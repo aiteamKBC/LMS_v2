@@ -15,6 +15,7 @@ from .attendance_lectures import attendance_lectures
 from .attendance_confirmation import confirm_attendance
 from .meeting_attendance import meeting_attendance, confirm_meeting_attendance
 from .attendance_mode import attendance_mode, review_attendance_mode
+from .first_session_bookings import first_session_bookings
 
 from . import certificates, monthly_assignment, legacy_assignments, quiz_reading, review_history
 from . import historical_evidence
@@ -51,6 +52,8 @@ urlpatterns = [
     path('attendance-mode/review/', review_attendance_mode, name='attendance-mode-review'),
     path('profile-photo/<str:kind>/<int:pk>/', learner_profile_photo, name='learner-profile-photo'),
     path("tutor-learners/", views.tutor_learners, name="tutor-learners"),
+    # Enrolment workspace: every learner's first-session booking, read only.
+    path("first-session-bookings/", first_session_bookings, name="first-session-bookings"),
     path("enrolment-users/", views.enrolment_users, name="enrolment-users"),
     path("enrolment-users/import-template/", learner_import.import_template, name="enrolment-users-import-template"),
     path("enrolment-users/import/", learner_import.import_students, name="enrolment-users-import"),

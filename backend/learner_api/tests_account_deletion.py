@@ -8,8 +8,9 @@ from django.db import DatabaseError
 from django.db.models import Q
 from django.test import RequestFactory, SimpleTestCase
 
-from .account_deletion import _profiles_for_deletion, delete_learner_account
+from .account_deletion import _ProfileCollector, _profiles_for_deletion, delete_learner_account
 from .mappers import ValidationError
+from .models import LearnerKsb, LearnerProfile, LearnerProgressEntry
 from .views import enrolment_user_detail
 
 
@@ -23,6 +24,7 @@ class AccountDeletionTests(SimpleTestCase):
             source = stack.enter_context(patch("learner_api.account_deletion.EnrolmentUser"))
             login = stack.enter_context(patch("learner_api.account_deletion.LoginAccount"))
             resolve = stack.enter_context(patch("learner_api.account_deletion._profiles_for_deletion", return_value=[profile]))
+            delete_profile = stack.enter_context(patch("learner_api.account_deletion._delete_profile"))
             children = [stack.enter_context(patch(f"learner_api.account_deletion.{name}"))
                         for name in ("LoginSession", "Invitation", "PasswordReset", "LoginAudit")]
             source.all_learners.using.return_value.select_for_update.return_value.get.return_value = user
@@ -37,7 +39,7 @@ class AccountDeletionTests(SimpleTestCase):
                 model.objects.using.return_value.filter.assert_called_once_with(account_id=407)
                 model.objects.using.return_value.filter.return_value.delete.assert_called_once_with()
             account.delete.assert_called_once_with(using="enrolment")
-            profile.delete.assert_called_once_with(using="enrolment")
+            delete_profile.assert_called_once_with(profile)
             user.delete.assert_called_once_with(using="enrolment")
 
     def test_missing_login_and_profile_still_deletes_enrolment(self):
@@ -52,11 +54,11 @@ class AccountDeletionTests(SimpleTestCase):
     def test_failure_reaches_transaction_boundary_and_stops_deletion(self):
         failure = DatabaseError("blocked dependency")
         profile = Mock()
-        profile.delete.side_effect = failure
         with patch("learner_api.account_deletion.transaction.atomic") as atomic, \
                 patch("learner_api.account_deletion.EnrolmentUser") as source, \
                 patch("learner_api.account_deletion.LoginAccount") as login, \
-                patch("learner_api.account_deletion._profiles_for_deletion", return_value=[profile]):
+                patch("learner_api.account_deletion._profiles_for_deletion", return_value=[profile]), \
+                patch("learner_api.account_deletion._delete_profile", side_effect=failure):
             login.objects.using.return_value.select_for_update.return_value.filter.return_value = []
             with self.assertRaises(DatabaseError):
                 delete_learner_account(132)
@@ -83,6 +85,33 @@ class AccountDeletionTests(SimpleTestCase):
                 _profiles_for_deletion(user)
             self.assertIn({'enrolment_id__isnull': True, 'email__iexact': 'shared@example.com'},
                           [call.kwargs for call in query.filter.call_args_list])
+
+
+class ProfileCollectorTests(SimpleTestCase):
+    """The retired learner_ksbs snapshot must not block a profile cascade."""
+
+    def related(self, model, *, ksbs_table):
+        collector = _ProfileCollector(using="enrolment")
+        field = model._meta.get_field("learner")
+        with patch("learner_api.account_deletion.learner_ksbs_relation_exists", return_value=ksbs_table) as probe:
+            query = collector.related_objects(model, [field], [LearnerProfile(pk=901)])
+        return query, probe
+
+    def test_missing_legacy_ksb_table_is_skipped_without_sql(self):
+        query, probe = self.related(LearnerKsb, ksbs_table=False)
+        probe.assert_called_once_with("enrolment")
+        self.assertTrue(query.query.is_empty())
+        self.assertEqual(list(query), [])  # SimpleTestCase would reject a real query.
+
+    def test_present_legacy_ksb_table_is_still_cascaded(self):
+        query, _ = self.related(LearnerKsb, ksbs_table=True)
+        self.assertFalse(query.query.is_empty())
+        self.assertIn("learner_ksbs", str(query.query))
+
+    def test_other_profile_children_are_untouched(self):
+        query, probe = self.related(LearnerProgressEntry, ksbs_table=False)
+        probe.assert_not_called()
+        self.assertFalse(query.query.is_empty())
 
 
 class AccountDeletionEndpointTests(SimpleTestCase):
