@@ -185,8 +185,8 @@ def tracking_record(context, payload, activity_id, activity_kind, history):
     if previous:
         return previous, True
     outside = activity_kind != 'quiz' and outside_uk_working_hours(tracking['submittedAt'])
-    if outside and payload.get('outsideWorkingHoursConfirmed') is not True:
-        raise ValueError('Confirm that this activity was completed outside normal working hours.')
+    if outside and payload.get('insideWorkingHoursConfirmed') is not True:
+        raise ValueError('Confirm that this activity was completed inside normal working hours.')
     seconds = tracking['verifiedSeconds']
     return {'kind': activity_kind, 'componentId': str(activity_id), 'timeTrackingSessionId': tracking['sessionId'],
             'startedAt': tracking['startedAt'].isoformat(), 'submittedAt': tracking['submittedAt'].isoformat(),
@@ -194,8 +194,10 @@ def tracking_record(context, payload, activity_id, activity_kind, history):
             'claimedSeconds': tracking['claimedSeconds'], 'serverSessionSeconds': tracking['serverSessionSeconds'],
             'timeTrackingSource': tracking['source'], 'feedback': str(payload.get('feedback') or ''),
             'reportedTime': str(payload.get('reportedTime') or ''), 'ksbs': [], 'passed': True,
-            'outsideWorkingHours': outside, 'outsideWorkingHoursConfirmed': outside,
-            'outsideWorkingHoursConfirmedAt': tracking['submittedAt'].isoformat() if outside else None}, False
+            'outsideWorkingHours': outside, 'outsideWorkingHoursConfirmed': False,
+            'outsideWorkingHoursConfirmedAt': None,
+            'insideWorkingHoursConfirmed': outside,
+            'insideWorkingHoursConfirmedAt': tracking['submittedAt'].isoformat() if outside else None}, False
 
 
 def complete_activity(context, account, detail, activity_id, activity_kind, payload):

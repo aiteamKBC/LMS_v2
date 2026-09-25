@@ -775,6 +775,11 @@ class LearnerProfile(models.Model):
                 "serverSessionSeconds": entry.server_session_seconds,
                 "verifiedSeconds": entry.verified_seconds,
                 "outsideWorkingHours": entry.outside_working_hours,
+                "insideWorkingHoursConfirmed": entry.inside_working_hours_confirmed,
+                "insideWorkingHoursConfirmedAt": (
+                    entry.inside_working_hours_confirmed_at.isoformat()
+                    if entry.inside_working_hours_confirmed_at else ""
+                ),
                 "outsideWorkingHoursConfirmed": entry.outside_working_hours_confirmed,
                 "outsideWorkingHoursConfirmedAt": (
                     entry.outside_working_hours_confirmed_at.isoformat()
@@ -1050,6 +1055,8 @@ class LearnerProgressEntry(models.Model):
     outside_working_hours = models.BooleanField(default=False)
     outside_working_hours_confirmed = models.BooleanField(default=False)
     outside_working_hours_confirmed_at = models.DateTimeField(null=True, blank=True)
+    inside_working_hours_confirmed = models.BooleanField(default=False)
+    inside_working_hours_confirmed_at = models.DateTimeField(null=True, blank=True)
     feed_kind = models.CharField(max_length=30, blank=True)
     feed_action = models.TextField(blank=True)
     feed_title = models.TextField(blank=True)

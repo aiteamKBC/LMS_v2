@@ -1,3 +1,4 @@
+from . import working_hours_holidays
 from .coach_availability import coach_available_slots, case_owner_available_slots
 from . import presentation_design
 from . import personal_learning
@@ -181,6 +182,7 @@ urlpatterns = [
     path("curriculum/legacy-otjh/", curriculum.legacy_otjh, name="curriculum-legacy-otjh"),
     # Signed start time shared by quizzes and learning components.
     path("time-tracking/start/", time_tracking.start_time_tracking, name="time-tracking-start"),
+    path("working-hours/holidays/", working_hours_holidays.working_hours_holidays, name="working-hours-holidays"),
     # quiz-taking
     path("quizzes/<int:quiz_id>/", quizzes.quiz_detail, name="quiz-detail"),
     path("quizzes/<int:quiz_id>/submit/", quizzes.submit_quiz_attempt, name="quiz-submit"),
