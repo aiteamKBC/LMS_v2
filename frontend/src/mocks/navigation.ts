@@ -611,6 +611,17 @@ export const adminNavItems: SidebarNavItem[] = [
 
   // Every headline count in one place, each row naming its source table.
   { id: 'admin-platform-report', label: 'Platform Report', icon: 'ri-bar-chart-box-line', href: '/admin/platform-report' },
+
+  // College sites outside the LMS — open in a new tab.
+  {
+    id: 'admin-group-external',
+    label: 'External tools',
+    icon: 'ri-external-link-line',
+    children: [
+      { id: 'admin-positive-moments', label: 'Positive Moments', icon: 'ri-heart-line', href: 'https://positive-moments.kentbusinesscollege.net', external: true },
+      { id: 'admin-tutor-dashboard', label: 'Tutor Dashboard', icon: 'ri-dashboard-line', href: 'https://tutordashboard.kentbusinesscollege.net', external: true },
+    ],
+  },
 ];
 
 // ============================================================================

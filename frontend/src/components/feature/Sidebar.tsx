@@ -115,6 +115,11 @@ export interface SidebarNavItem {
    */
   tag?: string;
   statusDot?: 'red' | 'amber' | 'blue' | 'green';
+  /**
+   * `href` is a site outside the LMS: it opens in a new tab and never goes
+   * through the router, so no route guard applies to it.
+   */
+  external?: boolean;
   children?: SidebarNavItem[];
 }
 
@@ -240,6 +245,18 @@ export function SidebarIcon({ id, label, sourceIcon, size = 18, className }: {
 }) {
   const Icon = resolveSidebarIcon(id, label, sourceIcon);
   return <Icon aria-hidden="true" focusable="false" size={size} strokeWidth={1.8} className={className} />;
+}
+
+/** New-tab link props for an external destination; nothing for an in-app route. */
+function externalLinkProps(item: SidebarNavItem) {
+  return item.external ? { target: '_blank', rel: 'noopener noreferrer', reloadDocument: true } : {};
+}
+
+/** Tells a screen reader that an external destination leaves this tab. */
+function NewTabHint({ item }: { item: SidebarNavItem }) {
+  // The space sits outside the span: whitespace at the start of an element is
+  // dropped from the accessible name, which would read "Moments(opens...".
+  return item.external ? <>{' '}<span className="sr-only">(opens in a new tab)</span></> : null;
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -785,6 +802,7 @@ function RailLink({ item, isActive, compact }: {
   return (
     <Link
       to={item.href ?? '#'}
+      {...externalLinkProps(item)}
       aria-current={active ? 'page' : undefined}
       title={item.label}
       className={`${ROW_BASE} ${active ? ROW_ACTIVE : ROW_IDLE} w-full flex-col justify-center gap-1 ${compact ? 'py-1.5' : 'py-2'} px-1`}
@@ -797,6 +815,7 @@ function RailLink({ item, isActive, compact }: {
         {(item.comingSoon || item.tag) && !item.badge && !item.statusDot ? <RailDot className="bg-amber-400" /> : null}
       </span>
       <RailLabel compact={compact}>{item.label}</RailLabel>
+      <NewTabHint item={item} />
     </Link>
   );
 }
@@ -860,11 +879,12 @@ function SecondaryNavCard({ item, active, onNavigate }: {
   return (
     <Link
       to={item.href ?? '#'}
+      {...externalLinkProps(item)}
       aria-current={active ? 'page' : undefined}
       onClick={onNavigate}
       className={`group flex min-h-10 w-full min-w-0 items-center rounded-lg px-3 py-2 text-left text-[13px] leading-snug transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/80 motion-reduce:!transition-none ${active ? 'bg-brand-accent font-semibold text-white' : 'text-white/75 hover:bg-white/10 hover:text-white'}`}
     >
-      <span className="min-w-0 flex-1 break-words">{item.label}</span>
+      <span className="min-w-0 flex-1 break-words">{item.label}<NewTabHint item={item} /></span>
       {hasStatus && (
         <span className="ml-2 flex shrink-0 items-center gap-1.5">
           {item.comingSoon ? <SoonBadge /> : item.tag ? <NavTag label={item.tag} /> : null}
@@ -891,6 +911,7 @@ function ExpandedLink({ item, isActive, onNavigate, compact, presentation }: {
   return (
     <Link
       to={item.href ?? '#'}
+      {...externalLinkProps(item)}
       aria-current={active ? 'page' : undefined}
       onClick={onNavigate}
       title={presentation === 'rail' ? item.label : undefined}
@@ -903,7 +924,7 @@ function ExpandedLink({ item, isActive, onNavigate, compact, presentation }: {
         {presentation === 'rail' && item.statusDot && !item.badge ? <RailDot className="bg-red-500" /> : null}
         {presentation === 'rail' && (item.comingSoon || item.tag) && !item.badge && !item.statusDot ? <RailDot className="bg-amber-400" /> : null}
       </span>
-      <span className={presentation === 'rail' ? 'sr-only' : presentation === 'row' ? 'min-w-0 flex-1 whitespace-normal break-words text-left' : 'min-w-0 flex-1 truncate'}>{item.label}</span>
+      <span className={presentation === 'rail' ? 'sr-only' : presentation === 'row' ? 'min-w-0 flex-1 whitespace-normal break-words text-left' : 'min-w-0 flex-1 truncate'}>{item.label}<NewTabHint item={item} /></span>
       {presentation !== 'rail' && (
         <span className="flex shrink-0 items-center gap-1.5">
           {item.comingSoon ? <SoonBadge /> : item.tag ? <NavTag label={item.tag} /> : null}
@@ -996,6 +1017,7 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate, prese
               <Link
                 key={child.id}
                 to={child.href ?? '#'}
+                {...externalLinkProps(child)}
                 aria-current={childActive ? 'page' : undefined}
                 onClick={onNavigate}
                 className={`${ROW_BASE} ${childActive ? ROW_ACTIVE : ROW_IDLE} gap-2 px-2.5 py-1.5 text-[12.5px]`}
@@ -1003,7 +1025,7 @@ function ExpandedGroup({ item, isActive, isExpanded, onToggle, onNavigate, prese
                 <span className="kbc-sidebar-icon-well kbc-sidebar-child-icon-well flex h-4 w-4 shrink-0 items-center justify-center">
                   <SidebarIcon id={child.id} label={child.label} sourceIcon={child.icon} size={15} />
                 </span>
-                <span className="min-w-0 flex-1 truncate">{child.label}</span>
+                <span className="min-w-0 flex-1 truncate">{child.label}<NewTabHint item={child} /></span>
                 <span className="flex shrink-0 items-center gap-1.5">
                   {child.comingSoon ? <SoonBadge /> : child.tag ? <NavTag label={child.tag} /> : null}
                   {child.statusDot && <StatusDot color={child.statusDot} />}
@@ -1111,6 +1133,7 @@ function useFlyout({ item, isActive, isOpen, onOpen, onClose, anchorRef }: {
             <Link
               key={child.id}
               to={child.href ?? '#'}
+              {...externalLinkProps(child)}
               aria-current={childActive ? 'page' : undefined}
               onClick={onClose}
               className={`${ROW_BASE} ${childActive ? ROW_ACTIVE : ROW_IDLE} gap-2.5 px-2.5 py-2 text-[12.5px]`}
@@ -1118,7 +1141,7 @@ function useFlyout({ item, isActive, isOpen, onOpen, onClose, anchorRef }: {
               <span className="kbc-sidebar-icon-well kbc-sidebar-child-icon-well flex h-4 w-4 shrink-0 items-center justify-center">
                 <SidebarIcon id={child.id} label={child.label} sourceIcon={child.icon} size={15} />
               </span>
-              <span className="min-w-0 flex-1 truncate">{child.label}</span>
+              <span className="min-w-0 flex-1 truncate">{child.label}<NewTabHint item={child} /></span>
               {child.comingSoon ? <SoonBadge /> : child.tag ? <NavTag label={child.tag} /> : null}
               {child.statusDot && <StatusDot color={child.statusDot} />}
               {child.badge ? <NavBadge count={child.badge} /> : null}

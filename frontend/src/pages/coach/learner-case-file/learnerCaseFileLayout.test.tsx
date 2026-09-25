@@ -43,6 +43,9 @@ vi.mock('@/pages/learner/reviews/ImportedReviewHistory', () => ({
     <div data-testid="imported-review-form">{`${kind}:${learnerId}:${category}:${reviewId}`}</div>
   ),
 }));
+vi.mock('./components/AssignmentsTab', () => ({
+  default: ({ kind, learnerId }: { kind: string; learnerId: string }) => <div data-testid="assignments-tab">{`${kind}:${learnerId}`}</div>,
+}));
 vi.mock('./data', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./data')>();
   return {
@@ -161,7 +164,9 @@ describe('Learner Case File design', () => {
     expect(screen.getByText('Activity overview only')).toBeInTheDocument();
     expect(screen.getByText('Rewards hidden')).toBeInTheDocument();
     expect(mocks.useDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true);
-    expect(screen.getAllByRole('tab')).toHaveLength(5);
+    // Overview, OTJH & KSB Progress, Attendance, Learning Plan, Reviews, Assignments.
+    expect(screen.getAllByRole('tab')).toHaveLength(6);
+    expect(screen.getByRole('tab', { name: 'Assignments' })).toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: 'Programme & Employer' })).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Reviews' })).toBeInTheDocument();
   });
@@ -661,4 +666,17 @@ describe('Learner Case File design', () => {
     expect(screen.queryByRole('button', { name: 'Add evidence' })).not.toBeInTheDocument();
   });
 
+
+  it('opens the Assignments tab for the enrolment record of the learner, from the tab bar or a link', () => {
+    const { unmount } = render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
+    expect(screen.queryByTestId('assignments-tab')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'Assignments' }));
+    expect(screen.getByRole('tab', { name: 'Assignments' })).toHaveAttribute('aria-selected', 'true');
+    // The enrolment id, not the profile id: assignments are read from the learner's own endpoints.
+    expect(screen.getByTestId('assignments-tab')).toHaveTextContent('apprenticeship:125');
+    unmount();
+
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42&tab=assignments']}><LearnerCaseFile /></MemoryRouter>);
+    expect(screen.getByTestId('assignments-tab')).toBeInTheDocument();
+  });
 });
