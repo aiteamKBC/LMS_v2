@@ -11,9 +11,19 @@ export const homeActions = [
 export interface HomeEvent {
   id: string; kind: 'lecture' | 'assignment' | 'review'; title: string;
   date: string | null; detail: string; href: string; moduleId?: string;
+  source?: string; eventKey?: string;
 }
 type DatedHomeEvent = HomeEvent & { date: string; time?: string };
 const inactive = new Set(['cancelled', 'canceled', 'completed', 'deleted', 'failed', 'superseded', 'awaiting-signature']);
+
+export type ReviewOrMcmEvent = HomeEvent & {
+  source: 'mcr' | 'progress-review';
+  sessionId: string;
+  eventKey: string;
+  scheduledDate: string | null;
+  scheduledTime: string | null;
+  meetingLink?: string | null;
+};
 
 /** One nearest event per category, in lecture / assignment / review order. */
 export function upcomingEvents(schedule?: TrainingPlanDashboard | null, week?: OverviewWeek | null, now = new Date()): HomeEvent[] {
@@ -43,6 +53,43 @@ export function upcomingEvents(schedule?: TrainingPlanDashboard | null, week?: O
     { id: 'next-review', kind: 'review', title: 'Next review', date: null, detail: 'No upcoming review scheduled', href: '/learner/calendar' },
   ];
   return slots.map(slot => upcoming.find(event => event.kind === slot.kind) || slot);
+}
+
+/** Return the next scheduled or due MCM/progress review for dashboard actions. */
+export function upcomingReviewOrMcm(schedule?: TrainingPlanDashboard | null, now = new Date()): ReviewOrMcmEvent | null {
+  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London' }).format(now);
+  const time = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(now);
+  const candidates = (schedule?.reviews ?? [])
+    .filter(item => (item.source === 'mcr' || item.source === 'progress-review')
+      && !inactive.has(item.status.trim().toLowerCase()))
+    .map(item => {
+      const source: ReviewOrMcmEvent['source'] = item.source === 'mcr' ? 'mcr' : 'progress-review';
+      const date = item.scheduledDate || item.targetDate || item.date || null;
+      return {
+        id: `review-action-${item.id}`,
+        sessionId: item.id,
+        kind: 'review' as const,
+        title: item.title || (source === 'mcr' ? 'Monthly Coaching Meeting' : 'Progress Review'),
+        date,
+        detail: source === 'mcr'
+          ? (item.scheduledDate ? 'Monthly Coaching Meeting' : 'MCM to be booked')
+          : (item.scheduledDate ? 'Progress review' : 'Review to be booked'),
+        href: '/learner/calendar',
+        source,
+        eventKey: item.eventKey || item.id,
+        scheduledDate: item.scheduledDate || null,
+        scheduledTime: item.scheduledTime || null,
+        meetingLink: item.meetingLink || null,
+        time: item.scheduledDate ? item.scheduledTime || undefined : undefined,
+      } satisfies ReviewOrMcmEvent & { time?: string };
+    })
+    .filter(item => item.date && Number.isFinite(Date.parse(item.date))
+      && (/^\d{4}-\d{2}-\d{2}$/.test(item.date)
+        ? item.date > today || item.date === today && (!item.time || item.time.slice(0, 5) >= time)
+        : Date.parse(item.date) >= now.getTime()))
+    .sort((a, b) => Date.parse(a.date!) - Date.parse(b.date!)
+      || (a.time || '23:59').localeCompare(b.time || '23:59') || a.id.localeCompare(b.id));
+  return candidates[0] || null;
 }
 
 export function greeting(now = new Date()) {

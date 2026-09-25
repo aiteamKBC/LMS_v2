@@ -26,13 +26,6 @@
 .children .row > svg { width: 15px; height: 15px; color: #9f8bdc; }
 .children .row[aria-current="page"] { background: rgb(126 91 229 / 24%); color: #fff; }
 .children .row[aria-current="page"] > svg { color: #c2afff; }
-.footer { margin: 0 14px; padding: 12px 0 16px; border-top: 1px solid rgb(255 255 255 / 10%); }
-.account { display: flex; align-items: center; gap: 11px; width: 100%; min-height: 52px; margin-top: 12px; padding: 8px; text-align: left; }
-.avatar { display: grid; place-items: center; width: 42px; height: 42px; flex-shrink: 0; border-radius: 50%; background: #6b35d8; color: white; font-size: 15px; }
-.identity { flex: 1; min-width: 0; }
-.identity strong, .identity small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.identity strong { font-size: 14px; color: #fff; }
-.identity small { margin-top: 3px; font-size: 12px; }
 .desktop :is(a, button):focus-visible, .mobile :is(a, button):focus-visible { outline: 2px solid var(--coach-nav-accent); outline-offset: 2px; }
 .mobile { display: none; }
 .close { margin-left: auto; padding: 5px; }
@@ -40,12 +33,8 @@
 .desktop[data-collapsed="true"] .brand span,
 .desktop[data-collapsed="true"] .row .label,
 .desktop[data-collapsed="true"] .row .chevron,
-.desktop[data-collapsed="true"] .identity,
-.desktop[data-collapsed="true"] .accountChevron { display: none; }
 .desktop[data-collapsed="true"] .nav { padding-inline: 10px; }
 .desktop[data-collapsed="true"] .row { justify-content: center; gap: 0; padding-inline: 0; }
-.desktop[data-collapsed="true"] .footer { margin-inline: 10px; }
-.desktop[data-collapsed="true"] .account { justify-content: center; padding-inline: 0; }
 @media (max-width: 1023px) {
   .desktop { display: none; }
   .mobile { display: flex; position: fixed; inset: 0 auto 0 0; z-index: 60; width: min(320px, 90vw); transform: translateX(-100%); visibility: hidden; transition: transform .2s, visibility .2s; }

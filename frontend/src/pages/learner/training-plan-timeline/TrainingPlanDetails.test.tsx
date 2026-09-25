@@ -56,7 +56,7 @@ const fixture = (): TrainingPlanDashboard => ({
     { id: 'missed', moduleId: 'M10', title: 'Missed session', start: '2026-09-08T10:00:00Z', end: null, minutes: 60, joinUrl: null, status: 'completed', attended: false },
     { id: 'next', moduleId: 'M10', title: 'Next session', start: '2026-09-15T10:00:00Z', end: null, minutes: 45, joinUrl: 'https://teams.microsoft.com/l/meetup-join/verified', status: 'scheduled', attended: null },
   ],
-  reviews: [review('future', '2026-09-22'), review('overdue', '2026-09-08'), review('done', '2026-09-01', 'completed'), review('booked', '2026-09-15', 'scheduled')],
+  reviews: [review('future', '2026-09-28'), review('overdue', '2026-09-08'), review('done', '2026-09-01', 'completed'), review('booked', '2026-09-15', 'scheduled')],
   coach: { name: 'Assigned coach', bookingUrl: 'https://outlook.office.com/book/assigned-coach' },
   contractStatus: 'ready', generatedAt: '2026-09-10T08:00:00Z',
 });
@@ -159,6 +159,10 @@ describe('Dashboard training plan controls', () => {
     expect(progress.getByText('Difference').nextElementSibling).toHaveTextContent('-6.5 hrs');
     expect(progress.getByText('K1')).toBeVisible();
     expect(progress.getByText('S4')).toBeVisible();
+    const reviews = within(panel.getByRole('region', { name: 'Reviews this month' }));
+    expect(reviews.getByText('28 Sept')).toBeVisible();
+    expect(reviews.getByText('15 Sept')).toBeVisible();
+    expect(reviews.getByText('1 Sept')).toBeVisible();
   });
 
   it('shows monthly assignments with hours, progress and their real component links', () => {

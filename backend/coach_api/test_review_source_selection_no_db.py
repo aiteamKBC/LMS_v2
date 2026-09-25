@@ -55,18 +55,78 @@ class SharedReviewSourceResolverTests(SimpleTestCase):
     @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
     @patch("coach_api.views.fetch_aptem_review_events")
     @patch("coach_api.views.resolve_effective_aptem_ids", return_value=({1: 101}, set()))
-    def test_aptem_learner_uses_aptem_only(
+    def test_aptem_learner_with_aptem_mcm_uses_aptem_only(
         self, _identities, fetch_aptem, _source_rows, curriculum_occurrences,
     ):
-        aptem_event = {"eventKey": "imported-review:A-1", "source": "progress-review", "reviewSource": "aptem"}
-        fetch_aptem.return_value = ([aptem_event], {1})
+        aptem_events = [
+            {"eventKey": "imported-review:A-1", "source": "progress-review", "reviewSource": "aptem", "learnerId": "1"},
+            {"eventKey": "imported-review:A-2", "source": "mcr", "reviewSource": "aptem", "learnerId": "1"},
+        ]
+        fetch_aptem.return_value = (aptem_events, {1})
 
         result = views.resolve_coach_review_events("coach@example.invalid", "Coach", [learner(1)])
 
-        self.assertEqual(result["events"], [aptem_event])
+        self.assertEqual(result["events"], aptem_events)
         curriculum_occurrences.assert_not_called()
         self.assertEqual(result["sourceCounts"]["aptemLearners"], 1)
         self.assertEqual(result["sourceCounts"]["curriculumLearners"], 0)
+        self.assertEqual(result["sourceCounts"]["curriculumMcmFallbackLearners"], 0)
+
+    @patch("coach_api.views.build_generated_calendar_event")
+    @patch("coach_api.views.resolve_curriculum_review_occurrences")
+    @patch("coach_api.views.resolve_curriculum_programme_id", return_value="programme-1")
+    @patch("coach_api.views.resolve_schedule_window", return_value=(date(2026, 1, 1), date(2027, 1, 1)))
+    @patch("coach_api.views.resolve_review_anchor_date", return_value=(date(2026, 1, 1), None))
+    @patch("coach_api.views.curriculum_review_instances.programme_review_template_identifiers", return_value=[("template-1", "mcm")])
+    @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
+    @patch("coach_api.views.fetch_aptem_review_events")
+    @patch("coach_api.views.resolve_effective_aptem_ids", return_value=({1: 101}, set()))
+    def test_aptem_learner_without_aptem_mcm_gets_curriculum_mcm_only(
+        self, _identities, fetch_aptem, _source_rows, _templates, _anchor, _window,
+        _programme, occurrences, build_event,
+    ):
+        aptem_event = {"eventKey": "imported-review:A-1", "source": "progress-review", "reviewSource": "aptem", "learnerId": "1"}
+        fetch_aptem.return_value = ([aptem_event], {1})
+        occurrences.return_value = [
+            {"reviewTypeCode": "mcm", "occurrenceNumber": 1, "targetDate": date(2026, 10, 24),
+             "reviewTemplateId": "template-1", "reviewName": "Monthly Coaching", "occurrenceSource": "generated"},
+            {"reviewTypeCode": "progress_review", "occurrenceNumber": 1, "targetDate": date(2026, 11, 24),
+             "reviewTemplateId": "template-2", "reviewName": "Progress Review", "occurrenceSource": "generated"},
+        ]
+        build_event.side_effect = lambda **kwargs: {"eventKey": f"review:1:{kwargs['review_template_id']}:1", "source": kwargs["event_type"]}
+
+        result = views.resolve_coach_review_events("coach@example.invalid", "Coach", [learner(1)])
+
+        self.assertEqual(
+            [(event["source"], event["reviewSource"]) for event in result["events"]],
+            [("progress-review", "aptem"), ("mcr", "curriculum")],
+        )
+        self.assertEqual(result["reviewGenerationIssues"], [])
+        self.assertEqual(result["sourceCounts"]["curriculumMcmFallbackLearners"], 1)
+        self.assertEqual(result["aptemProfileIds"], {1})
+
+    @patch("coach_api.views.resolve_curriculum_review_occurrences", return_value=[])
+    @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
+    @patch("coach_api.views.fetch_aptem_review_events")
+    @patch("coach_api.views.resolve_effective_aptem_ids", return_value=({1: 101}, set()))
+    def test_windowed_resolution_checks_aptem_mcm_outside_the_window(
+        self, _identities, fetch_aptem, _source_rows, curriculum_occurrences,
+    ):
+        # The Aptem MCM falls outside the requested month, so the windowed
+        # fetch is empty, but the learner still has Aptem MCMs -- no fallback.
+        aptem_mcm = {"eventKey": "imported-review:A-2", "source": "mcr", "reviewSource": "aptem", "learnerId": "1"}
+        fetch_aptem.side_effect = lambda *args, **kwargs: (
+            ([], set()) if kwargs.get("start_date") else ([aptem_mcm], {1})
+        )
+
+        result = views.resolve_coach_review_events(
+            "coach@example.invalid", "Coach", [learner(1)],
+            start_date=date(2026, 9, 1), end_date=date(2026, 9, 30),
+        )
+
+        self.assertEqual(result["events"], [])
+        curriculum_occurrences.assert_not_called()
+        self.assertEqual(result["sourceCounts"]["curriculumMcmFallbackLearners"], 0)
 
     @patch("coach_api.views.build_generated_calendar_event")
     @patch("coach_api.views.resolve_curriculum_review_occurrences")
@@ -111,7 +171,7 @@ class SharedReviewSourceResolverTests(SimpleTestCase):
         self, _identities, fetch_aptem, _source_rows, _templates, _anchor, _window,
         _programme, occurrences, build_event,
     ):
-        aptem_event = {"eventKey": "imported-review:A-1", "source": "mcr", "reviewSource": "aptem"}
+        aptem_event = {"eventKey": "imported-review:A-1", "source": "mcr", "reviewSource": "aptem", "learnerId": "1"}
         fetch_aptem.return_value = ([aptem_event], {1})
         occurrences.return_value = [{
             "reviewTypeCode": "pr", "occurrenceNumber": 1,

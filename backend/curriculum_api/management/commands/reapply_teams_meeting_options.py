@@ -88,7 +88,10 @@ class Command(BaseCommand):
             organizer = clean_str(series.get("organizer_email"))
             join_url = clean_str(series.get("join_url"))
             recording = clean_str(series.get("recording")).lower() or "none"
-            lobby = clean_str(series.get("lobby_bypass")).lower() or "invited"
+            # Existing rows may predate the direct-entry policy.  Reapplying
+            # this command is the explicit bridge that patches their Graph
+            # meetings, so a stored legacy value must not restore the lobby.
+            lobby = "everyone"
             language = clean_str(series.get("spoken_language")) or "en-GB"
             attendees = teams_series_email_list(series.get("attendees"))
             presenters = teams_series_email_list(series.get("presenters"))

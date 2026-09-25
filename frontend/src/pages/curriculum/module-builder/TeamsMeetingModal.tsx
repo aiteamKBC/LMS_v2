@@ -111,7 +111,7 @@ export function TeamsMeetingModal({
     presenters: storedEmails('teamsPresenters'),
     coOrganizers: storedEmails('teamsCoOrganizers'),
     details: String(settings.sessionPurpose ?? component?.description ?? ''),
-    lobbyBypass: String(settings.teamsLobbyBypass ?? 'invited'),
+    lobbyBypass: String(settings.teamsLobbyBypass ?? 'everyone'),
     recording: String(settings.teamsRecording ?? 'record-transcribe'),
     spokenLanguage: String(settings.teamsSpokenLanguage ?? 'en-GB'),
   }));
@@ -178,7 +178,7 @@ export function TeamsMeetingModal({
         organizerEmail: String(held.teamsOrganizerEmail),
         scheduleTimeZone: zone, seriesMode: saved.calendar.seriesMode,
         durationMinutes: '', details: '',
-        lobbyBypass: String(held.teamsLobbyBypass || 'invited'),
+        lobbyBypass: String(held.teamsLobbyBypass || 'everyone'),
         recording: String(held.teamsRecording || 'none'),
         spokenLanguage: String(held.teamsSpokenLanguage || 'en-GB'),
         meetingType: String(held.teamsMeetingType || 'live-session'),

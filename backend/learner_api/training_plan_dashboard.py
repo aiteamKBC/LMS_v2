@@ -12,7 +12,7 @@ from django.views.decorators.http import require_GET
 from login.permissions import learner_self_or_staff
 from old_otjh.coach_booking import booking_url
 from .learner_detail import SOURCE_MODELS
-from .models import LearnerProfile
+from .models import LearnerProfile, StaffUser
 from .learning_plan import _aptem_subject_modules, _effective_plan_ids, stored_training_plan
 from .coach_assignment import current_coach, source_coach
 from .student_activity import _builder_subject_metadata
@@ -169,6 +169,18 @@ def assigned_group_coach(source, modules):
                if [clean_text(module.get(key)).casefold() for key in ('programme_name', 'cohort_name', 'group_name')] == placement}
     coaches.discard('')
     return next(iter(coaches)) if len(coaches) == 1 else ''
+
+
+def coach_phone(email):
+    """Return the assigned staff member's phone without making it required."""
+    email = clean_text(email)
+    if not email:
+        return ''
+    try:
+        return clean_text(StaffUser.objects.filter(email__iexact=email)
+                          .values_list('phone_number', flat=True).first())
+    except DatabaseError:
+        return ''
 
 
 def find_contract(cursor, aptem_id):
@@ -341,9 +353,14 @@ def read_dashboard(source, section=None):
     reviews = [{**{key: event.get(key) for key in event_fields},
                 'meetingLink': safe_url(event.get('meetingLink')) or None} for event in events
                if event.get('source') in ('mcr', 'progress-review', 'student-support')]
+    coach = {'name': coach_name, 'bookingUrl': booking_url(coach_email)}
+    if coach_email:
+        coach['email'] = coach_email
+    phone = coach_phone(coach_email)
+    if phone:
+        coach['phone'] = phone
     return {**contract_data, 'actual': actual, 'actualAvailable': bool(aptem_id), 'modules': modules, 'moduleLinks': links,
-            'sessions': sessions, 'reviews': reviews,
-            'coach': {'name': coach_name, 'bookingUrl': booking_url(coach_email)},
+            'sessions': sessions, 'reviews': reviews, 'coach': coach,
             'generatedAt': datetime.now(timezone.utc).isoformat()}
 
 

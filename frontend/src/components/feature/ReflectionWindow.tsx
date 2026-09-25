@@ -32,6 +32,13 @@ export function parseClockSeconds(value: string | null | undefined): number | nu
     : units[0] * 60 + units[1];
 }
 
+/** The saved reflection always stores hours; show it in the field's unit. */
+function savedActualTime(hours: string, inMinutes: boolean): string {
+  if (!inMinutes || !hours.trim()) return hours;
+  const value = Number(hours);
+  return Number.isFinite(value) && value >= 0 ? String(Number((value * 60).toFixed(2))) : '';
+}
+
 export function formatRecordedClock(value: string | null | undefined): string | null {
   const totalSeconds = parseClockSeconds(value);
   return totalSeconds == null ? null : formatClock(totalSeconds);
@@ -99,6 +106,7 @@ export function ReflectionWindow({
   learnerKsbs,
   plannedTimeLabel,
   plannedHours: plannedHoursProp,
+  actualTimeUnit = 'hours',
   noun = 'quiz',
   submitting,
   submitError,
@@ -130,6 +138,14 @@ export function ReflectionWindow({
    * hours and submitted as such. Callers now convert to hours once, here.
    */
   plannedHours?: number;
+  /**
+   * Unit of the "Actual time spent" field. Quizzes use minutes because their
+   * planned time is shown in minutes; a bare "14" typed beside "60 minutes"
+   * was otherwise read as 14 hours. Minutes are submitted with an explicit
+   * unit ("14 minutes") so every OTJ parser reads them the same way, and the
+   * reflection record still receives hours.
+   */
+  actualTimeUnit?: 'hours' | 'minutes';
   noun?: string;
   submitting: boolean;
   submitError: string | null;
@@ -152,10 +168,15 @@ export function ReflectionWindow({
   // so "1.71" and "2" both read correctly while 102 minutes can no longer
   // arrive as 102 hours. Falls back to blank rather than to a parsed label: an
   // empty field is an honest "unknown", a wrong number is not.
+  const inMinutes = actualTimeUnit === 'minutes';
   const plannedHours =
     plannedHoursProp != null && Number.isFinite(plannedHoursProp) && plannedHoursProp > 0
-      ? String(Number(plannedHoursProp.toFixed(2)))
+      ? String(Number((inMinutes ? plannedHoursProp * 60 : plannedHoursProp).toFixed(2)))
       : '';
+  const actualTimeHours = () => {
+    const value = actualTime.trim();
+    return inMinutes && value ? String(Number((Number(value) / 60).toFixed(4))) : value;
+  };
   const [tab, setTab] = useState<TabId>('learning');
   const [reflection, setReflection] = useState('');
   const [selectedKsbs, setSelectedKsbs] = useState<string[]>([]);
@@ -353,7 +374,7 @@ export function ReflectionWindow({
         setCoachVisibilityConfirmed(Boolean(saved.evidenceConsentConfirmed));
         setSelectedBenefits(Array.isArray(saved.selectedBenefits) ? saved.selectedBenefits : []);
         setBenefitExplanation(saved.benefitExplanation || '');
-        setActualTime(saved.actualTimeHours || plannedHours);
+        setActualTime(savedActualTime(saved.actualTimeHours || '', inMinutes) || plannedHours);
         setPaidHours(saved.completedDuringPaidHours || 'yes');
         setDateCompleted(saved.dateCompleted || new Date().toISOString().split('T')[0]);
         setOtjhConfirmed(Boolean(saved.otjhConfirmed));
@@ -374,7 +395,7 @@ export function ReflectionWindow({
     return () => {
       cancelled = true;
     };
-  }, [evidenceSectionRef, learnerId, learnerKind, noun, plannedHours]);
+  }, [evidenceSectionRef, learnerId, learnerKind, noun, plannedHours, inMinutes]);
 
   const handleNext = () => {
     const nextTab = TABS[activeIndex + 1];
@@ -400,7 +421,7 @@ export function ReflectionWindow({
     const result: ReflectionSubmission = {
       ksbs: ksbCodes,
       feedback: reflection.trim(),
-      reportedTime: actualTime.trim(),
+      reportedTime: inMinutes && actualTime.trim() ? `${actualTime.trim()} minutes` : actualTime.trim(),
       confidenceBefore,
       confidenceAfter,
       ksbExplanations,
@@ -441,7 +462,7 @@ export function ReflectionWindow({
         evidenceConsentConfirmed: coachVisibilityConfirmed,
         selectedBenefits,
         benefitExplanation: benefitExplanation.trim(),
-        actualTimeHours: actualTime.trim(),
+        actualTimeHours: actualTimeHours(),
         completedDuringPaidHours: paidHours,
         dateCompleted,
         otjhConfirmed,
@@ -1084,14 +1105,14 @@ export function ReflectionWindow({
                   {plannedTimeLabel || 'Not set'}
                 </div>
               </Field>
-              <Field label="Actual time spent (hours)">
+              <Field label={`Actual time spent (${inMinutes ? 'minutes' : 'hours'})`}>
                 <input
                   type="number"
                   min="0"
-                  step="0.25"
+                  step={inMinutes ? '1' : '0.25'}
                   value={actualTime}
                   onChange={event => setActualTime(event.target.value)}
-                  placeholder="e.g. 2"
+                  placeholder={inMinutes ? 'e.g. 30' : 'e.g. 2'}
                   className="h-11 w-full rounded-xl border border-foreground-200 bg-white px-3 text-sm focus:border-primary-400 focus:outline-none"
                 />
               </Field>
