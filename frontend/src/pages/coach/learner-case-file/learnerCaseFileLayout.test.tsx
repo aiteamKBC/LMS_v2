@@ -353,12 +353,23 @@ describe('Learner Case File design', () => {
     expect(screen.getByRole('button', { name: 'Behaviours (4)' })).toBeInTheDocument();
   });
 
-  it('uses the same 58 browser rows for header, totals, remaining and category summaries', () => {
-    const ksbs = [
-      ...Array.from({ length: 18 }, (_, index) => ({ code: `K${index + 1}`, type: 'Knowledge', number: String(index + 1), description: `Knowledge ${index + 1}` })),
-      ...Array.from({ length: 27 }, (_, index) => ({ code: `S${index + 1}`, type: 'Skills', number: String(index + 1), description: `Skill ${index + 1}` })),
-      ...Array.from({ length: 13 }, (_, index) => ({ code: `B${index + 1}`, type: 'Behaviours', number: String(index + 1), description: `Behaviour ${index + 1}` })),
-    ];
+  it('collapses a 58-code profile to the same 16 parent rows across the browser and summaries', () => {
+    const profileShape: Record<string, number> = {
+      B1: 3, B2: 3, B3: 3, B4: 4,
+      K1: 6, K2: 5, K3: 4, K4: 3,
+      S1: 4, S2: 4, S3: 3, S4: 3, S5: 3, S6: 5, S7: 2, S8: 3,
+    };
+    const ksbs = Object.entries(profileShape).flatMap(([parent, count]) => (
+      Array.from({ length: count }, (_, index) => {
+        const code = index === 0 ? parent : `${parent}.${index}`;
+        return {
+          code,
+          type: parent.startsWith('K') ? 'Knowledge' : parent.startsWith('S') ? 'Skills' : 'Behaviours',
+          number: code.slice(1),
+          description: index === 0 ? `${parent} parent title` : `${parent} child ${index}`,
+        };
+      })
+    ));
     mocks.data = {
       ...caseFileData,
       detail: { ...caseFileData.detail, ksbs },
@@ -367,23 +378,24 @@ describe('Learner Case File design', () => {
       ksbEvidencedCount: null,
       ksbTotalCount: null,
       mappedKsbCodes: [],
-      touchedKsbCodes: ksbs.slice(0, 10).map((item) => item.code),
+      touchedKsbCodes: ['K1', 'K2', 'K3', 'K4', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6'],
     };
     render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
 
     const header = screen.getByRole('region', { name: 'Learner profile summary' });
-    expect(within(header).getByText('KSB', { selector: 'span' }).parentElement?.querySelector('strong')).toHaveTextContent('17%');
+    expect(within(header).getByText('KSB', { selector: 'span' }).parentElement?.querySelector('strong')).toHaveTextContent('63%');
     fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
-    expect(screen.getByText('Total KSB points').parentElement).toHaveTextContent('58');
+    expect(screen.getByText('Total KSB points').parentElement).toHaveTextContent('16');
     expect(screen.getByText('Points achieved').parentElement).toHaveTextContent('10');
-    expect(screen.getByText('Points remaining').parentElement).toHaveTextContent('48');
-    expect(screen.getAllByText('Knowledge')[0].parentElement).toHaveTextContent('10 / 18');
-    expect(screen.getAllByText('Skills')[0].parentElement).toHaveTextContent('0 / 27');
-    expect(screen.getAllByText('Behaviours')[0].parentElement).toHaveTextContent('0 / 13');
-    expect(screen.getByRole('button', { name: 'All (58)' })).toBeInTheDocument();
+    expect(screen.getByText('Points remaining').parentElement).toHaveTextContent('6');
+    expect(screen.getAllByText('Knowledge')[0].parentElement).toHaveTextContent('4 / 4');
+    expect(screen.getAllByText('Skills')[0].parentElement).toHaveTextContent('6 / 8');
+    expect(screen.getAllByText('Behaviours')[0].parentElement).toHaveTextContent('0 / 4');
+    expect(screen.getByRole('button', { name: 'All (16)' })).toBeInTheDocument();
+    expect(screen.queryByText('K1.1', { selector: 'strong' })).not.toBeInTheDocument();
   });
 
-  it('uses normalized parent evidence for child KSB rows and deduplicates sources', () => {
+  it('rolls child KSB evidence into the parent row and deduplicates sources', () => {
     mocks.data = {
       ...caseFileData,
       detail: {
@@ -409,17 +421,18 @@ describe('Learner Case File design', () => {
     render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
 
     fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
-    const childRow = screen.getByText('B1.1', { selector: 'strong' }).closest('tr');
-    expect(childRow).not.toBeNull();
-    expect(within(childRow!).getByText('Evidence linked')).toBeInTheDocument();
-    expect(within(childRow!).getByText('1')).toBeInTheDocument();
+    const parentRow = screen.getByText('B1', { selector: 'strong' }).closest('tr');
+    expect(parentRow).not.toBeNull();
+    expect(screen.queryByText('B1.1', { selector: 'strong' })).not.toBeInTheDocument();
+    expect(within(parentRow!).getByText('Evidence linked')).toBeInTheDocument();
+    expect(within(parentRow!).getByText('1')).toBeInTheDocument();
 
-    fireEvent.click(within(childRow!).getByRole('button', { name: 'View' }));
+    fireEvent.click(within(parentRow!).getByRole('button', { name: 'View' }));
     expect(screen.getByText('Accepted journal')).toBeInTheDocument();
     expect(screen.getAllByText('Accepted journal')).toHaveLength(1);
   });
 
-  it('keeps parent and child rows not evidenced when no parent evidence exists', () => {
+  it('keeps the collapsed parent row not evidenced when no parent evidence exists', () => {
     mocks.data = {
       ...caseFileData,
       detail: {
@@ -435,11 +448,10 @@ describe('Learner Case File design', () => {
     };
     render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
     fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
-    for (const code of ['B1', 'B1.1']) {
-      const row = screen.getByText(code, { selector: 'strong' }).closest('tr');
-      expect(within(row!).getByText('Not evidenced')).toBeInTheDocument();
-      expect(within(row!).getByText('0')).toBeInTheDocument();
-    }
+    const row = screen.getByText('B1', { selector: 'strong' }).closest('tr');
+    expect(within(row!).getByText('Not evidenced')).toBeInTheDocument();
+    expect(within(row!).getByText('0')).toBeInTheDocument();
+    expect(screen.queryByText('B1.1', { selector: 'strong' })).not.toBeInTheDocument();
   });
 
   it('shows completed components out of the weekly total and omits recent assessments', () => {

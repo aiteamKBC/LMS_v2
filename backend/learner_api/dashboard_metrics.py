@@ -83,6 +83,7 @@ def read_accepted_ksb_rows(cursor, source, kind):
     """Read accepted monthly activities using explicit learner/activity identity."""
     cursor.execute('''SELECT r.id, r.group_id, r.activity_id, r.source_ref,
             coalesce(p.component_ref, s.component_ref) AS component_ref,
+            coalesce(nullif(r.title, ''), nullif(a.title, '')) AS activity_title,
             coalesce(j.ksbs, CASE WHEN lk.source_preference='learner' THEN lk.ksbs ELSE ak.ksbs END,
                      a.raw #> '{live_lms_component,ksbs}') AS ksb_mappings
         FROM structured_manual_activities.manual_learner_activities r
@@ -640,6 +641,7 @@ def load_accepted_ksb_rows_bulk(keys):
         cursor.execute(f'''WITH requested(enrolment_id,aptem_id,learner_kind) AS (VALUES {placeholders})
             SELECT requested.enrolment_id,r.id,r.group_id,r.activity_id,r.source_ref,
                 coalesce(p.component_ref,s.component_ref) AS component_ref,
+                coalesce(nullif(r.title, ''),nullif(a.title, '')) AS activity_title,
                 coalesce(j.ksbs,CASE WHEN lk.source_preference='learner' THEN lk.ksbs ELSE ak.ksbs END,
                          a.raw #> '{{live_lms_component,ksbs}}') AS ksb_mappings
             FROM requested

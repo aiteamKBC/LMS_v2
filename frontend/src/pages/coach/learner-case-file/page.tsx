@@ -734,10 +734,21 @@ function selectCaseFileKsbRows(
 ): CaseFileKsbBrowserRow[] {
   const touched = new Set(data.touchedKsbCodes.map((code) => normalizeKsbCode(code)));
   const mapped = new Set(data.mappedKsbCodes.map((code) => normalizeKsbCode(code)));
-  return buildDisplayKsbs(data, fallbackKsbs)
-    .filter((item) => mapped.size === 0 || mapped.has(normalizeKsbCode(item.code)))
-    .map((item) => {
-      const code = String(item.code || '').trim().toUpperCase();
+  const parentRows = new Map<string, ReturnType<typeof buildDisplayKsbs>[number]>();
+  for (const item of buildDisplayKsbs(data, fallbackKsbs)) {
+    const rawCode = String(item.code || '').trim().toUpperCase();
+    const parentCode = normalizeKsbCode(rawCode);
+    if (!parentCode || (mapped.size > 0 && !mapped.has(parentCode))) continue;
+    const current = parentRows.get(parentCode);
+    // Profiles commonly contain both B1 and B1.1/B1.2. Keep one row per
+    // canonical parent and prefer the parent's own title over a child title.
+    if (!current || rawCode === parentCode) {
+      parentRows.set(parentCode, { ...item, code: parentCode });
+    }
+  }
+
+  return Array.from(parentRows.entries())
+    .map(([code, item]) => {
       const evidenceActivities = ksbLearningActivities(data, code);
       return {
         ...item,
@@ -745,7 +756,7 @@ function selectCaseFileKsbRows(
         category: ksbCategoryFromCode(code),
         evidenceActivities,
         evidenceCount: evidenceActivities.length,
-        linked: touched.has(normalizeKsbCode(code)),
+        linked: touched.has(code),
       };
     })
     .sort((left, right) => left.code.localeCompare(right.code, undefined, { numeric: true, sensitivity: 'base' }));

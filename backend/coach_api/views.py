@@ -2676,16 +2676,17 @@ def apply_aptem_variance_status(payload: dict, aptem_id) -> dict:
 
 
 def apply_evidenced_ksb_count(payload: dict, evidenced: int | None) -> dict:
-    """Overlay the audit KSB count on one serialized caseload learner.
+    """Attach the audit KSB count without corrupting curriculum progress.
 
     Sent as a count rather than a percentage, matching what the learner's own
     workspace shows: the audit KSB mapping spans several standards and carries
-    no per-learner denominator, so a percentage here would be against the wrong
-    total. `ksbTarget` is left as the curriculum figure it already was.
+    no per-learner denominator.  It therefore must not replace ``ksbCompleted``:
+    that field and ``ksbTarget`` are parent-code curriculum figures, while the
+    audit count contains distinct detailed codes.  Mixing them produced rows
+    such as ``28 / 16`` with a separately capped 100% progress value.
     """
     if evidenced is None:
         return payload
-    payload["ksbCompleted"] = evidenced
     payload["ksbEvidencedCount"] = evidenced
     payload["ksbSource"] = "audit"
     return payload
