@@ -571,6 +571,17 @@ class MailFallbackTests(SimpleTestCase):
         self.assertIn("noreply@kbc.test", url)
         self.assertFalse(kwargs["json"]["saveToSentItems"])
 
+    def test_save_to_sent_opt_in_reaches_graph(self):
+        with mock.patch.dict("os.environ", _MAIL_ENV, clear=False):
+            with mock.patch.object(email_azure, "_access_token", return_value="tok"):
+                response = mock.Mock(status_code=202, text="")
+                with mock.patch("httpx.post", return_value=response) as posted:
+                    email_azure.send_mail(
+                        to="person@kbc.test", subject="Subject",
+                        html_body="<b>x</b>", save_to_sent=True,
+                    )
+        self.assertTrue(posted.call_args[1]["json"]["saveToSentItems"])
+
     def test_network_error_is_caught(self):
         import httpx
 

@@ -1,5 +1,15 @@
-# Local assignment AI-writing check
+# Assignment AI-writing check
 
+## Provider
+`AI_CHECK_PROVIDER` in `backend/config/settings.py` is `"openai"`: the check sends the text
+(in the same 180-word passages) to the OpenAI API using `OPENAI_API_KEY` and
+`OPENAI_REFLECTION_MODEL` (`learner_api/openai_ai_detector.py`). A chat model is not a trained
+detector; its flags are rough estimates. Without a key the check returns 503, never a clean result.
+Set `AI_CHECK_PROVIDER = "local"` only where the offline model below is provisioned, and update
+the learner-facing wording in `LocalAiTextCheck.tsx`, which currently says text is sent to OpenAI.
+The rest of this file describes the offline provider.
+
+## Offline provider
 The assignment answer and learning fields offer an on-demand local model check.
 Suspected passages are highlighted separately without changing the saved answer.
 Results are estimates, not proof of AI use or copying from a particular service.
@@ -37,7 +47,7 @@ No real Teams, email, database, or paid API calls belong in regression tests.
 
 ## Verification
 ```powershell
-.\backend\.venv\Scripts\python.exe -m unittest discover -s backend/learner_api -t backend -p test_local_ai_detector.py
+.\backend\.venv\Scripts\python.exe -m unittest discover -s backend/learner_api -t backend -p "test_*ai_detector.py"
 npm.cmd --prefix frontend run test -- src/pages/learner/video-watch/LocalAiTextCheck.test.tsx
 npm.cmd --prefix frontend run test:teams
 ```

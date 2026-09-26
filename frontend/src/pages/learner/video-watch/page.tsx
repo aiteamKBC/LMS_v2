@@ -2,6 +2,7 @@ import { SessionResults } from '@/components/feature/SessionResults';
 import { parsePersonalLearning } from '@/lib/personalLearning';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { Mic } from 'lucide-react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import DOMPurify from 'dompurify';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
@@ -1954,8 +1955,11 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
           >
             <AppIcon className="ri-mark-pen-line" /> Marker
           </button>
-          <button type="button" onClick={() => void readCurrentPage()} className={`grid h-9 w-9 place-items-center rounded-lg border ${speaking ? 'border-violet-500 bg-violet-600 text-white' : 'border-background-300 bg-white text-foreground-700 hover:bg-background-50'}`} aria-label={speaking ? 'Stop reading page' : 'Read page aloud'}>
-            <AppIcon className={speaking ? 'ri-stop-circle-line' : 'ri-volume-up-line'} />
+          <button type="button" onClick={() => void readCurrentPage()} className={`group relative grid h-9 w-9 place-items-center rounded-lg border ${speaking ? 'border-violet-500 bg-violet-600 text-white' : 'border-background-300 bg-white text-foreground-700 hover:bg-background-50'}`} aria-label={speaking ? 'Stop reading page' : 'Read page aloud'} aria-pressed={speaking}>
+            <Mic size={18} aria-hidden="true" />
+            <span role="tooltip" className="pointer-events-none absolute top-full left-1/2 z-30 mt-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-slate-900 px-3 py-2 text-xs font-medium text-white opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100">
+              {speaking ? 'Stop narration' : 'Narration: read this page aloud'}
+            </span>
           </button>
           <button
             type="button"

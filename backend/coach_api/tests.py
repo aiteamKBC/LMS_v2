@@ -62,6 +62,7 @@ from coach_api.views import (
     normalize_program_status,
 )
 from learner_api.learner_detail import otjh_status_from_variance
+from learner_api.models import LearnerProfile
 
 
 class CoachProgrammeStatusTests(SimpleTestCase):
@@ -742,6 +743,72 @@ class CoachCaseloadViewTests(SimpleTestCase):
     def setUp(self):
         self.factory = RequestFactory()
 
+    class PageQuery:
+        class EmptyValues:
+            def distinct(self): return self
+            def order_by(self, *args): return self
+            def __iter__(self): return iter(())
+        def __init__(self, ids):
+            self.ids = ids
+        def annotate(self, **kwargs): return self
+        def filter(self, *args, **kwargs): return self
+        def exclude(self, **kwargs): return self
+        def count(self): return len(self.ids)
+        def order_by(self, *args): return self
+        def values_list(self, *fields, **kwargs):
+            if fields == ("id",): return self.ids
+            return self.EmptyValues()
+
+    @patch("coach_api.views.coach_staff_display_name", return_value="Coach Example")
+    @patch("coach_api.views.dashboard_attendance_rows", return_value=[])
+    @patch("coach_api.views.dashboard_latest_completed_review_dates", return_value={})
+    @patch("coach_api.views.caseload_aptem_ids", return_value={})
+    @patch("coach_api.views.dashboard_review_history", return_value={})
+    @patch("coach_api.views.caseload_canonical_metrics", return_value={})
+    @patch("coach_api.views.caseload_evidenced_ksb_counts", return_value={})
+    @patch("coach_api.views.caseload_audit_hour_totals", return_value={})
+    @patch("coach_api.views.caseload_latest_learning_activities", return_value={})
+    @patch("coach_api.views.current_curriculum_ksb_items_for_learner", return_value=[])
+    @patch("coach_api.views.curriculum_expected_otjh_by_component_id", return_value={})
+    @patch("coach_api.views.serialize_caseload_learner")
+    @patch("coach_api.views.fetch_caseload_learner_profiles_by_ids")
+    def test_paginated_caseload_enriches_only_requested_page(
+        self, fetch_page, serialize, *_mocks,
+    ):
+        ids = list(range(1, 33))
+        fetch_page.side_effect = lambda _owner, selected: [
+            SimpleNamespace(id=value, coach_name="Coach Example") for value in selected
+        ]
+        serialize.side_effect = lambda row, **kwargs: {"id": str(row.id), "coachName": "Coach Example"}
+
+        with patch.object(LearnerProfile, "objects", self.PageQuery(ids)):
+            first_response = call_coach_view(coach_caseload, self.factory.get(
+                "/coach_api/coach/caseload", {"owner_email": "coach@example.com", "page": 1, "page_size": 10},
+            ))
+            response = call_coach_view(coach_caseload, self.factory.get(
+                "/coach_api/coach/caseload", {"owner_email": "coach@example.com", "page": 4, "page_size": 10},
+            ))
+        first_payload = json.loads(first_response.content)
+        payload = json.loads(response.content)
+
+        self.assertEqual(len(first_payload["results"]), 10)
+        self.assertEqual(first_payload["pagination"]["totalPages"], 4)
+        self.assertEqual(payload["pagination"], {
+            "page": 4, "pageSize": 10, "total": 32, "totalPages": 4,
+            "hasNext": False, "hasPrevious": True,
+        })
+        self.assertEqual([row["id"] for row in payload["results"]], ["31", "32"])
+        self.assertEqual(fetch_page.call_args_list[-1].args, ("coach@example.com", [31, 32]))
+        self.assertEqual([call.args[0].id for call in serialize.call_args_list[-2:]], [31, 32])
+
+        with patch.object(LearnerProfile, "objects", self.PageQuery(list(range(1, 74)))):
+            large_response = call_coach_view(coach_caseload, self.factory.get(
+                "/coach_api/coach/caseload", {"owner_email": "coach@example.com", "page": 8, "page_size": 10},
+            ))
+        large_payload = json.loads(large_response.content)
+        self.assertEqual(large_payload["pagination"]["totalPages"], 8)
+        self.assertEqual([row["id"] for row in large_payload["results"]], ["71", "72", "73"])
+
     @patch("coach_api.views.serialize_caseload_dashboard_learner")
     @patch("coach_api.views.fetch_caseload_dashboard_profiles")
     def test_coach_caseload_can_return_dashboard_summary_snapshots(
@@ -928,7 +995,7 @@ class CoachDashboardViewTests(SimpleTestCase):
         payload = json.loads(response.content)
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(payload["learners"], [{"id": "2"}])
+        self.assertEqual(payload["learners"], [{"id": "2", "lastPr": None, "lastMcm": None}])
         self.assertEqual(payload["monthlyRisk"], [{"month": "2026-08", "label": "Aug", "count": 1}])
         # Attendance is overlaid directly onto each learner (see
         # CoachDashboardAttendanceOverlayTests) rather than shipped as a
@@ -1273,8 +1340,17 @@ class CoachTimetableWindowTests(SimpleTestCase):
 
     @patch("coach_api.views.fetch_calendar_event_records", return_value={})
     @patch("coach_api.views.fetch_standalone_event_records", return_value=[])
-    @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
+    @patch("coach_api.views.resolve_coach_review_events", return_value={
+        "events": [], "reviewGenerationIssues": [], "aptemProfileIds": set(),
+        "sourceCounts": {
+            "progressReviewRows": 0, "mcrRows": 0, "reviewRows": 0,
+            "learnersWithDates": 0, "reviewAnchorSkipped": 0,
+            "reviewAnchorSkipReasons": {}, "aptemReviewRows": 0,
+            "curriculumReviewRows": 0, "aptemLearners": 0, "curriculumLearners": 0,
+        },
+    })
     @patch("coach_api.views.build_learner_profile_map", return_value={})
+    @patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[])
     @patch("coach_api.views.fetch_owner_active_learner_profiles", return_value=[])
     @patch("coach_api.views.coach_staff_display_name", return_value="")
     @patch("coach_api.views.collect_live_session_events", side_effect=RuntimeError("legacy staff profile schema"))
@@ -1283,8 +1359,9 @@ class CoachTimetableWindowTests(SimpleTestCase):
         collect_live_session_events,
         coach_staff_display_name,
         fetch_owner_active_learner_profiles,
+        fetch_caseload_dashboard_profiles,
         build_learner_profile_map,
-        fetch_source_schedule_rows,
+        resolve_coach_review_events,
         fetch_standalone_event_records,
         fetch_calendar_event_records,
     ):
@@ -1295,10 +1372,13 @@ class CoachTimetableWindowTests(SimpleTestCase):
         collect_live_session_events.assert_called_once()
         coach_staff_display_name.assert_called_once_with("coach@example.com")
         fetch_owner_active_learner_profiles.assert_called_once_with("coach@example.com")
+        fetch_caseload_dashboard_profiles.assert_called_once_with("coach@example.com")
         build_learner_profile_map.assert_called_once_with([])
-        fetch_source_schedule_rows.assert_called_once_with([])
+        resolve_coach_review_events.assert_called_once_with(
+            "coach@example.com", "Med Maher", [], start_date=None, end_date=None,
+        )
         fetch_standalone_event_records.assert_called_once_with("coach@example.com")
-        fetch_calendar_event_records.assert_called_once_with("coach@example.com", [])
+        fetch_calendar_event_records.assert_not_called()
 
 
 class CoachTimetableBookingConflictTests(SimpleTestCase):

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import Swal from 'sweetalert2';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { type EvidenceRecord } from '@/api/evidence';
-import { fetchCoachImportedReviews, importedReviewEvents, isImportedReviewEvent } from '@/api/coachImportedReviews';
+import { isImportedReviewEvent } from '@/api/coachImportedReviews';
 import { type LearnerDetail, type LearnerKind, type LearnerQuizAttempt } from '@/api/learnerDetail';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -26,14 +26,12 @@ import { reviewInstancePath, reviewInstanceRouteState } from '../shared/reviewIn
 import {
   type CoachCalendarEvent,
   type ScheduleFormState,
-  canJoinMeeting,
   eventDisplayDate,
   eventIdentity,
   eventPeriodLabel,
-  eventTargetDate,
   fetchCoachCalendarEvents,
   formatDateLabel,
-  formatTimeLabel,
+  formatTimeRangeLabel,
   isAtRiskProgressReview,
   isAwaitingSignatureEvent,
   isDueSoonEvent,
@@ -50,12 +48,14 @@ import {
   sortEvents,
   statusLabel,
 } from '../shared/calendarEvents';
+import { normalizeResolvedReview, normalizeResolvedReviews, reviewActionMatrix } from '../shared/resolvedReviewRows';
 import {
   type ProgressReviewSlide,
   type ProgressReviewSlideListItem,
   type ProgressReviewSlidesDeck,
 } from './components/ProgressReviewSlidesModal';
 import ProgressReviewPptxModal from './components/ProgressReviewPptxModal';
+import { slidesTargetFromEvent } from './components/slidesTarget';
 import { bulkGenerateProgressReviews, fetchLatestRun } from '@/api/progressReviews';
 import { openReviewInstanceForEvent } from '@/api/reviewInstances';
 import {
@@ -88,7 +88,7 @@ const FILTER_COPY: Record<ReviewTab, { label: string; description: string }> = {
   },
   completed: {
     label: 'Completed',
-    description: 'Progress reviews marked as completed or confirmed.',
+    description: 'Progress reviews with a genuinely completed review workflow.',
   },
   all: {
     label: 'All',
@@ -981,6 +981,7 @@ export default function CoachProgressReviews() {
   const [error, setError] = useState<string | null>(null);
   const [scheduleForm, setScheduleForm] = useState<ScheduleFormState>(EMPTY_SCHEDULE_FORM);
   const [scheduleModalEvent, setScheduleModalEvent] = useState<CoachCalendarEvent | null>(null);
+  const [schedulePickerOpen, setSchedulePickerOpen] = useState(false);
   const [busyEventId, setBusyEventId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
@@ -1016,14 +1017,8 @@ export default function CoachProgressReviews() {
       setLoading(true);
       setError(null);
       try {
-        const [data, imported] = await Promise.all([
-          fetchCoachCalendarEvents(controller.signal),
-          fetchCoachImportedReviews(controller.signal).catch(() => []),
-        ]);
-        const reviews = sortEvents([
-          ...(data.events || []).filter(event => event.source === 'progress-review'),
-          ...importedReviewEvents(imported, 'reviews'),
-        ]);
+        const data = await fetchCoachCalendarEvents(controller.signal);
+        const reviews = sortEvents(normalizeResolvedReviews((data.events || []).filter(event => event.source === 'progress-review')));
         setEvents(reviews);
         setOwnerName(data.owner?.name || coach.name);
       } catch (err) {
@@ -1074,19 +1069,19 @@ export default function CoachProgressReviews() {
   );
 
   const visibleReviewsKey = paginatedReviews
-    .filter((review) => reviewHasLearnerReference(review) && eventTargetDate(review))
-    .map((review) => `${eventIdentity(review)}:${eventTargetDate(review)}`)
+    .filter((review) => reviewHasLearnerReference(review) && eventDisplayDate(review))
+    .map((review) => `${eventIdentity(review)}:${eventDisplayDate(review)}`)
     .join('|');
 
   useEffect(() => {
     if (!visibleReviewsKey) return;
     let cancelled = false;
-    const candidates = paginatedReviews.filter((review) => !isImportedReviewEvent(review) && reviewHasLearnerReference(review) && eventTargetDate(review));
+    const candidates = paginatedReviews.filter((review) => !isImportedReviewEvent(review) && reviewHasLearnerReference(review) && eventDisplayDate(review));
 
     Promise.all(candidates.map(async (review) => {
       const learnerId = review.enrolmentId || '';
       try {
-        const result = await fetchLatestRun(learnerId, eventTargetDate(review));
+        const result = await fetchLatestRun(learnerId, eventDisplayDate(review));
         return result.exists && result.generationStatus === 'completed' ? eventIdentity(review) : null;
       } catch {
         return null;
@@ -1124,7 +1119,7 @@ export default function CoachProgressReviews() {
 
   const updateEvent = (updatedEvent: CoachCalendarEvent) => {
     setEvents(prevEvents => sortEvents(prevEvents.map(event => (
-      eventIdentity(event) === eventIdentity(updatedEvent) ? updatedEvent : event
+      eventIdentity(event) === eventIdentity(updatedEvent) ? normalizeResolvedReview(updatedEvent) : event
     ))));
     setScheduleForm(scheduleDefaults(updatedEvent));
   };
@@ -1133,7 +1128,29 @@ export default function CoachProgressReviews() {
     setScheduleForm(scheduleDefaults(event));
     setActionError(null);
     setActionNotice(event.syncWarning || null);
+    setSchedulePickerOpen(false);
     setScheduleModalEvent(event);
+  };
+
+  const schedulableReviews = selectedMonthEvents.filter(event => !['in-progress', 'completed', 'awaiting-signature'].includes(event.status));
+
+  const openSchedulePicker = () => {
+    const preferred = schedulableReviews.find(needsScheduling) || schedulableReviews[0];
+    if (!preferred) return;
+    setScheduleForm(scheduleDefaults(preferred));
+    setActionError(null);
+    setActionNotice(preferred.syncWarning || null);
+    setSchedulePickerOpen(true);
+    setScheduleModalEvent(preferred);
+  };
+
+  const selectScheduleReview = (eventKey: string) => {
+    const selected = schedulableReviews.find(event => eventIdentity(event) === eventKey);
+    if (!selected) return;
+    setScheduleForm(scheduleDefaults(selected));
+    setActionError(null);
+    setActionNotice(selected.syncWarning || null);
+    setScheduleModalEvent(selected);
   };
 
   const listUrl = () => {
@@ -1147,14 +1164,6 @@ export default function CoachProgressReviews() {
   };
 
   const openDetails = (event: CoachCalendarEvent) => {
-    if (isImportedReviewEvent(event)) {
-      const params = new URLSearchParams({ tab: 'reviews' });
-      if (event.learnerId) params.set('id', event.learnerId);
-      if (event.learnerType) params.set('kind', event.learnerType);
-      if (event.enrolmentId) params.set('enrolmentId', event.enrolmentId);
-      navigate(`/coach/learner-case-file?${params.toString()}`, { state: { learnerId: event.learnerId, learnerName: event.learner, kind: event.learnerType, enrolmentId: event.enrolmentId, tab: 'reviews' } });
-      return;
-    }
     navigate(`/coach/progress-reviews/${encodeURIComponent(eventIdentity(event))}`, { state: { returnTo: listUrl() } });
   };
 
@@ -1181,6 +1190,12 @@ export default function CoachProgressReviews() {
 
   const openCompletionForm = async (event: CoachCalendarEvent) => {
     setActionError(null);
+    if (event.hasReviewForm && event.aptemReviewId && !event.reviewInstanceId) {
+      navigate(reviewInstancePath(eventIdentity(event)), {
+        state: reviewInstanceRouteState(event, listUrl()),
+      });
+      return;
+    }
     if (event.reviewTemplateId) {
       setBusyEventId(eventIdentity(event));
       try {
@@ -1203,7 +1218,7 @@ export default function CoachProgressReviews() {
   };
 
   const handleCreateSlides = (event: CoachCalendarEvent) => {
-    if (!reviewHasLearnerReference(event) || !eventTargetDate(event)) {
+    if (!reviewHasLearnerReference(event) || !eventDisplayDate(event)) {
       setActionError('This review is missing its learner id or review date, so slides cannot be generated yet.');
       setActionNotice(null);
       return;
@@ -1222,7 +1237,7 @@ export default function CoachProgressReviews() {
   };
 
   const handleBulkGenerateSlides = async () => {
-    const count = events.filter((event) => !isImportedReviewEvent(event) && reviewHasLearnerReference(event) && eventTargetDate(event)).length;
+    const count = events.filter((event) => !isImportedReviewEvent(event) && reviewHasLearnerReference(event) && eventDisplayDate(event)).length;
     if (!count) return;
     if (!window.confirm(`Generate Progress Review PPTX decks for ${count} review(s) with a learner and review date? This may take a while.`)) return;
     setBulkGenerating(true);
@@ -1290,6 +1305,7 @@ export default function CoachProgressReviews() {
               <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center xl:justify-end">
                 <div className="w-full sm:w-56"><SearchInput value={searchTerm} onChange={handleSearchChange} placeholder="Search learner name..." ariaLabel="Search progress reviews by learner" /></div>
                 <button type="button" onClick={handleBulkGenerateSlides} disabled={bulkGenerating} className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className={bulkGenerating ? 'ri-loader-4-line animate-spin' : 'ri-stack-line'} />{bulkGenerating ? 'Generating slides...' : 'Bulk generate slides'}</button>
+                <button type="button" onClick={openSchedulePicker} disabled={schedulableReviews.length === 0} className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-primary-700 px-4 text-[12px] font-bold text-white shadow-sm transition hover:bg-primary-800 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className="ri-add-line text-lg" />Schedule review</button>
               </div>
             </div>
             <div className="mt-5 border-t border-foreground-100 pt-4">
@@ -1334,12 +1350,9 @@ export default function CoachProgressReviews() {
                   <tbody>
                     {paginatedReviews.map(review => {
                       const reviewKey = eventIdentity(review);
-                      const imported = isImportedReviewEvent(review);
                       const isBusy = busyEventId === reviewKey;
                       const hasSlides = generatedReviewKeys.has(reviewKey);
-                      const joinAvailable = canJoinMeeting(review);
-                      const viewOnly = imported || review.status === 'completed' || review.status === 'awaiting-signature';
-                      const canSchedule = !imported && !viewOnly && review.status !== 'in-progress';
+                      const actions = reviewActionMatrix(review);
                       return (
                         <tr key={reviewKey} className="ui-action-row border-t border-primary-100/70 transition hover:bg-primary-50/35" onClick={() => openDetails(review)}>
                           <td className="px-4 py-3 align-middle">
@@ -1352,15 +1365,15 @@ export default function CoachProgressReviews() {
                             </div>
                           </td>
                           <td className="px-4 py-3 align-middle text-[12px] text-foreground-700"><span className="inline-flex items-center gap-1.5 whitespace-nowrap"><AppIcon className="ri-book-open-line text-primary-500" />{review.programme || '--'}</span></td>
-                          <td className="whitespace-nowrap px-4 py-3 align-middle text-[12px] text-foreground-700"><span className="inline-flex min-w-[150px] flex-col gap-1"><span className="flex items-center gap-1.5 whitespace-nowrap"><AppIcon className="ri-calendar-line shrink-0 text-primary-500" />{formatDateLabel(eventDisplayDate(review))}</span><span className="flex items-center gap-1.5 whitespace-nowrap text-foreground-500"><AppIcon className="ri-time-line shrink-0 text-primary-500" />{formatTimeLabel(review)}</span></span></td>
+                          <td className="whitespace-nowrap px-4 py-3 align-middle text-[12px] text-foreground-700"><span className="inline-flex min-w-[150px] flex-col gap-1"><span className="flex items-center gap-1.5 whitespace-nowrap"><AppIcon className="ri-calendar-line shrink-0 text-primary-500" />{formatDateLabel(eventDisplayDate(review))}</span><span className="flex items-center gap-1.5 whitespace-nowrap text-foreground-500"><AppIcon className="ri-time-line shrink-0 text-primary-500" />{formatTimeRangeLabel(review)}</span></span></td>
                           <td className="px-4 py-3 text-center align-middle"><div className="flex flex-wrap justify-center gap-1.5"><StatusBadge tone={statusTone(review.status)} label={statusLabel(review.status)} size="sm" />{isAtRiskProgressReview(review) ? <StatusBadge tone="critical" label="Overdue" dot={false} size="sm" /> : null}{isDueSoonEvent(review) ? <StatusBadge tone="upcoming" label="Due Soon" dot={false} size="sm" /> : null}</div></td>
-                          <td className="px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}>{canSchedule ? <button type="button" onClick={() => openScheduleModal(review)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-calendar-schedule-line" />{review.status === 'scheduled' ? 'Reschedule' : 'Schedule'}</button> : null}</td>
+                          <td className="px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}>{actions.schedule ? <button type="button" onClick={() => openScheduleModal(review)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-calendar-schedule-line" />{actions.schedule}</button> : null}</td>
                           <td className="min-w-[320px] px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}>
                             <div className="flex justify-end gap-1.5">
-                              {!viewOnly && (review.status === 'scheduled' || review.status === 'in-progress') ? <button type="button" onClick={() => { void openCompletionForm(review); }} disabled={isBusy} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className="ri-file-edit-line" />Form</button> : null}
-                              {!viewOnly ? <button type="button" onClick={() => { handleCreateSlides(review); }} disabled={!reviewHasLearnerReference(review)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className={hasSlides ? 'ri-slideshow-2-line' : 'ri-file-ppt-line'} />{hasSlides ? 'View Slides' : 'Create Slides'}</button> : null}
                               <button type="button" onClick={() => openDetails(review)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-eye-line" />View</button>
-                              {!viewOnly && joinAvailable ? <button type="button" onClick={() => { handleJoin(review); }} disabled={isBusy} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className="ri-video-on-line" />Join</button> : null}
+                              {actions.viewForm ? <button type="button" onClick={() => { void openCompletionForm(review); }} disabled={isBusy} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className="ri-file-edit-line" />View Form</button> : null}
+                              {actions.presentation ? <button type="button" onClick={() => { handleCreateSlides(review); }} disabled={!reviewHasLearnerReference(review)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className={hasSlides ? 'ri-slideshow-2-line' : 'ri-file-ppt-line'} />{hasSlides ? 'View Slides' : 'Create Slides'}</button> : null}
+                              {actions.join ? <button type="button" onClick={() => { handleJoin(review); }} disabled={isBusy} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className="ri-video-on-line" />Join</button> : null}
                             </div>
                           </td>
                         </tr>
@@ -1396,6 +1409,7 @@ export default function CoachProgressReviews() {
                 <button type="button" aria-label="Close schedule review" disabled={Boolean(busyEventId)} onClick={() => setScheduleModalEvent(null)} className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-400 hover:bg-foreground-50"><AppIcon className="ri-close-line text-lg" /></button>
               </div>
               <div className="space-y-4 px-5 py-5">
+                {schedulePickerOpen ? <label className="block text-[12px] font-semibold text-foreground-700">Learner<select value={eventIdentity(scheduleModalEvent)} onChange={(event) => selectScheduleReview(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-foreground-200 bg-white px-3 text-[13px] font-medium text-foreground-800 outline-none focus:border-primary-400">{schedulableReviews.map(review => <option key={eventIdentity(review)} value={eventIdentity(review)}>{review.learner || 'Unknown learner'}{review.programme ? ` · ${review.programme}` : ''}</option>)}</select></label> : null}
                 <div className="rounded-lg border border-primary-100 bg-primary-50/60 px-3 py-2 text-[12px] text-primary-900"><span className="font-semibold">Learner:</span> {scheduleModalEvent.learner || 'Unknown learner'}<span className="mx-2 text-primary-300">•</span><span>{scheduleModalEvent.programme || 'Progress review'}</span></div>
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <div><ScheduleFieldLabel>Date</ScheduleFieldLabel><ModernDatePicker value={scheduleForm.date} onChange={(value) => setScheduleForm(prev => ({ ...prev, date: value }))} /></div>
@@ -1427,9 +1441,9 @@ export default function CoachProgressReviews() {
         ) : null}
         <ProgressReviewPptxModal
           open={Boolean(pptxModalReview)}
-          review={pptxModalReview}
+          target={pptxModalReview ? slidesTargetFromEvent(pptxModalReview) : null}
           onClose={() => setPptxModalReview(null)}
-          onGenerated={markReviewSlidesGenerated}
+          onGenerated={() => { if (pptxModalReview) markReviewSlidesGenerated(pptxModalReview); }}
         />
       </PageContainer>
     </WorkspaceShell>

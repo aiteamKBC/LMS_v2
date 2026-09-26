@@ -22,6 +22,8 @@ import { fetchLearnerMetrics } from '@/api/learnerMetrics';
 import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
 import { buildLearnerJourney, type JourneyModule } from '@/utils/learnerJourney';
 import { coachFetch } from '@/lib/coachFetch';
+import { fetchStudentActivity, type StudentActivityResponse } from '@/api/studentActivity';
+import { buildCaseFileActivityStates, buildFullCaseFileJourney, type CaseFileActivityStates } from './activityState';
 
 const CASELOAD_BASE = '/coach_api/coach/caseload';
 const ATTENDANCE_BASE = '/coach_api/coach/attendance';
@@ -217,12 +219,18 @@ export interface CaseFileReviewMeeting {
   reviewTypeName: string;
   title: string;
   date: string;
+  plannedDate: string;
+  completedDate: string;
   time: string;
   detail: string;
   status: CoachCalendarEvent['status'];
   statusLabel: string;
   isNext: boolean;
   notes?: string;
+  reviewer: string;
+  hasForm: boolean;
+  hasTranscript: boolean;
+  hasAttendance: boolean;
 }
 
 export interface CaseFileReviewGroup {
@@ -242,6 +250,7 @@ export interface CoachLearnerCaseFileData {
   evidence: CoachMarkingQueueItem | null;
   detail: LearnerDetail | null;
   journey: JourneyModule[];
+  activityStates?: CaseFileActivityStates;
   peers: CoachCaseloadLearner[];
   displayName: string;
   initials: string;
@@ -386,12 +395,16 @@ export function useCoachLearnerCaseFileData(args: {
       let detail: LearnerDetail | null = null;
       let resolvedKind: LearnerKind | null = null;
       let detailError: string | null = null;
+      let aptemActivity: StudentActivityResponse | null = null;
 
       if (directDetailPromise) {
         try {
           const detailResult = await directDetailPromise;
           detail = detailResult.detail;
           resolvedKind = detailResult.kind;
+          if (detail.studentActivityAvailable) {
+            aptemActivity = await fetchStudentActivity(resolvedKind, directEnrolmentId).catch(() => null);
+          }
           [learnerMetrics, liveAttendance] = await Promise.all([
             fetchCaseFileMetrics(resolvedKind, directEnrolmentId),
             fetchCaseFileAttendance(resolvedKind, directEnrolmentId),
@@ -407,6 +420,7 @@ export function useCoachLearnerCaseFileData(args: {
             attendance: null,
             evidence: null,
             detail,
+            aptemActivity,
             caseload: [],
             timetableEvents: [],
             reviewGenerationIssues: [],
@@ -475,6 +489,9 @@ export function useCoachLearnerCaseFileData(args: {
           const detailResult = await fetchAnyLearnerDetail(resolvedEnrolmentId || resolvedId, resolvedDetailKind);
           detail = detailResult.detail;
           resolvedKind = detailResult.kind;
+          if (detail.studentActivityAvailable && resolvedEnrolmentId) {
+            aptemActivity = await fetchStudentActivity(resolvedKind, resolvedEnrolmentId).catch(() => null);
+          }
         } catch (loadErr) {
           detailError = loadErr instanceof Error ? loadErr.message : 'Could not load learner details.';
         }
@@ -502,6 +519,7 @@ export function useCoachLearnerCaseFileData(args: {
         evidence,
         markingItems: marking,
         detail,
+        aptemActivity,
         caseload,
         timetableEvents,
         reviewGenerationIssues: timetable.reviewGenerationIssues,
@@ -965,6 +983,10 @@ function buildReviewMeetingItems(
       reviewTypeName,
       title: event.title || reviewTypeName,
       date: formatCalendarDateLabel(displayDate),
+      plannedDate: formatCalendarDateLabel(event.targetDate || event.scheduledDate),
+      completedDate: event.status === 'completed'
+        ? formatCalendarDateLabel(event.reviewCompletedAt || displayDate)
+        : '--',
       time: formatCalendarTimeLabel(event),
       detail: [
         event.sequence ? (source === 'mcr' ? `Meeting ${event.sequence}` : `Review ${event.sequence}`) : 'Additional review',
@@ -977,6 +999,10 @@ function buildReviewMeetingItems(
       statusLabel: calendarStatusLabel(event.status),
       isNext,
       notes: String(event.notes || '').trim() || undefined,
+      reviewer: String(event.reviewerName || event.ownerName || '').trim() || '--',
+      hasForm: Boolean(event.hasReviewForm ?? event.reviewInstanceId),
+      hasTranscript: Boolean(event.hasTranscript),
+      hasAttendance: Boolean(event.hasAttendance),
     };
   });
 }
@@ -1076,6 +1102,7 @@ function buildCaseFileData(args: {
   evidence: CoachMarkingQueueItem | null;
   markingItems?: CoachMarkingQueueItem[];
   detail: LearnerDetail | null;
+  aptemActivity?: StudentActivityResponse | null;
   caseload: CoachCaseloadLearner[];
   timetableEvents: CoachCalendarEvent[];
   reviewGenerationIssues: CoachReviewGenerationIssue[];
@@ -1092,7 +1119,8 @@ function buildCaseFileData(args: {
   const peers = cohort
     ? args.caseload.filter((learner) => learner.id !== args.snapshot?.id && learner.cohortName === cohort)
     : [];
-  const journey = buildLearnerJourney(args.detail);
+  const journey = buildFullCaseFileJourney(buildLearnerJourney(args.detail), args.aptemActivity || null);
+  const activityStates = buildCaseFileActivityStates(journey, args.detail, args.aptemActivity || null);
   const touchedKsbCodes = Array.from(
     new Set(
       [
@@ -1147,6 +1175,7 @@ function buildCaseFileData(args: {
     evidence: args.evidence,
     detail: args.detail,
     journey,
+    activityStates,
     peers,
     displayName,
     initials: getInitials(displayName),

@@ -1,4 +1,4 @@
-import { useId, useState, type CSSProperties } from 'react';
+import { useId, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { percent, type TimelineModule } from './model';
 import { moduleProgress } from './progress';
@@ -72,6 +72,8 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
   const chartId = useId();
   const tooltipId = `${chartId}-monthly-tooltip`;
   const [activeMonth, setActiveMonth] = useState('');
+  const monthlyScrollRef = useRef<HTMLDivElement>(null);
+  const monthlyPan = useRef<{ pointerId: number; x: number; left: number } | null>(null);
   const selectedProgress = selected ? moduleProgress(selected, data) : null;
   const rows = [...modules].sort((a, b) => (a.start || '9999').localeCompare(b.start || '9999') || a.title.localeCompare(b.title));
   const months = monthlyHours(data, programmeStartMonth, programmeEndMonth);
@@ -123,6 +125,29 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
   } : null;
   const chartProgress = wholeProgrammeProgress || selectedProgress;
   const chartWidth = chartProgress?.measures.length === 6 ? 470 : 400;
+  const beginMonthlyPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.pointerType !== 'mouse' || event.button !== 0) return;
+    const scroll = monthlyScrollRef.current;
+    if (!scroll) return;
+    monthlyPan.current = { pointerId: event.pointerId, x: event.clientX, left: scroll.scrollLeft };
+    scroll.dataset.panning = 'true';
+    scroll.setPointerCapture?.(event.pointerId);
+  };
+  const moveMonthlyPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const scroll = monthlyScrollRef.current;
+    const pan = monthlyPan.current;
+    if (!scroll || !pan || pan.pointerId !== event.pointerId) return;
+    const distance = event.clientX - pan.x;
+    if (Math.abs(distance) > 2) event.preventDefault();
+    scroll.scrollLeft = pan.left - distance;
+  };
+  const endMonthlyPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const scroll = monthlyScrollRef.current;
+    if (!monthlyPan.current || monthlyPan.current.pointerId !== event.pointerId) return;
+    scroll?.releasePointerCapture?.(event.pointerId);
+    if (scroll) delete scroll.dataset.panning;
+    monthlyPan.current = null;
+  };
   return <div className={styles.charts}>
     <section className={styles.card} aria-label={programmeSnapshot ? 'Whole programme progress' : 'Module progress'}>
       <header><div><p className={styles.eyebrow}>{programmeSnapshot ? 'Whole programme' : 'Selected module'}</p><h2>{programmeSnapshot ? 'Whole programme progress' : 'Module progress'}</h2><p className={styles.subtitle}>{programmeSnapshot ? 'Summary metrics for this learner across every module' : selected?.title || 'Choose a module in the timeline'}</p></div>
@@ -175,8 +200,9 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
       {active && <div className={styles.tooltipPosition} style={{ '--tooltip-left': `${(activeIndex + .5) / months.length * 100}%` } as CSSProperties}>
         <MonthTooltip row={active} id={tooltipId} />
       </div>}
-      {months.length ? <div className={styles.monthlyScroll} role="region" tabIndex={0}
-        aria-label="Monthly off-the-job hours chart. Scroll horizontally to view more months.">
+      {months.length ? <div ref={monthlyScrollRef} className={styles.monthlyScroll} role="region" tabIndex={0}
+        aria-label="Monthly off-the-job hours chart. Scroll horizontally to view more months."
+        onPointerDown={beginMonthlyPan} onPointerMove={moveMonthlyPan} onPointerUp={endMonthlyPan} onPointerCancel={endMonthlyPan}>
         <div className={styles.monthlyPlot} style={{ minWidth: `${Math.max(36, months.length * 4.25)}rem` }}>
           <div className={styles.yAxis} aria-hidden="true">{ticks.map(value => <span key={value} style={{ bottom: `${value / scale.maximum * 100}%` }}>{hourNumber.format(value)}</span>)}</div>
           <div className={styles.grid} aria-hidden="true">{ticks.map(value => <i key={value} style={{ bottom: `${value / scale.maximum * 100}%` }} />)}</div>

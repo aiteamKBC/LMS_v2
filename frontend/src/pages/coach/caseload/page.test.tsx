@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
@@ -41,15 +41,23 @@ describe('Coach caseload loading', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     fetchCoachCalendarEvents.mockResolvedValue({ events: [] });
+    coachFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        owner: { name: 'Coach Example' }, results: [learner],
+        pagination: { page: 1, pageSize: 10, total: 32, totalPages: 4, hasNext: true, hasPrevious: false },
+        filterOptions: { cohort: [{ value: 'c1', label: 'Business Admin L3' }], group: [{ value: 'G1', label: 'G1' }], programStatus: [], employer: [] },
+      }),
+    });
   });
 
-  it('uses embedded learners as the authoritative caseload without fetching again', async () => {
+  it('loads the embedded dashboard table from the paginated caseload endpoint', async () => {
     render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={[learner]} /></MemoryRouter>);
 
     expect(await screen.findByText('Final Learner')).toBeInTheDocument();
     expect(screen.getByText('19 Sep 2026')).toBeInTheDocument();
     expect(screen.queryByText('Loading learners')).not.toBeInTheDocument();
-    expect(coachFetch).not.toHaveBeenCalled();
+    expect(coachFetch).toHaveBeenCalledWith(expect.stringContaining('/coach_api/coach/caseload?page=1&page_size=10'), expect.anything());
     expect(fetchCoachCalendarEvents).not.toHaveBeenCalled();
     expect(screen.getByRole('heading', { name: 'All Learners' })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'OTJH caseload summary' })).not.toBeInTheDocument();
@@ -63,16 +71,15 @@ describe('Coach caseload loading', () => {
     expect(screen.queryByRole('button', { name: /Sort direction:/ })).not.toBeInTheDocument();
   });
 
-  it('uses the API performance status when filtering the caseload', async () => {
+  it('resets to page one when a backend filter changes', async () => {
     const atRiskLearner = { ...learner, id: '43', name: 'At Risk Learner', initials: 'AR', status: 'at-risk' } satisfies CaseloadApiLearner;
-    render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={[learner, atRiskLearner]} /></MemoryRouter>);
+    coachFetch.mockResolvedValue({ ok: true, json: async () => ({ results: [learner, atRiskLearner], pagination: { page: 1, pageSize: 10, total: 32, totalPages: 4 }, filterOptions: { cohort: [], group: [], programStatus: [], employer: [] } }) });
+    render(<MemoryRouter><CoachCaseloadContent embedded /></MemoryRouter>);
 
     expect(await screen.findByText('At Risk Learner')).toBeInTheDocument();
-    expect(coachFetch).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: 'Status' }));
-    fireEvent.click(screen.getByRole('option', { name: 'At risk' }));
-
-    expect(screen.getByText('At Risk Learner')).toBeInTheDocument();
-    expect(screen.queryByText('Final Learner')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    await waitFor(() => expect(coachFetch).toHaveBeenCalledWith(expect.stringContaining('page=2'), expect.anything()));
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Final' } });
+    await waitFor(() => expect(coachFetch).toHaveBeenCalledWith(expect.stringContaining('page=1'), expect.anything()));
   });
 });
