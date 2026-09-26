@@ -50,6 +50,12 @@ beforeEach(() => {
 });
 
 describe('WorkspaceSwitcher', () => {
+  it('uses the prominent shared trigger treatment for an administrator', () => {
+    signedIn();
+    renderAt('/workspace/coach');
+    expect(trigger()).toHaveClass('kbc-workspace-switcher-button', 'font-bold', 'shadow-sm');
+  });
+
   it('is hidden from a non-admin', () => {
     signedIn({ isAdmin: false });
     renderAt('/workspace/coach');

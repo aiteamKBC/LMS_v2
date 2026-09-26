@@ -14,6 +14,8 @@ subscribeLearnerReadInvalidation(() => calendarResource.invalidate());
 
 export interface LearnerCalendarEvent {
   id: string;
+  /** Server-derived once the booked time has passed: learner attended (completed) or not (ended). */
+  meetingOutcome?: 'ended' | 'completed' | null;
   eventKey: string;
   title: string;
   source: 'mcr' | 'progress-review' | string;

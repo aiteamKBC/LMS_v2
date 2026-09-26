@@ -128,14 +128,17 @@ def submit_video_progress(request, component_id):
     ) + 1
 
     submitted_at_dt = timezone.now()
-    outside_working_hours = outside_uk_working_hours(submitted_at_dt)
-    confirmation_received = payload.get("outsideWorkingHoursConfirmed") is True
+    try:
+        outside_working_hours = outside_uk_working_hours(submitted_at_dt)
+    except DatabaseError:
+        return _error("Could not verify the working-hours holiday calendar. Please try again.", 503)
+    confirmation_received = payload.get("insideWorkingHoursConfirmed") is True
     if outside_working_hours and not confirmation_received:
         return _error(
-            "Confirm that this activity was completed outside UK working hours.",
+            "Confirm that this activity was completed inside UK working hours.",
             400,
         )
-    outside_working_hours_confirmed = outside_working_hours and confirmation_received
+    inside_working_hours_confirmed = outside_working_hours and confirmation_received
     try:
         tracking = verify_tracking_session(
             payload.get("trackingToken"),
@@ -173,8 +176,10 @@ def submit_video_progress(request, component_id):
         "serverSessionSeconds": tracking["serverSessionSeconds"],
         "verifiedSeconds": tracking["verifiedSeconds"],
         "outsideWorkingHours": outside_working_hours,
-        "outsideWorkingHoursConfirmed": outside_working_hours_confirmed,
-        "outsideWorkingHoursConfirmedAt": submitted_at if outside_working_hours_confirmed else None,
+        "outsideWorkingHoursConfirmed": False,
+        "insideWorkingHoursConfirmed": inside_working_hours_confirmed,
+        "insideWorkingHoursConfirmedAt": submitted_at if inside_working_hours_confirmed else None,
+        "outsideWorkingHoursConfirmedAt": None,
     }
 
     if active is not None:

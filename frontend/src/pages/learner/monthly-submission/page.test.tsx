@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import type { LearnerComponentEntry, LearnerDetail } from '@/api/learnerDetail';
+import type { ExtraActivity } from '@/api/extraActivities';
 import { clearAllCachedResources } from '@/api/cachedRequest';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import MonthlySubmissionPage from './page';
@@ -29,8 +30,9 @@ const metadata = { covers: {}, activity_dates: {
 const contract = { months: { '2026-09': { label: 'Month 4 — Martech', topics: ['Data, Insight and Analytics'], planned: 42, source: 'contract' },
   '2026-10': { label: '', topics: ['Marketing strategy'], planned: 30, source: 'contract' } }, contractStatus: 'ready' };
 
-function mockRequests(options: { failed?: 'dates' | 'statuses' | 'contract'; statuses?: Record<string, string>; counts?: Record<string, number> } = {}) {
+function mockRequests(options: { failed?: 'dates' | 'statuses' | 'contract'; statuses?: Record<string, string>; counts?: Record<string, number>; extras?: ExtraActivity[] } = {}) {
   const fetcher = vi.fn(async (url: string) => {
+    if (url.includes('/reflection/extra-activities/')) return { ok: true, json: async () => ({ activities: options.extras || [] }) };
     const source = url.includes('/subject-covers/') ? 'dates' : url.includes('/training-plan-dashboard/') ? 'contract' : 'statuses';
     const data = source === 'dates' ? metadata : source === 'contract' ? contract : { statuses: [
       { activityType: 'assignment', activityId: 'A1', status: options.statuses?.A1 || 'draft', submissionCount: options.counts?.A1 },
@@ -51,6 +53,45 @@ beforeEach(() => {
   mockRequests();
 });
 afterEach(() => { cleanup(); clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+it('shows accepted extra activities in their submission month, including months without assignments', async () => {
+  const activity: ExtraActivity = { activityId: 'extra:example', title: 'Additional research', status: 'accepted',
+    submittedAt: '2026-08-31T23:30:00Z', month: '2026-09', answer: 'Recorded work', reflection: '', ksbs: ['K1'], hours: '1.5',
+    coachFeedback: 'Evidence accepted', reviewedBy: 'Coach', reviewedAt: '2026-10-01T12:00:00Z' };
+  mockRequests({ extras: [activity, { ...activity, activityId: 'extra:later', title: 'Later research', month: '2026-11' },
+    { ...activity, activityId: 'extra:pending', title: 'Pending research', status: 'submitted_for_tutor_review' },
+    { ...activity, activityId: 'extra:rejected', title: 'Rejected research', status: 'rejected' }] });
+  mount();
+  const card = await screen.findByRole('button', { name: /Extra Activity · Additional research/ });
+  expect(screen.queryByRole('region', { name: 'Extra activity details' })).toBeNull();
+  fireEvent.click(card);
+  expect(card).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.queryByText('Explain how data informs your marketing decisions.')).toBeNull();
+  const section = within(screen.getByRole('region', { name: 'Extra activity details' }));
+  expect(section.getByText('Evidence accepted')).toBeVisible();
+  expect(section.getByText(/01\/09\/2026/)).toBeVisible();
+  expect(section.queryByText('Later research')).toBeNull();
+  expect(section.queryByText('Pending research')).toBeNull();
+  expect(section.queryByText('Rejected research')).toBeNull();
+  const filters = within(screen.getByRole('group', { name: 'Filter assignments by status' }));
+  fireEvent.click(filters.getByRole('button', { name: 'Rejected' }));
+  expect(screen.queryByRole('button', { name: /Extra Activity · Additional research/ })).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Extra activity details' })).toBeNull();
+  fireEvent.click(filters.getByRole('button', { name: 'Accepted' }));
+  expect(screen.getByRole('button', { name: /Extra Activity · Additional research/ })).toBeVisible();
+  fireEvent.change(screen.getByRole('combobox', { name: 'Choose month' }), { target: { value: '2026-11' } });
+  expect(await screen.findByText('Later research')).toBeVisible();
+  expect(screen.queryByText('Additional research')).toBeNull();
+});
+
+it('opens an extra activity directly from its saved selection', async () => {
+  mockRequests({ extras: [{ activityId: 'extra:saved', title: 'Saved selection', status: 'accepted', month: '2026-09',
+    submittedAt: '2026-09-20T12:00:00Z', answer: 'My work', reflection: '', hours: '1', ksbs: [],
+    coachFeedback: null, reviewedBy: null, reviewedAt: null }] });
+  mount('?month=2026-09&assignment=extra%3Asaved');
+  expect(await screen.findByRole('region', { name: 'Extra activity details' })).toBeVisible();
+  expect(screen.getByRole('button', { name: /Extra Activity · Saved selection/ })).toHaveAttribute('aria-pressed', 'true');
+});
 
 it('filters the selected month and keeps the displayed brief in sync with accepted or rejected results', async () => {
   mockRequests({ statuses: { A1: 'rejected', A2: 'accepted' } });

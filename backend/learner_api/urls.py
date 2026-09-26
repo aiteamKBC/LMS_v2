@@ -1,3 +1,4 @@
+from . import working_hours_holidays
 from .coach_availability import coach_available_slots, case_owner_available_slots
 from . import presentation_design
 from . import personal_learning
@@ -39,6 +40,7 @@ urlpatterns = [
     path('monthly-logs/learners/', monthly_logs.learners, name='monthly-log-learners'),
     path('monthly-logs/<int:learner_id>/', monthly_logs.summary, name='monthly-log-summary'),
     path('monthly-logs/<int:learner_id>/documents/<uuid:file_id>/', monthly_logs.document, name='monthly-log-document'),
+    path('monthly-logs/<int:learner_id>/canonical-documents/<int:file_id>/', monthly_logs.canonical_document, name='monthly-log-canonical-document'),
     path('monthly-logs/<int:learner_id>/<str:month>/', monthly_logs.detail, name='monthly-log-detail'),
     path('monthly-logs/<int:learner_id>/<str:month>/sign/', monthly_logs.sign, name='monthly-log-sign'),
     path('monthly-logs/<int:learner_id>/<str:month>/complete/', monthly_logs.complete, name='monthly-log-complete'),
@@ -127,6 +129,11 @@ urlpatterns = [
     # the signature route is declared before the learner route for clarity.
     path("employer-portal/<int:employer_id>/", employer_portal.employer_portal, name="employer-portal"),
     path(
+        "employer-portal/<int:employer_id>/absence-notifications/",
+        employer_portal.employer_absence_notifications,
+        name="employer-absence-notifications",
+    ),
+    path(
         "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/",
         employer_portal.employer_portal_learner,
         name="employer-portal-learner",
@@ -181,6 +188,7 @@ urlpatterns = [
     path("curriculum/legacy-otjh/", curriculum.legacy_otjh, name="curriculum-legacy-otjh"),
     # Signed start time shared by quizzes and learning components.
     path("time-tracking/start/", time_tracking.start_time_tracking, name="time-tracking-start"),
+    path("working-hours/holidays/", working_hours_holidays.working_hours_holidays, name="working-hours-holidays"),
     # quiz-taking
     path("quizzes/<int:quiz_id>/", quizzes.quiz_detail, name="quiz-detail"),
     path("quizzes/<int:quiz_id>/submit/", quizzes.submit_quiz_attempt, name="quiz-submit"),

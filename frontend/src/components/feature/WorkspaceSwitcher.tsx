@@ -101,7 +101,7 @@ export function WorkspaceSwitcher() {
         onClick={() => setOpen((wasOpen) => !wasOpen)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className={`kbc-workspace-switcher-button group flex h-9 cursor-pointer items-center gap-2 rounded-xl border pl-1.5 pr-2 transition-smooth ${
+        className={`kbc-workspace-switcher-button group flex h-9 cursor-pointer items-center gap-2 rounded-xl border pl-1.5 pr-2 font-bold shadow-sm transition-smooth ${
           open
             ? 'border-primary-300 bg-primary-50 shadow-sm'
             : 'border-foreground-200/70 hover:border-primary-300 hover:bg-primary-50/50'
@@ -117,7 +117,7 @@ export function WorkspaceSwitcher() {
         >
           <AppIcon className={`${current ? current.icon : 'ri-dashboard-line'} text-[11px]`} />
         </span>
-        <span className="hidden max-w-[9rem] truncate text-[12.5px] font-semibold !text-white sm:inline">
+        <span className="hidden max-w-[9rem] truncate text-[12.5px] font-bold !text-white sm:inline">
           Workspaces
         </span>
         <AppIcon
