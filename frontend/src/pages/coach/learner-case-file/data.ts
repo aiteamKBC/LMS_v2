@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { formatHoursMinutes } from '@/lib/format';
 import {
-  fetchLearnerDetail,
   type LearnerActivityEntry,
   type LearnerDetail,
   type LearnerKind,
@@ -9,7 +8,6 @@ import {
 } from '@/api/learnerDetail';
 import {
   eventDisplayDate,
-  fetchCoachCalendarEvents,
   formatDateLabel as formatCalendarDateLabel,
   formatTimeLabel as formatCalendarTimeLabel,
   parseLocalDate,
@@ -18,291 +16,28 @@ import {
   type CoachCalendarEvent,
   type CoachReviewGenerationIssue,
 } from '@/pages/coach/shared/calendarEvents';
-import { fetchLearnerMetrics } from '@/api/learnerMetrics';
-import { fetchLearnerAttendance, type LearnerAttendance } from '@/api/learnerAttendance';
-import { buildLearnerJourney, type JourneyModule } from '@/utils/learnerJourney';
-import { coachFetch } from '@/lib/coachFetch';
-import { fetchStudentActivity, type StudentActivityResponse } from '@/api/studentActivity';
-import { buildCaseFileActivityStates, buildFullCaseFileJourney, type CaseFileActivityStates } from './activityState';
-
-const CASELOAD_BASE = '/coach_api/coach/caseload';
-const ATTENDANCE_BASE = '/coach_api/coach/attendance';
-const MARKING_BASE = '/coach_api/coach/marking-queue';
-
-interface CoachCompletedKsbDetail {
-  code: string;
-  type?: string;
-  description?: string;
-  sources?: Array<{
-    id?: string;
-    title?: string;
-    typeLabel?: string;
-    kind?: string;
-    source?: string;
-    activityId?: string;
-    completedAt?: string;
-    status?: string;
-    module?: string;
-  }>;
-}
-
-export interface CoachCaseloadLearner {
-  id: string;
-  name: string;
-  initials: string;
-  /** 'commercial' | 'apprenticeship' — which learner_detail table this id resolves against. */
-  learnerType?: LearnerKind | null;
-  /** enrolment."Created_users".id — a different, disjoint pk space from `id` above.
-   *  This is the id /learner_api/learner-detail/<kind>/<pk>/ actually queries. */
-  enrolmentId?: string | null;
-  employer: string;
-  cohortId: string;
-  cohortName: string;
-  group: string;
-  status: 'at-risk' | 'on-track' | 'high' | 'new-starter';
-  enrollmentStatus: string;
-  riskFlags: string[];
-  overallProgress: number;
-  attendanceRate: number;
-  otjhCompleted: number;
-  otjhTarget: number;
-  otjhMinimum?: number;
-  otjhPlanned?: number;
-  otjhSubmitted?: number;
-  otjhForecast?: number;
-  otjhExpected?: number;
-  otjhProgressHours?: string;
-  otjhStatus?: string;
-  ksbCompleted?: number;
-  ksbTarget?: number;
-  ksbStatus?: string;
-  ksbCompletedDetails?: CoachCompletedKsbDetail[];
-  ksbProgress: number;
-  evidenceCount: number;
-  nextCoaching: string;
-  nextReview: string;
-  lastContact: string;
-  lastAttendanceDate: string;
-  lastProgressReview: string;
-  lastReview: string;
-  lastCoachingSession: string;
-  lastSubmittedEvidence: string;
-  recentFlag: string | null;
-  progressVariance: string;
-  startDate: string;
-  gatewayReviewDate: string;
-  plannedEndDate: string;
-  coachName?: string;
-  coachEmail?: string;
-  rawProgramStatus?: string;
-  coachRag?: string;
-  email?: string | null;
-  employerEmail?: string | null;
-  employerPhone?: string | null;
-}
-
-interface CoachCaseloadResponse {
-  owner?: {
-    name?: string;
-    email?: string;
-  };
-  learners?: CoachCaseloadLearner[];
-}
-
-export interface CoachAttendanceLearner {
-  sessionHistory?: import('@/api/learnerAttendance').AttendanceSessionRow[];
-  id: string;
-  learner: string;
-  initials: string;
-  learnerType?: LearnerKind | null;
-  enrolmentId?: string | null;
-  email?: string | null;
-  programme: string;
-  cohort: string;
-  group: string;
-  programStatus?: string;
-  enrollmentStatus?: string;
-  isOnBreak?: boolean;
-  includedInAttendanceMetrics?: boolean;
-  attendance: number | null;
-  sessions: number | null;
-  present: number | null;
-  absent: number | null;
-  late: number | null;
-  catchup: number | null;
-  trend: 'up' | 'down' | 'stable';
-  risk: 'red' | 'amber' | 'green' | null;
-  employer: string;
-  overallProgress: number;
-  otjhCompleted: number;
-  otjhTarget: number;
-  ksbProgress: number;
-  lastSession: string;
-  lastSessionDate?: string | null;
-  nextSession: string;
-  consecutiveMissed: number | null;
-  hasAttendance: boolean;
-}
-
-interface CoachAttendanceResponse {
-  learners?: CoachAttendanceLearner[];
-}
-
-export interface CoachMarkingQueueItem {
-  id: string;
-  learnerId: string;
-  learner: string;
-  initials: string;
-  email?: string | null;
-  programme: string;
-  group: string;
-  status: string;
-  enrollmentStatus: string;
-  isOnBreak: boolean;
-  pendingEvidence: number;
-  acceptedEvidence: number;
-  referredEvidence: number;
-  referredClosure: number;
-  totalEvidence: number;
-  elapsedDays: number;
-  isOverdue: boolean;
-  lastSubmission: string;
-  lastSubmissionIso?: string | null;
-  startDate: string;
-  module: string | null;
-  title: string | null;
-  type: string | null;
-  due: string | null;
-  words: number | null;
-  activityId?: string | null;
-  activityTitle?: string | null;
-  submittedAt?: string | null;
-}
-
-export interface CaseFileMarkingSubmission {
-  id: string;
-  activityId: string;
-  activityTitle: string;
-  submittedAt: string | null;
-}
-
-interface CoachMarkingQueueResponse {
-  items?: CoachMarkingQueueItem[];
-}
-
-export interface CaseFileActivityItem {
-  id: string;
-  date: string;
-  event: string;
-  detail: string;
-  tone: 'primary' | 'accent' | 'emerald' | 'amber' | 'red';
-}
-
-export interface CaseFileUpcomingSession {
-  id: string;
-  kind: 'live' | 'review';
-  status: CoachCalendarEvent['status'];
-  statusLabel: string;
-  day: string;
-  title: string;
-  date: string;
-  time: string;
-  summary: string;
-  detail: string;
-}
-
-export interface CaseFileReviewMeeting {
-  id: string;
-  eventKey: string;
-  reviewInstanceId?: string | null;
-  source: string;
-  reviewTypeName: string;
-  title: string;
-  date: string;
-  plannedDate: string;
-  completedDate: string;
-  time: string;
-  detail: string;
-  status: CoachCalendarEvent['status'];
-  statusLabel: string;
-  isNext: boolean;
-  notes?: string;
-  reviewer: string;
-  hasForm: boolean;
-  hasTranscript: boolean;
-  hasAttendance: boolean;
-}
-
-export interface CaseFileReviewGroup {
-  key: string;
-  title: string;
-  items: CaseFileReviewMeeting[];
-}
-
-export interface CoachLearnerCaseFileData {
-  learnerId: string;
-  /** enrolment."Created_users" id used by the learner workspace APIs. */
-  enrolmentId: string | null;
-  learnerIdentityIds?: string[];
-  kind: LearnerKind | null;
-  snapshot: CoachCaseloadLearner | null;
-  attendance: CoachAttendanceLearner | null;
-  evidence: CoachMarkingQueueItem | null;
-  detail: LearnerDetail | null;
-  journey: JourneyModule[];
-  activityStates?: CaseFileActivityStates;
-  peers: CoachCaseloadLearner[];
-  displayName: string;
-  initials: string;
-  programme: string;
-  employer: string;
-  cohort: string;
-  group: string;
-  email: string;
-  programStatus: string;
-  coachName: string;
-  coachEmail: string;
-  employerEmail: string;
-  employerPhone: string;
-  overallProgress: number | null;
-  attendanceRate: number | null;
-  attendancePresentCount: number | null;
-  attendanceSessionCount: number | null;
-  attendanceAbsentCount: number | null;
-  otjhCompleted: number | null;
-  otjhTarget: number | null;
-  otjhPlanned: number | null;
-  ksbProgress: number | null;
-  metricsAvailable?: boolean;
-  ksbStatus?: 'ready' | 'empty' | 'unavailable';
-  ksbEvidencedCount: number | null;
-  ksbTotalCount: number | null;
-  mappedKsbCodes: string[];
-  ksbCodeProgress: Array<{ code: string; completed: number; total: number }>;
-  evidenceCount: number | null;
-  startDate: string;
-  gatewayReviewDate: string;
-  plannedEndDate: string;
-  totalExpectedOtjh: number;
-  touchedKsbCodes: string[];
-  activityItems: CaseFileActivityItem[];
-  upcomingSessions: CaseFileUpcomingSession[];
-  progressReviews: CaseFileReviewMeeting[];
-  monthlyCoachMeetings: CaseFileReviewMeeting[];
-  reviewGroups: CaseFileReviewGroup[];
-  reviewGenerationIssues: CoachReviewGenerationIssue[];
-  reviewsLoading: boolean;
-  markingSubmissions?: CaseFileMarkingSubmission[];
-  coachNotes?: string[];
-}
-
-export interface CaseFileOtjhMetrics {
-  logged: number | null;
-  target: number | null;
-  programmeTotal: number | null;
-  remaining: number | null;
-  progressPercent: number | null;
-}
+import { buildLearnerJourney } from '@/utils/learnerJourney';
+import type { StudentActivityResponse } from '@/api/studentActivity';
+import { buildCaseFileActivityStates, buildFullCaseFileJourney } from './activityState';
+import { normalizeKsbCode } from './domain/ksbSelectors';
+import {
+  fetchCaseFileLearnerDetail,
+  fetchCaseFileLearnerMetrics,
+  fetchCaseFileShell,
+  fetchCaseFileStudentActivity,
+  type CaseFileShell,
+} from './api/caseFileApi';
+import type {
+  CaseFileActivityItem,
+  CaseFileOtjhMetrics,
+  CaseFileReviewGroup,
+  CaseFileReviewMeeting,
+  CaseFileUpcomingSession,
+  CoachAttendanceLearner,
+  CoachCaseloadLearner,
+  CoachLearnerCaseFileData,
+  CoachMarkingQueueItem,
+} from './types';
 
 /**
  * Shared presentation selector for the Case File OTJH values. The values are
@@ -318,17 +53,6 @@ export function selectCaseFileOtjh(data: Pick<CoachLearnerCaseFileData, 'otjhCom
     ? Math.min(100, Math.round((logged / target) * 100))
     : null;
   return { logged, target, programmeTotal, remaining, progressPercent };
-}
-
-/** Match the backend canonical KSB identity: child codes resolve to parent codes. */
-export function normalizeKsbCode(value: string | null | undefined): string {
-  const code = String(value || '').trim().toUpperCase();
-  const match = code.match(/^([KSB])(\d+)(?:\.\d+)?$/);
-  return match ? `${match[1]}${match[2]}` : code;
-}
-
-export interface CaseFileTabProps {
-  data: CoachLearnerCaseFileData;
 }
 
 export function useCoachLearnerCaseFileData(args: {
@@ -350,7 +74,6 @@ export function useCoachLearnerCaseFileData(args: {
 
   useEffect(() => {
     const rawLearnerId = args.learnerId?.trim();
-    const rawLearnerName = args.learnerName?.trim();
     let cancelled = false;
 
     if (args.enabled === false) {
@@ -360,7 +83,7 @@ export function useCoachLearnerCaseFileData(args: {
       return;
     }
 
-    if (!rawLearnerId && !rawLearnerName) {
+    if (!rawLearnerId) {
       setData(null);
       setError('No learner was selected.');
       setLoading(false);
@@ -371,62 +94,52 @@ export function useCoachLearnerCaseFileData(args: {
       setLoading(true);
       setError(null);
 
-      // Load the profile list first. The remaining coach-wide projections are
-      // expensive and each may consume a pooled connection for a long time;
-      // starting all four together starves login/session and learner requests.
-      // They are fetched after caseload resolution, preserving the payload while
-      // avoiding an initial pool-wide burst.
-      const requestedMarkingLearnerId = args.enrolmentId?.trim() || rawLearnerId;
-      const caseloadPromise = fetchCoachCaseload();
       const directId = numericId(rawLearnerId);
-      // rawLearnerId is the coach-side LearnerProfile id -- a disjoint pk space
-      // from enrolment."Created_users".id, which /learner-detail/ actually
-      // queries. Only start the fast path when the caller already resolved the
-      // real enrolment id (see CoachCaseloadLearner.enrolmentId); otherwise
-      // fetching it here would just 404 and get overwritten by the slow path
-      // below anyway, once the coach lists resolve the real id.
-      const directEnrolmentId = numericId(args.enrolmentId);
-      const directDetailPromise = directEnrolmentId
-        ? fetchAnyLearnerDetail(directEnrolmentId, args.kind ?? undefined)
-        : null;
+      if (!directId) {
+        setData(null);
+        setError('A stable learner ID is required.');
+        setLoading(false);
+        return;
+      }
+      let shell: CaseFileShell;
+      try {
+        shell = await fetchCaseFileShell(directId);
+      } catch (loadErr) {
+        if (!cancelled) {
+          setData(null);
+          setError(loadErr instanceof Error ? loadErr.message : 'Could not load learner case file details.');
+          setLoading(false);
+        }
+        return;
+      }
+      const resolvedEnrolmentId = shell.identity.enrolmentId;
+      const resolvedKind = shell.identity.kind;
       let learnerMetrics: CaseFileLearnerMetrics | null = null;
-      let liveAttendance: LearnerAttendance | null = null;
-
       let detail: LearnerDetail | null = null;
-      let resolvedKind: LearnerKind | null = null;
       let detailError: string | null = null;
       let aptemActivity: StudentActivityResponse | null = null;
-
-      if (directDetailPromise) {
+      if (resolvedEnrolmentId) {
         try {
-          const detailResult = await directDetailPromise;
+          const detailResult = await fetchAnyLearnerDetail(resolvedEnrolmentId, resolvedKind);
           detail = detailResult.detail;
-          resolvedKind = detailResult.kind;
           if (detail.studentActivityAvailable) {
-            aptemActivity = await fetchStudentActivity(resolvedKind, directEnrolmentId).catch(() => null);
+            aptemActivity = await fetchCaseFileStudentActivity(resolvedKind, resolvedEnrolmentId).catch(() => null);
           }
-          [learnerMetrics, liveAttendance] = await Promise.all([
-            fetchCaseFileMetrics(resolvedKind, directEnrolmentId),
-            fetchCaseFileAttendance(resolvedKind, directEnrolmentId),
-          ]);
-
-          // Show the useful learner view as soon as its focused detail arrives.
-          // Coach metrics continue enriching it in the background.
+          learnerMetrics = await fetchCaseFileMetrics(resolvedKind, resolvedEnrolmentId);
           const initialData = buildCaseFileData({
-            learnerId: directId,
-            enrolmentId: directEnrolmentId,
+            learnerId: shell.identity.learnerId,
+            enrolmentId: resolvedEnrolmentId,
             kind: resolvedKind,
+            shell,
             snapshot: null,
             attendance: null,
             evidence: null,
             detail,
             aptemActivity,
-            caseload: [],
             timetableEvents: [],
             reviewGenerationIssues: [],
             reviewsLoading: true,
             learnerMetrics,
-            liveAttendance,
           });
           if (!cancelled && initialData) {
             setData(initialData);
@@ -437,73 +150,8 @@ export function useCoachLearnerCaseFileData(args: {
         }
       }
 
-      const caseloadResult = await Promise.allSettled([caseloadPromise]).then(([result]) => result);
-
-      // Keep these projections serial as well. Each endpoint can perform many
-      // learner/database reads; overlapping them recreates the pool starvation
-      // seen during a normal case-file load.
-      const attendanceResult = await Promise.allSettled([fetchCoachAttendance()]).then(([result]) => result);
-      const markingResult = await Promise.allSettled([
-        fetchCoachMarkingQueue(requestedMarkingLearnerId, rawLearnerName),
-      ]).then(([result]) => result);
-      const timetableResult = await Promise.allSettled([fetchCoachTimetable()]).then(([result]) => result);
-
       if (cancelled) {
         return;
-      }
-
-      const caseload = caseloadResult.status === 'fulfilled' ? caseloadResult.value : [];
-      const attendance = attendanceResult.status === 'fulfilled' ? attendanceResult.value : [];
-      let marking = markingResult.status === 'fulfilled' ? markingResult.value : [];
-      const timetable = timetableResult.status === 'fulfilled'
-        ? timetableResult.value
-        : { events: [], reviewGenerationIssues: [] };
-      const timetableEvents = timetable.events;
-
-      const snapshot = resolveCaseloadLearner(caseload, rawLearnerId, rawLearnerName);
-      const attendanceLearner = resolveAttendanceLearner(attendance, rawLearnerId, rawLearnerName);
-      const evidence = resolveMarkingItem(marking, rawLearnerId, rawLearnerName);
-      const resolvedId = snapshot?.id || attendanceLearner?.id || evidence?.learnerId || numericId(rawLearnerId);
-      // Prefer the real enrolment id surfaced by whichever coach list matched
-      // this learner. Falling back to resolvedId (the profile id) only applies
-      // to the rare profile with no linked enrolment row left -- it will 404
-      // the same way this already did before enrolmentId existed, not worse.
-      const resolvedEnrolmentId = directEnrolmentId
-        || snapshot?.enrolmentId
-        || attendanceLearner?.enrolmentId
-        || null;
-      const resolvedDetailKind = args.kind ?? snapshot?.learnerType ?? attendanceLearner?.learnerType ?? undefined;
-
-      if (resolvedEnrolmentId && resolvedEnrolmentId !== requestedMarkingLearnerId) {
-        try {
-          marking = await fetchCoachMarkingQueue(resolvedEnrolmentId, rawLearnerName);
-        } catch {
-          // Keep the first safe response; the rest of the case file can still render.
-        }
-      }
-
-      // Non-numeric routes need coach data to resolve the id. Numeric routes have
-      // already loaded detail above, concurrently with the coach requests.
-      if ((resolvedEnrolmentId || resolvedId) && !directDetailPromise) {
-        try {
-          const detailResult = await fetchAnyLearnerDetail(resolvedEnrolmentId || resolvedId, resolvedDetailKind);
-          detail = detailResult.detail;
-          resolvedKind = detailResult.kind;
-          if (detail.studentActivityAvailable && resolvedEnrolmentId) {
-            aptemActivity = await fetchStudentActivity(resolvedKind, resolvedEnrolmentId).catch(() => null);
-          }
-        } catch (loadErr) {
-          detailError = loadErr instanceof Error ? loadErr.message : 'Could not load learner details.';
-        }
-      }
-
-      if (!learnerMetrics || !liveAttendance) {
-        const [metrics, attendanceRecord] = await Promise.all([
-          learnerMetrics ? Promise.resolve(learnerMetrics) : fetchCaseFileMetrics(resolvedKind, resolvedEnrolmentId),
-          liveAttendance ? Promise.resolve(liveAttendance) : fetchCaseFileAttendance(resolvedKind, resolvedEnrolmentId),
-        ]);
-        learnerMetrics = metrics;
-        liveAttendance = attendanceRecord;
       }
 
       if (cancelled) {
@@ -511,28 +159,26 @@ export function useCoachLearnerCaseFileData(args: {
       }
 
       const finalData = buildCaseFileData({
-        learnerId: resolvedId || rawLearnerId || '',
+        learnerId: shell.identity.learnerId,
         enrolmentId: resolvedEnrolmentId,
         kind: resolvedKind,
-        snapshot,
-        attendance: attendanceLearner,
-        evidence,
-        markingItems: marking,
+        shell,
+        snapshot: null,
+        attendance: null,
+        evidence: null,
         detail,
         aptemActivity,
-        caseload,
-        timetableEvents,
-        reviewGenerationIssues: timetable.reviewGenerationIssues,
+        timetableEvents: [],
+        reviewGenerationIssues: [],
         reviewsLoading: false,
         learnerMetrics,
-        liveAttendance,
       });
 
       if (!finalData) {
         setData(null);
         setError(
           detailError
-            || buildMissingLearnerMessage(rawLearnerId, rawLearnerName)
+            || buildMissingLearnerMessage(rawLearnerId, null)
             || 'Could not find that learner in the connected coach data.',
         );
         setLoading(false);
@@ -544,8 +190,6 @@ export function useCoachLearnerCaseFileData(args: {
       const missingDetailOnly = Boolean(detailError && /learner not found|\b404\b/i.test(detailError));
       if (!detail && detailError && !missingDetailOnly) {
         setError(detailError);
-      } else if (caseloadResult.status === 'rejected' && !snapshot) {
-        setError(caseloadResult.reason instanceof Error ? caseloadResult.reason.message : 'Could not load coach caseload.');
       } else {
         setError(null);
       }
@@ -665,82 +309,6 @@ export function formatQuizAttemptScore(attempt: LearnerQuizAttempt) {
     : '';
 }
 
-async function request<T>(url: string): Promise<T> {
-  const existingRequest = pendingRequests.get(url) as Promise<T> | undefined;
-  if (existingRequest) {
-    return existingRequest;
-  }
-
-  const pendingRequest = requestUncached<T>(url);
-  pendingRequests.set(url, pendingRequest);
-  try {
-    return await pendingRequest;
-  } finally {
-    pendingRequests.delete(url);
-  }
-}
-
-// React StrictMode intentionally re-runs effects in development. Sharing an
-// in-flight GET prevents that check from doubling slow database work.
-const pendingRequests = new Map<string, Promise<unknown>>();
-
-async function requestUncached<T>(url: string): Promise<T> {
-  let res: Response;
-  try {
-    res = await coachFetch(url, { headers: { 'Content-Type': 'application/json' } });
-  } catch {
-    throw new Error('Could not reach the server. Is the backend running on port 8000?');
-  }
-
-  const text = await res.text();
-  let data: unknown = null;
-  if (text) {
-    try {
-      data = JSON.parse(text);
-    } catch {
-      if (!res.ok) {
-        throw new Error(`Backend returned HTML instead of JSON (${res.status}). Check the Django server error output.`);
-      }
-      throw new Error('Received an invalid JSON response from the backend.');
-    }
-  }
-
-  if (!res.ok) {
-    const message = typeof data === 'object' && data && 'error' in data
-      ? String((data as { error?: string }).error)
-      : `Request failed (${res.status})`;
-    throw new Error(message);
-  }
-
-  return data as T;
-}
-
-async function fetchCoachCaseload() {
-  const data = await request<CoachCaseloadResponse>(CASELOAD_BASE);
-  return data.learners || [];
-}
-
-async function fetchCoachAttendance() {
-  const data = await request<CoachAttendanceResponse>(ATTENDANCE_BASE);
-  return data.learners || [];
-}
-
-async function fetchCoachMarkingQueue(learnerId?: string, learnerName?: string) {
-  const query = new URLSearchParams({ page_size: '100' });
-  if (learnerId) query.set('learner', learnerId);
-  else if (learnerName) query.set('search', learnerName);
-  const data = await request<CoachMarkingQueueResponse>(`${MARKING_BASE}?${query}`);
-  return data.items || [];
-}
-
-async function fetchCoachTimetable() {
-  const data = await fetchCoachCalendarEvents(undefined);
-  return {
-    events: data.events || [],
-    reviewGenerationIssues: data.reviewGenerationIssues || [],
-  };
-}
-
 type CaseFileLearnerMetrics = {
   programmeCompleted: number | null;
   programmeTotal: number | null;
@@ -760,7 +328,7 @@ type CaseFileLearnerMetrics = {
 async function fetchCaseFileMetrics(kind: LearnerKind | null, enrolmentId: string | null): Promise<CaseFileLearnerMetrics | null> {
   if (!kind || !enrolmentId) return null;
   try {
-    const metrics = await fetchLearnerMetrics(kind, enrolmentId);
+    const metrics = await fetchCaseFileLearnerMetrics(kind, enrolmentId);
     return {
       programmeCompleted: metrics.programme.completed,
       programmeTotal: metrics.programme.total,
@@ -784,25 +352,14 @@ async function fetchCaseFileMetrics(kind: LearnerKind | null, enrolmentId: strin
   }
 }
 
-/** The learner's own attendance register, read through the same endpoint their
- *  workspace uses so a coach and their learner never see different rates. */
-async function fetchCaseFileAttendance(kind: LearnerKind | null, enrolmentId: string | null) {
-  if (!kind || !enrolmentId) return null;
-  try {
-    return await fetchLearnerAttendance(kind, enrolmentId);
-  } catch {
-    return null;
-  }
-}
-
 async function fetchAnyLearnerDetail(id: string, kind?: LearnerKind) {
   if (kind) {
-    return { kind, detail: await fetchLearnerDetail(kind, id) };
+    return { kind, detail: await fetchCaseFileLearnerDetail(kind, id) };
   }
 
   const [commercial, apprenticeship] = await Promise.allSettled([
-    fetchLearnerDetail('commercial', id),
-    fetchLearnerDetail('apprenticeship', id),
+    fetchCaseFileLearnerDetail('commercial', id),
+    fetchCaseFileLearnerDetail('apprenticeship', id),
   ]);
 
   if (commercial.status === 'fulfilled') {
@@ -828,58 +385,6 @@ function chooseDetailError(
 
   const non404 = [commercialMessage, apprenticeshipMessage].find((message) => message && !message.includes('404'));
   return new Error(non404 || commercialMessage || apprenticeshipMessage || 'Could not load learner details.');
-}
-
-function resolveCaseloadLearner(
-  caseload: CoachCaseloadLearner[],
-  learnerId?: string | null,
-  learnerName?: string | null,
-) {
-  return caseload.find((learner) => matchesLearner(learner.id, learner.name, learnerId, learnerName)) || null;
-}
-
-function resolveAttendanceLearner(
-  attendance: CoachAttendanceLearner[],
-  learnerId?: string | null,
-  learnerName?: string | null,
-) {
-  return attendance.find((learner) => matchesLearner(learner.id, learner.learner, learnerId, learnerName)) || null;
-}
-
-function resolveMarkingItem(
-  items: CoachMarkingQueueItem[],
-  learnerId?: string | null,
-  learnerName?: string | null,
-) {
-  return items.find((item) => matchesLearner(item.learnerId, item.learner, learnerId, learnerName)) || null;
-}
-
-function matchesLearner(
-  candidateId: string | undefined,
-  candidateName: string | undefined,
-  learnerId?: string | null,
-  learnerName?: string | null,
-) {
-  const normalizedId = numericId(learnerId);
-  if (normalizedId && candidateId === normalizedId) {
-    return true;
-  }
-
-  if (candidateId && learnerId && candidateId === learnerId.trim()) {
-    return true;
-  }
-
-  // A supplied learner id is authoritative. Never cross-wire records by name
-  // when the stable identity did not match.
-  if (learnerId) {
-    return false;
-  }
-
-  if (!learnerName || !candidateName) {
-    return false;
-  }
-
-  return candidateName.trim().toLowerCase() === learnerName.trim().toLowerCase();
 }
 
 function numericId(value?: string | null) {
@@ -956,7 +461,7 @@ function sortLearnerScheduleEvents(events: CoachCalendarEvent[]) {
   return [...sortEvents(upcoming), ...sortEvents(past).reverse()];
 }
 
-function buildReviewMeetingItems(
+export function buildReviewMeetingItems(
   learner: Pick<CoachLearnerCaseFileData, 'learnerId' | 'learnerIdentityIds'>,
   timetableEvents: CoachCalendarEvent[],
 ): CaseFileReviewMeeting[] {
@@ -1015,7 +520,7 @@ function reviewTypeLabel(event: CoachCalendarEvent) {
   return 'Review';
 }
 
-function buildReviewGroups(items: CaseFileReviewMeeting[]): CaseFileReviewGroup[] {
+export function buildReviewGroups(items: CaseFileReviewMeeting[]): CaseFileReviewGroup[] {
   const groups = new Map<string, CaseFileReviewGroup>();
   for (const item of items) {
     const key = item.reviewTypeName.trim().toLowerCase() || 'review';
@@ -1097,28 +602,24 @@ function buildCaseFileData(args: {
   learnerId: string;
   enrolmentId: string | null;
   kind: LearnerKind | null;
+  shell: CaseFileShell;
   snapshot: CoachCaseloadLearner | null;
   attendance: CoachAttendanceLearner | null;
   evidence: CoachMarkingQueueItem | null;
-  markingItems?: CoachMarkingQueueItem[];
   detail: LearnerDetail | null;
   aptemActivity?: StudentActivityResponse | null;
-  caseload: CoachCaseloadLearner[];
   timetableEvents: CoachCalendarEvent[];
   reviewGenerationIssues: CoachReviewGenerationIssue[];
   reviewsLoading?: boolean;
   learnerMetrics?: CaseFileLearnerMetrics | null;
-  liveAttendance?: LearnerAttendance | null;
 }): CoachLearnerCaseFileData | null {
-  const displayName = args.detail?.name || args.snapshot?.name || args.attendance?.learner || args.evidence?.learner || '';
+  const displayName = args.detail?.name || args.shell.profile.name || args.attendance?.learner || args.evidence?.learner || '';
   if (!displayName) {
     return null;
   }
 
-  const cohort = args.detail?.cohort || args.snapshot?.cohortName || args.attendance?.cohort || '';
-  const peers = cohort
-    ? args.caseload.filter((learner) => learner.id !== args.snapshot?.id && learner.cohortName === cohort)
-    : [];
+  const cohort = args.detail?.cohort || args.shell.profile.cohort || args.attendance?.cohort || '';
+  const peers: CoachCaseloadLearner[] = [];
   const journey = buildFullCaseFileJourney(buildLearnerJourney(args.detail), args.aptemActivity || null);
   const activityStates = buildCaseFileActivityStates(journey, args.detail, args.aptemActivity || null);
   const touchedKsbCodes = Array.from(
@@ -1135,10 +636,11 @@ function buildCaseFileData(args: {
     ),
   ).sort();
   const programme = args.detail?.programme || args.attendance?.programme || '';
-  const group = args.detail?.group || args.snapshot?.group || args.attendance?.group || '';
-  const email = args.detail?.email || args.snapshot?.email || args.attendance?.email || args.evidence?.email || '';
+  const group = args.detail?.group || args.shell.profile.group || args.attendance?.group || '';
+  const email = args.detail?.email || args.shell.profile.email || args.attendance?.email || args.evidence?.email || '';
   const learnerIdentityIds = Array.from(new Set([
     args.learnerId,
+    args.shell.identity.enrolmentId,
     args.snapshot?.id,
     args.snapshot?.enrolmentId,
     args.attendance?.id,
@@ -1179,23 +681,24 @@ function buildCaseFileData(args: {
     peers,
     displayName,
     initials: getInitials(displayName),
-    programme,
-    employer: args.detail?.employer || args.snapshot?.employer || args.attendance?.employer || '',
+    programme: programme || args.shell.profile.programme || '',
+    employer: args.detail?.employer || args.shell.profile.employer || args.attendance?.employer || '',
     cohort,
     group,
     email,
-    programStatus: args.detail?.programmeStatus || args.snapshot?.rawProgramStatus || args.attendance?.programStatus || '',
-    coachName: args.snapshot?.coachName || '',
-    coachEmail: args.snapshot?.coachEmail || '',
-    employerEmail: args.snapshot?.employerEmail || '',
-    employerPhone: args.snapshot?.employerPhone || '',
+    programStatus: args.detail?.programmeStatus || args.shell.profile.status || args.attendance?.programStatus || '',
+    coachName: args.shell.profile.coachName || '',
+    coachEmail: args.shell.profile.coachEmail || '',
+    coachRag: args.shell.profile.coachRag,
+    employerEmail: '',
+    employerPhone: '',
     overallProgress,
     // Prefer the learner's canonical register. The coach attendance projection
     // remains a fallback so a temporary register failure does not blank the file.
-    attendanceRate: args.liveAttendance?.attendanceRate ?? args.attendance?.attendance ?? null,
-    attendancePresentCount: args.liveAttendance?.present ?? args.attendance?.present ?? null,
-    attendanceSessionCount: args.liveAttendance?.sessions ?? args.attendance?.sessions ?? null,
-    attendanceAbsentCount: args.liveAttendance?.absent ?? args.attendance?.absent ?? null,
+    attendanceRate: null,
+    attendancePresentCount: null,
+    attendanceSessionCount: null,
+    attendanceAbsentCount: null,
     otjhCompleted: metricsAvailable ? detailCompletedHours ?? null : null,
     otjhTarget: metricsAvailable ? detailTargetHours ?? null : null,
     otjhPlanned: metricsAvailable ? detailPlannedHours ?? null : null,
@@ -1209,9 +712,9 @@ function buildCaseFileData(args: {
     mappedKsbCodes: args.learnerMetrics?.ksbCodes ?? [],
     ksbCodeProgress: args.learnerMetrics?.ksbCodeProgress ?? [],
     evidenceCount: args.snapshot?.evidenceCount ?? args.evidence?.totalEvidence ?? null,
-    startDate: args.detail?.programmeStartDate || args.snapshot?.startDate || '--',
-    gatewayReviewDate: args.snapshot?.gatewayReviewDate || '--',
-    plannedEndDate: args.snapshot?.plannedEndDate || '--',
+    startDate: args.detail?.programmeStartDate || args.shell.profile.startDate || '--',
+    gatewayReviewDate: args.shell.profile.gatewayReviewDate || '--',
+    plannedEndDate: args.detail?.programmeEndDate || args.shell.profile.plannedEndDate || '--',
     totalExpectedOtjh: metricsAvailable ? detailPlannedHours ?? 0 : 0,
     touchedKsbCodes,
     activityItems: buildActivityItems(args.snapshot, args.detail, args.evidence),
@@ -1222,14 +725,6 @@ function buildCaseFileData(args: {
     learnerIdentityIds,
     reviewGenerationIssues: args.reviewGenerationIssues.filter(issue => learnerIdentityIds.includes(String(issue.learnerId))),
     reviewsLoading: Boolean(args.reviewsLoading),
-    markingSubmissions: (args.markingItems || [])
-      .filter(item => item.id && item.activityId)
-      .map(item => ({
-        id: String(item.id),
-        activityId: String(item.activityId),
-        activityTitle: String(item.activityTitle || ''),
-        submittedAt: item.submittedAt || null,
-      })),
     coachNotes: allReviewMeetings.map(item => item.notes || '').filter(Boolean).slice(0, 5),
   };
 }

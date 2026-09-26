@@ -9,8 +9,8 @@ import {
   formatAttemptGrade,
   formatHours,
   formatPercent,
-  type CaseFileTabProps,
 } from '../data';
+import type { CaseFileTabProps } from '../types';
 import styles from '../learnerCaseFile.module.css';
 
 type CaseFileKsbSummary = {
