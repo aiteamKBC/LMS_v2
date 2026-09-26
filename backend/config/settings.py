@@ -56,6 +56,8 @@ def load_env_file(path):
 load_env_file(BASE_DIR / '.env')
 
 SAFEGUARDING_SSO_SECRET = os.environ.get("SAFEGUARDING_SSO_SECRET", "").strip()
+INCLUSION_SSO_SECRET = os.environ.get("INCLUSION_SSO_SECRET", "").strip()
+INCLUSION_SSO_CALLBACK_URL = os.environ.get("INCLUSION_SSO_CALLBACK_URL", "").strip()
 SAFEGUARDING_SSO_CALLBACK_URL = os.environ.get(
     "SAFEGUARDING_SSO_CALLBACK_URL",
     "https://safeguarding.kentbusinesscollege.net/auth/lms/callback",

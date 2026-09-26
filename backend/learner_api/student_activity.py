@@ -304,6 +304,17 @@ def student_activity(request, kind, pk):
     payload['direct_otjh_activities'] = direct_progress
     allowed = {f"legacy:{item['group_id']}" for item in payload['activities']}
     payload['covers'] = {key: _cover_url(value) for key, value in saved['covers'].items() if key in allowed}
+    from . import canonical_learning
+    if canonical_learning.enabled(pk):
+        try:
+            owner = canonical_learning.profile(pk)
+            if owner['aptem_id'] != aptem_id:
+                return _error('The consolidated learner identity needs review.', 409)
+            payload = canonical_learning.overlay_subjects(payload, canonical_learning.entries(pk), summarize_activities)
+        except DatabaseError:
+            return _error('Could not load the consolidated learning record. Please retry.', 503)
+        except canonical_learning.ServiceError as error:
+            return _error(str(error), error.status)
     response = JsonResponse(payload)
     response["Cache-Control"] = "private, no-store"
     return response
