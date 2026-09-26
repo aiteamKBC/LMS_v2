@@ -20,7 +20,7 @@ ROOT = Path(__file__).parent
 package = types.ModuleType('curriculum_api')
 package.__path__ = [str(ROOT)]
 sys.modules['curriculum_api'] = package
-from curriculum_api.session_results_policy import (attendance_seconds, evidence_seconds, session_roster,
+from curriculum_api.session_results_policy import (attendance_display_name, attendance_name_key, attendance_seconds, evidence_seconds, session_roster,
     attendance_csv, archive_prefix, transcript_text, instant, session_runs)
 from curriculum_api.session_graph import collection
 from curriculum_api.session_transfer_progress import byte_count
@@ -40,6 +40,112 @@ class Response(dict):
         super().__init__(data if isinstance(data, dict) else {})
         self.status_code = status
         self.content = data
+
+
+class AlternativeRecoveryMatchingTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.ns = {'defaultdict': defaultdict, 'INACTIVE_STATUSES': {
+            'cancelled', 'canceled', 'deleted', 'failed', 'superseded',
+        }}
+        functions(ROOT.parent / 'learner_api' / 'alternative_recovery.py', {
+            '_active', '_module_key', '_matching_alternative_series',
+        }, cls.ns)
+
+    @staticmethod
+    def row(**values):
+        return types.SimpleNamespace(**values)
+
+    def test_matches_same_module_title_in_other_group_only(self):
+        original_module = self.row(module_catalogue_id='MOD-A', group_id='GROUP-FRI',
+                                   title='Aya  Module')
+        original_series = self.row(id='LIVE-FRI', module_catalogue_id='MOD-A',
+                                   module_title='Aya Module', status='active')
+        wednesday_module = self.row(module_catalogue_id='MOD-B', group_id='GROUP-WED',
+                                    title='  aya module COPY ')
+        unrelated_module = self.row(module_catalogue_id='MOD-C', group_id='GROUP-WED',
+                                    title='Test-cover')
+        wrong_same_group = self.row(module_catalogue_id='MOD-D', group_id='GROUP-FRI',
+                                    title='Aya Module')
+        sessions = [
+            original_series,
+            self.row(id='LIVE-WED', module_catalogue_id='MOD-B', status='active'),
+            self.row(id='LIVE-UNRELATED', module_catalogue_id='MOD-C', status='active'),
+            self.row(id='LIVE-SAME-GROUP', module_catalogue_id='MOD-D', status='active'),
+        ]
+
+        result = self.ns['_matching_alternative_series'](
+            original_series, original_module,
+            [original_module, wednesday_module, unrelated_module, wrong_same_group],
+            sessions,
+        )
+
+        self.assertEqual(set(result), {'GROUP-WED'})
+        self.assertEqual(result['GROUP-WED'][0].module_catalogue_id, 'MOD-B')
+        self.assertEqual(result['GROUP-WED'][1].id, 'LIVE-WED')
+
+    def test_copy_suffix_is_removed_only_at_the_end(self):
+        module_key = self.ns['_module_key']
+
+        self.assertEqual(module_key('Aya  Modual copy'), module_key('aya modual'))
+        self.assertEqual(module_key('Copy skills'), 'copy skills')
+
+    def test_rejects_ambiguous_series_for_the_same_module_delivery(self):
+        original_module = self.row(module_catalogue_id='MOD-A', group_id='GROUP-FRI', title='Module')
+        original_series = self.row(id='LIVE-FRI', module_catalogue_id='MOD-A',
+                                   module_title='Module', status='active')
+        candidate = self.row(module_catalogue_id='MOD-B', group_id='GROUP-WED', title='Module')
+        sessions = [
+            original_series,
+            self.row(id='LIVE-WED-1', module_catalogue_id='MOD-B', status='active'),
+            self.row(id='LIVE-WED-2', module_catalogue_id='MOD-B', status='active'),
+        ]
+
+        result = self.ns['_matching_alternative_series'](
+            original_series, original_module, [original_module, candidate], sessions,
+        )
+
+        self.assertEqual(result, {})
+
+
+class ModuleCalendarLinkingTests(unittest.TestCase):
+    def setUp(self):
+        self.updates = []
+        self.ns = {
+            'LIVE_SESSIONS_TABLE': 'curriculum.live_sessions',
+            'datetime': types.SimpleNamespace(utcnow=lambda: 'NOW'),
+            'ensure_live_sessions_table': lambda: None,
+            'clean_str': lambda value: str(value or '').strip(),
+            'update_authoring_rows': lambda *args: self.updates.append(args),
+        }
+        functions(ROOT / 'views.py', {'link_live_session_series_to_module'}, self.ns)
+
+    def test_full_structure_does_not_reparent_calendar_from_delivery_metadata(self):
+        self.ns['link_live_session_series_to_module']('MOD-COPY', {
+            'weekStructure': [{'components': []}],
+            'deliveryMetadata': {'teamsLiveSessionId': 'LIVE-SOURCE'},
+        })
+
+        self.assertEqual(self.updates, [])
+
+    def test_full_structure_links_calendar_named_by_live_component(self):
+        self.ns['link_live_session_series_to_module']('MOD-COPY', {
+            'weekStructure': [{'components': [{
+                'settings': {'teamsLiveSessionId': 'LIVE-COPY'},
+            }]}],
+            'deliveryMetadata': {'teamsLiveSessionId': 'LIVE-SOURCE'},
+        })
+
+        self.assertEqual(len(self.updates), 1)
+        self.assertEqual(self.updates[0][2], ['LIVE-COPY'])
+
+    def test_legacy_partial_save_keeps_metadata_fallback(self):
+        self.ns['link_live_session_series_to_module']('MOD-LEGACY', {
+            'deliveryMetadata': {'teamsLiveSessionId': 'LIVE-LEGACY'},
+        })
+
+        self.assertEqual(len(self.updates), 1)
+        self.assertEqual(self.updates[0][2], ['LIVE-LEGACY'])
 
 
 def visit(start, end):
@@ -130,6 +236,25 @@ class EvidenceTests(unittest.TestCase):
     def test_unidentified_attendee_requires_review(self):
         rows = session_roster(['a@example.invalid'], [{'id': 'guest', 'total_attendance_seconds': 300}], complete=True)
         self.assertEqual([r['status'] for r in rows], ['review', 'review'])
+
+    def test_repeated_unverified_name_is_grouped_with_all_source_rows(self):
+        rows = session_roster(set(), [
+            {'id': 'ROW-1', 'display_name': 'Shaz Yousaf', 'intervals': [visit('00:00', '01:00')]},
+            {'id': 'ROW-2', 'display_name': 'Shaz Yousaf (Unverified)', 'intervals': [visit('01:00', '02:00')]},
+        ], complete=True)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['seconds'], 120)
+        self.assertEqual(rows[0]['sourceRecordIds'], ['ROW-1', 'ROW-2'])
+        self.assertEqual(rows[0]['status'], 'review')
+
+    def test_direct_graph_identity_name_is_recovered_from_saved_raw_evidence(self):
+        record = {
+            'id': 'ROW-1', 'display_name': '',
+            'raw_data': {'identity': {'displayName': 'Example Learner', 'id': 'GRAPH-ID'}},
+            'total_attendance_seconds': 600,
+        }
+        self.assertEqual(attendance_display_name(record), 'Example Learner')
+        self.assertEqual(session_roster(set(), [record], complete=True)[0]['name'], 'Example Learner')
 
     def test_email_normalization_and_reconnects(self):
         rows = session_roster([' A@EXAMPLE.invalid '], [{'email': 'a@example.invalid', 'intervals': [visit('00:00', '02:00')]},
@@ -227,13 +352,17 @@ class RegisterTests(unittest.TestCase):
         def only(self, *_args): return self
         def order_by(self, *_args): return self
         def values_list(self, *fields, **_kwargs):
-            return [(getattr(row, field) for field in fields) for row in self]
+            def value(row, field):
+                for part in field.split('__'):
+                    row = getattr(row, part)
+                return row
+            return [tuple(value(row, field) for field in fields) for row in self]
 
     class Q:
         def __init__(self, **kwargs): pass
         def __or__(self, other): return self
 
-    def roster(self, records, *, invited=True, launched=False, complete=True, stored_attendees=None, recovery_guest=False):
+    def roster(self, records, *, assigned=True, invited=True, launched=False, complete=True, stored_attendees=None, recovery_guest=False):
         learner = types.SimpleNamespace(id=13, enrolment_id=7, full_name='Example Learner', email='a@example.invalid', coach_name='Coach')
         session = types.SimpleNamespace(id='S', module_catalogue_id='M', module_title='Module', attendees=['a@example.invalid'] if invited else [])
         if stored_attendees is not None:
@@ -253,16 +382,24 @@ class RegisterTests(unittest.TestCase):
         ns = {'__name__': 'learner_api.teams_attendance', '__package__': 'learner_api',
             'defaultdict': defaultdict, 'evidence_seconds': evidence_seconds, 'datetime': datetime,
             'datetime_timezone': timezone, 'parse_datetime': instant, 'Q': self.Q,
+            '_attendance_alias_rows': lambda *_args: [],
+            '_attendance_identity_link_rows': lambda *_args: [], 'attendance_name_key': attendance_name_key,
+            'attendance_display_name': attendance_display_name,
             'timezone': types.SimpleNamespace(is_aware=lambda value: value.tzinfo is not None, is_naive=lambda value: value.tzinfo is None,
                 localtime=lambda value: value, now=lambda: end), 'router': types.SimpleNamespace(db_for_read=lambda model: 'default'),
             'LearnerProfile': types.SimpleNamespace(objects=self.Query([learner])),
-            'LiveSession': types.SimpleNamespace(objects=self.Query([session])),
-            'LiveSessionOccurrence': types.SimpleNamespace(objects=self.Query(occurrences)),
-            'LiveSessionAttendance': types.SimpleNamespace(objects=self.Query([types.SimpleNamespace(occurrence_id='O1', graph_record_id=str(i),
-                display_name='Example Learner', email=email, intervals=intervals, total_attendance_seconds=0) for i, (email, intervals) in enumerate(records)])),
+            'LearnerTrainingPlanModule': types.SimpleNamespace(objects=self.Query([
+                types.SimpleNamespace(module_ref='M', learner=learner),
+            ] if assigned else [])),
+             'LiveSession': types.SimpleNamespace(objects=self.Query([session])),
+             'LiveSessionOccurrence': types.SimpleNamespace(objects=self.Query(occurrences)),
+             'LiveSessionAttendanceAlias': types.SimpleNamespace(objects=self.Query([])),
+             'LiveSessionAttendance': types.SimpleNamespace(objects=self.Query([types.SimpleNamespace(id=f'ROW-{i}', occurrence_id='O1', graph_record_id=str(i),
+                display_name='Example Learner', email=email, role='attendee', raw_data={}, intervals=intervals, total_attendance_seconds=0) for i, (email, intervals) in enumerate(records)])),
             'ModuleAuthoringModule': types.SimpleNamespace(objects=self.Query([types.SimpleNamespace(module_catalogue_id='M', group_id='G', group_name='Group')]))}
-        functions(ROOT.parent / 'learner_api/teams_attendance.py', {'_email', '_session_expected_emails', '_local_datetime',
-            '_graph_datetime', '_attendance_interval_bounds', 'fetch_verified_teams_attendance_rows'}, ns)
+        functions(ROOT.parent / 'learner_api/teams_attendance.py', {'_email', '_canonical_attendance_email', '_assigned_learner_emails_by_module',
+            '_module_expected_emails', '_unique_exact_name_email', '_local_datetime', '_graph_datetime', '_attendance_interval_bounds',
+            'fetch_verified_teams_attendance_rows'}, ns)
         # The shared invitation parser is also used by the incoming Teams code.
         # Load its real rules through AST so its lazy import cannot load Django.
         views = types.ModuleType('curriculum_api.views')
@@ -286,14 +423,11 @@ class RegisterTests(unittest.TestCase):
         self.assertEqual([row['attendance_status'] for row in rows], ['present', 'absent'])
         self.assertEqual([row['occurrence_id'] for row in rows], ['O1', 'O2'])
 
-    def test_join_extends_only_clicked_occurrence_and_never_proves_attendance(self):
-        rows = self.roster([], invited=False, launched=True)
-        self.assertEqual(len(rows), 1)
-        self.assertEqual((rows[0]['occurrence_id'], rows[0]['attendance_status']), ('O1', 'absent'))
-        self.assertEqual(rows[0]['eligibility_reason'], 'assigned_lms_join')
+    def test_join_does_not_add_an_unassigned_person_to_the_roster(self):
+        self.assertEqual(self.roster([], assigned=False, invited=False, launched=True), [])
 
     def test_approved_recovery_guest_is_expected_only_for_target_occurrence(self):
-        rows = self.roster([], invited=False, recovery_guest=True)
+        rows = self.roster([], assigned=False, invited=False, recovery_guest=True)
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['occurrence_id'], 'O1')
         self.assertEqual(rows[0]['attendance_status'], 'absent')
@@ -302,9 +436,10 @@ class RegisterTests(unittest.TestCase):
     def test_pending_report_never_publishes_absence(self):
         self.assertEqual(self.roster([], complete=False), [])
 
-    def test_anonymous_participant_prevents_false_absence(self):
+    def test_unique_exact_unverified_name_matches_the_module_learner(self):
         rows = self.roster([('', [visit('00:00', '03:01')])])
-        self.assertEqual([row['occurrence_id'] for row in rows], ['O2'])
+        self.assertEqual([row['occurrence_id'] for row in rows], ['O1', 'O2'])
+        self.assertEqual([row['attendance_status'] for row in rows], ['present', 'absent'])
 
 
 class EndpointTests(unittest.TestCase):
@@ -329,13 +464,18 @@ class EndpointTests(unittest.TestCase):
             '_forbidden': lambda roles: Response(status=403), '_read_only_learner_view': lambda: Response(status=403),
             '_target_learner_id': lambda req, kwargs, **opts: kwargs.get('learner_id'),
             'instant': instant, 'session_roster': session_roster, 'attendance_csv': attendance_csv,
-            'session_runs': session_runs, 'evidence_seconds': evidence_seconds,
+            'session_runs': session_runs, 'evidence_seconds': evidence_seconds, 'attendance_name_key': attendance_name_key,
+            'attendance_display_name': attendance_display_name,
             'hidden_artifact_ids': hidden_artifact_ids, 'recording_transcript_links': recording_transcript_links,
             'transcript_timing_ready': transcript_timing_ready, 'artifact_metadata': artifact_metadata,
             'timezone': types.SimpleNamespace(now=lambda: datetime(2026, 9, 16, 12, tzinfo=timezone.utc))}
         functions(ROOT.parent / 'login/permissions.py', {'require_role', '_learner_progress_gate', 'learner_self_or_staff'}, self.ns)
         functions(ROOT / 'session_results.py', {'json_value', 'result_rows', 'admin_session', 'learner_results', 'learner_content',
-            'module_results', 'stored_content', 'queue_sync', 'learner_join', 'apply_recovery', 'unavailable', 'archive_schema_missing', 'recording_visibility', 'export_attendance'}, self.ns)
+            'module_results', 'stored_content', 'queue_sync', 'learner_join', 'apply_recovery', 'unavailable', 'archive_schema_missing',
+            'attendance_alias_rows', 'attendance_identity_link_rows',
+            'recording_visibility', 'export_attendance', 'link_attendance_alias'}, self.ns)
+        self.real_attendance_identity_link_rows = self.ns['attendance_identity_link_rows']
+        self.ns['attendance_identity_link_rows'] = Mock(return_value=[])
         self.cursor = Mock(); self.cursor.__enter__ = Mock(return_value=self.cursor); self.cursor.__exit__ = Mock(return_value=False)
         self.ns['connections'] = {'default': types.SimpleNamespace(cursor=lambda: self.cursor)}
         self.ns['read'] = Mock(return_value=[])
@@ -390,6 +530,66 @@ class EndpointTests(unittest.TestCase):
         self.assertIn("o.live_session_id=%s", sql)
         self.assertIn("a.artifact_type='recording'", sql)
 
+    def test_attendance_alias_link_is_staff_only_and_recalculates_saved_module(self):
+        for role in (None, 'learner', 'employer'):
+            req = self.req(role, method='POST'); req.body = b'{}'
+            self.assertIn(self.ns['link_attendance_alias'](req, 'S', 1).status_code, (401, 403))
+        self.ns['read'].assert_not_called()
+
+        req = self.req('staff', method='POST')
+        req.body = b'{"aliasEmail":"Other@Example.invalid","learnerProfileId":7}'
+        self.ns['read'].side_effect = [
+            [{'id': 'O', 'module_catalogue_id': 'M'}],
+            [{'exists': 1}],
+            [{'learner_profile_id': 7, 'learner_email': 'learner@example.invalid', 'learner_name': 'Learner A'}],
+            [],
+        ]
+        attendance = types.ModuleType('learner_api.teams_attendance')
+        attendance.sync_verified_teams_attendance_reporting = Mock(return_value=1)
+        with patch.dict(sys.modules, {'learner_api.teams_attendance': attendance}):
+            response = self.ns['link_attendance_alias'](req, 'S', 1)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['aliasEmail'], 'other@example.invalid')
+        sql, params = self.cursor.execute.call_args.args
+        self.assertIn('live_session_attendance_aliases', sql)
+        self.assertEqual(params[:4], ['M', 'other@example.invalid', 7, 'learner@example.invalid'])
+        attendance.sync_verified_teams_attendance_reporting.assert_called_once_with(module_refs=['M'])
+
+    def test_email_less_identity_link_is_occurrence_scoped_and_recalculates_saved_module(self):
+        req = self.req('staff', method='POST')
+        req.body = b'{"aliasEmail":"","sourceRecordIds":["ROW-1","ROW-2"],"learnerProfileId":7}'
+        self.ns['read'].side_effect = [
+            [{'id': 'O', 'module_catalogue_id': 'M'}],
+            [{'id': 'ROW-1', 'display_name': 'Shaz Yousaf'}, {'id': 'ROW-2', 'display_name': 'Shaz Yousaf'}],
+            [{'learner_profile_id': 7, 'learner_email': 'learner@example.invalid', 'learner_name': 'Shezreah Yousaf'}],
+            [],
+        ]
+        attendance = types.ModuleType('learner_api.teams_attendance')
+        attendance.sync_verified_teams_attendance_reporting = Mock(return_value=1)
+        with patch.dict(sys.modules, {'learner_api.teams_attendance': attendance}):
+            response = self.ns['link_attendance_alias'](req, 'S', 1)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['sourceRecordIds'], ['ROW-1', 'ROW-2'])
+        insert_calls = [call.args for call in self.cursor.execute.call_args_list if 'identity_links' in call.args[0]]
+        self.assertEqual(len(insert_calls), 2)
+        self.assertTrue(all(args[1][0] == 'O' for args in insert_calls))
+        attendance.sync_verified_teams_attendance_reporting.assert_called_once_with(module_refs=['M'])
+
+    def test_missing_optional_alias_table_does_not_hide_saved_results(self):
+        cause = Exception('Undefined table')
+        cause.sqlstate = '42P01'
+        error = self.ns['DatabaseError']('Alias table is not installed')
+        error.__cause__ = cause
+        self.ns['read'].side_effect = error
+
+        self.assertEqual(self.ns['attendance_alias_rows']('M'), [])
+
+        self.ns['attendance_identity_link_rows'] = self.real_attendance_identity_link_rows
+        self.ns['read'].side_effect = error
+        self.assertEqual(self.ns['attendance_identity_link_rows'](['O']), [])
+
     def test_pdf_export_is_staff_only_and_uses_saved_session_evidence(self):
         for role in (None, 'learner', 'employer'):
             response = self.ns['export_attendance'](self.req(role), series_id='S', session_number=1, file_format='pdf')
@@ -422,7 +622,7 @@ class EndpointTests(unittest.TestCase):
     def test_hidden_media_is_removed_from_learner_result_payload(self):
         self.ns['apply_recovery'] = lambda rows: None
         self.ns['read'].side_effect = [[{'id': 'O', 'session_number': 1, 'status': 'completed',
-            'scheduled_start': '2026-09-16T09:00Z', 'scheduled_end': '2026-09-16T10:00Z'}], [], [
+            'scheduled_start': '2026-09-16T09:00Z', 'scheduled_end': '2026-09-16T10:00Z'}], [], [], [
             {'id': 'V', 'occurrence_id': 'O', 'artifact_type': 'recording', 'metadata': {'lmsHiddenFromLearners': True}},
             {'id': 'T', 'occurrence_id': 'O', 'artifact_type': 'transcript', 'transcript_text': 'Private speech'},
         ]]
@@ -448,11 +648,59 @@ class EndpointTests(unittest.TestCase):
         self.ns['apply_recovery'] = lambda rows: None
         self.ns['read'].side_effect = [[{'id': 'O', 'session_number': 1, 'status': 'completed', 'attendance_report_id': 'R',
             'actual_end': '2026-09-16T10:00Z', 'scheduled_start': '2026-09-16T09:00Z', 'scheduled_end': '2026-09-16T10:00Z'}],
-            [{'id': 'A', 'occurrence_id': 'O', 'email': 'a@example.invalid', 'total_attendance_seconds': 200, 'raw_data': {'private': True}}], []]
+            [{'id': 'A', 'occurrence_id': 'O', 'email': 'a@example.invalid', 'total_attendance_seconds': 200, 'raw_data': {'private': True}}],
+            [{'occurrence_id': 'O', 'learner_profile_id': 7, 'learner_email': 'a@example.invalid',
+              'learner_name': 'Learner A', 'attendance_status': 'present', 'attended_seconds': 200}], []]
         rows = self.ns['result_rows']({'id': 'S', 'attendees': ['a@example.invalid', 'b@example.invalid']}, session_number=1, email='a@example.invalid')
         self.assertEqual(len(rows[0]['attendance']), 1)
         self.assertNotIn('raw_data', json.dumps(rows, default=str))
         self.assertEqual(self.ns['read'].call_args_list[0].args[1], ['S', 1])
+
+    def test_staff_register_contains_only_module_learners(self):
+        self.ns['apply_recovery'] = lambda rows: None
+        self.ns['read'].side_effect = [[{
+            'id': 'O', 'session_number': 1, 'status': 'completed',
+            'attendance_report_id': 'R', 'actual_end': '2026-09-16T10:00Z',
+            'scheduled_start': '2026-09-16T09:00Z', 'scheduled_end': '2026-09-16T10:00Z',
+        }], [{
+            'id': 'LEARNER', 'occurrence_id': 'O', 'email': 'learner@example.invalid',
+            'display_name': 'Learner', 'total_attendance_seconds': 240,
+         }, {
+             'id': 'TUTOR', 'occurrence_id': 'O', 'email': 'tutor@example.invalid',
+             'display_name': 'Tutor', 'role': 'Presenter', 'total_attendance_seconds': 3600,
+        }], [{
+            'occurrence_id': 'O', 'learner_profile_id': 7,
+            'learner_email': 'learner@example.invalid', 'learner_name': 'Module Learner',
+            'attendance_status': 'present', 'attended_seconds': 240,
+         }], [], []]
+
+        rows = self.ns['result_rows']({'id': 'S', 'presenters': ['tutor@example.invalid']}, session_number=1)
+
+        self.assertEqual([person['email'] for person in rows[0]['attendance']], ['learner@example.invalid'])
+        self.assertEqual(rows[0]['attendance'][0]['name'], 'Module Learner')
+        self.assertNotIn('tutor@example.invalid', json.dumps(rows, default=str))
+
+    def test_staff_sees_unknown_attendee_separately_from_module_roster(self):
+        self.ns['apply_recovery'] = lambda rows: None
+        self.ns['read'].side_effect = [[{
+            'id': 'O', 'session_number': 1, 'status': 'completed', 'attendance_report_id': 'R',
+            'actual_end': '2026-09-16T10:00Z', 'scheduled_start': '2026-09-16T09:00Z',
+            'scheduled_end': '2026-09-16T10:00Z',
+        }], [{
+            'id': 'GUEST', 'occurrence_id': 'O', 'email': 'other@example.invalid',
+            'display_name': 'Module Learner', 'role': 'Attendee', 'total_attendance_seconds': 600,
+        }], [{
+            'occurrence_id': 'O', 'learner_profile_id': 7,
+            'learner_email': 'learner@example.invalid', 'learner_name': 'Module Learner',
+            'attendance_status': 'absent', 'attended_seconds': 0,
+        }], [], []]
+
+        rows = self.ns['result_rows']({'id': 'S', 'module_catalogue_id': 'M'}, session_number=1)
+
+        self.assertEqual([person['email'] for person in rows[0]['attendance']], ['learner@example.invalid'])
+        self.assertEqual([person['email'] for person in rows[0]['unmatchedAttendance']], ['other@example.invalid'])
+        self.assertEqual(rows[0]['unmatchedAttendance'][0]['suggestedLearnerProfileId'], 7)
+        self.assertEqual(rows[0]['attendanceCandidates'][0]['learnerProfileId'], 7)
 
     def test_launch_expectations_are_scoped_to_the_clicked_occurrence(self):
         functions(ROOT / 'session_results.py', {'launch_expectations'}, self.ns)
@@ -538,6 +786,8 @@ class EndpointTests(unittest.TestCase):
             'attendance_report_id': 'R', 'actual_end': '2026-09-16T10:00Z',
             'scheduled_start': '2026-09-16T09:00Z', 'scheduled_end': '2026-09-16T10:00Z'}],
             [{'occurrence_id': 'O', 'email': 'a@example.invalid', 'total_attendance_seconds': 240}],
+            [{'occurrence_id': 'O', 'learner_profile_id': 7, 'learner_email': 'a@example.invalid',
+              'learner_name': 'Learner A', 'attendance_status': 'present', 'attended_seconds': 240}], [],
             self.missing_archive(), [{'id': 'A', 'occurrence_id': 'O', 'artifact_type': 'recording',
             'created_datetime': None, 'archive_status': None, 'transcript_text': None}]]
         rows = self.ns['result_rows']({'id': 'S', 'attendees': ['a@example.invalid']}, session_number=1)
@@ -605,78 +855,100 @@ class EndpointTests(unittest.TestCase):
         self.assertNotIn('attendance_status', query)
         self.assertEqual(params[1:], ['S', 'O', 'a@example.invalid'])
 
-    def test_approved_excuse_stays_absent_until_completed_matching_catchup(self):
-        reports = types.ModuleType('learner_api.absence_reports')
-        reports._kbc_attendance_report_id = lambda key: key
-        for status, email, event_type, expected in [('scheduled', 'a@example.invalid', 'catch-up', 0),
-            ('completed', 'other@example.invalid', 'catch-up', 0), ('completed', 'a@example.invalid', 'student-support', 0),
-            ('completed', 'a@example.invalid', 'catch-up', 1)]:
-            with self.subTest(status=status, email=email, event_type=event_type), patch.dict(sys.modules, {'learner_api.absence_reports': reports}):
-                self.ns['read'].side_effect = [[{'enrolment_id': 7, 'email': 'a@example.invalid'}],
-                    [{'attendance_id': '7:teams:O', 'learner_id': 7, 'status': 'approved', 'catchup_status': status,
-                        'event_type': event_type, 'learner_email': email}]]
-                rows = [{'id': 'O', 'attendance': session_roster(['a@example.invalid'], [], complete=True)}]
-                self.ns['apply_recovery'](rows)
-                person = rows[0]['attendance'][0]
-                self.assertEqual(person['status'], 'absent')
-                self.assertEqual(person['attendance'], 0)
-                self.assertEqual(person['rawStatus'], 'absent')
-                self.assertEqual(person['rawAttendance'], 0)
-                self.assertEqual(person['effectiveAttendance'], expected)
-                self.assertEqual(person['finalOutcome'], 'made_up' if expected else 'absent_excused')
-                self.assertTrue(person['excused'])
+    def test_reported_catchup_is_shown_without_changing_original_absence(self):
+        self.ns['read'].return_value = [{
+            'occurrence_id': 'O', 'learner_email': 'a@example.invalid',
+            'recovery_status': 'catchup_booked',
+            'recovery_method': 'catch-up', 'recovery_reference': 'catch-up:7:1',
+        }]
+        rows = [{'id': 'O', 'attendance': session_roster(['a@example.invalid'], [], complete=True)}]
 
-    def test_only_approved_alternative_attendance_recovers_original_absence(self):
-        reports = types.ModuleType('learner_api.absence_reports')
-        reports._kbc_attendance_report_id = lambda key: key
-        alternatives = types.ModuleType('learner_api.alternative_recovery')
-        alternatives.alternative_occurrence_id = lambda key: str(key or '').removeprefix('alternative:')
-        for approval, expected in [('pending', 0), ('approved', 1)]:
-            with self.subTest(approval=approval), patch.dict(sys.modules, {
-                'learner_api.absence_reports': reports,
-                'learner_api.alternative_recovery': alternatives,
-            }):
-                self.ns['read'].side_effect = [
-                    [{'enrolment_id': 7, 'email': 'a@example.invalid'}],
-                    [{'attendance_id': '7:teams:O', 'learner_id': 7, 'status': approval,
-                      'recovery_method': 'alternative', 'catchup_event_key': 'alternative:TARGET',
-                      'catchup_status': None, 'event_type': None, 'learner_email': None}],
-                    [{'occurrence_id': 'TARGET', 'email': 'a@example.invalid',
-                      'total_attendance_seconds': 181, 'intervals': []}],
-                    [{'id': 'TARGET', 'status': 'completed', 'actual_end': '2026-09-16T11:00Z',
-                      'attendance_report_id': 'REPORT', 'scheduled_end': '2026-09-16T11:00Z'}],
-                ]
-                rows = [{'id': 'O', 'attendance': session_roster(['a@example.invalid'], [], complete=True)}]
-                self.ns['apply_recovery'](rows)
-                person = rows[0]['attendance'][0]
-                self.assertEqual(person['rawAttendance'], 0)
-                self.assertEqual(person['effectiveAttendance'], expected)
-                self.assertEqual(person['finalOutcome'], 'made_up' if expected else 'absent')
+        self.ns['apply_recovery'](rows)
 
-    def test_approved_alternative_without_attendance_is_missed(self):
-        reports = types.ModuleType('learner_api.absence_reports')
-        reports._kbc_attendance_report_id = lambda key: key
-        alternatives = types.ModuleType('learner_api.alternative_recovery')
-        alternatives.alternative_occurrence_id = lambda key: str(key or '').removeprefix('alternative:')
-        with patch.dict(sys.modules, {
-            'learner_api.absence_reports': reports,
-            'learner_api.alternative_recovery': alternatives,
-        }):
-            self.ns['read'].side_effect = [
-                [{'enrolment_id': 7, 'email': 'a@example.invalid'}],
-                [{'attendance_id': '7:teams:O', 'learner_id': 7, 'status': 'approved',
-                  'recovery_method': 'alternative', 'catchup_event_key': 'alternative:TARGET',
-                  'catchup_status': None, 'event_type': None, 'learner_email': None}],
-                [],
-                [{'id': 'TARGET', 'status': 'completed', 'actual_end': '2026-09-16T11:00Z',
-                  'attendance_report_id': 'REPORT', 'scheduled_end': '2026-09-16T11:00Z'}],
-            ]
-            rows = [{'id': 'O', 'attendance': session_roster(['a@example.invalid'], [], complete=True)}]
-            self.ns['apply_recovery'](rows)
-            person = rows[0]['attendance'][0]
-            self.assertEqual(person['recoveryStatus'], 'missed')
-            self.assertEqual(person['effectiveAttendance'], 0)
-            self.assertEqual(person['finalOutcome'], 'absent_excused')
+        person = rows[0]['attendance'][0]
+        self.assertEqual(person['status'], 'absent')
+        self.assertEqual(person['attendance'], 0)
+        self.assertEqual(person['finalOutcome'], 'absent')
+        self.assertEqual(person['effectiveAttendance'], 0)
+        self.assertTrue(person['absenceReported'])
+        self.assertEqual(person['recoveryStatus'], 'catchup_booked')
+        self.assertEqual(person['recoveryType'], 'catch-up')
+        self.assertFalse(person['excused'])
+
+    def test_absent_without_report_is_shown_as_no_recovery(self):
+        self.ns['read'].return_value = []
+        rows = [{'id': 'O', 'attendance': session_roster(['a@example.invalid'], [], complete=True)}]
+
+        self.ns['apply_recovery'](rows)
+
+        person = rows[0]['attendance'][0]
+        self.assertFalse(person['absenceReported'])
+        self.assertEqual(person['recoveryStatus'], 'none')
+        self.assertEqual(person['recoveryType'], 'none')
+        self.assertEqual(person['finalOutcome'], 'absent')
+
+    def test_completed_catchup_is_made_up_without_rewriting_original_absence(self):
+        self.ns['read'].return_value = [{
+            'occurrence_id': 'O', 'learner_email': 'a@example.invalid',
+            'recovery_status': 'completed',
+            'recovery_method': 'catch-up', 'recovery_reference': 'catch-up:7:1',
+        }]
+        rows = [{'id': 'O', 'attendance': session_roster(['a@example.invalid'], [], complete=True)}]
+
+        self.ns['apply_recovery'](rows)
+
+        person = rows[0]['attendance'][0]
+        self.assertEqual(person['status'], 'absent')
+        self.assertEqual(person['attendance'], 0)
+        self.assertEqual(person['rawStatus'], 'absent')
+        self.assertEqual(person['recoveryStatus'], 'completed')
+        self.assertTrue(person['catchupCompleted'])
+        self.assertTrue(person['excused'])
+        self.assertEqual(person['effectiveStatus'], 'made_up')
+        self.assertEqual(person['effectiveAttendance'], 1)
+        self.assertEqual(person['finalOutcome'], 'made_up')
+
+    def _alternative_recovery(self, register):
+        self.ns['read'].side_effect = [[{
+            'occurrence_id': 'O', 'learner_email': 'a@example.invalid',
+            'recovery_status': 'requested',
+            'recovery_method': 'alternative', 'recovery_reference': 'alternative:ALT',
+        }], register]
+        rows = [{'id': 'O', 'attendance': session_roster(['a@example.invalid'], [], complete=True)}]
+        self.ns['apply_recovery'](rows)
+        return rows[0]['attendance'][0]
+
+    def test_attended_alternative_session_is_made_up_without_rewriting_original_absence(self):
+        person = self._alternative_recovery([{'occurrence_id': 'ALT', 'learner_email': 'a@example.invalid'}])
+        query, params = self.ns['read'].call_args.args
+        self.assertIn("attendance_status='present'", query)
+        self.assertEqual(params, [['ALT'], ['a@example.invalid']])
+        self.assertEqual((person['rawStatus'], person['attendance']), ('absent', 0))
+        self.assertEqual((person['recoveryStatus'], person['recoveryType']), ('completed', 'alternative'))
+        self.assertEqual((person['effectiveStatus'], person['effectiveAttendance'], person['finalOutcome']),
+                         ('made_up', 1, 'made_up'))
+
+    def test_unattended_alternative_session_stays_absent(self):
+        person = self._alternative_recovery([])
+        self.assertEqual((person['recoveryStatus'], person['finalOutcome'], person['effectiveAttendance']),
+                         ('requested', 'absent', 0))
+
+    def test_recovery_report_never_changes_present_attendance(self):
+        self.ns['read'].return_value = [{
+            'occurrence_id': 'O', 'learner_email': 'a@example.invalid',
+            'recovery_status': 'requested',
+            'recovery_method': 'recorded', 'recovery_reference': '',
+        }]
+        rows = [{'id': 'O', 'attendance': session_roster(
+            ['a@example.invalid'], [{'email': 'a@example.invalid', 'total_attendance_seconds': 181}], complete=True,
+        )}]
+
+        self.ns['apply_recovery'](rows)
+
+        person = rows[0]['attendance'][0]
+        self.assertEqual(person['status'], 'present')
+        self.assertFalse(person['absenceReported'])
+        self.assertEqual(person['recoveryStatus'], 'none')
 
 
 class ArchiveWorkerTests(unittest.TestCase):

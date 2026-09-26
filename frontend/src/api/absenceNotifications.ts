@@ -59,11 +59,16 @@ export async function fetchAbsenceNotifications(account: AuthUser): Promise<Abse
 
   if (isCoachAccount(account)) {
     const result = await request<CoachAbsenceResponse>('/coach_api/coach/absence-reports');
+    const recoveryText: Record<string, string> = {
+      recorded: 'watch the recording',
+      'catch-up': 'attend a catch-up session',
+      alternative: 'attend an alternative group session',
+    };
     return result.items
-      .filter(report => report.recoveryMethod === 'recorded')
+      .filter(report => Boolean(report.recoveryMethod && recoveryText[report.recoveryMethod]))
       .map(report => ({
-        id: `recorded-absence:${report.id}`,
-        text: `${report.learner} reported they will miss ${report.sessionTitle} and watch the recording. Attendance will remain absent.`,
+        id: `recovery-absence:${report.id}`,
+        text: `${report.learner} reported an absence for ${report.sessionTitle} and chose to ${recoveryText[report.recoveryMethod || '']}.`,
         createdAt: report.reportedDate,
         type: 'attendance' as const,
         category: 'Attendance' as const,

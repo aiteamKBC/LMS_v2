@@ -20,6 +20,7 @@ class CoachNonDeliveryBookingTests(unittest.TestCase):
             'LearnerCalendarConflict',
             'reserve_coach_calendar_booking',
             'persist_calendar_sync_reservation',
+            'booking_non_delivery_reason',
         }
         selected = [
             node for node in tree.body
@@ -31,6 +32,7 @@ class CoachNonDeliveryBookingTests(unittest.TestCase):
             'time': time,
             'normalize_email': lambda value: value,
             'clean_text': lambda value: str(value or '').strip(),
+            'NON_DELIVERY_WEEKEND_MESSAGE': 'Sessions and meetings can only be booked Monday to Friday.',
             'england_non_delivery_reason': lambda value: (
                 'Sessions and meetings can only be booked Monday to Friday.'
                 if value.weekday() >= 5 else ''
@@ -46,13 +48,15 @@ class CoachNonDeliveryBookingTests(unittest.TestCase):
             self.reserve(
                 owner_email='coach@example.test', owner_name='Coach', learner_id=1,
                 learner_name='Learner', learner_email='learner@example.test',
-                session_type='catch-up', scheduled_date=date(2026, 9, 19),
+                # TEMPORARY: catch-ups may be booked at weekends, so this uses an MCM.
+                session_type='mcr', scheduled_date=date(2026, 9, 19),
                 scheduled_time=time(10, 0), duration_minutes=60, notes='',
                 idempotency_key='booking-weekend-1',
             )
 
     def test_reschedule_is_rejected_before_the_transaction_starts(self):
-        candidate = SimpleNamespace(scheduled_date=date(2026, 9, 20))
+        # TEMPORARY: catch-ups may be booked at weekends, so this uses an MCM.
+        candidate = SimpleNamespace(event_type='mcr', scheduled_date=date(2026, 9, 20))
         with self.assertRaisesRegex(self.conflict, 'Monday to Friday'):
             self.persist(candidate)
 

@@ -122,6 +122,7 @@ from curriculum_api.views import (
     get_program_config_rows,
     get_training_rows,
     england_non_delivery_reason,
+    NON_DELIVERY_WEEKEND_MESSAGE,
     group_authoring_detail_rows,
     is_operational_training_row,
     LIVE_SESSION_OCCURRENCES_TABLE,
@@ -2492,11 +2493,13 @@ def caseload_canonical_attendance(rows) -> dict[int, dict]:
     ]
     if not work:
         return {}
+    from learner_api.attendance_lectures import _merge_register_duplicates
 
     def load(item):
         profile_id, source = item
         try:
-            return profile_id, _summarize_attendance(combined_attendance_rows(source))
+            # A lecture in both the KBC register and Teams counts once, as on learner pages.
+            return profile_id, _summarize_attendance(_merge_register_duplicates(combined_attendance_rows(source)))
         except Exception as exc:
             logger.warning("Could not read canonical coach attendance for learner %s: %s", profile_id, exc)
             return profile_id, None
@@ -9632,6 +9635,10 @@ def ensure_learner_session_not_booked_in_week(
     scheduled_date: date,
     exclude_record_id: int | None = None,
 ) -> None:
+    # Catch-ups recover missed lectures, so a learner may book several in one
+    # week. Overlapping times are still rejected by the calendar conflict check.
+    if clean_text(session_type).lower() == "catch-up":
+        return
     existing = find_learner_same_session_in_week(
         learner_id=learner_id,
         learner_email=learner_email,
@@ -9673,7 +9680,7 @@ def reserve_coach_calendar_booking(
 
     owner_email = normalize_email(owner_email)
     session_type = clean_text(session_type).lower()
-    non_delivery_reason = england_non_delivery_reason(scheduled_date)
+    non_delivery_reason = booking_non_delivery_reason(session_type, scheduled_date)
     if non_delivery_reason:
         raise LearnerCalendarConflict(non_delivery_reason)
     if initial_status not in {CoachCalendarEvent.STATUS_SCHEDULED, CoachCalendarEvent.STATUS_NOT_SCHEDULED}:
@@ -9842,6 +9849,17 @@ def sync_scheduled_review_instance(record: CoachCalendarEvent) -> CoachCalendarE
         return record
 
 
+def booking_non_delivery_reason(session_type, scheduled_date) -> str:
+    """England non-delivery reason for a booking date.
+
+    TEMPORARY for testing: catch-ups may be booked at weekends; restore after testing.
+    """
+    reason = england_non_delivery_reason(scheduled_date)
+    if reason == NON_DELIVERY_WEEKEND_MESSAGE and clean_text(session_type).lower() == "catch-up":
+        return ""
+    return reason
+
+
 def persist_calendar_sync_reservation(
     candidate: CoachCalendarEvent, *, review_event: dict | None = None,
 ) -> CoachCalendarEvent:
@@ -9871,7 +9889,7 @@ def persist_calendar_sync_reservation(
         "occurrence_number",
     )
     if candidate.scheduled_date:
-        non_delivery_reason = england_non_delivery_reason(candidate.scheduled_date)
+        non_delivery_reason = booking_non_delivery_reason(candidate.event_type, candidate.scheduled_date)
         if non_delivery_reason:
             raise LearnerCalendarConflict(non_delivery_reason, candidate)
     with transaction.atomic():
@@ -11273,6 +11291,9 @@ def coach_timetable(request):
         return validation_error_response(exc)
     include_live_sessions = clean_text(request.GET.get("include_live_sessions", "1")).casefold() not in {"0", "false", "no", "off"}
     include_scheduler_queues = clean_text(request.GET.get("include_scheduler_queues", "1")).casefold() not in {"0", "false", "no", "off"}
+    # Catch-ups only: close this coach's elapsed catch-ups before listing them.
+    from learner_api.catchup_outcomes import sync_catchup_outcomes
+    sync_catchup_outcomes(owner_email=owner_email)
 
     try:
         timetable_payload = collect_generated_timetable(

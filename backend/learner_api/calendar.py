@@ -59,6 +59,7 @@ EVENT_TITLES = {
     "gateway": "Gateway",
     "other": "Other",
     "catch-up": "Catch-up Session",
+    "recorded-recovery": "Watch Recording",
     "student-support": "Student Support",
     "first-session": "First Session",
     # Onboarding reviews (see ONBOARDING_REVIEW_LABELS below).
@@ -75,6 +76,7 @@ EVENT_JSON_TYPES = {
     "gateway": "review",
     "other": "coaching",
     "catch-up": "coaching",
+    "recorded-recovery": "coaching",
     "student-support": "welfare",
     "first-session": "coaching",
     "eligibility-review": "review",
@@ -454,7 +456,7 @@ def _serialize_event(record, *, review_types_by_template=None, templates_by_id=N
         # A row can save while the Graph sync fails (no network, non-tenant
         # mailbox, ...). Without this the UI shows a confident "Booked" for a
         # meeting that reached nobody's calendar or inbox.
-        "invited": bool(_s(record.graph_event_id)),
+        "invited": bool(_s(record.graph_event_id)) or event_type == "recorded-recovery",
         "syncError": sync_warning,
         "syncState": getattr(record, "sync_state", ""),
         "syncWarning": _friendly_sync_warning(sync_warning) if sync_warning else "",
@@ -546,6 +548,56 @@ def coaching_events_for_learner(learner, mirror):
         if is_review_placeholder and record.status == CoachCalendarEvent.STATUS_NOT_SCHEDULED:
             continue
         events.append(_serialize_event(record, review_types_by_template=types, templates_by_id=templates))
+    return events
+
+
+def alternative_recovery_events_for_learner(learner_id):
+    """Expose approved cross-group recovery occurrences on the learner calendar."""
+    from coach_api.models import CoachAbsenceReport
+    from .alternative_recovery import ALTERNATIVE_METHOD, alternative_target_details
+
+    events = []
+    reports = CoachAbsenceReport.objects.filter(
+        learner_id=learner_id,
+        status=CoachAbsenceReport.STATUS_APPROVED,
+        recovery_method=ALTERNATIVE_METHOD,
+    )
+    for report in reports:
+        target = alternative_target_details(report.catchup_event_key, include_join_url=True)
+        if not target:
+            continue
+        try:
+            start = datetime.fromisoformat(f"{target['dateIso']}T{target['startTime']}")
+            end = datetime.fromisoformat(f"{target['dateIso']}T{target['endTime']}") if target.get('endTime') else None
+            duration = max(1, int((end - start).total_seconds() // 60)) if end else 60
+        except (KeyError, TypeError, ValueError):
+            continue
+        key = f"absence-alternative:{report.id}"
+        events.append({
+            "id": key,
+            "eventKey": key,
+            "title": target.get("title") or report.session_title,
+            "source": "live-session",
+            "type": "live-session",
+            "sequence": 1,
+            "status": CoachCalendarEvent.STATUS_SCHEDULED,
+            "date": target["dateIso"],
+            "targetDate": target["dateIso"],
+            "scheduledDate": target["dateIso"],
+            "scheduledTime": target["startTime"],
+            "durationMinutes": duration,
+            "coachName": "",
+            "coachEmail": report.owner_email,
+            "meetingProvider": "Microsoft Teams" if target.get("joinUrl") else "",
+            "meetingLink": target.get("joinUrl") or "",
+            "notes": "Alternative group session for an approved absence recovery plan.",
+            "invited": True,
+            "syncError": "",
+            "syncState": CoachCalendarEvent.SYNC_SYNCED,
+            "module": target.get("module") or report.session_title,
+            "cohort": target.get("cohort") or "",
+            "group": target.get("group") or "",
+        })
     return events
 
 
@@ -1147,6 +1199,7 @@ def learner_calendar(request, kind, pk):
 
     try:
         events = coaching_events_for_learner(learner, mirror)
+        events.extend(alternative_recovery_events_for_learner(pk))
 
         # Live curriculum sessions belong to the learner's explicit module
         # assignment, not to a possibly stale profile group label. Fall back to
@@ -1311,16 +1364,21 @@ def learner_calendar_book(request, kind, pk):
                 )
     else:
         if mirror is None:
-            # Everything else is a session *within* a running programme. A
-            # learner still waiting for their first session has one thing they
-            # may book, and this is not it -- said plainly, because "only
-            # Active learners" does not tell them what to do next.
             return _error(
                 "Only Active learners can book coach sessions. "
                 "Book your first learning session first.", 400
             )
-        owner_email = _s(mirror.coach_email)
-        owner_name = _s(mirror.coach_name) or "Coach"
+        # The source learner carries the current assignment. A mirror can lag
+        # after reassignment, and an explicitly cleared source assignment must
+        # not silently send a new invite to the former coach.
+        owner_email = _s(
+            getattr(learner, "coach_email", mirror.coach_email)
+            if hasattr(learner, "coach_email") else mirror.coach_email
+        )
+        owner_name = _s(
+            getattr(learner, "coach_name", mirror.coach_name)
+            if hasattr(learner, "coach_name") else mirror.coach_name
+        ) or "Coach"
         if not owner_email:
             return _error("No coach has been assigned to you yet. Please contact your programme team.", 400)
 
@@ -1339,7 +1397,8 @@ def learner_calendar_book(request, kind, pk):
         return _error("scheduledDate is required.", 400)
     if not scheduled_time:
         return _error("scheduledTime is required.", 400)
-    date_restriction = booking_date_restriction(scheduled_date)
+    # TEMPORARY for testing: catch-ups may be booked at weekends.
+    date_restriction = booking_date_restriction(scheduled_date, allow_weekend=session_type == "catch-up")
     if date_restriction is not None:
         return _error(date_restriction.message, 400)
 
@@ -1375,7 +1434,7 @@ def learner_calendar_book(request, kind, pk):
         payload = {**payload, "eventKey": resolved_event_key}
         direct_cycle_request = False
     requires_coach_approval = (
-        session_type in {"catch-up", "student-support", "gateway", "other"}
+        session_type in {"student-support", "gateway", "other"}
         or direct_cycle_request
     ) and not is_onboarding_review
     calendar_learner_id = int(mirror.id) if mirror is not None and not is_onboarding_review else pk

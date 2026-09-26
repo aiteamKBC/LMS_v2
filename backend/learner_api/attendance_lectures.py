@@ -18,12 +18,38 @@ from .attendance import combined_attendance_rows, _summarize_attendance
 from .dashboard_metrics import as_json
 from .learner_detail import SOURCE_MODELS
 from .progress_rules import progress_record_counts_as_achieved as progress_counts_as_achieved
-from .student_activity import CURRENT_SUBJECTS_SQL, _direct_progress_records
+from .student_activity import _direct_progress_records
 from .student_activity_access import student_activity_available
 from .training_plan_dashboard import rows as dict_rows
 
 log = logging.getLogger(__name__)
 ATTENDANCE_SOURCE_FIELDS = ('id', 'username', 'email', 'aptem_id', 'employer_id')
+
+# Attendance must use both persisted representations of the current learning
+# plan.  An empty JSON array is common while the normalized learner-plan mirror
+# already contains the assigned modules (for example immediately after a plan
+# rebuild).  The shared student-activity query intentionally treats a JSON
+# array as authoritative, so attendance keeps its own union rather than
+# changing that behaviour for unrelated learner screens.
+ATTENDANCE_SUBJECTS_SQL = '''
+    WITH source AS (
+        SELECT id, CASE WHEN jsonb_typeof("Training_plan"::jsonb)='array'
+            THEN "Training_plan"::jsonb ELSE "Learning_plan"::jsonb END AS plan
+        FROM enrolment."Created_users" WHERE id=%s
+    ), assigned AS (
+        SELECT entry->>'moduleId' AS module_id FROM source
+        CROSS JOIN LATERAL jsonb_array_elements(
+            CASE WHEN jsonb_typeof(plan)='array' THEN plan ELSE '[]'::jsonb END
+        ) entry
+        UNION
+        SELECT coalesce(m.curriculum_module_id,nullif(m.module_ref,'')) FROM source
+        JOIN "Learner".learners l ON l.enrolment_id=source.id
+        JOIN "Learner".learner_training_plan_modules m ON m.learner_id=l.id
+    )
+    SELECT DISTINCT cm.module_catalogue_id,cm.title
+    FROM assigned JOIN curriculum.modules cm ON cm.module_catalogue_id=assigned.module_id
+    WHERE (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent, '') <> '')
+'''
 
 
 def _text(value):
@@ -99,10 +125,9 @@ def report_id(row):
 def read_native_occurrences(source):
     """Current assigned-module occurrences expected for, or attended by, the learner.
 
-    The saved Teams invite list remains authoritative for sessions with no
-    attendance evidence. A completed Teams report is stronger evidence for an
-    attendee, though, and must not be hidden merely because the series invite
-    list is stale (for example after a learner joined the cohort later).
+    Current module assignment is authoritative for the learner's schedule.  A
+    saved Teams invite list may be stale after assignment changes, so it must
+    not hide a module session.  Completed attendance evidence is merged below.
     """
     if not source.email:
         return []
@@ -110,7 +135,7 @@ def read_native_occurrences(source):
         # An old Teams invitation is not a current curriculum assignment.
         # Use the same saved plan as My Learning and Training Plan, then exclude
         # deleted delivery modules and replaced meeting series below.
-        cur.execute(CURRENT_SUBJECTS_SQL, [source.id])
+        cur.execute(ATTENDANCE_SUBJECTS_SQL, [source.id])
         module_ids = [row[0] for row in cur.fetchall()]
         if not module_ids:
             return []
@@ -130,17 +155,7 @@ def read_native_occurrences(source):
               AND m.deleted_at IS NULL AND NOT coalesce(m.is_programme_deleted,false)
               AND lower(btrim(s.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
               AND lower(btrim(o.status)) NOT IN ('cancelled','canceled','deleted','failed','superseded')
-              AND (EXISTS (SELECT 1 FROM jsonb_array_elements_text(
-                    CASE WHEN jsonb_typeof(s.attendees)='array' THEN s.attendees ELSE '[]'::jsonb END) e
-                    WHERE lower(btrim(e))=%s)
-                   OR (o.attendance_report_id IS NOT NULL AND o.attendance_report_id<>''
-                       AND EXISTS(SELECT 1 FROM curriculum.live_session_attendance a
-                           WHERE a.occurrence_id=o.id AND lower(btrim(a.email))=%s
-                             AND a.total_attendance_seconds>0))
-                   OR EXISTS(SELECT 1 FROM curriculum.live_session_join_launches j
-                       WHERE j.occurrence_id=o.id AND lower(btrim(j.viewer_email))=%s))
-            ORDER BY o.scheduled_start,o.id''', [_key(source.email), module_ids,
-                                                _key(source.email), _key(source.email), _key(source.email)])
+            ORDER BY o.scheduled_start,o.id''', [_key(source.email), module_ids])
         result = dict_rows(cur)
     now = timezone.now()
     for row in result:
@@ -168,10 +183,15 @@ def lecture_register(source):
     by_occurrence = {str(row['session_id']): row for row in scheduled}
     now = timezone.now()
     result = []
+    attended_alternatives = set()
     for row in records:
         if row.get('source') == 'microsoft-teams':
             schedule = by_occurrence.pop(str(row['session_id']), None)
             if schedule is None:
+                # Another group's occurrence joined as an approved alternative
+                # recovers the original absence; it is not a lecture of its own.
+                if row.get('eligibility_reason') == 'approved_recovery_guest' and row['attendance_status'] == 'present':
+                    attended_alternatives.add(str(row['session_id']))
                 # A cancelled/deleted occurrence no longer belongs in the workspace.
                 continue
             if schedule['scheduled_end'] > now:
@@ -197,8 +217,65 @@ def lecture_register(source):
         else row
         for row in result
     ]
+    if attended_alternatives:
+        result = _apply_attended_alternatives(result, source.id, attended_alternatives)
     from .attendance_confirmation import apply_confirmations, read_confirmations
-    return apply_confirmations(result, read_confirmations(source.id))
+    return _merge_register_duplicates(apply_confirmations(result, read_confirmations(source.id)))
+
+
+def _approved_alternative_targets(learner_id):
+    """Approved alternative-session reports as {absence report id: target occurrence}."""
+    from coach_api.models import CoachAbsenceReport
+    from .alternative_recovery import ALTERNATIVE_METHOD, alternative_occurrence_id
+    reports = CoachAbsenceReport.objects.filter(
+        learner_id=learner_id, status=CoachAbsenceReport.STATUS_APPROVED, recovery_method=ALTERNATIVE_METHOD,
+    ).values_list('attendance_id', 'catchup_event_key')
+    return {str(attendance_id): alternative_occurrence_id(key) for attendance_id, key in reports}
+
+
+def _apply_attended_alternatives(rows, learner_id, attended_occurrences):
+    """Mark a missed Teams lecture made up once its approved alternative was attended.
+
+    Attendance at the alternative comes from the verified Teams report (more
+    than three minutes). The original absence keeps its raw Teams status.
+    """
+    targets = _approved_alternative_targets(learner_id)
+    made_up = {'catchup_completed': True, 'excused': True, 'effective_attendance': 1,
+               'effective_attendance_status': 'made_up', 'final_outcome': 'made_up'}
+    return [
+        {**row, **made_up}
+        if row.get('source') == 'microsoft-teams' and row.get('attendance_status') == 'absent'
+        and targets.get(str(report_id(row))) in attended_occurrences
+        else row
+        for row in rows
+    ]
+
+
+def _merge_register_duplicates(rows):
+    """Count a lecture recorded in both the KBC register and Teams once.
+
+    The Teams occurrence is kept (it carries the schedule and join link). A KBC
+    row only merges into exactly one Teams row of the same module and date,
+    and passes on an attended outcome the Teams row does not already have.
+    """
+    teams = {}
+    for row in rows:
+        if row.get('source') == 'microsoft-teams':
+            teams.setdefault((row['session_date'], _module_key(row.get('module_title'))), []).append(row)
+    attended = {'present', 'late'}
+    merged = []
+    for row in rows:
+        if row.get('source') == 'kbc-attendance':
+            matches = teams.get((row['session_date'], _module_key(row.get('module_title'))), [])
+            if len(matches) == 1 and _module_key(row.get('module_title')):
+                target = matches[0]
+                if row['attendance_status'] in attended and target['attendance_status'] not in attended:
+                    target.update({key: row[key] for key in (
+                        'attendance_status', 'minutes_late', 'attendance_confirmed', 'credited_minutes')
+                        if key in row})
+                continue
+        merged.append(row)
+    return merged
 
 
 def read_legacy_metadata(source, register):
@@ -275,7 +352,7 @@ def read_native_components(source, module_refs=None):
     if module_refs is not None and not module_refs:
         return [], _direct_progress_records(source.id)
     with connections['enrolment'].cursor() as cur:
-        cur.execute(CURRENT_SUBJECTS_SQL, [source.id])
+        cur.execute(ATTENDANCE_SUBJECTS_SQL, [source.id])
         modules = [row[0] for row in cur.fetchall() if module_refs is None or row[0] in module_refs]
         cur.execute('''SELECT c.id,c.module_catalogue_id,c.week_id,c.type,c.title,c.description,
             jsonb_build_object(
@@ -314,7 +391,7 @@ def read_assigned_modules(source):
     its zero/upcoming state.
     """
     with connections['enrolment'].cursor() as cur:
-        cur.execute(CURRENT_SUBJECTS_SQL, [source.id])
+        cur.execute(ATTENDANCE_SUBJECTS_SQL, [source.id])
         return [{'id': row[0], 'title': row[1]} for row in cur.fetchall()]
 
 
@@ -338,10 +415,9 @@ def _component_for(row, components):
     return candidates[0] if len(candidates) == 1 else None
 
 
-def _duration(row):
-    if row.get('scheduled_start') and row.get('scheduled_end'):
-        return round((row['scheduled_end'] - row['scheduled_start']).total_seconds() / 60)
-    return None
+# Every live session counts as a two-hour lecture, the same rule the audit uses
+# (audit_api.views.LIVE_SESSION_HOURS), whatever its schedule or source.
+LIVE_SESSION_MINUTES = 120
 
 
 def build_lectures(register, legacy_meta, legacy_activities, components, kind, learner_id):
@@ -369,7 +445,7 @@ def build_lectures(register, legacy_meta, legacy_activities, components, kind, l
             'moduleId': module_id, 'module': row.get('module_title') or 'Other lectures',
             'source': source, 'startTime': row['session_start_time'].strftime('%H:%M') if row.get('session_start_time') else '',
             'endTime': row['session_end_time'].strftime('%H:%M') if row.get('session_end_time') else '',
-            'durationMinutes': _duration(row), 'contentSummary': '', 'ksbs': [], 'ksbScope': None, 'activities': [],
+            'durationMinutes': LIVE_SESSION_MINUTES, 'contentSummary': '', 'ksbs': [], 'ksbScope': None, 'activities': [],
             'startsAt': _aware(row['scheduled_start']).isoformat() if row.get('scheduled_start') else None,
             'endsAt': _aware(row['scheduled_end']).isoformat() if row.get('scheduled_end') else None,
             'joinUrl': (f"/learner_api/session-results/{kind}/{learner_id}/{row['live_session_id']}/sessions/{row['session_number']}/join/" if source == 'microsoft-teams' and row.get('live_session_id') and row.get('session_number') else _text(row.get('join_url'))),
@@ -393,8 +469,6 @@ def build_lectures(register, legacy_meta, legacy_activities, components, kind, l
             lecture['ksbs'] = ksb_codes(meta.get('ksbs'))
             if lecture['ksbs']:
                 lecture['ksbScope'] = 'lecture'
-            if meta.get('activity_hours') is not None:
-                lecture['durationMinutes'] = float(meta['activity_hours']) * 60
             if meta.get('activity_time'):
                 lecture['startTime'] = meta['activity_time'].strftime('%H:%M')
             key = ('legacy', meta.get('group_id'), row.get('module_title'))
@@ -449,7 +523,8 @@ def build_lectures(register, legacy_meta, legacy_activities, components, kind, l
                 lecture['monthlyLog']['month'] = lecture['date'][:7]
         if lecture['status'] == 'absent':
             activities = lecture['activities']
-            lecture['catchupStatus'] = ('pending' if source == 'microsoft-teams' else 'completed' if activities and all(a['completed'] for a in activities) else 'pending')
+            lecture['catchupStatus'] = ('completed' if row.get('catchup_completed') else 'pending') if source == 'microsoft-teams' else (
+                'completed' if activities and all(a['completed'] for a in activities) else 'pending')
         lectures.append(lecture)
     return sorted(lectures, key=lambda r: (r['date'], r['startTime'], r['id']))
 
@@ -461,6 +536,28 @@ def lecture_totals(lectures):
             'covered': sum(row['catchupStatus'] == 'completed' for row in lectures),
             'upcoming': sum(row['status'] == 'upcoming' for row in lectures),
             'attendanceRate': round(100 * attended / (attended + absent)) if attended + absent else None}
+
+
+def _mark_missed_catchups(lectures, reported):
+    """Show a missed Teams lecture's catch-up as missed once it ended without the learner."""
+    pending = {}
+    for lecture in lectures:
+        report = reported.get(lecture['reportId'])
+        if (lecture['source'] == 'microsoft-teams' and lecture['status'] == 'absent'
+                and lecture['catchupStatus'] == 'pending' and report
+                and report.get('recovery_method') == 'catch-up' and report.get('catchup_event_key')):
+            pending.setdefault(report['catchup_event_key'], []).append(lecture)
+    if not pending:
+        return
+    from coach_api.models import CoachCalendarEvent
+    from .catchup_outcomes import learner_attended_catchup
+    completed = CoachCalendarEvent.objects.filter(
+        event_key__in=list(pending), event_type__iexact='catch-up', status=CoachCalendarEvent.STATUS_COMPLETED,
+    ).values_list('event_key', flat=True)
+    for event_key in completed:
+        if not learner_attended_catchup(event_key):
+            for lecture in pending[event_key]:
+                lecture['catchupStatus'] = 'missed'
 
 
 def read_workspace(source, kind):
@@ -479,7 +576,8 @@ def read_workspace(source, kind):
             WHERE enrolment_id=%s''', [source.id])
         profiles = dict_rows(cur)
         coach = (profiles[0].get('coach_name') or profiles[0].get('coach_email') or '') if len(profiles) == 1 else ''
-        cur.execute('''SELECT id,attendance_id,status,session_title,created_at,updated_at
+        cur.execute('''SELECT id,attendance_id,status,session_title,created_at,updated_at,
+            recovery_method,catchup_event_key
             FROM "Coach".coach_absence_report WHERE learner_id=%s ORDER BY created_at DESC''', [source.id])
         reports = dict_rows(cur)
         cur.execute('''SELECT id,event_type,status,updated_at FROM "Coach".coach_calendar_event
@@ -505,6 +603,7 @@ def read_workspace(source, kind):
             (lecture['status'] == 'pending' and lecture['date'] == timezone.localdate().isoformat())) and not report
         if lecture['status'] in {'completed', 'late'} and lecture['updatedAt']:
             recent.append({'id': lecture['id'], 'title': f"{lecture['title']} attended", 'at': lecture['updatedAt'], 'type': 'attendance'})
+    _mark_missed_catchups(lectures, reported)
     for report in reports:
         recent.append({'id': f"report:{report['id']}", 'title': f"Absence report: {report['session_title']} ({report['status']})",
                        'at': _aware(report['updated_at']).isoformat(), 'type': 'absence'})
@@ -551,6 +650,10 @@ def attendance_lectures(request, kind, learner_id):
         source = model.all_learners.filter(pk=learner_id).only(*ATTENDANCE_SOURCE_FIELDS).first()
         if source is None:
             return JsonResponse({'error': 'Learner not found.'}, status=404)
+        if getattr(source, 'email', ''):
+            # Catch-ups only: settle this learner's elapsed catch-ups before reading recoveries.
+            from .catchup_outcomes import sync_catchup_outcomes
+            sync_catchup_outcomes(learner_email=getattr(source, 'email', ''))
         payload = read_workspace(source, kind)
         payload['csrfToken'] = get_token(request)
     except Exception:

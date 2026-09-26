@@ -95,18 +95,19 @@ class BookingEndpointRestrictionTests(SimpleTestCase):
                                  full_name='Test Learner', email='learner@example.com')
         source_model = Mock()
         source_model.all_learners.filter.return_value.first.return_value = learner
-        record = SimpleNamespace(event_key='catch-up:248:1:2026-09-15')
+        record = SimpleNamespace(pk=1, event_key='catch-up:248:1:2026-10-15', event_type='catch-up')
         with patch.object(module, 'SOURCE_MODELS', {'commercial': source_model}), \
                 patch.object(module, 'learner_profile_for_source', return_value=mirror), \
                 patch('learner_api.booking_calendar.timezone.localdate', return_value=date(2026, 9, 14)), \
                 patch.object(module.CoachCalendarEvent.objects, 'filter') as events, \
                 patch('learner_api.calendar_connections.booking_conflicts', return_value=False), \
                 patch('coach_api.views.reserve_coach_calendar_booking', return_value=(record, True)) as reserve, \
-                patch('coach_api.views.synchronize_reserved_calendar_event') as sync, \
+                patch('coach_api.views.build_booked_calendar_event', return_value={}), \
+                patch('coach_api.views.synchronize_reserved_calendar_event', return_value=(record, '', True)) as sync, \
                 patch.object(module, '_serialize_event', return_value={'eventKey': record.event_key}):
             events.return_value.first.return_value = None
             request = RequestFactory().post('/book/', data=json.dumps({
-                'sessionType': 'catch-up', 'scheduledDate': '2026-09-15',
+                'sessionType': 'catch-up', 'scheduledDate': '2026-10-15',
                 'scheduledTime': '11:00', 'durationMinutes': 60,
             }), content_type='application/json')
             response = inspect.unwrap(module.learner_calendar_book)(request, 'commercial', 101)
@@ -114,14 +115,13 @@ class BookingEndpointRestrictionTests(SimpleTestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(reserve.call_args.kwargs['owner_name'], 'Test curriculum')
         self.assertEqual(reserve.call_args.kwargs['owner_email'], 'curriculum@example.com')
-        # This existing approval flow must still wait for the coach.
-        self.assertTrue(json.loads(response.content)['approvalRequired'])
-        sync.assert_not_called()
+        self.assertNotIn('approvalRequired', json.loads(response.content))
+        sync.assert_called_once()
 
     def test_new_booking_rejects_explicitly_cleared_assignment(self):
         from . import calendar as module
 
-        learner = SimpleNamespace(case_owner='', coach_name='', coach_email='')
+        learner = SimpleNamespace(username='Test Learner', email='learner@example.com', case_owner='', coach_name='', coach_email='')
         mirror = SimpleNamespace(coach_email='old@example.com', coach_name='Old coach')
         source_model = Mock()
         source_model.all_learners.filter.return_value.first.return_value = learner
@@ -129,7 +129,7 @@ class BookingEndpointRestrictionTests(SimpleTestCase):
                 patch.object(module, 'learner_profile_for_source', return_value=mirror), \
                 patch('coach_api.views.reserve_coach_calendar_booking') as reserve:
             request = RequestFactory().post('/book/', data=json.dumps({
-                'sessionType': 'catch-up', 'scheduledDate': '2026-09-15', 'scheduledTime': '11:00',
+                'sessionType': 'catch-up', 'scheduledDate': '2026-10-15', 'scheduledTime': '11:00',
             }), content_type='application/json')
             response = inspect.unwrap(module.learner_calendar_book)(request, 'commercial', 101)
         self.assertEqual(response.status_code, 400)
@@ -152,7 +152,8 @@ class BookingEndpointRestrictionTests(SimpleTestCase):
         # own booking rule and must never reach a database or Microsoft Graph.
         view = inspect.unwrap(module.learner_calendar_book)
 
-        for session_type in module.BOOKABLE_TYPES:
+        # TEMPORARY for testing: catch-ups may be booked at weekends; restore after testing.
+        for session_type in [value for value in module.BOOKABLE_TYPES if value != "catch-up"]:
             with self.subTest(session_type=session_type), \
                     patch.object(module, "SOURCE_MODELS", {"commercial": source_model}), \
                     patch.object(module, "learner_profile_for_source", return_value=mirror), \
@@ -171,6 +172,38 @@ class BookingEndpointRestrictionTests(SimpleTestCase):
 
             self.assertEqual(response.status_code, 400)
             self.assertIn("Saturdays or Sundays", json.loads(response.content)["error"])
+
+    def test_catch_up_booking_is_rejected_on_a_bank_holiday_before_graph_sync(self):
+        from . import calendar as module
+
+        learner = SimpleNamespace(username="Test Learner", email="learner@example.com")
+        mirror = SimpleNamespace(
+            coach_email="coach@example.com", coach_name="Coach",
+            full_name="Test Learner", email="learner@example.com",
+        )
+        source_model = Mock()
+        source_model.all_learners.filter.return_value.first.return_value = learner
+        view = inspect.unwrap(module.learner_calendar_book)
+
+        with patch.object(module, "SOURCE_MODELS", {"commercial": source_model}), \
+                patch.object(module, "learner_profile_for_source", return_value=mirror), \
+                patch("learner_api.booking_calendar.timezone.localdate", return_value=date(2026, 9, 1)), \
+                patch("coach_api.views.reserve_coach_calendar_booking") as reserve:
+            request = RequestFactory().post(
+                "/learner_api/calendar/commercial/101/book/",
+                data=json.dumps({
+                    "sessionType": "catch-up",
+                    "scheduledDate": "2026-12-28",
+                    "scheduledTime": "10:00",
+                    "durationMinutes": 60,
+                }),
+                content_type="application/json",
+            )
+            response = view(request, "commercial", 101)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("UK bank holidays", json.loads(response.content)["error"])
+        reserve.assert_not_called()
 
     def test_a_direct_booking_request_for_a_past_date_is_rejected(self):
         from . import calendar as module

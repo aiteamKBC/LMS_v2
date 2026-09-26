@@ -2,15 +2,19 @@
 import hashlib
 import logging
 from datetime import date, datetime, time
+from html import escape
 from uuid import uuid4
 
 from django.conf import settings
-from django.db import DatabaseError, IntegrityError, transaction
+from django.db import DatabaseError, IntegrityError, router, transaction
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
 
 from coach_api.models import CoachAbsenceReport, CoachCalendarEvent
+from curriculum_api.live_session_absences import record_reported_absence
+from curriculum_api.models import LiveSessionAbsence
+from login import email_azure
 from login.permissions import learner_self_or_admin
 
 from .attendance_lectures import lecture_register, session_key, report_id
@@ -183,6 +187,64 @@ class RecoveryPlanError(ValueError):
     pass
 
 
+def _recording_recovery_event(report, learner, mirror, recording_date, recording_time, duration_minutes):
+    """Save the learner-selected recording slot as a local calendar task."""
+    calendar_learner_id = int(getattr(mirror, "id", 0) or getattr(learner, "id", 0))
+    return CoachCalendarEvent.objects.create(
+        event_key=f"absence-recording:{report.id}",
+        idempotency_key=f"absence-recovery:{report.id}",
+        owner_email=report.owner_email,
+        owner_name=report.owner_name,
+        learner_id=calendar_learner_id,
+        learner_name=report.learner_name,
+        learner_email=report.learner_email,
+        event_type="recorded-recovery",
+        sequence=1,
+        target_date=recording_date,
+        scheduled_date=recording_date,
+        scheduled_time=recording_time,
+        duration_minutes=duration_minutes,
+        status=CoachCalendarEvent.STATUS_SCHEDULED,
+        notes=f"Watch the recording for: {report.session_title}",
+        sync_state=CoachCalendarEvent.SYNC_SYNCED,
+    )
+
+
+def _email_coach_recovery(report, *, recovery_details=""):
+    """Best-effort coach notification containing only the selected recovery plan."""
+    labels = {
+        "recorded": "Watch the recording",
+        "catch-up": "Catch-up session",
+        ALTERNATIVE_METHOD: "Alternative group session",
+    }
+    label = labels.get(report.recovery_method)
+    if not label or not report.owner_email:
+        return
+    detail_line = f"\nScheduled: {recovery_details}" if recovery_details else ""
+    text_body = (
+        f"{report.learner_name} reported an absence for {report.session_title}.\n"
+        f"Recovery method: {label}.{detail_line}"
+    )
+    html_detail = f"<p><strong>Scheduled:</strong> {escape(recovery_details)}</p>" if recovery_details else ""
+    html_body = (
+        f"<p>{escape(report.learner_name)} reported an absence for "
+        f"{escape(report.session_title)}.</p>"
+        f"<p><strong>Recovery method:</strong> {escape(label)}</p>{html_detail}"
+    )
+    try:
+        sent, detail = email_azure.send_mail(
+            to=report.owner_email,
+            subject=f"Learner recovery plan: {report.session_title}",
+            html_body=html_body,
+            text_body=text_body,
+            sender_name="Kent Business College LMS",
+        )
+        if not sent:
+            logger.warning("Coach recovery email was not sent for absence report %s: %s", report.id, detail)
+    except Exception:
+        logger.exception("Coach recovery email failed for absence report %s", report.id)
+
+
 def _catchup_booking(learner, mirror, event_key, session_date, *, lock=False):
     """Recheck the saved appointment; matching IDs never override another email."""
     query = CoachCalendarEvent.objects
@@ -250,6 +312,9 @@ def learner_absence_reports(request, kind, learner_id):
     recovery_method = request.POST.get("recoveryMethod", "").strip()
     catchup_event_key = request.POST.get("catchupEventKey", "").strip()
     target_occurrence_id = request.POST.get("targetOccurrenceId", "").strip()
+    recording_date_text = request.POST.get("recordingDate", "").strip()
+    recording_time_text = request.POST.get("recordingTime", "").strip()
+    recording_duration_text = request.POST.get("recordingDurationMinutes", "").strip()
     upload = request.FILES.get("evidence")
 
     if not session_title or not session_date_text:
@@ -265,6 +330,10 @@ def learner_absence_reports(request, kind, learner_id):
         return _error('Book or select a catch-up session before submitting your absence report.')
     if recovery_method == 'recorded' and catchup_event_key:
         return _error('A recording recovery plan cannot include a catch-up booking.')
+    if recovery_method == 'recorded' and (not recording_date_text or not recording_time_text):
+        return _error('Choose when you plan to watch the recording.')
+    if recovery_method != 'recorded' and (recording_date_text or recording_time_text or recording_duration_text):
+        return _error('A recording time can only be used with the recording recovery plan.')
     if recovery_method == ALTERNATIVE_METHOD and not target_occurrence_id:
         return _error('Choose an available alternative session.')
     if recovery_method != ALTERNATIVE_METHOD and target_occurrence_id:
@@ -277,8 +346,20 @@ def learner_absence_reports(request, kind, learner_id):
     try:
         parsed_date = date.fromisoformat(session_date_text)
         parsed_time = time.fromisoformat(session_time_text) if session_time_text else None
+        recording_date = date.fromisoformat(recording_date_text) if recording_date_text else None
+        recording_time = time.fromisoformat(recording_time_text) if recording_time_text else None
     except ValueError:
         return _error("Invalid session date or time.")
+    try:
+        recording_duration = int(recording_duration_text or 60)
+        if not 15 <= recording_duration <= 480:
+            raise ValueError
+    except (TypeError, ValueError):
+        return _error('Recording duration must be between 15 and 480 minutes.')
+    if recovery_method == 'recorded':
+        recording_start = datetime.combine(recording_date, recording_time)
+        if recording_date < parsed_date or recording_start <= timezone.localtime().replace(tzinfo=None):
+            return _error('Choose a future recording time on or after the lecture date.')
 
     try:
         attendance_id = _resolve_absent_attendance(
@@ -319,6 +400,8 @@ def learner_absence_reports(request, kind, learner_id):
 
     active = learner_profile_for_source(learner, learner_id, active_only=True)
     original_occurrence_id = session_id[len('teams:'):] if session_id.startswith('teams:') else ''
+    if original_occurrence_id and active is None:
+        return _error('This live-session absence could not be linked to your learner profile.', 409)
     if recovery_method == ALTERNATIVE_METHOD:
         try:
             alternative = validate_alternative_occurrence(
@@ -330,9 +413,10 @@ def learner_absence_reports(request, kind, learner_id):
         if alternative is None:
             return _error('That alternative session is no longer eligible. Choose another option.', 409)
         catchup_event_key = alternative_event_key(target_occurrence_id)
+    catchup_booking = None
     if recovery_method == 'catch-up':
         try:
-            _catchup_booking(learner, active, catchup_event_key, parsed_date)
+            catchup_booking = _catchup_booking(learner, active, catchup_event_key, parsed_date)
         except RecoveryPlanError as exc:
             return _error(str(exc))
         except DatabaseError:
@@ -369,7 +453,9 @@ def learner_absence_reports(request, kind, learner_id):
     try:
         with transaction.atomic():
             if recovery_method == 'catch-up':
-                _catchup_booking(learner, active, catchup_event_key, parsed_date, lock=True)
+                catchup_booking = _catchup_booking(
+                    learner, active, catchup_event_key, parsed_date, lock=True,
+                )
             elif recovery_method == ALTERNATIVE_METHOD:
                 # Recheck eligibility inside the save transaction so an expired
                 # or cancelled target cannot be submitted from a stale dialog.
@@ -389,7 +475,9 @@ def learner_absence_reports(request, kind, learner_id):
                 reason_category=reason_category,
                 reason=reason,
                 reported_by=learner_email or learner_name,
-                status=CoachAbsenceReport.STATUS_PENDING,
+                status=(CoachAbsenceReport.STATUS_APPROVED
+                        if recovery_method in {'recorded', 'catch-up', ALTERNATIVE_METHOD}
+                        else CoachAbsenceReport.STATUS_PENDING),
                 evidence_provided=bool(upload or evidence_text),
                 coach_note="",
                 recovery_method=recovery_method,
@@ -400,6 +488,22 @@ def learner_absence_reports(request, kind, learner_id):
                 evidence_text=evidence_text,
                 previous_absences=previous_absences,
             )
+            if original_occurrence_id:
+                record_reported_absence(
+                    database=router.db_for_write(LiveSessionAbsence) or 'default',
+                    occurrence_id=original_occurrence_id,
+                    learner_profile_id=active.id,
+                    source_kind=kind,
+                    source_learner_id=learner_id,
+                    learner_email=learner_email,
+                    learner_name=learner_name,
+                    recovery_method=recovery_method,
+                    recovery_reference=catchup_event_key or '',
+                )
+            if recovery_method == 'recorded':
+                _recording_recovery_event(
+                    report, learner, active, recording_date, recording_time, recording_duration,
+                )
     except RecoveryPlanError as exc:
         if blob_name:
             try:
@@ -433,4 +537,16 @@ def learner_absence_reports(request, kind, learner_id):
                 pass
         return _error("The evidence was uploaded, but the absence report could not be saved.", 502)
 
+    recovery_details = ""
+    if recovery_method == 'recorded':
+        recovery_details = f"{recording_date.isoformat()} at {recording_time.strftime('%H:%M')}"
+    elif recovery_method == 'catch-up':
+        recovery_details = (
+            f"{catchup_booking.scheduled_date.isoformat()} at "
+            f"{catchup_booking.scheduled_time.strftime('%H:%M')}"
+        )
+    elif recovery_method == ALTERNATIVE_METHOD:
+        target = alternative or {}
+        recovery_details = " ".join(filter(None, [target.get('dateIso'), target.get('startTime'), target.get('group')]))
+    _email_coach_recovery(report, recovery_details=recovery_details)
     return JsonResponse(_serialize(report), status=201)

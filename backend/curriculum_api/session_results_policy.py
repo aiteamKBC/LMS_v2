@@ -4,9 +4,71 @@ import hashlib
 import io
 import json
 import re
+import unicodedata
 from datetime import datetime, timezone
 
 PRESENT_AFTER_SECONDS = 180
+
+
+def attendance_name_key(value):
+    """Return a conservative exact-name key for an unverified Teams row."""
+
+    text = unicodedata.normalize('NFKC', str(value or '')).strip().casefold()
+    text = re.sub(r'\s+\((?:unverified|external|guest)\)\s*$', '', text)
+    return ' '.join(text.split())
+
+
+def attendance_identity(record):
+    """Read both documented and legacy Graph attendance identity shapes."""
+
+    if not isinstance(record, dict):
+        return '', ''
+    raw = record.get('raw_data')
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            raw = {}
+    source = raw if isinstance(raw, dict) else record
+    identity = source.get('identity') if isinstance(source.get('identity'), dict) else {}
+    display_name = str(identity.get('displayName') or identity.get('name') or '').strip()
+    identity_id = str(identity.get('id') or '').strip()
+    if display_name or identity_id:
+        return display_name, identity_id
+    for key in ('user', 'guest', 'phone', 'encrypted'):
+        value = identity.get(key)
+        if not isinstance(value, dict):
+            continue
+        display_name = str(value.get('displayName') or value.get('name') or '').strip()
+        identity_id = str(value.get('id') or '').strip()
+        if display_name or identity_id:
+            return display_name, identity_id
+    return '', ''
+
+
+def attendance_display_name(record):
+    """Recover a display name without changing the stored raw Teams evidence."""
+
+    if not isinstance(record, dict):
+        return ''
+    existing = str(record.get('display_name') or '').strip()
+    if existing:
+        return existing
+    display_name, _identity_id = attendance_identity(record)
+    if display_name:
+        return display_name
+    raw = record.get('raw_data')
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            raw = {}
+    source = raw if isinstance(raw, dict) else record
+    for key in ('displayName', 'participantDisplayName', 'name'):
+        display_name = str(source.get(key) or '').strip()
+        if display_name:
+            return display_name
+    return ''
 
 
 def instant(value):
@@ -57,9 +119,12 @@ def session_roster(expected, records, *, complete):
     for record in records:
         email = str(record.get('email') or '').strip().casefold()
         unidentified |= not bool(email)
-        key = email or 'unmatched:' + str(record.get('id') or record.get('graph_record_id'))
-        person = people.setdefault(key, {'email': email, 'name': record.get('display_name') or 'Unmatched participant', 'expected': False, 'records': []})
-        person['name'] = record.get('display_name') or person['name']
+        source_id = str(record.get('id') or record.get('graph_record_id') or '').strip()
+        display_name = attendance_display_name(record)
+        name_key = attendance_name_key(display_name)
+        key = email or ('unmatched-name:' + name_key if name_key else 'unmatched:' + source_id)
+        person = people.setdefault(key, {'email': email, 'name': display_name or 'Unmatched participant', 'expected': False, 'records': []})
+        person['name'] = display_name or person['name']
         person['records'].append(record)
     result = []
     for person in people.values():
@@ -77,6 +142,11 @@ def session_roster(expected, records, *, complete):
         if not person['email'] or (unidentified and not seconds):
             status = 'review'
         attendance = 1 if status == 'present' else 0 if status == 'absent' else None
+        source_record_ids = sorted({
+            str(record.get('id') or record.get('graph_record_id') or '').strip()
+            for record in source_records
+            if str(record.get('id') or record.get('graph_record_id') or '').strip()
+        })
         result.append({**person, 'seconds': seconds, 'status': status,
                        'attendance': attendance,
                        # These are the immutable Teams result. Recovery is an
@@ -85,7 +155,7 @@ def session_roster(expected, records, *, complete):
                        'rawStatus': status, 'rawAttendance': attendance,
                        'excuseStatus': 'none', 'recoveryStatus': 'none',
                        'effectiveStatus': status, 'effectiveAttendance': attendance,
-                       'finalOutcome': status,
+                       'finalOutcome': status, 'sourceRecordIds': source_record_ids,
                        'excused': False, 'catchupCompleted': False,
                        'intervals': [{'joinedAt': joined.isoformat(), 'leftAt': left.isoformat()} for joined, left in sorted(visits)]})
     return sorted(result, key=lambda person: (not person['expected'], person['name'].casefold()))
@@ -141,7 +211,8 @@ def attendance_csv(rows):
     output = io.StringIO(newline='')
     writer = csv.writer(output)
     writer.writerow(['Name', 'Email', 'Raw attendance', 'Raw status', 'Effective attendance',
-                     'Final outcome', 'Seconds', 'Excused', 'Catch-up completed'])
+                     'Final outcome', 'Seconds', 'Excused', 'Catch-up completed',
+                     'Absence reported', 'Recovery status', 'Recovery method'])
     def cell(value):
         value = str(value)
         return "'" + value if value.lstrip().startswith(('=', '+', '-', '@')) else value
@@ -151,5 +222,7 @@ def attendance_csv(rows):
                          row.get('rawStatus', row.get('status', '')),
                          '' if row.get('effectiveAttendance', row.get('attendance')) is None else row.get('effectiveAttendance', row.get('attendance')),
                          row.get('finalOutcome', row.get('status', '')), row['seconds'],
-                         'Yes' if row.get('excused') else 'No', 'Yes' if row.get('catchupCompleted') else 'No'])
+                         'Yes' if row.get('excused') else 'No', 'Yes' if row.get('catchupCompleted') else 'No',
+                         'Yes' if row.get('absenceReported') else 'No',
+                         row.get('recoveryStatus', 'none'), row.get('recoveryType', 'none')])
     return '\ufeff' + output.getvalue()

@@ -97,26 +97,124 @@ describe('Saved session results', () => {
     expect(screen.getByLabelText('Session recording 1')).toHaveAttribute('src', '/learner_api/session-results/commercial/7/S1/artifacts/recording-1/');
   });
 
-  it('keeps the original absence at zero while showing the effective excuse', async () => {
+  it('keeps a reported recovery separate from the original absence', async () => {
     fetchMock.mockImplementation(() => ok({ sessions: [{ ...session, attendance: [{ ...session.attendance[0],
       status: 'absent', attendance: 0, rawStatus: 'absent', rawAttendance: 0,
-      effectiveStatus: 'absent_excused', effectiveAttendance: 0, finalOutcome: 'absent_excused',
-      excuseStatus: 'approved', recoveryStatus: 'scheduled', excused: true }] }] }));
+      effectiveStatus: 'absent', effectiveAttendance: 0, finalOutcome: 'absent',
+      absenceReported: true, recoveryStatus: 'requested', recoveryType: 'recorded', excused: false }] }] }));
     render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} learner={{ kind: 'apprenticeship', id: '7' }} /></MemoryRouter>);
     expect(await screen.findByText('Your original attendance: Absent')).toBeInTheDocument();
-    expect(screen.getByText(/Effective outcome: Absent, excused/)).toBeInTheDocument();
-    expect(screen.getByText('Book catch-up with your coach')).toHaveAttribute('href', '/learner/attendance');
+    expect(screen.queryByText(/Effective outcome:/)).not.toBeInTheDocument();
+    expect(screen.getByText('View recovery plan')).toHaveAttribute('href', '/learner/attendance');
   });
 
   it('shows made up separately without rewriting the original Teams absence', async () => {
     fetchMock.mockImplementation(() => ok({ sessions: [{ ...session, attendance: [{ ...session.attendance[0],
       status: 'absent', attendance: 0, rawStatus: 'absent', rawAttendance: 0,
       effectiveStatus: 'made_up', effectiveAttendance: 1, finalOutcome: 'made_up',
-      excuseStatus: 'approved', recoveryStatus: 'completed', excused: true, catchupCompleted: true }] }] }));
+      excuseStatus: 'approved', recoveryStatus: 'catchup_booked', excused: true, catchupCompleted: true }] }] }));
     render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} learner={{ kind: 'apprenticeship', id: '7' }} /></MemoryRouter>);
     expect(await screen.findByText('Your original attendance: Absent')).toBeInTheDocument();
     expect(screen.getByText('Effective outcome: Made up — catch-up completed')).toBeInTheDocument();
     expect(screen.queryByText('Book catch-up with your coach')).not.toBeInTheDocument();
+  });
+
+  it('shows attendance and recovery state in the staff register', async () => {
+    fetchMock.mockImplementation(() => ok({ sessions: [{ ...session, attendance: [
+      { ...session.attendance[0], status: 'absent', attendance: 0, rawStatus: 'absent', rawAttendance: 0,
+        name: 'Booked Learner', recoveryStatus: 'catchup_booked', recoveryType: 'catch-up' },
+      { ...session.attendance[0], status: 'absent', attendance: 0, rawStatus: 'absent', rawAttendance: 0,
+        name: 'No Recovery Learner', email: 'second@example.invalid', recoveryStatus: 'none' },
+      { ...session.attendance[0], status: 'absent', attendance: 0, rawStatus: 'absent', rawAttendance: 0,
+        name: 'Recovered Learner', email: 'third@example.invalid', recoveryStatus: 'completed', catchupCompleted: true },
+    ] }] }));
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('tab', { name: 'attendance' }));
+    expect(screen.getByRole('columnheader', { name: 'Attendance' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Recovery' })).toBeInTheDocument();
+    expect(screen.getByText('Catch-up booked')).toBeInTheDocument();
+    expect(screen.getByText('Catch-up completed')).toBeInTheDocument();
+    expect(screen.getByText('Not requested')).toBeInTheDocument();
+  });
+
+  it('keeps unknown Teams identities separate and lets staff link one to a module learner', async () => {
+    const unmatched = { email: 'other@example.invalid', name: 'Other identity', seconds: 600,
+      attendance: 1, status: 'present', rawAttendance: 1, rawStatus: 'present',
+      expected: false, excused: false, catchupCompleted: false };
+    fetchMock.mockImplementation(() => ok({ sessions: [{ ...session,
+      unmatchedAttendance: [unmatched],
+      attendanceCandidates: [{ learnerProfileId: 7, email: 'learner@example.invalid', name: 'Learner One' }],
+    }] }));
+    vi.mocked(coachFetch).mockResolvedValue({ ok: true, json: async () => ({
+      aliasEmail: unmatched.email, learnerProfileId: 7,
+      learnerEmail: 'learner@example.invalid', learnerName: 'Learner One',
+    }) } as Response);
+
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('tab', { name: 'attendance' }));
+    expect(screen.queryByText('Other identity')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Review unmatched participants (1)' }));
+    fireEvent.change(screen.getByLabelText('Match other@example.invalid to learner'), { target: { value: '7' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Link identity' }));
+
+    await waitFor(() => expect(coachFetch).toHaveBeenCalledWith(
+      '/curriculum_api/curriculum/session-results/S1/sessions/1/attendance-alias/',
+      expect.objectContaining({ method: 'POST', body: '{"aliasEmail":"other@example.invalid","learnerProfileId":7,"sourceRecordIds":[]}' }),
+    ));
+    expect(await screen.findByText(/is now matched to Learner One/)).toBeInTheDocument();
+  });
+
+  it('groups email-less Teams records and sends their source identities for manual matching', async () => {
+    const unmatched = { email: '', name: 'Shaz Yousaf', seconds: 6205, sourceRecordIds: ['ROW-1', 'ROW-2', 'ROW-3'],
+      attendance: null, status: 'review', rawAttendance: null, rawStatus: 'review',
+      expected: false, excused: false, catchupCompleted: false };
+    fetchMock.mockImplementation(() => ok({ sessions: [{ ...session,
+      unmatchedAttendance: [unmatched],
+      attendanceCandidates: [{ learnerProfileId: 7, email: 'learner@example.invalid', name: 'Shezreah Yousaf' }],
+    }] }));
+    vi.mocked(coachFetch).mockResolvedValue({ ok: true, json: async () => ({
+      aliasEmail: '', sourceRecordIds: unmatched.sourceRecordIds, learnerProfileId: 7,
+      learnerEmail: 'learner@example.invalid', learnerName: 'Shezreah Yousaf',
+    }) } as Response);
+
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('tab', { name: 'attendance' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Review unmatched participants (1)' }));
+    expect(screen.getByText('Unverified Teams identity')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Match Shaz Yousaf to learner'), { target: { value: '7' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Link identity' }));
+
+    await waitFor(() => expect(coachFetch).toHaveBeenCalledWith(
+      '/curriculum_api/curriculum/session-results/S1/sessions/1/attendance-alias/',
+      expect.objectContaining({ method: 'POST', body: JSON.stringify({ aliasEmail: '', learnerProfileId: 7, sourceRecordIds: unmatched.sourceRecordIds }) }),
+    ));
+  });
+
+  it('preselects a unique name suggestion but waits for staff confirmation', async () => {
+    const unmatched = { email: '', name: 'Learner One', seconds: 600, sourceRecordIds: ['ROW-1'],
+      suggestedLearnerProfileId: 7, attendance: null, status: 'review', rawAttendance: null, rawStatus: 'review',
+      expected: false, excused: false, catchupCompleted: false };
+    fetchMock.mockImplementation(() => ok({ sessions: [{ ...session,
+      unmatchedAttendance: [unmatched],
+      attendanceCandidates: [{ learnerProfileId: 7, email: 'learner@example.invalid', name: 'Learner One' }],
+    }] }));
+    vi.mocked(coachFetch).mockResolvedValue({ ok: true, json: async () => ({
+      aliasEmail: '', sourceRecordIds: unmatched.sourceRecordIds, learnerProfileId: 7,
+      learnerEmail: 'learner@example.invalid', learnerName: 'Learner One',
+    }) } as Response);
+
+    render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('tab', { name: 'attendance' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Review unmatched participants (1)' }));
+    const select = screen.getByLabelText('Match Learner One to learner');
+    expect(select).toHaveValue('7');
+    expect(screen.getByText(/Suggested from the Teams name/)).toBeInTheDocument();
+    expect(coachFetch).not.toHaveBeenCalled();
+    fireEvent.change(select, { target: { value: '' } });
+    expect(screen.getByRole('button', { name: 'Link identity' })).toBeDisabled();
+    fireEvent.change(select, { target: { value: '7' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Link identity' }));
+    await waitFor(() => expect(coachFetch).toHaveBeenCalledTimes(1));
   });
 
   it('shows a failed archive without attempting playback', async () => {
@@ -208,7 +306,7 @@ describe('Saved session results', () => {
     expect(screen.queryByLabelText('Session recording 1')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('tab', { name: 'attendance' }));
     expect(screen.getByText('Learner One')).toBeInTheDocument();
-    expect(screen.getAllByText('Present')).toHaveLength(2);
+    expect(screen.getAllByText('Present')).toHaveLength(1);
     expect(coachFetch).not.toHaveBeenCalled();
   });
 

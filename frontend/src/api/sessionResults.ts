@@ -10,11 +10,19 @@ export interface SessionPerson {
   rawStatus?: 'present' | 'absent' | 'pending' | 'review';
   rawAttendance?: 0 | 1 | null;
   excuseStatus?: 'none' | 'pending' | 'approved' | 'declined';
-  recoveryStatus?: string;
+  absenceReported?: boolean;
+  recoveryStatus?: 'none' | 'requested' | 'catchup_booked' | 'completed';
+  recoveryType?: 'none' | 'recorded' | 'alternative' | 'catch-up';
+  recoveryReference?: string;
   effectiveStatus?: 'present' | 'absent' | 'pending' | 'review' | 'absent_excused' | 'made_up';
   effectiveAttendance?: 0 | 1 | null;
   finalOutcome?: 'present' | 'absent' | 'pending' | 'review' | 'absent_excused' | 'made_up';
   intervals?: { joinedAt: string; leftAt: string }[];
+  sourceRecordIds?: string[];
+  suggestedLearnerProfileId?: number | null;
+}
+export interface AttendanceCandidate {
+  learnerProfileId: number; email: string; name: string;
 }
 export interface SessionFile {
   id: string; type: 'recording' | 'transcript'; state: 'pending' | 'ready' | 'failed';
@@ -30,7 +38,8 @@ export interface SessionResult {
   title?: string; actualStartsAt?: string | null; actualEndsAt?: string | null;
   runs?: { startsAt: string; endsAt: string }[];
   state: string; reportReady: boolean; syncedAt?: string; fileCount?: number; archiveReady?: boolean;
-  attendance?: SessionPerson[]; artifacts?: SessionFile[];
+  attendance?: SessionPerson[]; unmatchedAttendance?: SessionPerson[];
+  attendanceCandidates?: AttendanceCandidate[]; artifacts?: SessionFile[];
 }
 export interface ModuleSessionResults {
   syncAvailable?: boolean;
@@ -77,6 +86,16 @@ export async function requestSessionSync(seriesId: string) {
   const result = await response.json();
   if (!response.ok) throw new Error(result.error || 'Could not request synchronization.');
   return result as { state: 'queued'; message: string };
+}
+
+export async function linkAttendanceAlias(seriesId: string, sessionNumber: number, aliasEmail: string, learnerProfileId: number, sourceRecordIds: string[] = []) {
+  const response = await coachFetch(`${adminBase}/${encodeURIComponent(seriesId)}/sessions/${sessionNumber}/attendance-alias/`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ aliasEmail, learnerProfileId, sourceRecordIds }),
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || 'Could not link the reported email.');
+  return result as { aliasEmail: string; sourceRecordIds: string[]; learnerProfileId: number; learnerEmail: string; learnerName: string };
 }
 
 export async function setRecordingVisibility(seriesId: string, artifactId: string, hidden: boolean) {
