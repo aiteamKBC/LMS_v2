@@ -1,3 +1,4 @@
+import { InclusionSignIn } from '@/components/InclusionSignIn';
 import { BrowserRouter } from 'react-router-dom';
 import { SafeguardingSignIn } from '@/components/SafeguardingSignIn';
 import { AuthProvider } from '@/hooks/useAuth';
@@ -14,7 +15,7 @@ export default function App() {
         <ToastProvider>
           <AiSettingsProvider>
             <AuthProvider>
-              <SafeguardingSignIn><AppRoutes /></SafeguardingSignIn>
+              <InclusionSignIn><SafeguardingSignIn><AppRoutes /></SafeguardingSignIn></InclusionSignIn>
               <ToastContainer />
             </AuthProvider>
           </AiSettingsProvider>
