@@ -12,8 +12,8 @@ from django.views.decorators.http import require_GET
 from login.permissions import learner_self_or_staff
 from old_otjh.coach_booking import booking_url
 from .learner_detail import SOURCE_MODELS
-from .models import LearnerProfile
-from .learning_plan import _effective_plan_ids
+from .models import LearnerProfile, StaffUser
+from .learning_plan import _aptem_subject_modules, _effective_plan_ids, stored_training_plan
 from .coach_assignment import current_coach, source_coach
 from .student_activity import _builder_subject_metadata
 from .subject_content import as_list, clean_text, safe_url
@@ -30,6 +30,15 @@ def number(value):
         return None
 
 
+def valid_aptem_id(value):
+    """Only a positive stable Aptem identifier selects the Aptem projection."""
+    try:
+        parsed = int(str(value or '').strip())
+    except (ValueError, TypeError):
+        return None
+    return parsed if parsed > 0 else None
+
+
 def rows(cursor):
     return [dict(zip([field[0] for field in cursor.description], row)) for row in cursor.fetchall()]
 
@@ -41,6 +50,11 @@ def instant(value):
     if isinstance(value, datetime) and value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return value.isoformat()
+
+
+def date_only(value):
+    """Serialize contract programme dates without applying a machine timezone."""
+    return str(value)[:10] if value else None
 
 
 def plan_session(row):
@@ -86,7 +100,9 @@ def attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number=Non
     module, because every module of a cohort shares that cohort's holidays.
 
     ``weeks_by_number`` maps ``(module_id, week_number)`` to that authored
-    week's ``id``/``title``/``learningOutcomes`` (see ``curriculum.weeks``).
+    week's ``id``/``title``/``learningOutcomes``/``holidayNote`` (see
+    ``curriculum.weeks``). ``holidayNote`` is already blank unless the author
+    published it, and it is attached only to a slot a holiday lands on.
     A taught slot's ``sessionNumber`` is the same content-week numbering, so a
     live-session slot picks up its week's own title and outcomes here rather
     than the module-wide aggregate. Omitted entirely when the caller has none
@@ -130,6 +146,12 @@ def attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number=Non
                 slot['weekId'] = week['id']
                 slot['weekTitle'] = week['title']
                 slot['learningOutcomes'] = week['learningOutcomes']
+                # The author's holiday hint, and only on a slot a holiday
+                # actually lands on. The note is written against a clash, so a
+                # week whose dates have since moved off the holiday carries
+                # nothing -- the same test the author's own notice is drawn from.
+                if week.get('holidayNote') and slot.get('holidays'):
+                    slot['holidayNote'] = week['holidayNote']
         # The effective delivery end is the scheduler's own -- the last
         # DELIVERED session, holiday shifts included. Deliberately separate from
         # the stored `end_date` the module row carries, which a human may have
@@ -149,11 +171,24 @@ def assigned_group_coach(source, modules):
     return next(iter(coaches)) if len(coaches) == 1 else ''
 
 
+def coach_phone(email):
+    """Return the assigned staff member's phone without making it required."""
+    email = clean_text(email)
+    if not email:
+        return ''
+    try:
+        return clean_text(StaffUser.objects.filter(email__iexact=email)
+                          .values_list('phone_number', flat=True).first())
+    except DatabaseError:
+        return ''
+
+
 def find_contract(cursor, aptem_id):
     cursor.execute('''SELECT c.id,c.azure_path,c.training_plan_planned_hours,
         c.document_name AS original_name,
         coalesce(nullif(a.display_name,''),c.document_name) AS document_name,
-        c.date,c.fetched_at,c.fully_signed_date,c.raw AS extraction_metadata
+        c.date,c.fetched_at,c.fully_signed_date,c.raw AS extraction_metadata,
+        c.program_start_date,c.planned_end_date
         FROM fetching_evidence.aptem_cv_contracts_probe c
         LEFT JOIN "Audit".contract_document_archive a ON a.contract_id=c.id
         WHERE c.learner_id=%s
@@ -178,14 +213,13 @@ def contract_plan(source, contract):
         except Exception:
             log.warning('Training-plan contract could not be read for enrolment %s', source.pk)
             status = 'unavailable'
-    return {'months': months, 'contractStatus': status}
+    return {'months': months, 'contractStatus': status,
+            'programmeStartDate': date_only(contract.get('program_start_date')) if contract else None,
+            'programmeEndDate': date_only(contract.get('planned_end_date')) if contract else None}
 
 
 def read_dashboard(source, section=None):
-    try:
-        aptem_id = int(str(source.aptem_id or '').strip())
-    except (ValueError, TypeError):
-        aptem_id = None
+    aptem_id = valid_aptem_id(source.aptem_id)
     email = str(source.email or '').strip().casefold()
     actual, modules, sessions = [], [], []
     historical = None
@@ -211,13 +245,30 @@ def read_dashboard(source, section=None):
                 GROUP BY month,group_id ORDER BY month,group_id''', [aptem_id])
             actual = [{'month': row['month'], 'groupId': str(row['group_id']) if row['group_id'] is not None else None,
                        'hours': number(row['hours']) or 0, 'count': row['activity_count']} for row in rows(cur)]
-        refs = [f'current:{module_id}' for module_id in _effective_plan_ids(source, {})]
+        # Effective current assignments are authoritative for the schedule.
+        # Builder metadata enriches those assignments (and supplies legacy
+        # links), but a missing builder row must not hide an assigned module.
+        current_module_ids = list(dict.fromkeys(_effective_plan_ids(source, {})))
+        # Imported learners can have real assigned subjects in the Aptem
+        # mirror without those ids ever being written to the native learning
+        # plan. Include those subjects in the same dashboard projection unless
+        # staff explicitly limited the learner to a native assignment set.
+        saved_plan = stored_training_plan(source) or []
+        has_explicit_plan = any(entry.get('assignmentMode') == 'explicit' for entry in saved_plan)
+        if aptem_id and not has_explicit_plan:
+            current_module_ids.extend(_aptem_subject_modules(source).keys())
+        current_module_ids = list(dict.fromkeys(current_module_ids))
+        refs = [f'current:{module_id}' for module_id in current_module_ids]
         if aptem_id and historical:
             cur.execute('''SELECT gl.group_id FROM "Last_audit".group_learners gl
                 JOIN "Last_audit".learners l ON l.learner_id=gl.learner_id WHERE l.aptem_id=%s''', [aptem_id])
             refs.extend(f'legacy:{row[0]}' for row in cur.fetchall())
         _, links = _builder_subject_metadata(cur, refs)
-        ids = sorted({item['id'] for item in links.values()})
+        builder_ids = {
+            item['id'] for item in links.values() if item.get('id')
+        }
+        authoritative_ids = set(current_module_ids)
+        ids = sorted(builder_ids | authoritative_ids)
         if ids:
             # cohort_id is read so the curriculum scheduler can resolve this
             # module's cohort holidays -- including the ones a delivery team
@@ -236,7 +287,8 @@ def read_dashboard(source, section=None):
             by_id = {module['id']: module for module in modules}
             week_counts = defaultdict(int)
             weeks_by_number = {}
-            cur.execute('''SELECT id,module_catalogue_id,week_number,title,learning_outcomes FROM curriculum.weeks
+            cur.execute('''SELECT id,module_catalogue_id,week_number,title,learning_outcomes,
+                holiday_note_enabled,holiday_note FROM curriculum.weeks
                 WHERE module_catalogue_id=ANY(%s) AND (deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '')
                 ORDER BY display_order,week_number,id''', [ids])
             for row in rows(cur):
@@ -251,7 +303,12 @@ def read_dashboard(source, section=None):
                 # display order the module-level aggregate above already reads in.
                 key = (row['module_catalogue_id'], row['week_number'])
                 if key not in weeks_by_number:
-                    weeks_by_number[key] = {'id': row['id'], 'title': clean_text(row['title']), 'learningOutcomes': outcomes}
+                    weeks_by_number[key] = {
+                        'id': row['id'], 'title': clean_text(row['title']), 'learningOutcomes': outcomes,
+                        # Published only when the author turned the switch on.
+                        # Text alone is a draft, and a draft is nobody's to read.
+                        'holidayNote': clean_text(row['holiday_note']) if row['holiday_note_enabled'] else '',
+                    }
             attach_curriculum_slots(module_rows, by_id, week_counts, weeks_by_number)
             if section != 'learning':
                 cur.execute('''SELECT s.id AS session_id,s.module_catalogue_id AS module_id,s.module_title,
@@ -280,7 +337,8 @@ def read_dashboard(source, section=None):
         }
     # The overview must never wait for an Azure PDF download. Older clients
     # still receive the complete response when no section was requested.
-    contract_data = ({'months': {}, 'contractStatus': 'loading'} if section == 'overview'
+    contract_data = ({'months': {}, 'contractStatus': 'loading',
+                      'programmeStartDate': None, 'programmeEndDate': None} if section == 'overview'
                      else contract_plan(source, contract))
     contact = current_coach(source, profile, historical)
     coach_name, coach_email = contact['coach_name'], contact['coach_email']
@@ -295,9 +353,14 @@ def read_dashboard(source, section=None):
     reviews = [{**{key: event.get(key) for key in event_fields},
                 'meetingLink': safe_url(event.get('meetingLink')) or None} for event in events
                if event.get('source') in ('mcr', 'progress-review', 'student-support')]
+    coach = {'name': coach_name, 'bookingUrl': booking_url(coach_email)}
+    if coach_email:
+        coach['email'] = coach_email
+    phone = coach_phone(coach_email)
+    if phone:
+        coach['phone'] = phone
     return {**contract_data, 'actual': actual, 'actualAvailable': bool(aptem_id), 'modules': modules, 'moduleLinks': links,
-            'sessions': sessions, 'reviews': reviews,
-            'coach': {'name': coach_name, 'bookingUrl': booking_url(coach_email)},
+            'sessions': sessions, 'reviews': reviews, 'coach': coach,
             'generatedAt': datetime.now(timezone.utc).isoformat()}
 
 

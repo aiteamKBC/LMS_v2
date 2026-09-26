@@ -25,7 +25,7 @@ import logging
 import hashlib
 from datetime import datetime
 
-from django.db import DatabaseError, connection
+from django.db import DatabaseError, connection, connections
 from django.db.models import Q
 from django.http import JsonResponse
 from django.utils import timezone
@@ -38,7 +38,17 @@ from .identity import learner_profile_for_source
 from .mappers import _s
 from .models import EnrolmentReview, LearnerProfile, StaffUser
 from .booking_calendar import booking_calendar_payload, booking_date_restriction
+# The first session's own vocabulary: its event type, and the college's today.
+# Imported rather than restated so the gate, the booking and the calendar
+# cannot disagree about either.
+from .aptem_status import programme_status
+from .first_session import (
+    SESSION_TYPE as FIRST_SESSION_TYPE,
+    imported_from_aptem as first_session_imported_from_aptem,
+    uk_today as first_session_uk_today,
+)
 from login.permissions import learner_self_or_staff
+from login.sessions import authenticate_request
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +81,28 @@ EVENT_JSON_TYPES = {
     "workspace": "review",
     "training-plan": "review",
 }
+
+
+def assigned_curriculum_module_ids(learner):
+    """Return the learner's explicit curriculum-module assignment ids.
+
+    Calendar visibility follows the same assignment query as My Learning and
+    live lecture attendance.  It must not depend on the profile's current
+    group label: a learner can remain assigned to a module while a cohort/group
+    correction is being made, and hiding that module would hide its Teams link.
+    """
+    learner_id = getattr(learner, "id", None) or getattr(learner, "pk", None)
+    if learner_id in (None, ""):
+        return []
+    try:
+        from .student_activity import CURRENT_SUBJECTS_SQL
+
+        with connections['enrolment'].cursor() as cursor:
+            cursor.execute(CURRENT_SUBJECTS_SQL, [learner_id])
+            return sorted({str(row[0]).strip() for row in cursor.fetchall() if row and str(row[0]).strip()})
+    except DatabaseError:
+        logger.warning("learner_calendar: module assignment lookup failed", exc_info=True)
+        return []
 
 # What a learner can book for themselves. Monthly coaching and progress reviews
 # must be booked against a generated programme-cycle eventKey so the learner and
@@ -711,6 +743,43 @@ def _learner_calendar_record(kind, pk, event_key):
     return record if (str(record.learner_id or "") in learner_ids or _s(record.learner_email).strip().casefold() in emails) else None
 
 
+def _follow_first_session_start_date(kind, pk, record, scheduled_date):
+    """Move the programme start date with the first session, if that is what moved.
+
+    Booking the first session writes its date to ``learner_start_date``
+    (first_session._stamp) because the programme starts at that session. Moving
+    the session therefore has to move the start date too: leaving it behind
+    would make the record disagree with the meeting, and that column is the
+    strict anchor review scheduling reads -- so the learner's whole review
+    timeline would stay pinned to a day nothing happens on.
+
+    Only ``first-session``. Every other bookable type is a session *within* a
+    programme that has already started, and moving one must not shift the
+    learner's start date.
+
+    Failure is logged, not raised: the meeting has already moved in Graph and
+    everybody has been re-invited by this point, so refusing the whole request
+    would report a failure for something that did happen.
+    """
+    if _s(getattr(record, "event_type", "")).lower() != "first-session":
+        return
+    model = SOURCE_MODELS.get(kind)
+    if model is None:
+        return
+    try:
+        from .learner_dates import save_enrolment_fields
+
+        learner = model.all_learners.filter(pk=pk).first()
+        if learner is None:
+            return
+        learner.learner_start_date = scheduled_date.isoformat()
+        save_enrolment_fields(learner, ["learner_start_date"])
+    except DatabaseError:
+        logger.exception(
+            "learner_calendar_reschedule: could not move the start date for learner %s", pk,
+        )
+
+
 def _learner_booking_record(kind, pk, event_key):
     """Resolve a learner-owned booking row that the learner is allowed to move."""
     record = _learner_calendar_record(kind, pk, event_key)
@@ -719,15 +788,21 @@ def _learner_booking_record(kind, pk, event_key):
     return record
 
 
+@csrf_exempt
 @learner_self_or_staff(kwarg="pk")
 def learner_calendar_event_review(request, kind, pk, event_key):
-    """Return the read-only Curriculum form for a learner calendar event.
+    """Return the Curriculum form for a learner calendar event, or (POST)
+    save the learner's own answers to whichever fields the Review's
+    Curriculum template opted the Learner into answering.
 
-    The endpoint never creates a review instance. Unscheduled occurrences
-    expose a read-only template preview; booked instances retain their snapshot.
+    The endpoint never creates a review instance -- GET on an unscheduled
+    occurrence exposes a read-only template preview; POST requires a booked
+    instance to already exist (the coach's meeting is what creates it).
     """
-    if request.method != "GET":
+    if request.method not in ("GET", "POST"):
         return _error("Method not allowed.", 405)
+    if request.method == "POST":
+        return _save_learner_review_answers(request, kind, pk, event_key)
     record = _learner_calendar_record(kind, pk, event_key)
     from curriculum_api import review_instances, reviews
     instance_id = _s(getattr(record, "review_instance_id", ""))
@@ -772,7 +847,7 @@ def learner_calendar_event_review(request, kind, pk, event_key):
             definition = review_instances.review_instance_form_definition(instance)
             if not definition['template']['visibleTo'].get('participant', True):
                 return _error('This review is not visible to the learner.', 403)
-            return JsonResponse(definition)
+            return JsonResponse(_learner_visible_review_definition(definition))
         template = reviews.get_review_template_row(template_id, include_deleted=bool(record))
         if template is None:
             return _error('Review template not found.', 404)
@@ -791,7 +866,63 @@ def learner_calendar_event_review(request, kind, pk, event_key):
     definition = review_instances.review_instance_form_definition(instance)
     if not definition['template']['visibleTo'].get('participant', True):
         return _error('This review is not visible to the learner.', 403)
-    return JsonResponse(definition)
+    return JsonResponse(_learner_visible_review_definition(definition))
+
+
+def _save_learner_review_answers(request, kind, pk, event_key):
+    """POST /learner_api/calendar/<kind>/<pk>/events/<event_key>/review/
+
+    Saves only the fields the Review's Curriculum template opted the
+    Learner ('participant') into answering -- every other field stays the
+    coach's/Curriculum's, exactly as before this endpoint accepted writes.
+    """
+    from curriculum_api import review_instances
+
+    record = _learner_calendar_record(kind, pk, event_key)
+    instance_id = _s(getattr(record, "review_instance_id", ""))
+    if not instance_id:
+        return _error("This review has not been booked yet.", 404)
+    instance = review_instances.get_review_instance(instance_id)
+    if not instance:
+        return _error("Review instance not found.", 404)
+    definition = review_instances.review_instance_form_definition(instance)
+    if not definition['template']['visibleTo'].get('participant', True):
+        return _error('This review is not visible to the learner.', 403)
+
+    try:
+        payload = json.loads(request.body or b"{}")
+    except json.JSONDecodeError:
+        return _error("Invalid JSON body.", 400)
+    answers = payload.get("answers")
+    if not isinstance(answers, dict):
+        return _error("answers must be an object keyed by field id.", 400)
+
+    account = authenticate_request(request)
+    actor = _s(getattr(account, "email", "")) or f"learner:{pk}"
+    try:
+        updated = review_instances.save_review_instance_answers_for_role(
+            instance, answers, "participant", actor=actor,
+        )
+    except PermissionError as exc:
+        return _error(str(exc), 403)
+    except ValueError as exc:
+        return _error(str(exc), 409)
+    return JsonResponse(_learner_visible_review_definition(updated))
+
+
+def _learner_visible_review_definition(definition):
+    """Hide the formal MCM summary until the coach submits the Review."""
+    if (
+        (definition.get('template') or {}).get('reviewTypeCode') == 'mcm'
+        and (definition.get('instance') or {}).get('status') not in {'awaiting-signature', 'completed'}
+    ):
+        from curriculum_api.review_instances import meeting_summary_field
+        field = meeting_summary_field(definition)
+        if field:
+            field['answer'] = None
+            field['answeredBy'] = None
+            field['answeredAt'] = None
+    return definition
 
 
 @learner_self_or_staff(kwarg="pk")
@@ -829,7 +960,7 @@ def learner_calendar_event_artifacts(request, kind, pk, event_key):
     if not record:
         return _error("Calendar event not found for this learner.", 404)
     from coach_api.views import (
-        apply_teams_attendance_status_transition, ensure_coach_meeting_summary,
+        apply_teams_attendance_status_transition,
         fetch_coach_meeting_graph_snapshot, persist_coach_meeting_snapshots,
     )
     snapshot, error_payload, status_code = fetch_coach_meeting_graph_snapshot(record)
@@ -846,19 +977,18 @@ def learner_calendar_event_artifacts(request, kind, pk, event_key):
         attendance_reports=snapshot["attendanceReports"],
         attendance_tracker=snapshot["attendanceTracker"],
     )
-    meeting_summary = ensure_coach_meeting_summary(record)
     # Learners may watch the formal meeting recording, but transcripts remain
     # staff-only because they can contain sensitive discussion notes.
     learner_artifacts = [
         artifact for artifact in snapshot["artifacts"]
-        if _s(artifact.get("artifact_type")).lower() in (
-            {"recording", "transcript"} if record.event_type == "mcr" else {"recording"}
-        )
+        if _s(artifact.get("artifact_type")).lower() == "recording"
     ]
     return JsonResponse({
         "artifacts": learner_artifacts,
         "attendance": snapshot["attendance"],
-        "meetingSummary": meeting_summary,
+        # Mutable AI drafts never cross the learner boundary. The lifecycle-
+        # gated formal answer is returned by learner_calendar_event_review.
+        "meetingSummary": None,
         "errors": snapshot["errors"],
         "partial": snapshot["partial"],
         "storage": storage,
@@ -872,7 +1002,7 @@ def learner_calendar_event_artifact_content(request, kind, pk, event_key, artifa
     record = _learner_calendar_record(kind, pk, event_key)
     if not record:
         return _error("Calendar event not found for this learner.", 404)
-    allowed_types = {"recording", "transcript"} if record.event_type == "mcr" else {"recording"}
+    allowed_types = {"recording"}
     if _s(artifact_type).lower() not in allowed_types:
         return _error("Only meeting recordings are available to learners.", 403)
     from coach_api.views import coach_meeting_artifact_content_response
@@ -1018,10 +1148,23 @@ def learner_calendar(request, kind, pk):
     try:
         events = coaching_events_for_learner(learner, mirror)
 
-        # Live curriculum sessions belong to the learner's placement, not to
-        # their assigned coach. Use the same module/week/holiday planner as the
-        # coach calendar, but scope it directly to programme/cohort/group.
-        if mirror is not None and (_s(getattr(mirror, "group_id", "")) or _s(mirror.group_name)):
+        # Live curriculum sessions belong to the learner's explicit module
+        # assignment, not to a possibly stale profile group label. Fall back to
+        # placement scope only for legacy learners with no module assignment.
+        module_ids = assigned_curriculum_module_ids(learner)
+        if module_ids:
+            from coach_api.views import collect_live_session_events
+
+            live_events = collect_live_session_events(
+                "",
+                "",
+                require_coach_access=False,
+                include_past=True,
+                learner_module_ids=module_ids,
+            )
+            for event in live_events:
+                events.append(_serialize_live_session_event(event))
+        elif mirror is not None and (_s(getattr(mirror, "group_id", "")) or _s(mirror.group_name)):
             from coach_api.views import collect_live_session_events
 
             live_events = collect_live_session_events(
@@ -1127,22 +1270,55 @@ def learner_calendar_book(request, kind, pk):
 
     session_type = _s(payload.get("sessionType"))
     is_onboarding_review = session_type in ONBOARDING_REVIEW_TYPES
+    is_first_session = session_type == FIRST_SESSION_TYPE
     if session_type not in BOOKABLE_TYPES and not is_onboarding_review:
         allowed = "', '".join((*BOOKABLE_TYPES, *ONBOARDING_REVIEW_TYPES))
         return _error(f"sessionType must be one of '{allowed}'.", 400)
 
     owner_staff_id = None
-    if is_onboarding_review:
-        # Booked during enrolment, before the learner is Active and before a
-        # coach exists — so these go to the case owner (enrolment officer).
+    if is_onboarding_review or is_first_session:
+        # Booked before the learner is Active and before a coach exists, so
+        # these go to the case owner (enrolment officer) rather than a coach.
+        #
+        # The first session is the clearest case: it is the meeting that starts
+        # the programme, so requiring an Active mirror to book it would be
+        # circular -- the learner cannot become Active until it has happened.
         owner_email, owner_name, owner_staff_id = _case_owner_record(learner)
         if not owner_email:
             return _error(
                 "No case owner has been assigned to you yet. Please contact your programme team.", 400
             )
+        if is_first_session:
+            # There is only ever one first session. Without this a learner
+            # could book a second from a stale tab and end up with two
+            # meetings, two invitations and a start date that follows whichever
+            # was written last -- moving it is what reschedule is for.
+            try:
+                existing = (
+                    CoachCalendarEvent.objects.filter(
+                        learner_id=pk, event_type=FIRST_SESSION_TYPE
+                    )
+                    .exclude(status=CoachCalendarEvent.STATUS_CANCELLED)
+                    .exists()
+                )
+            except DatabaseError as exc:
+                logger.exception("learner_calendar_book: first-session check failed")
+                return _error(f"Database error: {exc}", 502)
+            if existing:
+                return _error(
+                    "Your first learning session is already booked. "
+                    "Contact your case owner if you need to change it.", 409
+                )
     else:
         if mirror is None:
-            return _error("Only Active learners can book coach sessions.", 400)
+            # Everything else is a session *within* a running programme. A
+            # learner still waiting for their first session has one thing they
+            # may book, and this is not it -- said plainly, because "only
+            # Active learners" does not tell them what to do next.
+            return _error(
+                "Only Active learners can book coach sessions. "
+                "Book your first learning session first.", 400
+            )
         owner_email = _s(mirror.coach_email)
         owner_name = _s(mirror.coach_name) or "Coach"
         if not owner_email:
@@ -1537,6 +1713,12 @@ def learner_calendar_book(request, kind, pk):
         )
 
     _record_enrolment_review(record, kind=kind, learner_kind_id=pk, coach_id=owner_staff_id)
+    # The programme starts at the first session, so booking one sets the
+    # learner's start date. This used to be done by first_session._stamp when
+    # the enrolment form did the booking; the learner books it themselves now,
+    # and the date has to follow either way -- it is the anchor review
+    # scheduling reads, and the enrolment header states it.
+    _follow_first_session_start_date(kind, pk, record, scheduled_date)
 
     return JsonResponse(
         {"event": _serialize_event(record), "warning": _friendly_sync_warning(warning)},
@@ -1638,6 +1820,7 @@ def learner_calendar_reschedule(request, kind, pk):
         _mark_imported_review_scheduled(
             payload.get("reviewId"), record.learner_id, scheduled_date, scheduled_time,
         )
+        _follow_first_session_start_date(kind, pk, record, scheduled_date)
     except LearnerCalendarConflict as exc:
         return _error(str(exc), 409)
     except CalendarSyncInProgress:
@@ -1805,3 +1988,110 @@ def learner_onboarding_reviews(request, kind, pk):
         "reviews": reviews,
         "allBooked": all(r["booked"] for r in reviews),
     })
+
+
+def _already_started(learner):
+    """Whether this learner's programme is already running.
+
+    Active is the whole test. Being Active *is* the statement that the
+    programme is under way, so there is no first session left to arrange --
+    whether or not a start date was ever written, and whether or not the
+    session was booked through this flow at all.
+
+    A start date is deliberately not also required. Active learners who have
+    none are real (a learner activated before their session was arranged, or
+    one carried in from an older route), and requiring the date sent exactly
+    those learners to the booking screen, which is the lockout this branch
+    exists to prevent.
+
+    The one thing this must not swallow is the waiting state: a learner with a
+    session booked for a future day is *not* Active yet, so they still get the
+    holding screen and the day still has to arrive.
+    """
+    return programme_status(learner).casefold() == "active"
+
+
+@learner_self_or_staff(kwarg="pk")
+def learner_first_session(request, kind, pk):
+    """Whether this learner has booked their first session, and when.
+
+        GET /learner_api/calendar/<kind>/<id>/first-session/
+
+    -> {caseOwner: {name, email} | null, booked: bool, event: {...} | null,
+        startsOn: "YYYY-MM-DD" | null, access: "book" | "waiting" | "open"}
+
+    The first session used to be arranged by whoever enrolled the learner. It is
+    now the learner's own first task: they sign in, book it with their case
+    owner, and wait until the day.
+
+    ``access`` is the whole gate in one word, decided here rather than in the
+    browser -- a learner must not be able to reach their programme early by
+    changing a date on their own machine:
+
+    * ``book``    -- nothing booked yet; the learner books it.
+    * ``waiting`` -- booked, but the day has not arrived.
+    * ``open``    -- the session day has come (or passed), so the programme runs
+      normally from here. Also any Active learner, whose programme is running
+      whether or not a session was ever booked through here
+      (``_already_started``).
+
+    Computed on every request rather than stored, so nothing has to run
+    overnight to let a learner in, and moving the session takes effect at once.
+    """
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+
+    model = SOURCE_MODELS.get(kind)
+    if model is None:
+        return _error(f"Unknown kind: {kind!r}. Expected 'commercial' or 'apprenticeship'.", 404)
+
+    try:
+        learner = model.all_learners.filter(pk=pk).first()
+        if learner is None:
+            return _error("Learner not found.", 404)
+        record = (
+            CoachCalendarEvent.objects.filter(learner_id=pk, event_type=FIRST_SESSION_TYPE)
+            .exclude(status=CoachCalendarEvent.STATUS_CANCELLED)
+            .order_by("-sequence")
+            .first()
+        )
+    except DatabaseError as exc:
+        logger.exception("learner_first_session: lookup failed")
+        return _error(f"Database error: {exc}", 502)
+
+    owner_email, owner_name = _case_owner_contact(learner)
+    starts_on = record.scheduled_date if record is not None else None
+
+    if first_session_imported_from_aptem(learner):
+        # An Aptem learner arrives with a start date and a history behind them,
+        # and book_first_session skips them entirely -- so they will never have
+        # one of these. Holding them out until a session that is never going to
+        # be booked would lock them out of their own programme for good.
+        access = "open"
+    elif _already_started(learner):
+        # An Active learner's programme is already running, so there is no
+        # first session left to arrange. Asking them to book one would hold a
+        # learner out of a programme they are part-way through -- the same
+        # permanent lockout the Aptem case above avoids, reached by a different
+        # route (activated outside this booking flow, or before it existed).
+        access = "open"
+    elif starts_on is None:
+        access = "book"
+    else:
+        # The college's own day. A learner abroad must not reach their
+        # programme a day early, nor be held out a day late, because of where
+        # they happen to be -- the session happens in Kent either way.
+        access = "waiting" if starts_on > first_session_uk_today() else "open"
+
+    response = JsonResponse({
+        "caseOwner": {"name": owner_name, "email": owner_email} if owner_email else None,
+        "booked": record is not None,
+        "event": _serialize_event(record) if record is not None else None,
+        "startsOn": starts_on.isoformat() if starts_on else None,
+        "access": access,
+    })
+    # Never cached: ``access`` turns over at midnight UK time, so a stored copy
+    # would hold a learner out on the morning of their own session, or let them
+    # in the day before.
+    response["Cache-Control"] = "private, no-store"
+    return response

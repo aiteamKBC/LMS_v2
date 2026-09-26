@@ -20,6 +20,22 @@ describe('Learner preview', () => {
     expect(previewComponent(component({ ...settings, powerpointSource: 'URL' })).resourceUrl).toBe(settings.resourceUrl);
   });
 
+  it('previews an Embed source by its src, matching what the learner API serves', () => {
+    // The builder's Embed field holds the provider's whole <iframe> snippet.
+    // Passing the markup through as videoUrl made the preview iframe resolve it
+    // as a relative route, so the author saw a 404 where the video belongs —
+    // while real learners saw the video, because the backend unwraps it.
+    const embed = '<iframe src="https://example.sharepoint.com/sites/Team/_layouts/15/embed.aspx'
+      + '?UniqueId=d7609e36&amp;referrer=StreamWebApp" width="640" height="360"></iframe>';
+    expect(previewComponent(component({ embedCode: embed })).videoUrl)
+      .toBe('https://example.sharepoint.com/sites/Team/_layouts/15/embed.aspx?UniqueId=d7609e36&referrer=StreamWebApp');
+    // An authored address still wins over the embed snippet, as before.
+    expect(previewComponent(component({ videoUrl: 'https://example.invalid/v.mp4', embedCode: embed })).videoUrl)
+      .toBe('https://example.invalid/v.mp4');
+    // No embed authored: still empty, so the preview renders no player at all.
+    expect(previewComponent(component()).videoUrl).toBe('');
+  });
+
   it('maps the uploaded materials and authored brief used by the learner', () => {
     const resource = previewComponent(component({ presentationUrl: 'https://example.invalid/deck.pptx', downloadAllowed: true,
       assignmentBrief: 'Write an answer', assignmentFileName: 'brief.pdf' }));

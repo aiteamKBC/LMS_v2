@@ -157,6 +157,15 @@ export interface LearnerDetail {
   programmeStatus: string;
   learnerType?: LearnerKind;
   programmeStartDate?: string;
+  /** The learner's own recorded start, from Created_users.Learner_start_date.
+   *  programmeStartDate falls back to the cohort when this is unset, so it can
+   *  differ; the dashboard header states this one. */
+  learnerStartDate?: string;
+  /** The learner's own recorded end, from Created_users.Learner_end_date.
+   *  programmeEndDate resolves through the delivery's own end columns, which
+   *  stay empty for a learner whose end date is recorded only against
+   *  themselves; the dashboard header states this one. */
+  learnerEndDate?: string;
   programmeEndDate?: string;
   cohort: string;
   /** The learner's cohort schedule, from curriculum.cohorts. Gateway is a date
@@ -169,6 +178,7 @@ export interface LearnerDetail {
   group: string;
   employer: string;
   employerId?: number | null;
+  organization?: string;
   lineManager: string;
   isActive: boolean;
   modules: string[];
@@ -205,8 +215,8 @@ export interface LearnerDetail {
 
 export type LearnerSummary = Pick<LearnerDetail,
   'id' | 'name' | 'email' | 'phone' | 'programme' | 'programmeStatus' |
-  'cohort' | 'group' | 'employer' | 'employerId' | 'learnerType' | 'isActive'
-> & Pick<LearnerDetail, 'studentActivityAvailable' | 'programmeStartDate' | 'programmeEndDate' | 'accessGate' | 'learningAccess'>;
+  'cohort' | 'group' | 'employer' | 'employerId' | 'organization' | 'learnerType' | 'isActive'
+> & Pick<LearnerDetail, 'studentActivityAvailable' | 'programmeStartDate' | 'learnerStartDate' | 'learnerEndDate' | 'programmeEndDate' | 'accessGate' | 'learningAccess'>;
 
 /** Small identity response for pages that only need the learner heading. */
 export function fetchLearnerSummary(kind: LearnerKind, id: string, force = false): Promise<LearnerSummary> {

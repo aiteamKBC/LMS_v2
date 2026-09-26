@@ -9,8 +9,8 @@
 // Data contract, unchanged from before the redesign:
 //   GET   /coach_api/coach/caseload            — the caseload itself
 //   GET   /coach_api/coach/attendance          — live attendance, joined on id/email/name
-//   PATCH /coach_api/coach/caseload/{id}/coach-rag
-// Two requests for the whole page. Nothing is fetched per card, and the quick
+//   GET   /engagement_api/learner-analytics/ â€” Engagement-derived status
+// Three requests for the whole page. Nothing is fetched per card, and the quick
 // view adds no request of its own — both payloads already carry what it shows.
 //
 // This component owns state and wiring only. Anything that renders lives in
@@ -18,36 +18,33 @@
 // ============================================================================
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { PageContainer } from '@/components/ui/PageContainer';
-import { PageHeader } from '@/components/ui/PageHeader';
 import { useAuth } from '@/hooks/useAuth';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
-import { roleNavMap } from '@/mocks/navigation';
+import { useListQueryState } from '@/hooks/useListQueryState';
 import { coachFetch } from '@/lib/coachFetch';
+import { fetchCoachCalendarEvents, type CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
 
 import { CaseloadEmpty, CaseloadError, CaseloadLoading, CaseloadNoMatches } from './components/CaseloadStates';
-import { LearnerCardGrid } from './components/LearnerCardGrid';
+import { LearnerTable } from './components/LearnerTable';
 import { LearnerQuickViewDrawer } from './components/LearnerQuickViewDrawer';
-import { LearnerStatusTabs } from './components/LearnerStatusTabs';
 import { LearnerToolbar, type CaseloadFilterState } from './components/LearnerToolbar';
 import { LearnersHeaderActions } from './components/LearnersHeader';
 import { Pagination } from './components/Pagination';
-import { buildInsightMap, countCaseload } from './lib/attention';
+import { buildInsightMap } from './lib/attention';
 import { downloadLearnersPdf } from './lib/exportPdf';
 import {
   EMPTY_VALUE,
   displayValue,
   findAttendanceRecord,
-  formatCoachRagValue,
   getProgramStatusKey,
+  hasValue,
   normalizeLearner,
-  parseDisplayDate,
   startOfToday,
 } from './lib/format';
 import type {
   AttendanceApiLearner,
   AttendanceApiResponse,
+  CaseloadApiLearner,
   CaseloadApiResponse,
   FilterOption,
   Learner,
@@ -56,20 +53,21 @@ import type {
   SortKey,
   StatusFilter,
 } from './types';
+import styles from './caseload.module.css';
 
-const coachNav = roleNavMap.coach;
-
-const CASELOAD_ENDPOINT = '/coach_api/coach/caseload?live=1';
+const CASELOAD_ENDPOINT = '/coach_api/coach/caseload';
 const ATTENDANCE_ENDPOINT = '/coach_api/coach/attendance';
-const coachRagEndpoint = (learnerId: string) => `/coach_api/coach/caseload/${learnerId}/coach-rag`;
 
-const PAGE_SIZE = 12;
+const PAGE_SIZE = 10;
+const QUERY_DEFAULTS = {
+  search: '', cohort: 'all', group: 'all', programmeStatus: 'all', employer: 'all',
+  view: 'all', sort: 'risk', direction: 'desc', page: 1,
+};
 
 const INITIAL_FILTERS: CaseloadFilterState = {
   search: '',
   cohort: 'all',
   group: 'all',
-  coachRag: 'all',
   programStatus: 'all',
   employer: 'all',
 };
@@ -92,15 +90,52 @@ async function fetchAttendanceLearners(signal: AbortSignal): Promise<AttendanceA
   }
 }
 
+function reviewDate(event: CoachCalendarEvent): string | null {
+  const raw = event.scheduledDate || event.date || event.targetDate;
+  if (!raw) return null;
+  const date = new Date(`${raw.slice(0, 10)}T00:00:00`);
+  return Number.isNaN(date.getTime())
+    ? null
+    : new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(date);
+}
+
+async function fetchLastCompletedReviews(signal: AbortSignal): Promise<Map<string, { pr?: string; mcm?: string }>> {
+  try {
+    const response = await fetchCoachCalendarEvents(signal);
+    const latest = new Map<string, { pr?: { time: number; value: string }; mcm?: { time: number; value: string } }>();
+    (response.events || []).forEach((event) => {
+      if (event.status !== 'completed' || !event.learnerId || (event.source !== 'progress-review' && event.source !== 'mcr')) return;
+      const value = reviewDate(event);
+      const time = Date.parse(event.scheduledDate || event.date || event.targetDate || '');
+      if (!value || Number.isNaN(time)) return;
+      const current = latest.get(String(event.learnerId)) || {};
+      const key = event.source === 'progress-review' ? 'pr' : 'mcm';
+      if (!current[key] || time > current[key]!.time) current[key] = { time, value };
+      latest.set(String(event.learnerId), current);
+    });
+    return new Map([...latest].map(([id, value]) => [id, { pr: value.pr?.value, mcm: value.mcm?.value }]));
+  } catch (error) {
+    if (signal.aborted) throw error;
+    console.warn('Unable to load completed PR/MCM sessions for the caseload');
+    return new Map();
+  }
+}
+
 function uniqueOptions(values: string[]): FilterOption[] {
   return [...new Set(values.filter((value) => value && value !== EMPTY_VALUE))]
     .sort((left, right) => left.localeCompare(right))
     .map((value) => ({ value, label: value }));
 }
 
-const COACH_RAG_ORDER: Record<string, number> = { Red: 0, Amber: 1, Green: 2 };
+function normalizedPerformanceStatus(value?: string | null): string {
+  return displayValue(value).toLowerCase().replace(/[\s_]+/g, '-');
+}
 
-export default function CoachCaseload() {
+function hasAuthoritativePerformanceStatus(value?: string | null): boolean {
+  return ['at-risk', 'on-track', 'high', 'new-starter'].includes(normalizedPerformanceStatus(value));
+}
+
+export function CoachCaseloadContent({ embedded = false }: { embedded?: boolean; embeddedLearners?: unknown[] }) {
   const navigate = useNavigate();
   const { auth, isInitialized } = useAuth();
   // Whose caseload this is: the signed-in coach, or the coach an administrator
@@ -114,18 +149,23 @@ export default function CoachCaseload() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadToken, setReloadToken] = useState(0);
+  const [serverTotal, setServerTotal] = useState(0);
+  const [serverTotalPages, setServerTotalPages] = useState(0);
+  const [serverFilterOptions, setServerFilterOptions] = useState<{
+    cohort: FilterOption[]; group: FilterOption[]; programStatus: FilterOption[]; employer: FilterOption[];
+  } | null>(null);
 
-  const [filters, setFilters] = useState<CaseloadFilterState>(INITIAL_FILTERS);
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
-  const [sortKey, setSortKey] = useState<SortKey>('risk');
-  const [sortDir, setSortDir] = useState<SortDirection>('desc');
-
-  const [pageSize, setPageSize] = useState(PAGE_SIZE);
-  const [currentPage, setCurrentPage] = useState(1);
+  const { state: query, setValues: setQueryValues, reset: resetQuery } = useListQueryState(QUERY_DEFAULTS);
+  const filters: CaseloadFilterState = useMemo(() => ({
+    search: String(query.search), cohort: String(query.cohort), group: String(query.group),
+    programStatus: String(query.programmeStatus), employer: String(query.employer),
+  }), [query.cohort, query.employer, query.group, query.programmeStatus, query.search]);
+  const statusFilter = String(query.view) as StatusFilter;
+  const sortKey = String(query.sort) as SortKey;
+  const sortDirection = String(query.direction) as SortDirection;
+  const currentPage = Number(query.page);
 
   const [quickView, setQuickView] = useState<{ learnerId: string; tab: QuickViewTab } | null>(null);
-  const [savingCoachRagId, setSavingCoachRagId] = useState<string | null>(null);
-  const [coachRagSaveError, setCoachRagSaveError] = useState<string | null>(null);
 
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedLearnerIds, setSelectedLearnerIds] = useState<Set<string>>(() => new Set());
@@ -134,6 +174,22 @@ export default function CoachCaseload() {
   // One "today" per mount. Every day-offset on the page is measured from the
   // same instant, so two rows can never disagree about how far away a date is.
   const today = useMemo(() => startOfToday(), []);
+  const caseloadUrl = useMemo(() => {
+    const query = new URLSearchParams({ page: String(currentPage), page_size: String(PAGE_SIZE) });
+    if (filters.search.trim()) query.set('search', filters.search.trim());
+    if (filters.cohort !== 'all') query.set('cohort', filters.cohort);
+    if (filters.group !== 'all') query.set('group', filters.group);
+    if (filters.programStatus !== 'all') query.set('status', filters.programStatus);
+    // Computed risk states cannot be applied before canonical enrichment. Keep
+    // them in the request identity so changing the tab still refreshes page 1,
+    // while the returned page is filtered with the unchanged canonical rule.
+    if (statusFilter !== 'all') query.set('view_status', statusFilter);
+    if (sortKey === 'name') {
+      query.set('sort', 'name');
+      query.set('direction', sortDirection);
+    }
+    return `${CASELOAD_ENDPOINT}?${query}`;
+  }, [currentPage, filters.cohort, filters.group, filters.programStatus, filters.search, sortDirection, sortKey, statusFilter]);
 
   useEffect(() => {
     if (!isInitialized) return;
@@ -156,19 +212,29 @@ export default function CoachCaseload() {
       }
 
       try {
-        const caseloadResponse = await coachFetch(CASELOAD_ENDPOINT, { signal: controller.signal });
+        const caseloadResponse = await coachFetch(caseloadUrl, { signal: controller.signal });
         if (!caseloadResponse.ok) {
           const payload = await caseloadResponse.json().catch(() => ({})) as { detail?: string; message?: string };
           throw new Error(payload.detail || payload.message || `Request failed with status ${caseloadResponse.status}`);
         }
 
         const data: CaseloadApiResponse = await caseloadResponse.json();
-        const attendanceLearners = await fetchAttendanceLearners(controller.signal);
-
+        if (controller.signal.aborted) return;
         setOwnerName(data.owner?.name || authenticatedCoachName);
-        setLearners((data.learners || []).map((learner) => (
-          normalizeLearner(learner, findAttendanceRecord(learner, attendanceLearners))
-        )));
+        const pageResults = data.results || data.learners || [];
+        setLearners(pageResults.map((source) => normalizeLearner({
+          ...source,
+          lastProgressReview: source.lastProgressReview || source.lastPr || undefined,
+          lastReview: source.lastReview || source.lastMcm || undefined,
+        }, source.attendanceRateAvailable ? {
+          id: source.id, learner: source.name || '', attendance: source.attendanceRate,
+          hasAttendance: true, sessions: source.attendanceSessions, present: source.attendancePresent,
+          absent: source.attendanceAbsent, lastSession: source.attendanceLastSession,
+          lastSessionDate: source.attendanceLastSessionDate,
+        } : null)));
+        setServerTotal(data.pagination?.total ?? pageResults.length);
+        setServerTotalPages(data.pagination?.totalPages ?? (pageResults.length ? 1 : 0));
+        setServerFilterOptions(data.filterOptions || null);
       } catch (err) {
         if (controller.signal.aborted) return;
         console.error('Unable to load coach caseload', err);
@@ -181,45 +247,43 @@ export default function CoachCaseload() {
 
     loadCaseload();
     return () => controller.abort();
-  }, [auth.account, authenticatedCoachEmail, authenticatedCoachName, isInitialized, reloadToken]);
+  }, [authenticatedCoachEmail, authenticatedCoachName, caseloadUrl, isInitialized, reloadToken]);
 
   // --- derived data ---------------------------------------------------------
 
   // The one expensive computation on the page, and the only place risk is
   // decided. Keyed on the learner list, so filtering and sorting never redo it.
   const insights = useMemo(() => buildInsightMap(learners, today), [learners, today]);
-  const counts = useMemo(() => countCaseload(learners, insights), [learners, insights]);
-
-  const filterOptions = useMemo(() => ({
+  const filterOptions = useMemo(() => serverFilterOptions || ({
     cohort: [...new Map(learners.map((learner) => [learner.cohortId, displayValue(learner.cohortName)])).entries()]
       .filter(([, label]) => label !== EMPTY_VALUE)
       .map(([value, label]) => ({ value, label }))
       .sort((left, right) => left.label.localeCompare(right.label)),
     group: uniqueOptions(learners.map((learner) => displayValue(learner.group))),
-    coachRag: uniqueOptions(learners.map((learner) => displayValue(learner.coachRag)))
-      .sort((left, right) => (COACH_RAG_ORDER[left.value] ?? 99) - (COACH_RAG_ORDER[right.value] ?? 99)),
     programStatus: uniqueOptions(learners.map((learner) => displayValue(learner.rawProgramStatus))),
     employer: uniqueOptions(learners.map((learner) => displayValue(learner.employer))),
-  }), [learners]);
+  }), [learners, serverFilterOptions]);
 
   const matched = useMemo(() => {
-    const search = filters.search.trim().toLowerCase();
-
     return learners.filter((learner) => {
       const insight = insights.get(learner.id);
+      const performanceStatus = normalizedPerformanceStatus(learner.status);
+      const useApiStatus = hasAuthoritativePerformanceStatus(learner.status);
 
       switch (statusFilter) {
         case 'at-risk':
-          if (insight?.tier !== 'critical') return false;
+          if (useApiStatus ? performanceStatus !== 'at-risk' : insight?.tier !== 'critical') return false;
           break;
         case 'need-attention':
-          if (insight?.tier !== 'attention') return false;
+          if (insight?.tier !== 'attention' && insight?.tier !== 'upcoming') return false;
           break;
         case 'upcoming':
           if (insight?.tier !== 'upcoming') return false;
           break;
         case 'on-track':
-          if (insight?.tier !== 'on-track') return false;
+          if (useApiStatus
+            ? performanceStatus !== 'on-track' && performanceStatus !== 'high'
+            : insight?.tier !== 'on-track') return false;
           break;
         case 'needs-action':
           if (insight?.tier !== 'critical' && insight?.tier !== 'attention' && insight?.tier !== 'upcoming') return false;
@@ -231,72 +295,57 @@ export default function CoachCaseload() {
           break;
       }
 
-      if (filters.cohort !== 'all' && learner.cohortId !== filters.cohort) return false;
-      if (filters.group !== 'all' && displayValue(learner.group) !== filters.group) return false;
-      if (filters.coachRag !== 'all' && displayValue(learner.coachRag) !== filters.coachRag) return false;
-      if (filters.programStatus !== 'all' && displayValue(learner.rawProgramStatus) !== filters.programStatus) return false;
+      // Search and stable placement filters have already been applied by the server.
       if (filters.employer !== 'all' && displayValue(learner.employer) !== filters.employer) return false;
-
-      if (search) {
-        // Name and email are what a coach types; cohort, group and employer stay
-        // searchable because the previous page allowed them and people rely on it.
-        const haystack = [
-          learner.name,
-          learner.email,
-          learner.cohortName,
-          learner.group,
-          learner.employer,
-          learner.programmeName,
-        ];
-        if (!haystack.some((field) => field?.toLowerCase().includes(search))) return false;
-      }
 
       return true;
     });
   }, [learners, insights, statusFilter, filters]);
 
   const sorted = useMemo(() => {
-    const direction = sortDir === 'asc' ? 1 : -1;
-    const gatewayTime = (learner: Learner) => {
-      const parsed = parseDisplayDate(learner.gatewayReviewDate);
-      // Undated learners sort last in either direction rather than clumping at
-      // the top as an epoch-zero block.
-      return parsed ? parsed.getTime() : Number.POSITIVE_INFINITY;
+    const numeric = (value: number | null | undefined, available = true) => available && Number.isFinite(value) ? Number(value) : null;
+    const date = (value: string | null | undefined) => {
+      if (!hasValue(value)) return null;
+      const timestamp = Date.parse(value!);
+      return Number.isNaN(timestamp) ? null : timestamp;
     };
-
-    const value = (learner: Learner): number => {
+    const valueFor = (learner: Learner): number | string | null => {
       switch (sortKey) {
-        case 'risk': return insights.get(learner.id)?.urgency ?? 0;
-        case 'progress': return learner.overallProgressAvailable ? learner.overallProgress : -1;
-        case 'attendance': return learner.liveAttendanceRateAvailable ? learner.liveAttendanceRate ?? -1 : -1;
-        case 'otjh': return learner.otjhCompleted;
-        // Matches the card's Components display: completed against the whole
-        // programme component total, not the to-date target.
-        case 'components': return learner.componentsPlanned && learner.componentsPlanned > 0
-          ? ((learner.componentsCompleted ?? 0) / learner.componentsPlanned) * 100
-          : -1;
-        case 'ksb': return learner.ksbProgressAvailable ? learner.ksbProgress : -1;
-        case 'gateway': return gatewayTime(learner);
-        default: return 0;
+        case 'name': return learner.name;
+        case 'otjh': return numeric(learner.overallProgress, learner.overallProgressAvailable);
+        case 'ksb': return numeric(learner.ksbProgress, learner.ksbProgressAvailable);
+        case 'components': return learner.componentsPlanned ? numeric(((learner.componentsCompleted ?? 0) / learner.componentsPlanned) * 100) : null;
+        case 'attendance': return numeric(learner.liveAttendanceRate, learner.liveAttendanceRateAvailable);
+        case 'activity': return date([learner.lastActivity, learner.attendanceLastSession, learner.lastSubmittedEvidence, learner.lastContact].find(hasValue));
+        case 'progress-review': return date(learner.lastProgressReview);
+        case 'monthly-coaching': return date(learner.lastReview);
+        default: return insights.get(learner.id)?.urgency ?? 0;
       }
     };
-
+    const direction = sortDirection === 'asc' ? 1 : -1;
     return [...matched].sort((left, right) => {
-      if (sortKey === 'name') {
-        return direction * left.name.localeCompare(right.name);
-      }
-      const delta = value(left) - value(right);
-      // Name is the tie-break everywhere, so equal rows keep a stable order.
-      return delta !== 0 ? direction * delta : left.name.localeCompare(right.name);
+      const leftValue = valueFor(left);
+      const rightValue = valueFor(right);
+      if (leftValue === null && rightValue === null) return left.name.localeCompare(right.name);
+      if (leftValue === null) return 1;
+      if (rightValue === null) return -1;
+      const delta = typeof leftValue === 'string'
+        ? leftValue.localeCompare(String(rightValue), undefined, { sensitivity: 'base' })
+        : leftValue - Number(rightValue);
+      return (delta * direction) || left.name.localeCompare(right.name);
     });
-  }, [matched, insights, sortKey, sortDir]);
+  }, [matched, insights, sortDirection, sortKey]);
 
-  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
+  const handleSort = useCallback((key: SortKey) => {
+    setQueryValues({
+      sort: key,
+      direction: sortKey === key ? (sortDirection === 'asc' ? 'desc' : 'asc') : 'asc',
+    }, { resetPage: true });
+  }, [setQueryValues, sortDirection, sortKey]);
+
+  const totalPages = Math.max(1, serverTotalPages);
   const safePage = Math.min(currentPage, totalPages);
-  const paginated = useMemo(
-    () => sorted.slice((safePage - 1) * pageSize, (safePage - 1) * pageSize + pageSize),
-    [sorted, safePage, pageSize],
-  );
+  const paginated = sorted;
 
   const matchedIdKey = useMemo(() => sorted.map((learner) => learner.id).join(','), [sorted]);
 
@@ -324,37 +373,22 @@ export default function CoachCaseload() {
   // --- handlers ------------------------------------------------------------
 
   const handleFilterChange = useCallback((patch: Partial<CaseloadFilterState>) => {
-    setFilters((current) => ({ ...current, ...patch }));
-    setCurrentPage(1);
-  }, []);
+    setQueryValues({
+      ...(patch.search !== undefined ? { search: patch.search } : {}),
+      ...(patch.cohort !== undefined ? { cohort: patch.cohort } : {}),
+      ...(patch.group !== undefined ? { group: patch.group } : {}),
+      ...(patch.programStatus !== undefined ? { programmeStatus: patch.programStatus } : {}),
+      ...(patch.employer !== undefined ? { employer: patch.employer } : {}),
+    }, { resetPage: true });
+  }, [setQueryValues]);
 
   const handleStatusFilterChange = useCallback((next: StatusFilter) => {
-    setStatusFilter(next);
-    setCurrentPage(1);
-  }, []);
+    setQueryValues({ view: next }, { resetPage: true });
+  }, [setQueryValues]);
 
   const handleClearAll = useCallback(() => {
-    setFilters(INITIAL_FILTERS);
-    setStatusFilter('all');
-    setCurrentPage(1);
-  }, []);
-
-  const handleSortKeyChange = useCallback((next: SortKey) => {
-    setSortKey(next);
-    // Names read A–Z; every other column is interesting at its extreme.
-    setSortDir(next === 'name' ? 'asc' : 'desc');
-    setCurrentPage(1);
-  }, []);
-
-  const handleSortDirToggle = useCallback(() => {
-    setSortDir((current) => (current === 'asc' ? 'desc' : 'asc'));
-    setCurrentPage(1);
-  }, []);
-
-  const handlePageSizeChange = useCallback((size: number) => {
-    setPageSize(size);
-    setCurrentPage(1);
-  }, []);
+    resetQuery(['search', 'cohort', 'group', 'programmeStatus', 'employer', 'view', 'page']);
+  }, [resetQuery]);
 
   const handleToggleSelect = useCallback((learnerId: string) => {
     setSelectedLearnerIds((current) => {
@@ -384,39 +418,6 @@ export default function CoachCaseload() {
   }, [navigate]);
 
   const handleOpenProfile = useCallback((learner: Learner) => openProfile(learner), [openProfile]);
-
-  const handleCoachRagChange = useCallback(async (learnerId: string, nextValue: string) => {
-    const previousValue = learners.find((learner) => learner.id === learnerId)?.coachRag || EMPTY_VALUE;
-    const applyValue = (value: string | null | undefined) => {
-      setLearners((current) => current.map((learner) => (
-        learner.id === learnerId ? { ...learner, coachRag: formatCoachRagValue(value) } : learner
-      )));
-    };
-
-    setCoachRagSaveError(null);
-    setSavingCoachRagId(learnerId);
-    // Optimistic, then reconciled against whatever the server stored.
-    applyValue(nextValue);
-
-    try {
-      const response = await coachFetch(coachRagEndpoint(learnerId), {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ coachRag: nextValue || null }),
-      });
-      const payload = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(payload.detail || `Request failed with status ${response.status}`);
-      }
-      applyValue(payload.coachRag);
-    } catch (err) {
-      console.error('Unable to save coach RAG', err);
-      applyValue(previousValue);
-      setCoachRagSaveError('Unable to save Coach RAG right now.');
-    } finally {
-      setSavingCoachRagId((current) => (current === learnerId ? null : current));
-    }
-  }, [learners]);
 
   const runExport = useCallback((rows: Learner[]) => {
     if (rows.length === 0) return;
@@ -470,64 +471,47 @@ export default function CoachCaseload() {
   // been selected. Reuse the existing directory picker instead of showing a
   // misleading empty/error state when a deep link lands here first.
   if (isInitialized && coach.canChooseCoach && !coach.isViewingAsCoach) {
-    return <Navigate to="/workspace/coach" replace />;
+    return embedded ? null : <Navigate to="/workspace/coach#learner-caseload" replace />;
   }
 
   const needsLiveSignIn = isInitialized && !auth.account && !authenticatedCoachEmail;
 
   return (
-    <WorkspaceShell
-      role="coach"
-      roleLabel={coachNav.label}
-      navItems={coachNav.items}
-      workspaceLabel={coachNav.workspaceLabel}
-      pageTitle="My Learners"
-      pageSubtitle="Monitor learner progress, identify risks and take action"
-      userName={ownerName}
-      userRole="Progress Coach"
-    >
-      <PageContainer>
-        <PageHeader
-          icon="ri-group-line"
-          title="My Learners"
-          description="Monitor learner progress, identify risks and take action."
-          actions={(
-            <LearnersHeaderActions
-              selectionMode={selectionMode}
-              selectedCount={selectedLearners.length}
-              isExporting={isExportingPdf}
-              exportDisabled={sorted.length === 0}
-              onExportCurrentView={handleExportCurrentView}
-              onStartSelection={handleStartSelection}
-              onExportSelected={handleExportSelected}
-              onCancelSelection={handleCancelSelection}
-            />
-          )}
-        />
+    <>
+      <section className={`${styles.page} ${embedded ? styles.embedded : ''}`} aria-label="Coach learner caseload">
+        <header className="flex flex-wrap items-center justify-between gap-4">
+          <div className={styles.title}>
+            <h1>{embedded ? 'All Learners' : 'My Learners'}</h1>
+            {!embedded ? <p>Monitor learner progress and engagement</p> : null}
+          </div>
+          <LearnersHeaderActions
+            selectionMode={selectionMode}
+            selectedCount={selectedLearners.length}
+            isExporting={isExportingPdf}
+            exportDisabled={sorted.length === 0}
+            onExportCurrentView={handleExportCurrentView}
+            onStartSelection={handleStartSelection}
+            onExportSelected={handleExportSelected}
+            onCancelSelection={handleCancelSelection}
+          />
+        </header>
 
-        {!loading && !error && learners.length > 0 ? (
-          <LearnerStatusTabs value={statusFilter} counts={counts} onChange={handleStatusFilterChange} />
-        ) : null}
-
-        <section className="overflow-hidden rounded-2xl bg-white shadow-sm">
+        <section className={styles.panel}>
           {!error && learners.length > 0 ? (
-            <div className="border-b border-foreground-100 p-3.5">
+            <div className={styles.toolbar}>
               <LearnerToolbar
                 filters={filters}
                 options={filterOptions}
-                sortKey={sortKey}
-                sortDir={sortDir}
-                resultCount={sorted.length}
+                statusFilter={statusFilter}
                 onFilterChange={handleFilterChange}
-                onSortKeyChange={handleSortKeyChange}
-                onSortDirToggle={handleSortDirToggle}
+                onStatusFilterChange={handleStatusFilterChange}
                 onClearAll={handleClearAll}
               />
             </div>
           ) : null}
 
           {selectionMode && !loading && !error && sorted.length > 0 ? (
-            <div className="flex flex-wrap items-center gap-2 border-b border-foreground-100 bg-primary-50/40 px-3.5 py-2.5">
+            <div className={styles.selection}>
               <span className="text-[12px] font-semibold text-primary-800">
                 {selectedLearners.length} selected
               </span>
@@ -562,73 +546,62 @@ export default function CoachCaseload() {
             </div>
           ) : null}
 
-          {coachRagSaveError ? (
-            <div className="flex items-center justify-between gap-3 border-b border-red-100 bg-red-50 px-3.5 py-2 text-[12px] text-red-700">
-              {coachRagSaveError}
-              <button
-                type="button"
-                onClick={() => setCoachRagSaveError(null)}
-                className="font-semibold underline-offset-2 hover:underline"
-              >
-                Dismiss
-              </button>
-            </div>
-          ) : null}
-
           {loading ? (
             <CaseloadLoading />
           ) : error ? (
             <CaseloadError
               message={error}
               onRetry={handleRetry}
-              action={needsLiveSignIn ? { label: 'Sign in', onClick: () => navigate('/login', { state: { from: '/coach/caseload' } }) } : undefined}
+              action={needsLiveSignIn ? { label: 'Sign in', onClick: () => navigate('/login', { state: { from: '/workspace/coach#learner-caseload' } }) } : undefined}
             />
           ) : learners.length === 0 ? (
             <CaseloadEmpty />
           ) : sorted.length === 0 ? (
             <CaseloadNoMatches onClearFilters={handleClearAll} />
           ) : (
-            <div className="p-3.5">
-              <LearnerCardGrid
-                learners={paginated}
-                insights={insights}
-                selectedLearnerIds={selectedLearnerIds}
-                selectionMode={selectionMode}
-                onToggleSelect={handleToggleSelect}
-                onQuickView={handleQuickView}
-                onOpenProfile={handleOpenProfile}
-              />
-            </div>
+            <LearnerTable
+              learners={paginated}
+              insights={insights}
+              sortKey={sortKey}
+              sortDirection={sortDirection}
+              onSort={handleSort}
+              selectedLearnerIds={selectedLearnerIds}
+              selectionMode={selectionMode}
+              onToggleSelect={handleToggleSelect}
+              onOpenProfile={handleOpenProfile}
+            />
           )}
 
           {!loading && !error && sorted.length > 0 ? (
             <Pagination
               page={safePage}
               totalPages={totalPages}
-              total={sorted.length}
-              pageSize={pageSize}
-              onPageChange={setCurrentPage}
-              onPageSizeChange={handlePageSizeChange}
+              total={serverTotal}
+              pageSize={PAGE_SIZE}
+              onPageChange={(nextPage) => setQueryValues({ page: nextPage }, { replace: false })}
             />
           ) : null}
         </section>
 
         {hasFiltersApplied && !loading && !error && sorted.length > 0 ? (
-          <p className="px-1 text-[12px] text-foreground-400">
-            Showing {sorted.length} of {learners.length} learners in your caseload.
+          <p className={styles.footerNote}>
+            Showing {sorted.length} learners on this page from {serverTotal} matching learners.
           </p>
         ) : null}
-      </PageContainer>
+      </section>
 
       <LearnerQuickViewDrawer
         learner={quickViewLearner}
         insight={quickViewLearner ? insights.get(quickViewLearner.id) ?? null : null}
         initialTab={quickView?.tab ?? 'overview'}
-        savingCoachRag={savingCoachRagId === quickViewLearner?.id}
         onClose={handleCloseQuickView}
-        onCoachRagChange={handleCoachRagChange}
         onOpenProfile={openProfile}
       />
-    </WorkspaceShell>
+    </>
   );
+}
+
+/** The former standalone page now has one canonical home on the coach dashboard. */
+export default function CoachCaseload() {
+  return <Navigate to="/workspace/coach#learner-caseload" replace />;
 }

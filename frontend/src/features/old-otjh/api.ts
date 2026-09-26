@@ -5,6 +5,7 @@ export type Signature = { signed_at: string; signer_name: string; url: string };
 export type SignatureCaptureMethod = 'draw' | 'upload' | 'import';
 export type MonthState = {
   is_required?: boolean;
+  provisional?: boolean;
   month: string;
   status: 'awaiting_signature' | 'needs_review' | 'student_signed' | 'awaiting_coach' | 'ready_to_complete' | 'complete' | 'no_data';
   row_count: number;
@@ -40,6 +41,10 @@ export type Summary = {
 export type Activity = {
   id: number; category: string; title: string; activity_date: string | null;
   activity_time: string | null; planned_hours: string | number; actual_hours: string | number;
+  actual_pending?: boolean;
+  provisional?: boolean;
+  provisional_fields?: string[];
+  provisional_source?: string | null;
   timestamp_label: string; completion_note: string | null; accepted: boolean;
   source_ref?: string | null;
   group_name?: string | null;
@@ -52,10 +57,12 @@ export type Activity = {
     quiz_maximum_score: string | null; quiz_passed: boolean | null; quiz_attempt_number: number | null }[];
 };
 export type MonthDetail = MonthState & { rows: Activity[]; snapshot_digest: string;
-  profile?: { start_date: string | null; planned_end_date: string | null; first_evidence_date: string | null } };
+  profile?: { start_date: string | null; planned_end_date: string | null; first_evidence_date: string | null };
+  demo_only?: boolean; provisional?: boolean };
 /** Presentation data shared by retained and current monthly journals. */
 export type JournalSummary = {
-  learner?: { id: number; aptem_id?: number | null; name: string; programme: string; coach_name: string };
+  learner?: { id: number; aptem_id?: number | null; name: string; programme: string; coach_name: string;
+    planned_end_date?: string | null };
   months: MonthState[];
 };
 export type ActivityContent = { id: number; parts: { id: number; title: string; category: string;

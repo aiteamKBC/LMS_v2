@@ -18,6 +18,8 @@ import { dateKey } from '@/pages/learner/training-plan-timeline/model';
 /** One week as the sidebar lists it. */
 export interface SidebarWeek {
   key?: string;
+  /** The authored curriculum week (curriculum.weeks.id), when this week has one. */
+  weekId?: string;
   week: string;
   count: number;
   completed: number;
@@ -144,6 +146,7 @@ export function placeActivity(
         weekComponents: week.components,
         weeks: module.weeks.map((w, index) => ({
           key: w.components[0]?.weekId || `week-${index}`,
+          weekId: w.components.find((c) => c.weekId)?.weekId || undefined,
           week: w.week,
           count: w.components.length,
           completed: w.components.filter((c) => isComponentComplete(c, completedIds)).length,

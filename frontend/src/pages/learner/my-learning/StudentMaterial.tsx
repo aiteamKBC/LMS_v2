@@ -8,6 +8,31 @@ import { subjectRequest, type SubjectMaterial, type SubjectAttemptResult } from 
 
 const AttachmentPreview = lazy(() => import('../video-watch/page').then((module) => ({ default: module.InlineAttachmentPreview })));
 
+function previousSelections(data: SubjectMaterial): Record<string, string[]> {
+  const text = (value: string) => new DOMParser().parseFromString(value, 'text/html').body.textContent?.replace(/\s+/g, ' ').trim() || '';
+  // The API orders submitted attempts newest first. Never mix attempts or
+  // reuse positional option IDs against a potentially changed question bank.
+  const latest = data.history[0];
+  const selections: Record<string, string[]> = {};
+  for (const question of data.quiz?.questions || []) {
+    const matches = latest
+      ? (latest.answer_review || []).filter((answer) => text(answer.question) === text(question.text))
+        .map((answer) => answer.selected)
+      : data.historical.answers.filter((answer) => String(answer.question_id) === question.id && text(answer.question_body) === text(question.text))
+        .map((answer) => Array.isArray(answer.learner_answer) ? answer.learner_answer : [answer.learner_answer]);
+    if (matches.length !== 1 || !matches[0].length) continue;
+    const ids: string[] = [];
+    for (const selected of matches[0]) {
+      if (typeof selected !== 'string') break;
+      const options = question.options.filter((option) => text(option.text) === text(selected));
+      if (options.length !== 1) break;
+      ids.push(options[0].id);
+    }
+    if (ids.length === matches[0].length) selections[question.id] = ids;
+  }
+  return selections;
+}
+
 function Html({ value }: { value: string }) {
   const normalized = normalizeReadingHtml(value);
   const clean = DOMPurify.sanitize(normalized, { FORBID_TAGS: ['form'], FORBID_ATTR: ['srcdoc'] });
@@ -107,6 +132,8 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
   if (!data && error) return <div role="alert" className="rounded-xl border border-red-200 p-4">{error} <button onClick={() => setRetry((v) => v + 1)} className="font-semibold underline">Try again</button></div>;
   if (!data) return <p role="status" className="p-5">Loading activity…</p>;
   const quiz = data.quiz;
+  const displayedAnswers = attemptId ? answers : previousSelections(data);
+  const reviewing = !attemptId && (data.history.length > 0 || data.historical.answers.length > 0);
   const isComplete = completed || data.completed || savedResult?.completed || data.history.some((attempt) => attempt.completed);
   const answered = quiz?.questions.every((question) => (answers[question.id]?.length || 0) > 0) ?? true;
   const needsConfirmation = !!quiz && data.has_reading;
@@ -141,11 +168,12 @@ export function StudentMaterial({ kind, learnerId, groupId, activityId, complete
     {quiz && <section className="space-y-4" aria-label="Activity quiz">
       <div className="flex flex-wrap items-center justify-between gap-3"><h4 className="text-lg font-bold">Quiz · {quiz.questions.length} {quiz.questions.length === 1 ? 'question' : 'questions'}</h4>{quiz.passing_percent != null && <p className="text-sm text-foreground-500">Pass mark: {Number(quiz.passing_percent).toFixed(0)}%</p>}</div>
       {quiz.body && <Html value={quiz.body} />}
+      {reviewing && <p className="rounded-xl border border-primary-100 bg-primary-50 p-3 text-sm text-primary-800">Your previous answers are selected below for review. Choose Try quiz again to start a new attempt. Answers that no longer match the current questions remain in your attempt history.</p>}
       {!quiz.ready && <p role="status" className="rounded-xl bg-amber-50 p-3 text-sm text-amber-900">{quiz.message} Your previous results are kept.</p>}
       {quiz.questions.map((question, index) => <fieldset key={question.id} disabled={!attemptId || busy} className="space-y-3 rounded-xl border border-foreground-200 p-4">
         <legend className="px-2 text-sm font-bold">Question {index + 1}{question.type === 'multi_choice' ? ' · Select all that apply' : ''}</legend><Html value={question.text} />
-        {question.options.map((option) => <label key={option.id} className={`flex cursor-pointer items-start gap-3 rounded-lg border p-3 ${answers[question.id]?.includes(option.id) ? 'border-primary-400 bg-primary-50' : 'border-foreground-200'}`}>
-          <input type={question.type === 'multi_choice' ? 'checkbox' : 'radio'} name={`question-${question.id}`} value={option.id} checked={answers[question.id]?.includes(option.id) || false}
+        {question.options.map((option) => <label key={option.id} className={`flex ${attemptId ? 'cursor-pointer' : 'cursor-default'} items-start gap-3 rounded-lg border p-3 ${displayedAnswers[question.id]?.includes(option.id) ? 'border-primary-400 bg-primary-50' : 'border-foreground-200'}`}>
+          <input type={question.type === 'multi_choice' ? 'checkbox' : 'radio'} name={`question-${question.id}`} value={option.id} checked={displayedAnswers[question.id]?.includes(option.id) || false}
             onChange={(event) => setAnswers((previous) => ({ ...previous, [question.id]: question.type === 'multi_choice' ? event.target.checked ? [...(previous[question.id] || []), option.id] : (previous[question.id] || []).filter((value) => value !== option.id) : [option.id] }))} className="mt-1 shrink-0 accent-primary-600" /><Html value={option.text} />
         </label>)}
       </fieldset>)}

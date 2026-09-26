@@ -107,7 +107,11 @@ class ManagementTests(CalendarFixture):
         return self.review('reschedule', changes=[dict(sessionNumber=1, startDateTimeUtc='2026-10-09T11:00:00Z', durationMinutes=120)], **kwargs)
 
     def confirm(self, review):
-        return self.ns['confirm_action']('LIVE-1', {'reviewToken': review['reviewToken'], 'acknowledgeNotifications': True}, 'ACTOR-1')
+        return self.ns['confirm_action']('LIVE-1', {
+            'reviewToken': review['reviewToken'],
+            'notifyAttendees': True,
+            'acknowledgeNotifications': True,
+        }, 'ACTOR-1')
 
     def test_review_is_read_only_and_uses_exact_occurrence(self):
         review = self.review()
@@ -123,6 +127,18 @@ class ManagementTests(CalendarFixture):
         self.assertEqual(review['calendarRequests'], 1)
         self.assertEqual(self.tokens[review['reviewToken']]['commands'][0]['eventId'], 'master-1')
         self.assertEqual(len(review['sessions']), 2)
+
+    def test_reschedule_review_allows_a_silent_choice(self):
+        review = self.move()
+        self.assertFalse(review['notificationRequired'])
+        result = self.ns['confirm_action']('LIVE-1', {
+            'reviewToken': review['reviewToken'],
+            'notifyAttendees': False,
+            'acknowledgeNotifications': False,
+        }, 'ACTOR-1')
+        self.assertEqual(result['status'], 'done')
+        self.ns['graph_action'].assert_called_once()
+        self.assertFalse(self.ns['graph_action'].call_args.args[3])
 
     def test_foreign_session_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -346,7 +362,8 @@ class PureTests(unittest.TestCase):
         client = types.SimpleNamespace(get=Mock(return_value=types.SimpleNamespace(status_code=200, json=lambda: event)),
             post=Mock(return_value=types.SimpleNamespace(status_code=202)), patch=Mock(return_value=types.SimpleNamespace(status_code=200)))
         ns = {'httpx': types.SimpleNamespace(Client=lambda **_: nullcontext(client), HTTPError=TransportError),
-              'quote': quote, 'CalendarStateError': CalendarStateError, 'ActionNotSent': ActionNotSent}
+              'quote': quote, 'CalendarStateError': CalendarStateError, 'ActionNotSent': ActionNotSent,
+              'SILENT_UPDATE_HEADERS': {'Prefer': 'outlook.send-invitations="none"'}}
         functions(ROOT / 'teams_calendar_actions.py', ['graph_action'], ns)
         series = {'organizer_email': 'owner@example.invalid'}
         command = {'eventId': 'exact/occurrence', 'joinUrl': 'synthetic-link', 'etag': 'version-1',
@@ -356,11 +373,14 @@ class PureTests(unittest.TestCase):
             path, = client.patch.call_args.args
             self.assertIn('exact%2Foccurrence', path)
             self.assertEqual(set(client.patch.call_args.kwargs['json']), {'start', 'end', 'hideAttendees'})
+            self.assertIsNone(client.patch.call_args.kwargs['headers'])
+            self.assertTrue(ns['graph_action'](series, command, '', False))
+            self.assertEqual(client.patch.call_args.kwargs['headers'], {'Prefer': 'outlook.send-invitations="none"'})
             client.post.assert_not_called()
             event['@odata.etag'] = 'changed'
             with self.assertRaises(ActionNotSent):
                 ns['graph_action'](series, command, '')
-            client.patch.assert_called_once()
+            self.assertEqual(client.patch.call_count, 2)
 
     def test_new_endpoints_enforce_staff_roles_before_directory_or_actions(self):
         ns = {'functools': functools, 'JsonResponse': Response,

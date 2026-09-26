@@ -64,55 +64,37 @@ export const learnerNavItems: SidebarNavItem[] = [
 // ============================================================================
 export const coachNavItems: SidebarNavItem[] = [
   { id: 'coach-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/coach' },
-  { id: 'coach-previous-records', label: 'Previous learning records', icon: 'ri-history-line', href: '/old-otjh/coach' },
-  {
-    id: 'coach-group-learners',
-    label: 'My Learners',
-    icon: 'ri-group-line',
-    href: '/coach/caseload',
-  },
   { id: 'coach-notifications', label: 'Notifications', icon: 'ri-notification-3-line', href: '/notifications' },
   {
-    id: 'coach-group-attendance',
-    label: 'Attendance',
-    icon: 'ri-calendar-2-line',
-    href: '',
+    id: 'coach-meetings',
+    label: 'Meetings',
+    icon: 'ri-calendar-event-line',
+    href: '/coach/monthly-coaching',
     children: [
-      { id: 'coach-attendance', label: 'Attendance & Catch-up', icon: 'ri-calendar-check-line', href: '/coach/attendance' },
-      { id: 'coach-absence-reports', label: 'Absence Reports', icon: 'ri-error-warning-line', href: '/coach/absence-reports' },
-    ],
-  },
-  {
-    id: 'coach-group-marking',
-    label: 'Marking & Evidence',
-    icon: 'ri-edit-line',
-    href: '',
-    children: [
-      { id: 'coach-marking-queue', label: 'Marking Queue', icon: 'ri-edit-line', href: '/coach/marking-queue' },
-    ],
-  },
-  {
-    id: 'coach-group-coaching',
-    label: 'Coaching & Reviews',
-    icon: 'ri-calendar-schedule-line',
-    href: '',
-    children: [
-      { id: 'coach-timetable', label: 'Calendar', icon: 'ri-calendar-schedule-line', href: '/coach/timetable' },
-      { id: 'coach-meetings', label: 'Monthly Coaching Meeting', icon: 'ri-calendar-check-line', href: '/coach/meetings' },
+      { id: 'coach-monthly-coaching', label: 'Monthly Coaching Meeting', icon: 'ri-calendar-check-line', href: '/coach/monthly-coaching' },
       { id: 'coach-progress-reviews', label: 'Progress Reviews', icon: 'ri-file-chart-line', href: '/coach/progress-reviews' },
-      { id: 'coach-monthly-logs', label: 'Monthly Logs', icon: 'ri-file-list-3-line', href: '/coach/monthly-logs', matchPaths: ['/coach/monthly-cycle'] },
+      { id: 'coach-catchup-queue', label: 'Catch-up Queue', icon: 'ri-refresh-line', href: '/coach/catchup-queue' },
+      { id: 'coach-timetable', label: 'Calendar', icon: 'ri-calendar-schedule-line', href: '/coach/timetable' },
     ],
   },
   {
-    id: 'coach-group-intelligence',
-    label: 'Progress Intelligence',
-    icon: 'ri-bar-chart-2-line',
-    href: '',
-    children: [
-      { id: 'coach-ksb-impact', label: 'KSB Impact', icon: 'ri-bar-chart-2-line', href: '/coach/ksb-impact' },
-      { id: 'coach-otjh-reports', label: 'OTJH Reports', icon: 'ri-time-line', href: '/coach/otjh-reports' },
-      { id: 'coach-monthly-reports', label: 'Monthly Reports', icon: 'ri-file-list-3-line', href: '/coach/monthly-reports' },
-    ],
+    id: 'coach-attendance',
+    label: 'Attendance',
+    icon: 'ri-calendar-check-line',
+    href: '/coach/attendance',
+  },
+  {
+    id: 'coach-marking-queue',
+    label: 'Marking',
+    icon: 'ri-edit-line',
+    href: '/coach/marking-queue',
+  },
+  {
+    id: 'coach-monthly-logs',
+    label: 'Monthly Logs',
+    icon: 'ri-file-list-3-line',
+    href: '/coach/monthly-logs',
+    matchPaths: ['/coach/monthly-cycle'],
   },
 ];
 
@@ -215,6 +197,7 @@ export const employerNavItems: SidebarNavItem[] = [
 // CURRICULUM STUDIO — Grouped sidebar
 // ============================================================================
 export const curriculumNavItems: SidebarNavItem[] = [
+  { id: 'curriculumNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/curriculum/coach-directory' },
   { id: 'curriculum-home', label: 'Home', icon: 'ri-home-5-line', href: '/workspace/curriculum' },
   {
     id: 'curriculum-programmes',
@@ -257,11 +240,6 @@ export const curriculumNavItems: SidebarNavItem[] = [
     label: 'Quality',
     icon: 'ri-shield-check-line',
     href: '/curriculum/quality',
-    // Published Content, Reports and the Audit Trail are live; Quality
-    // Assurance and Version Control have no record store yet, and the hub says
-    // which is which. The tag flags that the destination is usable but part
-    // built, where `comingSoon` would wrongly read as "do not bother opening".
-    tag: 'Under review',
     matchPaths: [
       '/curriculum/published',
       '/curriculum/reports',
@@ -270,6 +248,17 @@ export const curriculumNavItems: SidebarNavItem[] = [
       '/curriculum/qa',
       '/curriculum/version-control',
     ],
+  },
+  {
+    // The archive, for the whole of Curriculum rather than per list. Every page
+    // that archives something still has its own "View archived" toggle scoped to
+    // that list; this is where the four of them are read together, and the only
+    // place a record is put back or removed for good without first knowing which
+    // list it left.
+    id: 'curriculum-archive',
+    label: 'Archive',
+    icon: 'ri-archive-line',
+    href: '/curriculum/archive',
   },
 ];
 
@@ -311,7 +300,16 @@ export const engagementNavItems: SidebarNavItem[] = [
       { id: 'engagement-clubs', label: 'Learner Clubs', icon: 'ri-team-line', href: '/engagement/clubs' },
     ],
   },
-  { id: 'engagement-reports', label: 'Reports', icon: 'ri-bar-chart-box-line', href: '/engagement/reports' },
+  {
+    id: 'engagement-group-reports',
+    label: 'Reports',
+    icon: 'ri-bar-chart-box-line',
+    href: '',
+    children: [
+      { id: 'engagement-reports', label: 'Reports', icon: 'ri-file-chart-line', href: '/engagement/reports' },
+      { id: 'engagement-feedbacks', label: 'Feedbacks', icon: 'ri-chat-quote-line', href: '/engagement/feedbacks' },
+    ],
+  },
 ];
 
 // ============================================================================
@@ -328,6 +326,8 @@ export const engagementNavItems: SidebarNavItem[] = [
  * live on the learner's own page (see BoardPage's Programme panel).
  */
 export const apprenticeNavItems: SidebarNavItem[] = [
+  { id: 'apprenticeNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/users/coach-directory' },
+  { id: 'apprenticeNavItems-first-sessions', label: 'First sessions', icon: 'ri-calendar-check-line', href: '/users/first-sessions' },
   { id: 'apprentice-users', label: 'Users', icon: 'ri-group-line', href: '/users', statusDot: 'blue' },
 ];
 
@@ -336,6 +336,8 @@ export const apprenticeNavItems: SidebarNavItem[] = [
  * compliance workspace pages (ILR, evidence packs, funding risk, …) rely on.
  */
 export const enrolmentNavItems: SidebarNavItem[] = [
+  { id: 'enrolmentNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/users/coach-directory' },
+  { id: 'enrolmentNavItems-first-sessions', label: 'First sessions', icon: 'ri-calendar-check-line', href: '/users/first-sessions' },
   { id: 'enrolment-users', label: 'Users', icon: 'ri-group-line', href: '/users', statusDot: 'blue' },
 ];
 
@@ -577,6 +579,7 @@ export const leadershipNavItems: SidebarNavItem[] = [
 export const adminNavItems: SidebarNavItem[] = [
   // Dashboard
   { id: 'admin-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/admin' },
+  { id: 'admin-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/admin/coach_directory' },
 
   // User & Access Control — login."Login_accounts" and the four real roles
   {
@@ -588,6 +591,9 @@ export const adminNavItems: SidebarNavItem[] = [
       { id: 'admin-roles', label: 'Roles', icon: 'ri-shield-check-line', href: '/admin/roles' },
       { id: 'admin-permissions', label: 'Permissions', icon: 'ri-key-2-line', href: '/admin/permissions' },
       { id: 'admin-access-logs', label: 'Access Logs', icon: 'ri-door-lock-line', href: '/admin/access-logs' },
+      // The system-wide Audit Trail. Access Logs above answers "who signed in";
+      // this answers "who was here, what did they open, and what did they change".
+      { id: 'admin-audit-trail', label: 'Audit Trail', icon: 'ri-history-line', href: '/admin/audit-trail', matchPaths: ['/admin/audit-trail/people'] },
     ],
   },
 
@@ -607,6 +613,17 @@ export const adminNavItems: SidebarNavItem[] = [
 
   // Every headline count in one place, each row naming its source table.
   { id: 'admin-platform-report', label: 'Platform Report', icon: 'ri-bar-chart-box-line', href: '/admin/platform-report' },
+
+  // College sites outside the LMS — open in a new tab.
+  {
+    id: 'admin-group-external',
+    label: 'External tools',
+    icon: 'ri-external-link-line',
+    children: [
+      { id: 'admin-positive-moments', label: 'Positive Moments', icon: 'ri-heart-line', href: 'https://positive-moments.kentbusinesscollege.net', external: true },
+      { id: 'admin-tutor-dashboard', label: 'Tutor Dashboard', icon: 'ri-dashboard-line', href: 'https://tutordashboard.kentbusinesscollege.net', external: true },
+    ],
+  },
 ];
 
 // ============================================================================

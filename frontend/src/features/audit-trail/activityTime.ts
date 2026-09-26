@@ -1,0 +1,236 @@
+/**
+ * Stamps and spans, as the audit trail shows them.
+ *
+ * Shared by the People list and one person's activity page so the two never
+ * disagree about what "Today 14:32" means. The change feed's own day grouping
+ * stays in `page.tsx`, where it is the only thing that uses it.
+ */
+
+import type { CurriculumAuditEvent } from '@/lib/curriculumApi';
+
+/**
+ * The backend writes UTC. Whether the driver hands back a bare
+ * `2026-09-09T10:00:00` or an offset-bearing `...+00:00` depends on the column
+ * type, so the marker is only added when the string carries no zone of its own
+ * — appending one unconditionally turns every offset stamp into an invalid date
+ * and the whole time column silently blanks.
+ */
+export function parseActivityStamp(value: string): Date | null {
+  const text = String(value || '').trim();
+  if (!text) return null;
+  const zoned = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(text);
+  const parsed = new Date(zoned ? text : `${text}Z`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/** `Today 14:32`, `Yesterday 09:05`, `16 Sep 2026 14:32`. Empty for no stamp. */
+export function stampLabel(value: string): string {
+  const parsed = parseActivityStamp(value);
+  if (!parsed) return '';
+  const time = parsed.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+  const today = new Date();
+  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const startOfDay = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+  const diffDays = Math.round((startOfToday.getTime() - startOfDay.getTime()) / 86_400_000);
+  if (diffDays === 0) return `Today ${time}`;
+  if (diffDays === 1) return `Yesterday ${time}`;
+  return `${parsed.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} ${time}`;
+}
+
+/** `14:32` alone, for a row already sitting under its own date. */
+export function clockLabel(value: string): string {
+  const parsed = parseActivityStamp(value);
+  return parsed ? parsed.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }) : '';
+}
+
+/** Full context for a compact clock value: date, timezone and local-time note. */
+export function timeMetaLabel(value: string): string {
+  const parsed = parseActivityStamp(value);
+  if (!parsed) return 'Time not recorded';
+  const formatted = parsed.toLocaleString('en-GB', {
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true, timeZoneName: 'short',
+  });
+  return `${formatted} · your local time`;
+}
+
+/** Makes opaque audit identifiers readable while the raw value remains available in a tooltip. */
+/**
+ * A sensitive field records that it changed without recording what to: the
+ * stored value is a digest of itself, so two different values differ and the
+ * same value matches, and neither can be read back. See
+ * `system_audit/records.py` for which fields those are and why.
+ */
+export const REDACTED_PREFIX = 'redacted:';
+
+export function isRedacted(value: unknown): boolean {
+  return typeof value === 'string' && value.startsWith(REDACTED_PREFIX);
+}
+
+export function auditValueLabel(value: unknown): string {
+  // Said plainly rather than shown as a digest. "Hidden" on both sides of a
+  // diff is honest here in a way a count never is: the row above already says
+  // the field changed, and this says the value is deliberately not recorded.
+  if (isRedacted(value)) return 'Hidden — not recorded';
+  if (value === null || value === undefined || value === '') return 'Empty';
+  if (Array.isArray(value)) {
+    const ids = value.filter(item => typeof item === 'string');
+    if (ids.length === value.length && ids.every(item => /^(?:APTEM-)?GROUP-/i.test(item))) return `${value.length} linked groups`;
+    if (ids.length === value.length && ids.every(item => /^(?:APTEM-)?MOD-/i.test(item))) return `${value.length} linked modules`;
+    if (ids.length === value.length && ids.every(item => /^(?:APTEM-)?(?:COMP|COMPONENT)-/i.test(item))) return `${value.length} linked components`;
+    if (ids.length === value.length && ids.every(item => /^(?:APTEM-|MOD-|GROUP-|COMP(?:ONENT)?-|WEEK-)/i.test(item))) return `${value.length} linked records`;
+    try { return JSON.stringify(value); } catch { return '[value unavailable]'; }
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+      try { return auditValueLabel(JSON.parse(trimmed)); } catch { /* keep the original text */ }
+    }
+    if (/^(?:APTEM-)?GROUP-/i.test(trimmed)) return 'Internal group reference';
+    if (/^(?:APTEM-)?MOD-/i.test(trimmed)) return 'Internal module reference';
+    if (/^(?:APTEM-)?(?:COMP|COMPONENT)-/i.test(trimmed)) return 'Internal component reference';
+    if (/^APTEM-/i.test(trimmed)) return 'Internal record reference';
+  }
+  if (typeof value === 'object') {
+    try {
+      return Object.entries(value as Record<string, unknown>)
+        .map(([key, item]) => `${key.replace(/([A-Z])/g, ' $1').replace(/^./, char => char.toUpperCase())}: ${auditValueLabel(item)}`)
+        .join(' · ');
+    } catch { return '[value unavailable]'; }
+  }
+  return String(value);
+}
+
+type AuditFieldValue = {
+  label: string;
+  before?: unknown;
+  after?: unknown;
+};
+
+function parseAuditList(value: unknown): unknown[] | null {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return null;
+  try {
+    const parsed = JSON.parse(trimmed);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch { return null; }
+}
+
+/** The string ids inside a recorded list field, in the order they were saved. */
+export function auditIdList(value: unknown): string[] {
+  return (parseAuditList(value) || [])
+    .filter(item => typeof item === 'string')
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+/**
+ * Uses the friendly name field recorded in the same save when an audit event
+ * also contains a technical ID field. The ID remains available through the
+ * value tooltip, while the visible value is useful to a person reading the
+ * history.
+ *
+ * When the save recorded no names of its own, `names` resolves the ids against
+ * the live records. An id that resolves to nothing keeps its own text: a name
+ * that cannot be found is a gap in the lookup, not evidence that the record was
+ * never in the list, and dropping it would make a side of the diff shorter than
+ * what was actually saved.
+ */
+export function auditFieldValueLabel(
+  fieldLabel: string,
+  value: unknown,
+  fields: AuditFieldValue[],
+  side: 'before' | 'after',
+  names?: ReadonlyMap<string, string>,
+): string {
+  const namesLabel = /module\s+ids?/i.test(fieldLabel)
+    ? /module\s+names?/i
+    : /group\s+ids?/i.test(fieldLabel)
+      ? /group\s+names?/i
+      : null;
+  if (namesLabel) {
+    const namesField = fields.find(field => namesLabel.test(field.label));
+    const rawNames = namesField?.[side];
+    let names: unknown = rawNames;
+    if (typeof rawNames === 'string') {
+      const trimmed = rawNames.trim();
+      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+        try { names = JSON.parse(trimmed); } catch { /* keep the recorded text */ }
+      }
+    }
+    if (Array.isArray(names) && names.length > 0 && names.every(name => typeof name === 'string' && name.trim())) {
+      return names.map(name => String(name).trim()).join(', ');
+    }
+    if (typeof names === 'string' && names.trim()) return names.trim();
+  }
+  if (/(?:module|group)\s+ids?/i.test(fieldLabel) && names?.size) {
+    const ids = auditIdList(value);
+    // Shown only when at least one id could be named; a list of bare ids is no
+    // more readable than the count `auditValueLabel` falls back to, and the raw
+    // value stays in the tooltip either way.
+    if (ids.length && ids.some(id => names.get(id.toLowerCase()))) {
+      return ids.map(id => names.get(id.toLowerCase()) || id).join(', ');
+    }
+  }
+  return auditValueLabel(value);
+}
+
+export function auditValueTitle(value: unknown): string {
+  // No raw value in the tooltip either -- the tooltip is where the unredacted
+  // value normally lives, so it is the one place a redaction could leak.
+  if (isRedacted(value)) return 'This field is audited but its value is not recorded';
+  if (value === null || value === undefined || value === '') return 'Empty';
+  if (typeof value === 'string') return value;
+  try { return JSON.stringify(value); } catch { return String(value); }
+}
+
+/**
+ * Opens authored components at their exact week in Module Builder. Revision
+ * events carry the module and week ancestry; older timestamp events do not,
+ * so those keep their original destination instead of guessing.
+ */
+export function auditEventHref(event: CurriculumAuditEvent): string {
+  const componentId = String(event.entity === 'component' ? event.entityId || '' : '').trim();
+  const moduleId = String(event.moduleCatalogueId || (event.entity === 'module' ? event.entityId : '') || '').trim();
+  const archived = event.action === 'archived' || String(event.contentStatus || '').toLowerCase() === 'archived';
+  // An archived module is not in the catalogue to open, and the Module Builder
+  // no longer carries an archive of its own: the Curriculum archive is where
+  // every archived record is read, so the link names the module it means there.
+  if (archived && moduleId) {
+    const params = new URLSearchParams({ type: 'module', q: moduleId });
+    return `/curriculum/archive?${params.toString()}`;
+  }
+  const weekId = String(event.parentId || '').trim();
+  if (!componentId || !moduleId) return event.href;
+
+  const params = new URLSearchParams({ module: moduleId, component: componentId, focus: 'component' });
+  if (weekId) params.set('week', weekId);
+  return `/curriculum/module-builder?${params.toString()}`;
+}
+
+/**
+ * How long a page was open.
+ *
+ * `null` is not zero and must not read as it: a tab closed before the duration
+ * could be reported is an unknown, and the caller shows it as such rather than
+ * printing "0s" against a page somebody spent ten minutes on.
+ */
+export function durationLabel(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined || !Number.isFinite(ms)) return '';
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return seconds % 60 ? `${minutes}m ${seconds % 60}s` : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  return minutes % 60 ? `${hours}h ${minutes % 60}m` : `${hours}h`;
+}
+
+/** The span between two stamps, for a whole visit. */
+export function spanLabel(from: string, to: string): string {
+  const start = parseActivityStamp(from);
+  const end = parseActivityStamp(to);
+  if (!start || !end) return '';
+  return durationLabel(Math.max(0, end.getTime() - start.getTime()));
+}

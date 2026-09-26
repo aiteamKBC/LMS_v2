@@ -25,6 +25,8 @@ export default defineConfig(({ mode }) => {
     // ...proxyPlugins,
     react(),
     AutoImport({
+      include: [/[\\/]src[\\/].*\.[jt]sx?$/],
+      exclude: [/[\\/]src[\\/].*(?:__tests__|\.test\.|\.spec\.|mocks)[\\/].*/],
       imports: [
         {
           react: [
@@ -74,7 +76,10 @@ export default defineConfig(({ mode }) => {
           "@/components/feature/AppIcon": ["AppIcon"],
         },
       ],
-      dts: true,
+      // TypeScript already consumes the checked-in declaration file during
+      // production builds; regenerating it scans the whole source tree and is
+      // the main avoidable cost in the deploy build.
+      dts: mode !== 'production',
     }),
   ],
   base,
@@ -140,6 +145,10 @@ export default defineConfig(({ mode }) => {
         changeOrigin: true,
       },
       "/enrolment_api": {
+        target: apiTarget,
+        changeOrigin: true,
+      },
+      "/progress_reviews_api": {
         target: apiTarget,
         changeOrigin: true,
       },

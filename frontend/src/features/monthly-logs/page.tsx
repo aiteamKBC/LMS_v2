@@ -49,6 +49,22 @@ function ErrorState({ error, retry }: { error: Error; retry: () => void }) {
     action={<button className={journal.secondaryButton} onClick={retry}>Try again</button>} />;
 }
 
+function currentMonthKey() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function FutureMonthState({ month, base }: { month: string; base: string }) {
+  return <div className={`${journal.card} ${styles.futureMonth}`}>
+    <EmptyState title={`${monthLabel(month)} has not started yet`} icon="ri-calendar-schedule-line"
+      description="This monthly log will become available when the month begins. Your scheduled lecture is still available from Attendance."
+      action={<>
+        <Link className={styles.futurePrimaryAction} to="/learner/attendance"><AppIcon className="ri-calendar-check-line" />Back to Attendance</Link>
+        <Link className={styles.futureSecondaryAction} to={base}><AppIcon className="ri-history-line" />View available months</Link>
+      </>} />
+  </div>;
+}
+
 function CoachLearners() {
   const { auth } = useAuth();
   const [search, setSearch] = useState('');
@@ -87,8 +103,9 @@ function MonthlyLog({ id, month, summary, base, perspective }: { id: string; mon
   const client = useQueryClient();
   const student = auth.account?.role === 'learner';
   const canActAsStudent = student || (perspective === 'learner' && auth.account?.role === 'admin');
+  const futureMonth = month > currentMonthKey();
   const key = ['monthly-logs', auth.account?.id, perspective, perspective === 'coach' ? coachViewAs()?.email : null, id, month];
-  const query = useQuery({ queryKey: key, queryFn: ({ signal }) => getLogMonth(id, month, signal, perspective), refetchInterval: 7000 });
+  const query = useQuery({ queryKey: key, queryFn: ({ signal }) => getLogMonth(id, month, signal, perspective), refetchInterval: 7000, enabled: !futureMonth });
   const draftDigest = useRef<string | null>(null);
   const [captureVersion, setCaptureVersion] = useState(0);
   const [message, setMessage] = useState('');
@@ -109,6 +126,7 @@ function MonthlyLog({ id, month, summary, base, perspective }: { id: string; mon
     setMessage('This monthly log has been unlocked. Existing signatures were kept.');
     void client.invalidateQueries({ queryKey: ['monthly-logs'] });
   } });
+  if (futureMonth) return <FutureMonthState month={month} base={base} />;
   if (query.isPending) return <MonthReportSkeleton />;
   if (query.error && !query.data) return <ErrorState error={query.error} retry={() => void query.refetch()} />;
   if (!query.data) return null;
@@ -131,6 +149,7 @@ function MonthlyLog({ id, month, summary, base, perspective }: { id: string; mon
       </div></div>
     </nav>
     <LearnerInformation summary={summary} data={data} actions={<JournalDownloads summary={summary} month={month} disabled={signing.isPending || (data.source === 'lms' && !(data.student_signature && data.coach_signature))} loadMonth={(selected, signal) => getLogMonth(id, selected, signal, perspective)} />} />
+    {data.target_warning && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Target hours: Unavailable. {data.target_warning}</p>}
     <MonthlyHours data={data} />
     <ActivityLog key={sourceRef ?? 'all'} data={data} initialSourceRef={sourceRef}
       contentScope={`monthly-logs:${perspective}:${id}`} loadContent={rowId => getLogContent(id, month, rowId, perspective)} />

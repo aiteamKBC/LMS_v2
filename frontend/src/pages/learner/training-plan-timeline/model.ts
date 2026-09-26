@@ -34,9 +34,15 @@ export function reviewToBook(reviews: TrainingPlanDashboard['reviews']) {
 
 export function buildPlanModules(subjects: (Subject | PlanSubjectSummary)[], data: TrainingPlanDashboard) {
   return subjects.map(subject => {
-    const summary = 'activities' in subject ? null : subject;
+    const initialSummary = 'activities' in subject ? null : subject;
     const activities = 'activities' in subject ? subject.activities : [];
     const moduleId = data.moduleLinks[subject.id]?.id || (subject.id.startsWith('current:') ? subject.id.slice(8) : null);
+    // Reuse the already-loaded overview summary for current modules too. The
+    // detail panel receives these summaries, while the timeline previously
+    // only used them for legacy subjects, dropping direct recorded hours and
+    // canonical activity/KSB values for selected current modules.
+    const summary = initialSummary || data.planSubjects?.find(item =>
+      item.id === subject.id || (moduleId != null && item.moduleIds.includes(moduleId)));
     const detail = data.modules.find(module => module.id === moduleId);
     const sessions = data.sessions.filter(session => session.moduleId === moduleId).map(session => {
       const matches = activities.filter(activity => Date.parse(activity.native?.sessionDateTimeUtc || '') === Date.parse(session.start)
@@ -61,11 +67,10 @@ export function buildPlanModules(subjects: (Subject | PlanSubjectSummary)[], dat
     }, {});
     const ksbCodes = summary?.ksbCodes || [...new Set(activities.flatMap(activity =>
       (activity.native?.ksbMappings || []).map(mapping => mapping.code).filter(Boolean)))].sort();
-    const ksbProgress = summary ? summary.ksbProgress : activities.some(activity => !activity.native?.ksbMappings) ? null
-      : activities.reduce((counts, activity) => {
-        const count = new Set((activity.native?.ksbMappings || []).map(mapping => mapping.code).filter(Boolean)).size;
-        return { total: counts.total + count, completed: counts.completed + (activity.completed ? count : 0) };
-      }, { completed: 0, total: 0 });
+    // Activity-to-KSB mappings are occurrence counts, not canonical learner KSB
+    // evidence/profile progress.  No safe per-module canonical KSB source is
+    // present in this payload, so the module indicator remains unavailable.
+    const ksbProgress = summary?.ksbProgress ?? null;
     const historicalHours = actual.length ? actual.reduce((sum, row) => sum + row.hours, 0) : null;
     const recordedHours = summary?.directHours != null
       ? groupId ? data.actualAvailable ? (historicalHours || 0) + summary.directHours : null : summary.directHours
@@ -111,7 +116,9 @@ export function moduleVisualEnd(module: { end: string; detail?: { effectiveEndDa
 export type CurriculumRow =
   | { kind: 'session'; slotNumber: number; date: string; sessionNumber: number;
       title: string; start: string | null; minutes: number | null; attended: boolean | null; joinUrl: string | null;
-      holidays: PlanSlotHoliday[]; weekId?: string; weekTitle?: string; learningOutcomes?: string[] }
+      holidays: PlanSlotHoliday[]; weekId?: string; weekTitle?: string; learningOutcomes?: string[];
+      /** The curriculum team's published hint for this holiday week, if there is one. */
+      holidayNote?: string }
   /** Kept for a payload from an older, genuinely closing scheduler; today's spine never emits one. */
   | { kind: 'reading-week'; slotNumber: number; date: string; holidays: PlanSlotHoliday[] };
 
@@ -160,6 +167,9 @@ export function buildCurriculumTimeline(
       weekId: slot.weekId,
       weekTitle: slot.weekTitle,
       learningOutcomes: slot.learningOutcomes || [],
+      // Carried through exactly as served: the week it belongs to is the week
+      // this row is, so it can never surface against another one.
+      holidayNote: slot.holidayNote,
     };
   });
 }
@@ -191,10 +201,17 @@ export function uniquePlanSessions(modules: TimelineModule[]) {
 export function monthMetrics(month: string, modules: TimelineModule[], data: TrainingPlanDashboard) {
   const dates = modules.flatMap(module => module.dates).filter(date => date.startsWith(month));
   const weeks = new Set(dates.map(weekKey)).size;
+  const monthlyLog = data.monthlyLogOtjh?.[month];
   const current = data.monthlyOtjh?.[month];
-  const planned = data.months[month]?.planned ?? current?.planned ?? null;
+  const useAudit = !!data.auditOtjhCutoffMonth && month <= data.auditOtjhCutoffMonth;
+  // Monthly Logs is the authoritative per-month total when it exists. It
+  // already combines retained Audit history and current LMS completions, so
+  // adding `actual` rows or `monthlyOtjh.actual` here would double-count.
+  const planned = monthlyLog ? monthlyLog.target : useAudit ? null : data.months[month]?.planned ?? current?.planned ?? null;
   const historicalActual = data.actual.filter(row => row.month === month).reduce((sum, row) => sum + row.hours, 0);
-  const actual = data.actualAvailable === false && !data.monthlyOtjh ? null : historicalActual + (current?.actual || 0);
+  const actual = monthlyLog ? monthlyLog.completed
+    : useAudit ? null
+      : data.actualAvailable === false && !data.monthlyOtjh ? null : historicalActual + (current?.actual || 0);
   const explicit = data.months[month]?.weeklyTarget;
   return { planned, actual, remaining: planned === null || actual === null ? null : Math.max(0, planned - actual), weeks,
     weekly: explicit ?? (planned !== null && weeks > 0 ? planned / weeks : null), progress: planned === null || actual === null ? null : percent(actual, planned) };
@@ -221,10 +238,55 @@ export function barPosition(start: string, end: string, year: number, startMonth
   return { left: position(first), width: position(last) - position(first) };
 }
 
+/** Position a date range against the same twelve-month period using weekly columns. */
+export function periodPosition(start: string, end: string, year: number, startMonth = 0) {
+  const from = Date.UTC(year, startMonth, 1), to = Date.UTC(year + 1, startMonth, 1);
+  const first = Date.parse(start), last = Date.parse(end) + 86400000;
+  if (!Number.isFinite(first) || !Number.isFinite(last) || first >= to || last <= from || last < first) return null;
+  const position = (time: number) => Math.min(100, Math.max(0, (time - from) / (to - from) * 100));
+  return { left: position(first), width: position(last) - position(first) };
+}
+
+/** Position a date range against weekly columns anchored to the first real programme week. */
+export function weeklyPosition(start: string, end: string, anchor: string, weekCount: number) {
+  const from = Date.parse(anchor), to = from + weekCount * 7 * 86400000;
+  const first = Date.parse(start), last = Date.parse(end) + 86400000;
+  if (!Number.isFinite(from) || !Number.isFinite(first) || !Number.isFinite(last) || first >= to || last <= from || last < first) return null;
+  const position = (time: number) => Math.min(100, Math.max(0, (time - from) / (to - from) * 100));
+  return { left: position(first), width: position(last) - position(first) };
+}
+
 export function timelineMonthKeys(year: number, startMonth = 0) {
   return Array.from({ length: 12 }, (_, index) => new Date(Date.UTC(year, startMonth + index, 1)).toISOString().slice(0, 7));
 }
 
+export function timelineWeekKeys(year: number, startMonth = 0, anchor?: string) {
+  const from = anchor && Number.isFinite(Date.parse(anchor)) ? Date.parse(anchor) : Date.UTC(year, startMonth, 1);
+  const to = anchor ? from + 52 * 7 * 86400000 : Date.UTC(year + 1, startMonth, 1);
+  const count = anchor ? 52 : Math.ceil((to - from) / (7 * 86400000));
+  return Array.from({ length: count }, (_, index) => new Date(from + index * 7 * 86400000).toISOString().slice(0, 10));
+}
+
 export function timelinePeriodYear(month: string, startMonth = 0) {
   return Number(month.slice(0, 4)) - (Number(month.slice(5, 7)) - 1 < startMonth ? 1 : 0);
+}
+
+/**
+ * The curriculum team's published holiday hints for one module, by week id.
+ *
+ * `holidayNote` reaches a learner only on a slot whose week the author both
+ * clashed with a holiday and published a note for — the server decides both,
+ * so every entry here is already a hint this learner is meant to read. Keyed
+ * by `weekId` so a screen that lists weeks rather than delivery dates (My
+ * Learning, the week rail beside an activity) can show it against the one
+ * week it was written for.
+ */
+export function weekHolidayNotes(slots?: PlanCurriculumSlot[] | null): Map<string, string> {
+  const notes = new Map<string, string>();
+  for (const slot of slots || []) {
+    const note = (slot.holidayNote || '').trim();
+    const weekId = (slot.weekId || '').trim();
+    if (note && weekId && !notes.has(weekId)) notes.set(weekId, note);
+  }
+  return notes;
 }

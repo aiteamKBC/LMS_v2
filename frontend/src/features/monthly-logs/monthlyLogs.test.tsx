@@ -89,6 +89,15 @@ describe('monthly logs', () => {
     expect(screen.getByText(/Signing opens after the month ends/)).toBeVisible();
   });
 
+  it('shows a friendly scheduled state instead of requesting a future monthly log', async () => {
+    page('/learner/monthly-logs/commercial/7/2999-01?source=attendance%3Aocc-8');
+    expect(await screen.findByText('January 2999 has not started yet')).toBeVisible();
+    expect(screen.getByText(/monthly log will become available when the month begins/i)).toBeVisible();
+    expect(screen.getByRole('link', { name: /Back to Attendance/ })).toHaveAttribute('href', '/learner/attendance');
+    expect(screen.getByRole('link', { name: /View available months/ })).toHaveAttribute('href', '/learner/monthly-logs');
+    expect(getLogMonth).not.toHaveBeenCalled();
+  });
+
   it('filters the year and unsigned learner months while keeping historical reports reachable', async () => {
     const earlier = { ...retained, month: '2025-05', coach_signature: null };
     vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [current, retained, earlier] });
@@ -214,6 +223,28 @@ describe('monthly logs', () => {
     expect(await screen.findByText('Your signature has been saved for this month.')).toBeInTheDocument();
   });
 
+  it('signs a formula-backed snapshot like an ordinary month', async () => {
+    const provisional = {
+      ...retained,
+      status: 'awaiting_signature' as const,
+      student_signature: null,
+      coach_signature: null,
+      provisional: true,
+      snapshot_digest: 'provisional-digest',
+      rows: [{ ...retained.rows[0], provisional: true, provisional_fields: ['actual', 'ksb'] }],
+    };
+    vi.mocked(getLogMonth).mockResolvedValue(provisional);
+    vi.mocked(signLogMonth).mockResolvedValue({ ...provisional, student_signature: retained.student_signature, status: 'complete' });
+
+    page('/learner/monthly-logs/2026-08');
+    expect(await screen.findByText('August 2026')).toBeVisible();
+    expect(screen.queryByText(/Provisional reconstruction|signature will capture the exact formula-derived hours/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Sign as learner' }));
+    await waitFor(() => expect(signLogMonth).toHaveBeenCalledWith(
+      '7', '2026-08', 'provisional-digest', expect.any(Blob), 'draw', 'csrf', 'learner',
+    ));
+  });
+
   it('lets the coach add their own signature to a learner-signed month', async () => {
     Object.assign(account, { role: 'staff', access: 'coach' });
     vi.mocked(getLogMonth).mockResolvedValue({ ...current, student_signature: retained.student_signature, status: 'complete' });
@@ -263,4 +294,23 @@ describe('monthly logs', () => {
     page();
     expect(await screen.findByText('No monthly logs yet')).toBeInTheDocument();
   });
+});
+
+
+it('keeps monthly activities accessible when the signed target is unavailable', async () => {
+  const target_warning = 'The signed Training Plan is unavailable. Activities remain available.';
+  const missing = { ...retained, training_plan_target: null, target_warning };
+  vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [missing] });
+  page();
+  expect(await screen.findByText(target_warning)).toBeVisible();
+  expect(screen.getByText('Unavailable')).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Review month: August 2026' })).toBeVisible();
+});
+
+it('shows the unavailable-target warning and actual activity in the report', async () => {
+  const target_warning = 'The signed Training Plan could not be read.';
+  vi.mocked(getLogMonth).mockResolvedValue({ ...retained, training_plan_target: null, target_warning });
+  page('/learner/monthly-logs/2026-08');
+  expect(await screen.findByText(/Target hours: Unavailable/)).toBeVisible();
+  expect(screen.getByRole('button', { name: /Completed reading/ })).toBeVisible();
 });

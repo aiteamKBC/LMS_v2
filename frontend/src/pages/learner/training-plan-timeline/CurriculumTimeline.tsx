@@ -51,12 +51,12 @@ export function CurriculumTimeline({
       <ol className={layout.rows}>
         {group.rows.map(row => row.kind === 'reading-week'
           ? <li key={`slot-${row.slotNumber}`} className={layout.readingWeek} data-testid="learner-reading-week">
+            <div className={layout.readingHeader}>Reading Week</div>
             <CalendarOff size={15} aria-hidden="true" />
             <div>
               <p className={layout.rowTitle}>
                 <span className={layout.weekNumber}>Week {row.slotNumber}</span>
                 <span className={layout.rowDate}>{dateLabel(row.date)}</span>
-                <span className={layout.readingBadge}>Reading Week</span>
               </p>
               {row.holidays.map((holiday, index) => <p key={`${holiday.id || holiday.label}-${index}`} className={layout.holiday}>
                 <strong>Holiday:</strong> {holiday.label || 'Holiday'}
@@ -74,10 +74,9 @@ export function CurriculumTimeline({
             <div>
               <p className={layout.rowTitle}>
                 <span className={layout.weekNumber}>Week {row.slotNumber}</span>
-                <span className={layout.rowDate}>{dateLabel(row.date)}</span>
-                <strong>{row.title}</strong>
+                <strong>{row.weekTitle || 'Week title to be confirmed'}</strong>
                 <span className={layout.detailInline}>
-                  {row.start ? `${sessionTime(row.start)} · UK time` : 'Time to be confirmed'}
+                  {row.start ? sessionTime(row.start) : `${dateLabel(row.date)} · Time to be confirmed`}
                   {row.minutes ? ` · ${row.minutes} min` : ''}
                   {row.attended === true ? ' · Attended' : row.attended === false ? ' · Not attended' : ''}
                 </span>
@@ -91,6 +90,13 @@ export function CurriculumTimeline({
                 {holiday.type ? ` · ${holiday.type}` : ''}
                 {holiday.notes ? ` · ${holiday.notes}` : ''}
               </p>)}
+              {/* Only this week's own note, and only one the curriculum team
+                  published: the server sends nothing for a week whose hint is
+                  off, so there is no hidden text here to leak. */}
+              {row.holidays.length > 0 && row.holidayNote
+                && <p className={layout.holidayNote} data-testid="learner-holiday-note">
+                  <strong>From your curriculum team:</strong> {row.holidayNote}
+                </p>}
             </div>
           </li>)}
       </ol>

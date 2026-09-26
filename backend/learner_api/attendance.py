@@ -153,7 +153,7 @@ def fetch_kbc_attendance_rates(aptem_ids):
     numerator and the denominator. So a coach and their learner never read
     different percentages for the same register.
 
-    Returns {aptem_id (str): {'sessions', 'present', 'absent', 'rate'}} with an
+    Returns {aptem_id (str): {'sessions', 'present', 'absent', 'rate', 'lastSessionDate'}} with an
     entry only for learners that actually have counted rows.
     """
     keys = sorted({str(value).strip() for value in (aptem_ids or []) if str(value or '').strip()})
@@ -169,11 +169,13 @@ def fetch_kbc_attendance_rates(aptem_ids):
                 '''
                 SELECT "ID"::text AS aptem_id,
                        "Attendance" AS attended,
-                       count(*) AS row_count
+                       count(*) AS row_count,
+                       max("date") AS last_session_date
                 FROM public.kbc_attendance
                 WHERE "ID"::text = ANY(%s)
                   AND "Attendance" IN (0, 1)
                   AND "date" IS NOT NULL
+                  AND "date" <= CURRENT_DATE
                 GROUP BY 1, 2
                 ''',
                 [keys],
@@ -182,9 +184,12 @@ def fetch_kbc_attendance_rates(aptem_ids):
 
     totals = {}
     for row in rows:
-        bucket = totals.setdefault(row['aptem_id'], {'sessions': 0, 'present': 0, 'absent': 0})
+        bucket = totals.setdefault(row['aptem_id'], {'sessions': 0, 'present': 0, 'absent': 0, 'lastSessionDate': None})
         count = int(row['row_count'] or 0)
         bucket['sessions'] += count
+        last_date = row['last_session_date']
+        if last_date and (bucket['lastSessionDate'] is None or last_date > bucket['lastSessionDate']):
+            bucket['lastSessionDate'] = last_date
         if row['attended'] == 1:
             bucket['present'] += count
         else:

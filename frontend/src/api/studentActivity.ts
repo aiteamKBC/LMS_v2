@@ -27,6 +27,9 @@ export interface StudentActivityItem {
   due_timing?: string | null;
   position?: number;
   has_result?: boolean;
+  video_started?: boolean | null;
+  reading_viewed?: boolean | null;
+  quiz_attempted?: boolean | null;
   best_score_percent?: number | null;
   historical_completed?: boolean;
   new_attempt_count?: number;
@@ -73,6 +76,7 @@ export interface StudentActivityResponse {
   activities: StudentActivityItem[];
   source_status?: 'live' | 'historical';
   activity_sources?: Record<string, { module_id: string; group_id: number; activity_id: number }>;
+  activity_source_issues?: Record<string, 'missing_source_component_id' | 'missing_group_id_activity_id' | 'ambiguous_lineage'>;
   subjects?: { id: number; name: string }[];
   covers?: Record<string, string>;
 }

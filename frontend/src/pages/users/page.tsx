@@ -6,8 +6,8 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { AdminPageHeader } from '@/pages/admin/_shared/AdminPage';
 import { useAuth } from '@/hooks/useAuth';
+import { useListQueryState } from '@/hooks/useListQueryState';
 import { roleNavMap } from '@/mocks/navigation';
-import { CASE_OWNER_OPTIONS } from '@/mocks/enrolment-console';
 import { fetchEnrolmentUsers, STATUS_OPTIONS, TYPE_OPTIONS, PROGRAMME_STATUS_OPTIONS } from '@/api/enrolmentUsers';
 import { fetchStaffUsers, type StaffUserRow } from '@/api/staffUsers';
 import { fetchProgrammes, fetchCohorts, fetchGroups } from '@/api/curriculum';
@@ -188,6 +188,12 @@ const EMPTY_FILTER: UsersFilter = {
   userName: '', groups: [], email: '', statuses: [], type: 'all', programme: '', cohort: '',
   programmeStatus: '', niNumber: '', caseOwner: 'any', referenceNumber: '', page: 1, pageSize: PAGE_SIZE,
 };
+const DIRECTORY_QUERY_DEFAULTS = {
+  search: '', summary: 'all', page: 1, name: '', email: '', groups: '', statuses: '',
+  type: 'all', programme: '', cohort: '', programmeStatus: '', caseOwner: 'any', reference: '',
+};
+const encodeFilterList = (values?: string[]) => (values || []).join('~');
+const decodeFilterList = (value: string) => value ? value.split('~').filter(Boolean) : [];
 
 function initials(name: string) {
   return name.split(' ').filter(Boolean).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
@@ -322,6 +328,10 @@ export function matches(row: DirectoryRow, f: UsersFilter): boolean {
   if (f.programme && differs(row.programme, f.programme)) return false;
   if (f.cohort && differs(row.cohort, f.cohort)) return false;
   if (f.programmeStatus && (row.programmeStatus ?? '') !== f.programmeStatus) return false;
+  // 'any' is the unset value here, not '' — the select's own placeholder. Owner
+  // names are free text on the row like programme and cohort, so they are
+  // compared the same folded way.
+  if (f.caseOwner && f.caseOwner !== 'any' && differs(row.caseOwner, f.caseOwner)) return false;
   if (f.referenceNumber && !(row.reference ?? '').toLowerCase().includes(f.referenceNumber.toLowerCase())) return false;
   return true;
 }
@@ -329,11 +339,19 @@ export function matches(row: DirectoryRow, f: UsersFilter): boolean {
 export default function UsersListPage() {
   const { isAdmin } = useAuth();
   const navigate = useNavigate();
-  const [draft, setDraft] = useState<UsersFilter>(EMPTY_FILTER);
-  const [applied, setApplied] = useState<UsersFilter>(EMPTY_FILTER);
-  const [quickSearch, setQuickSearch] = useState('');
+  const { state: query, setValues: setQueryValues, reset: resetQuery } = useListQueryState(DIRECTORY_QUERY_DEFAULTS);
+  const applied = useMemo<UsersFilter>(() => ({
+    ...EMPTY_FILTER,
+    userName: String(query.name), email: String(query.email),
+    groups: decodeFilterList(String(query.groups)), statuses: decodeFilterList(String(query.statuses)),
+    type: String(query.type) as UsersFilter['type'], programme: String(query.programme),
+    cohort: String(query.cohort), programmeStatus: String(query.programmeStatus),
+    caseOwner: String(query.caseOwner), referenceNumber: String(query.reference),
+  }), [query.caseOwner, query.cohort, query.email, query.groups, query.name, query.programme, query.programmeStatus, query.reference, query.statuses, query.type]);
+  const [draft, setDraft] = useState<UsersFilter>(applied);
+  const quickSearch = String(query.search);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const [page, setPage] = useState(1);
+  const page = Number(query.page);
   const [createOpen, setCreateOpen] = useState(false);
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -348,7 +366,7 @@ export default function UsersListPage() {
   const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
 
   const [rows, setRows] = useState<DirectoryRow[]>([]);
-  const [summaryFilter, setSummaryFilter] = useState<SummaryFilter>('all');
+  const summaryFilter = String(query.summary) as SummaryFilter;
   // The curriculum lookups behind the programme -> cohort -> group filters. They
   // come from curriculum.cohort_authoring_details, the same source the create
   // form picks from, so a filter can only offer combinations that really exist.
@@ -403,6 +421,8 @@ export default function UsersListPage() {
   };
 
   useEffect(load, []);
+
+  useEffect(() => setDraft(applied), [applied]);
 
   // A failed lookup isn't worth an error banner over the whole directory: the
   // dropdown falls back to the programmes/cohorts the loaded rows already carry.
@@ -472,6 +492,11 @@ export default function UsersListPage() {
     () => Array.from(new Set([...programmes, ...distinct(rows, (r) => r.programme)])).sort(),
     [programmes, rows],
   );
+  // The case owners who actually own somebody, read off the loaded rows. This
+  // used to be a fixed list of four names in mocks/enrolment-console: two of
+  // them owned no learners at all, and every owner since was missing, so the
+  // filter could not reach most of the directory.
+  const caseOwnerOptions = useMemo(() => distinct(rows, (r) => r.caseOwner), [rows]);
   const cohortOptions = useMemo(
     () => Array.from(new Set([
       ...cohorts,
@@ -539,10 +564,15 @@ export default function UsersListPage() {
       ...('cohort' in patch ? { groups: [] } : {}),
       ...patch,
     }));
-  const search = () => { setApplied(draft); setPage(1); };
-  const updateQuickSearch = (value: string) => { setQuickSearch(value); setPage(1); };
-  const reset = () => { setDraft(EMPTY_FILTER); setApplied(EMPTY_FILTER); setQuickSearch(''); setSummaryFilter('all'); setPage(1); };
-  const selectSummary = (next: SummaryFilter) => { setSummaryFilter(next); setPage(1); };
+  const search = () => setQueryValues({
+    name: draft.userName || '', email: draft.email || '', groups: encodeFilterList(draft.groups),
+    statuses: encodeFilterList(draft.statuses), type: draft.type || 'all', programme: draft.programme || '',
+    cohort: draft.cohort || '', programmeStatus: draft.programmeStatus || '',
+    caseOwner: draft.caseOwner || 'any', reference: draft.referenceNumber || '',
+  }, { resetPage: true });
+  const updateQuickSearch = (value: string) => setQueryValues({ search: value }, { resetPage: true });
+  const reset = () => { setDraft(EMPTY_FILTER); resetQuery(); };
+  const selectSummary = (next: SummaryFilter) => setQueryValues({ summary: next }, { resetPage: true });
   // Commercial and apprenticeship ids come from different tables and overlap,
   // so every row action carries the row's source.
   const q = (row: UserListRow) => (row.source === 'commercial' ? '?source=commercial' : '');
@@ -591,7 +621,7 @@ export default function UsersListPage() {
   const applyLearnerImport = (imported: UserListRow[]) => {
     // Keep the saved rows in local state while refreshing server-derived fields.
     setRows(previous => mergeDirectoryRows([...imported, ...previous]));
-    setPage(1);
+    setQueryValues({ page: 1 });
     load();
   };
 
@@ -701,7 +731,7 @@ export default function UsersListPage() {
             />
             <SelectFilter label="Programme status" value={draft.programmeStatus ?? ''} onChange={(v) => set({ programmeStatus: v })} options={[{ value: '', label: '--All--' }, ...PROGRAMME_STATUS_OPTIONS.map((s) => ({ value: s, label: s }))]} />
             <TextFilter label="NI number" value={draft.niNumber ?? ''} onChange={(v) => set({ niNumber: v })} />
-            <SelectFilter label="Case owner" value={draft.caseOwner ?? 'any'} onChange={(v) => set({ caseOwner: v })} options={[{ value: 'any', label: 'Any' }, ...CASE_OWNER_OPTIONS.map((c) => ({ value: c, label: c }))]} />
+            <SelectFilter label="Case owner" value={draft.caseOwner ?? 'any'} onChange={(v) => set({ caseOwner: v })} options={[{ value: 'any', label: 'Any' }, ...caseOwnerOptions.map((c) => ({ value: c, label: c }))]} />
             <TextFilter label="Reference number" value={draft.referenceNumber ?? ''} onChange={(v) => set({ referenceNumber: v })} />
           </div>
           <div className="mt-5 flex items-center justify-end gap-4 lg:col-span-4">
@@ -753,7 +783,7 @@ export default function UsersListPage() {
             <table id="users-directory-table" className="w-full text-[13px]">
               <thead>
                 <tr className="border-b border-foreground-200/70 bg-background-100/50">
-                  {['User', 'Type', 'Email', 'Group', 'Programme', 'Subscription status', 'Learning plan', 'Programme status', 'Actions'].map((h) => (
+                  {['User', 'Type', 'Email', 'Group', 'Programme', 'Cohort', 'Subscription status', 'Learning plan', 'Programme status', 'Actions'].map((h) => (
                     <th key={h} className="text-left py-3 px-3 text-[11px] font-semibold text-foreground-500 uppercase tracking-wider whitespace-nowrap">{h}</th>
                   ))}
                 </tr>
@@ -762,9 +792,9 @@ export default function UsersListPage() {
                 {/* Skeleton rows, not a spinner in a merged cell: the table keeps
                     its column widths and height, so the header stops jumping when
                     the first page of users lands. */}
-                {loading && <TableBodySkeleton rows={6} columns={9} />}
+                {loading && <TableBodySkeleton rows={6} columns={10} />}
                 {!loading && error && (
-                  <tr><td colSpan={9} className="py-10 text-center text-[13px]">
+                  <tr><td colSpan={10} className="py-10 text-center text-[13px]">
                     <p className="text-red-600 mb-2"><AppIcon className="ri-error-warning-line mr-1.5" />{error}</p>
                     <button className={btnSecondary} onClick={load}><AppIcon className="ri-refresh-line" />Retry</button>
                   </td></tr>
@@ -807,6 +837,13 @@ export default function UsersListPage() {
                     <td className="py-2.5 px-3 text-foreground-600 max-w-[180px] break-words">
                       {isLearner && row.programme
                         ? row.programme
+                        : <span className="text-foreground-300">—</span>}
+                    </td>
+                    {/* Learners only, same as Programme: the cohort hangs off
+                        the programme, so a row without one has no cohort. */}
+                    <td className="py-2.5 px-3 text-foreground-600 whitespace-nowrap">
+                      {isLearner && row.cohort
+                        ? row.cohort
                         : <span className="text-foreground-300">—</span>}
                     </td>
                     <td className="py-2.5 px-3 whitespace-nowrap">
@@ -920,13 +957,13 @@ export default function UsersListPage() {
                   </tr>
                   );
                 })}
-                {!loading && !error && pageRows.length === 0 && <tr><td colSpan={9} className="py-10 text-center text-[13px] text-foreground-400">{rows.length === 0 ? 'No users yet. Use “Create” to add the first learner.' : 'No users match your filters.'}</td></tr>}
+                {!loading && !error && pageRows.length === 0 && <tr><td colSpan={10} className="py-10 text-center text-[13px] text-foreground-400">{rows.length === 0 ? 'No users yet. Use “Create” to add the first learner.' : 'No users match your filters.'}</td></tr>}
               </tbody>
             </table>
           </div>
           <div className="flex flex-col items-center justify-between gap-3 border-t border-foreground-100 px-5 py-2.5 sm:flex-row">
             <p className="text-[11px] text-foreground-500">Showing {showingStart} to {showingEnd} of {filtered.length} users</p>
-            <Pagination page={page} totalPages={totalPages} onChange={setPage} />
+            <Pagination page={page} totalPages={totalPages} onChange={nextPage => setQueryValues({ page: nextPage }, { replace: false })} />
             <label className="hidden items-center gap-2 text-[11px] text-foreground-500 sm:flex">
               Rows per page
               <select className="rounded-lg border border-foreground-200 bg-background-50 px-2 py-1 text-[11px] text-foreground-700" value={PAGE_SIZE} aria-label="Rows per page" onChange={() => undefined}>

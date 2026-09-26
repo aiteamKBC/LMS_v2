@@ -1,7 +1,7 @@
 import { finishTeamsCreation } from '../creationResult';
 import { syncTeamsCalendarState } from '../calendarState';
 import { calendarAction } from '../calendarActions';
-import { loadTeamsMeetingArtifacts } from '../../module-builder/moduleAuthoringData';
+import { loadModuleStructure, loadTeamsMeetingArtifacts } from '../../module-builder/moduleAuthoringData';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -149,6 +149,20 @@ vi.mock('../calendarActions', () => ({ calendarAction: vi.fn() }));
 const probeModuleTeamsAttachment = vi.fn(async () => 0);
 const fetchCurriculumTeamsMeetingSummaries = vi.fn(async () => summaries);
 const fetchCurriculumSessions = vi.fn<typeof import('@/lib/curriculumApi').fetchCurriculumSessions>(async () => sessions);
+const fetchModuleSessionPlan = vi.fn(async (moduleId: string) => ({
+  sessions: sessions
+    .filter(item => item.moduleCatalogueId === moduleId)
+    .map((item, index) => ({
+      sessionNumber: index + 1,
+      date: item.date,
+      day: item.day,
+      startTime: item.startTime,
+      endTime: item.endTime,
+      durationMinutes: 120,
+      skippedHolidays: item.skippedHolidays || [],
+    })),
+  skippedHolidays: [], finalEndDate: '', warnings: [],
+}));
 
 vi.mock('@/lib/curriculumApi', async importOriginal => ({
   ...(await importOriginal<typeof import('@/lib/curriculumApi')>()),
@@ -192,6 +206,8 @@ vi.mock('../../module-builder/moduleAuthoringData', async importOriginal => ({
     timeZone: 'GMT Standard Time', timeZoneIana: 'Europe/London',
   })),
   loadTeamsMeetingArtifacts: vi.fn(async () => artifacts),
+  fetchModuleSessionPlan: (...args: unknown[]) => fetchModuleSessionPlan(...(args as [string])),
+  loadModuleStructure: vi.fn(async () => null),
   syncTeamsMeetingArtifacts: (...args: unknown[]) => syncTeamsMeetingArtifacts(...(args as [])),
   restoreModuleTeamsMeeting: (...args: unknown[]) => restoreModuleTeamsMeeting(...(args as [])),
   probeModuleTeamsAttachment: (...args: unknown[]) => probeModuleTeamsAttachment(...(args as [])),
@@ -564,6 +580,60 @@ describe('Teams Meetings page', () => {
       const dialog = within(await screen.findByRole('dialog'));
       // The count is on the button, so the action says what it will do.
       expect(await dialog.findByRole('button', { name: 'Add 3 missing live sessions' })).toBeInTheDocument();
+    });
+
+    it('verifies the silent Teams update before creating missing local components', async () => {
+      probeModuleTeamsAttachment.mockResolvedValue(1);
+      const repairPlan = {
+        sessions: [
+          { sessionNumber: 1, weekNumber: 1, date: '2026-09-03', day: 'Thursday', startTime: '09:30', endTime: '11:30', durationMinutes: 120, skippedHolidays: [] },
+          { sessionNumber: 2, weekNumber: 2, date: '2026-09-17', day: 'Thursday', startTime: '09:30', endTime: '11:30', durationMinutes: 120, skippedHolidays: ['2026-09-17'] },
+          { sessionNumber: 3, weekNumber: 3, date: '2026-10-01', day: 'Thursday', startTime: '09:30', endTime: '11:30', durationMinutes: 120, skippedHolidays: [] },
+        ],
+        skippedHolidays: [], finalEndDate: '', warnings: [],
+      };
+      fetchModuleSessionPlan.mockResolvedValueOnce(repairPlan).mockResolvedValueOnce(repairPlan);
+      const repairedStructure = {
+        catalogueId: 'MOD-2',
+        weekStructure: [
+          { id: 'WEEK-1', weekNumber: 1, components: [{ id: 'LIVE-1', type: 'live-session' }] },
+          { id: 'WEEK-2', weekNumber: 2, components: [] },
+          { id: 'WEEK-3', weekNumber: 3, components: [] },
+        ],
+      };
+      vi.mocked(loadModuleStructure)
+        .mockResolvedValueOnce(repairedStructure as never)
+        .mockResolvedValueOnce(repairedStructure as never);
+      const order: string[] = [];
+      updateTeamsMeetingSchedule.mockImplementationOnce(async () => {
+        order.push('teams');
+        return { updated: true, meeting: {} as never, warnings: [] };
+      });
+      restoreModuleTeamsMeeting.mockImplementationOnce(async () => {
+        order.push('restore');
+        return { restored: true, updatedComponents: 1, createdComponents: 1, meeting: {}, module: {} };
+      });
+      await renderPage();
+      expect(await screen.findByText('Risk Management')).toBeInTheDocument();
+      await userEvent.click(within(rowFor('Risk Management')).getByRole('button', { name: 'Detail' }));
+
+      const dialog = within(await screen.findByRole('dialog'));
+      await userEvent.click(await dialog.findByRole('button', { name: 'Add 1 missing live session' }));
+
+      await waitFor(() => expect(restoreModuleTeamsMeeting).toHaveBeenCalledWith(
+        'MOD-2',
+        { createMissingComponents: true },
+      ));
+      expect(order).toEqual(['teams', 'restore']);
+      const [, repairInput] = updateTeamsMeetingSchedule.mock.calls[0] as unknown as [
+        string,
+        { notifyAttendees?: boolean; scheduledOccurrences: Array<{ startDateTimeUtc: string }> },
+      ];
+      expect(repairInput).not.toHaveProperty('notifyAttendees');
+      expect(repairInput.scheduledOccurrences.map(item => item.startDateTimeUtc)).toEqual([
+        '2026-09-03T08:30:00.000Z',
+        '2026-10-01T08:30:00.000Z',
+      ]);
     });
 
     it('keeps the manual artifact sync available once sessions have ended', async () => {

@@ -15,6 +15,7 @@ import json
 import logging
 import re
 from datetime import timedelta
+from decimal import Decimal
 from html import unescape
 from pathlib import Path
 from urllib.parse import urlparse
@@ -806,20 +807,27 @@ def _append_week_quizzes(weeks, components, assigned_modules=None):
     return next_weeks, next_components
 
 
-def _otjh_status(variance):
-    """RAG status from progress_variance (a decimal fraction):
-        On track       : variance > -0.05          (-4.999...% and better)
-        Need attention : -0.15 < variance <= -0.05  (-5% to -14.999...%)
-        At risk        : variance <= -0.15          (-15% and worse)
-    With no target yet (variance None) there's nothing to be behind on -> On track.
+def otjh_status_from_variance(variance):
+    """RAG status from the OTJH hour difference (actual minus target).
+
+    The coach and learner surfaces use the same absolute-hour thresholds:
+    a shortfall of 20 hours needs attention and a shortfall of 40 hours is at
+    risk. ``variance`` is retained as the argument name for compatibility with
+    existing callers, but it is an hour difference rather than a percentage.
     """
     if variance is None:
         return "On track"
-    if variance > -0.05:
-        return "On track"
-    if variance > -0.15:
+    shortfall = -Decimal(str(variance))
+    if shortfall > Decimal("40"):
+        return "At risk"
+    if shortfall > Decimal("20"):
         return "Need attention"
-    return "At risk"
+    return "On track"
+
+
+def _otjh_status(variance):
+    """Backward-compatible wrapper for the shared OTJH RAG rule."""
+    return otjh_status_from_variance(variance)
 
 
 def _week_target_rows(detail):
@@ -1063,7 +1071,7 @@ def _live_otjh_snapshot(detail, learner_profile=None):
     progress_hours_str = fmt_hours(progress_hours_num) if progress_hours_num >= 0 else f"-{fmt_hours(abs(progress_hours_num))}"
     variance_str = "" if variance is None else str(variance)
     variance_db = None if variance is None else variance
-    otjh_status = _otjh_status(variance)
+    otjh_status = _otjh_status(progress_hours_num)
 
     return {
         "planned_hours": planned,
@@ -1140,9 +1148,10 @@ def build_otjh_detail(source, learner_profile=None):
     reads it through one builder instead of repeating this resolution chain.
     """
     detail = to_learner_detail(source, learner_profile)
+    resolved_plan = effective_training_plan(source)
     detail["modules"], detail["week"], detail["components"] = _resolve_from_master(
         detail["modules"], detail["week"], detail["components"],
-        assigned_modules=get_training_plan(source),
+        assigned_modules=resolved_plan,
     )
     detail["components"] = _apply_programme_assignment_template(
         detail["components"], getattr(source, "programme", "")
@@ -1151,7 +1160,7 @@ def build_otjh_detail(source, learner_profile=None):
     detail["week"], detail["components"] = _append_week_quizzes(
         detail["week"],
         detail["components"],
-        assigned_modules=get_training_plan(source),
+        assigned_modules=resolved_plan,
     )
     return detail
 
@@ -1887,8 +1896,9 @@ def learner_summary(request, kind, pk):
     try:
         source = model.all_learners.only(
             "id", "username", "email", "phone_number", "programme",
-            "programme_status", "cohort", "group", "employer", "employer_id",
+            "programme_status", "cohort", "group", "employer", "employer_id", "organization",
             "learner_type", "aptem_id", "start_date", "end_date",
+            "learner_start_date",
             "practical_period_end_date", "apprenticeship_end_date",
         ).get(pk=pk)
         resolved_status = programme_status(source)
@@ -1911,9 +1921,18 @@ def learner_summary(request, kind, pk):
         "group": _s(source.group),
         "employer": _s(source.employer),
         "employerId": source.employer_id,
+        "organization": _s(getattr(source, "organization", "")),
         "learnerType": _s(getattr(source, "learner_type", "")) or "apprenticeship",
         "isActive": resolved_status.casefold() == "active",
         "programmeStartDate": _iso_date(start),
+        # See mappers.learner_detail_payload: the learner's own recorded start,
+        # unmediated by the cohort fallback that programmeStartDate applies.
+        "learnerStartDate": _s(getattr(source, "learner_start_date", None)),
+        # Mirrors learnerStartDate: the learner's own recorded end, straight
+        # from Created_users.Learner_end_date. programmeEndDate below resolves
+        # through the programme/apprenticeship columns, which stay empty for a
+        # learner whose end date is only recorded against themselves.
+        "learnerEndDate": _s(getattr(source, "learner_end_date", None)),
         "programmeEndDate": _iso_date(source.end_date or source.practical_period_end_date or source.apprenticeship_end_date or end),
         "accessGate": access_gate(source),
         "learningAccess": learning_access(source),

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import type { OverviewWeek } from '@/api/learnerOverview';
-import { greeting, homeActions, upcomingEvents } from './homeData';
+import { greeting, homeActions, upcomingEvents, upcomingReviewOrMcm } from './homeData';
 describe('student home data', () => {
   it('maps the four secondary actions to existing destinations', () => {
     expect(homeActions.map(item => item.href)).toEqual(['/learner/monthly-submission', '/workspace/learner/dashboard', '/learner/attendance', '/learner/monthly-coaching']);
@@ -23,6 +23,15 @@ describe('student home data', () => {
     const week = { deadlines: [{ id: '3', title: 'My assignment', date: '2026-09-14', type: 'assignment' },
       { id: '4', title: 'Old assignment', date: '2026-09-01', type: 'assignment' }] } as OverviewWeek;
     expect(upcomingEvents(schedule, week, new Date('2026-09-13T12:00:00Z')).map(item => item.title)).toEqual(['Personal session', 'My assignment', 'Next review']);
+  });
+  it('keeps the next session module so callers can open its learning activity', () => {
+    const schedule = { sessions: [
+      { id: 'session-1', moduleId: 'module-12', title: 'Personal session', start: '2026-09-15T09:00:00Z', status: 'scheduled' },
+    ], reviews: [] } as unknown as TrainingPlanDashboard;
+
+    expect(upcomingEvents(schedule, null, new Date('2026-09-13T12:00:00Z'))[0]).toMatchObject({
+      title: 'Personal session', moduleId: 'module-12',
+    });
   });
   it('finds a review beyond many earlier lectures and does not replace categories with coaching or checkpoints', () => {
     const schedule = { sessions: Array.from({ length: 8 }, (_, index) => ({ id: String(index), title: `Lecture ${index}`, start: `2026-09-${15 + index}T09:00:00Z`, status: 'scheduled' })),
@@ -49,6 +58,24 @@ describe('student home data', () => {
     expect(result[0].title).toBe('First');
     expect(result[1]).toMatchObject({ kind: 'assignment', date: null });
     expect(result[2]).toMatchObject({ kind: 'review', date: null });
+  });
+  it('selects the nearest active MCM or progress review for the learner dashboard action', () => {
+    const schedule = { reviews: [
+      { id: 'later-review', title: 'Progress review', source: 'progress-review', targetDate: '2026-10-10', status: 'not-scheduled', meetingLink: 'https://teams.microsoft.com/l/meetup-join/later' },
+      { id: 'next-mcm', eventKey: 'mcr:12', title: 'Monthly Coaching', source: 'mcr', targetDate: '2026-09-20', status: 'not-scheduled' },
+      { id: 'done-mcm', title: 'Completed MCM', source: 'mcr', scheduledDate: '2026-09-15', status: 'completed' },
+    ] } as unknown as TrainingPlanDashboard;
+    expect(upcomingReviewOrMcm(schedule, new Date('2026-09-13T12:00:00Z'))).toMatchObject({
+      source: 'mcr', sessionId: 'next-mcm', eventKey: 'mcr:12', title: 'Monthly Coaching', scheduledDate: null,
+    });
+  });
+  it('keeps a scheduled Teams link for the dashboard action card', () => {
+    const schedule = { reviews: [
+      { id: 'review-28', title: 'Progress Review', source: 'progress-review', scheduledDate: '2026-09-28', scheduledTime: '09:00', meetingLink: 'https://teams.microsoft.com/l/meetup-join/review-28', status: 'scheduled' },
+    ] } as unknown as TrainingPlanDashboard;
+    expect(upcomingReviewOrMcm(schedule, new Date('2026-09-24T12:00:00Z'))).toMatchObject({
+      scheduledDate: '2026-09-28', meetingLink: 'https://teams.microsoft.com/l/meetup-join/review-28',
+    });
   });
   it('uses the booked review date and UK time to exclude earlier appointments today', () => {
     const schedule = { sessions: [], reviews: [

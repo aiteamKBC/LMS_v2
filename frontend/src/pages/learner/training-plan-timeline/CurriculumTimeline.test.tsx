@@ -149,7 +149,7 @@ describe('what the learner sees for a session on a holiday', () => {
 
     const flagged = screen.getByTestId('learner-holiday-session');
     expect(within(flagged).getByText('Week 4')).toBeVisible();
-    expect(within(flagged).getByText('Session 4')).toBeVisible();
+    expect(within(flagged).getByText('Week title to be confirmed')).toBeVisible();
     const text = flagged.textContent || '';
     expect(text).toContain('Early May bank holiday');
     expect(text).toContain('Bank holiday');
@@ -177,9 +177,32 @@ describe('what the learner sees for a session on a holiday', () => {
 
     const rows = [...screen.getByTestId('curriculum-timeline').querySelectorAll('li')];
     expect(rows).toHaveLength(6);
-    expect(rows[0].textContent).toContain('Research methods');
-    expect(rows[3].textContent).toContain('Session 4');
+    expect(rows[0].textContent).toContain('Week title to be confirmed');
+    expect(rows[0].textContent).not.toContain('Research methods');
+    expect(rows[3].textContent).not.toContain('Session 4');
     expect(rows[3].textContent).toContain('Early May bank holiday');
+  });
+
+  it('shows the authored week name instead of the booked session name', () => {
+    render(<CurriculumTimeline
+      slots={[{ ...slot(1, '2026-10-08', 1), weekTitle: 'Understanding customer needs' }]}
+      sessions={[session('S1', '2026-10-08', 'Session 1')]} />);
+
+    const row = screen.getByText('Understanding customer needs').closest('li')!;
+    expect(row).toHaveTextContent('8 Oct, 09:00 · 120 min');
+    expect(row).not.toHaveTextContent('UK time');
+    expect(row.textContent?.match(/8 Oct/g)).toHaveLength(1);
+    expect(screen.queryByText('Session 1')).not.toBeInTheDocument();
+  });
+
+  it('keeps an unbooked week date with the time status on the right', () => {
+    render(<CurriculumTimeline
+      slots={[{ ...slot(2, '2026-08-14', 2), weekTitle: 'Planning the campaign' }]}
+      sessions={[]} />);
+
+    const row = screen.getByText('Planning the campaign').closest('li')!;
+    expect(row).toHaveTextContent(/14 Aug(?: 2026)? · Time to be confirmed/);
+    expect(row.textContent?.match(/14 Aug/g)).toHaveLength(1);
   });
 
   it('counts the sessions on a holiday separately from the taught total', () => {
@@ -201,6 +224,18 @@ describe('what the learner sees for a session on a holiday', () => {
   });
 });
 
+describe('reading week presentation', () => {
+  it('uses a secondary-colour header labelled Reading Week', () => {
+    render(<CurriculumTimeline slots={[{
+      slotNumber: 5, date: '2026-05-11', day: 'Monday', type: 'reading-week', sessionNumber: null,
+      holidays: [{ label: 'Spring break', startDate: '2026-05-11', endDate: '2026-05-17' }],
+    }]} sessions={[]} />);
+
+    expect(screen.getByText('Reading Week')).toBeVisible();
+    expect(screen.getByTestId('learner-reading-week')).toHaveTextContent('Spring break');
+  });
+});
+
 describe('the learner and curriculum slot shapes are one contract', () => {
   it('accepts a curriculum ModuleSessionSlot wherever a PlanCurriculumSlot is expected', () => {
     // A compile-time check, not a runtime one: if either side's slot shape is
@@ -214,5 +249,42 @@ describe('the learner and curriculum slot shapes are one contract', () => {
     const asLearner: PlanCurriculumSlot = fromCurriculum;
 
     expect(buildCurriculumTimeline([asLearner], [])).toHaveLength(1);
+  });
+});
+
+/**
+ * The curriculum team's own hint for a holiday week.
+ *
+ * It is served already filtered: the note reaches the payload only when the
+ * author published it AND the week still clashes, so what arrives here is
+ * simply shown -- on the week it was written for and nowhere else. There is no
+ * unpublished text on this side to hide.
+ */
+describe('the holiday note the curriculum team publishes', () => {
+  const noteSlots: PlanCurriculumSlot[] = SLOTS.map(item => (item.date === '2026-05-04'
+    ? { ...item, holidayNote: 'No live session -- use the time for Assignment 2.' }
+    : item));
+
+  it('shows the note on the holiday week only', () => {
+    render(<CurriculumTimeline slots={noteSlots} sessions={[]} />);
+
+    const notes = screen.getAllByTestId('learner-holiday-note');
+    expect(notes).toHaveLength(1);
+    expect(notes[0].textContent).toContain('use the time for Assignment 2');
+    expect(within(screen.getByTestId('learner-holiday-session')).getByTestId('learner-holiday-note')).toBeInTheDocument();
+  });
+
+  it('shows nothing when the team published no note', () => {
+    render(<CurriculumTimeline slots={SLOTS} sessions={[]} />);
+
+    expect(screen.queryByTestId('learner-holiday-note')).toBeNull();
+  });
+
+  it('carries the note through the timeline it was served on', () => {
+    const rows = buildCurriculumTimeline(noteSlots, []);
+    const flagged = rows.filter(row => row.kind === 'session' && row.holidayNote);
+
+    expect(flagged).toHaveLength(1);
+    expect(flagged[0].date).toBe('2026-05-04');
   });
 });

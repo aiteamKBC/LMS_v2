@@ -80,6 +80,12 @@ export interface CoachCalendarEvent {
   syncAttemptCount?: number;
   reviewResponses?: Record<string, string>;
   reviewCompletedAt?: string | null;
+  reviewSource?: 'aptem' | 'curriculum' | string;
+  aptemReviewId?: string | null;
+  reviewerName?: string | null;
+  hasReviewForm?: boolean;
+  hasTranscript?: boolean;
+  hasAttendance?: boolean;
   managerSignedAt?: string | null;
   managerSignedBy?: string;
   /** The Curriculum review_templates.id this occurrence was generated from. */
@@ -441,7 +447,7 @@ export function startOfDay(value = new Date()) {
   return new Date(value.getFullYear(), value.getMonth(), value.getDate());
 }
 
-export function currentWeekRange(referenceDate = new Date()) {
+export function getCurrentWorkWeekRange(referenceDate = new Date()) {
   const today = startOfDay(referenceDate);
   const day = today.getDay();
   const mondayOffset = day === 0 ? -6 : 1 - day;
@@ -449,9 +455,25 @@ export function currentWeekRange(referenceDate = new Date()) {
   start.setDate(today.getDate() + mondayOffset);
 
   const end = new Date(start);
-  end.setDate(start.getDate() + 6);
+  end.setDate(start.getDate() + 4);
+  end.setHours(23, 59, 59, 999);
   return { start, end };
 }
+
+export function getNextWorkWeekRange(referenceDate = new Date()) {
+  const { start: currentMonday } = getCurrentWorkWeekRange(referenceDate);
+  const start = new Date(currentMonday);
+  start.setDate(currentMonday.getDate() + 7);
+
+  const end = new Date(start);
+  end.setDate(start.getDate() + 4);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+// Retained for existing calendar consumers; a dashboard work week is the same
+// established Monday-to-Friday range.
+export const currentWeekRange = getCurrentWorkWeekRange;
 
 export function eventDisplayDate(event: CoachCalendarEvent) {
   return event.scheduledDate || event.date || event.targetDate || '';
@@ -476,6 +498,18 @@ export function formatTimeLabel(event: CoachCalendarEvent) {
     return `${event.scheduledTime.slice(0, 5)} - ${event.durationMinutes || 60} min`;
   }
   return event.timeLabel && event.timeLabel !== 'Time TBC' ? event.timeLabel : 'Time TBC';
+}
+
+/** Display a booked session as a start/end range instead of a duration label. */
+export function formatTimeRangeLabel(event: CoachCalendarEvent) {
+  if (!event.scheduledTime) return event.timeLabel && event.timeLabel !== 'Time TBC' ? event.timeLabel : 'Time TBC';
+  const startText = event.scheduledTime.slice(0, 5);
+  const match = /^(\d{1,2}):(\d{2})$/.exec(startText);
+  if (!match) return startText;
+  const start = new Date(2000, 0, 1, Number(match[1]), Number(match[2]));
+  start.setMinutes(start.getMinutes() + (event.durationMinutes || 60));
+  const endText = `${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')}`;
+  return `${startText} - ${endText}`;
 }
 
 export function scheduleDefaults(event: CoachCalendarEvent): ScheduleFormState {
@@ -557,6 +591,10 @@ export function isScheduledEvent(event: CoachCalendarEvent) {
   return event.status === 'scheduled';
 }
 
+export function hasScheduledSlot(event: CoachCalendarEvent) {
+  return isScheduledEvent(event) || Boolean(event.scheduledDate && event.scheduledTime);
+}
+
 export function isInProgressEvent(event: CoachCalendarEvent) {
   return event.status === 'in-progress';
 }
@@ -574,7 +612,49 @@ export function isUrgentEvent(event: CoachCalendarEvent) {
 }
 
 export function isCompletedEvent(event: CoachCalendarEvent) {
-  return event.status === 'completed' || event.status === 'confirmed';
+  return event.status === 'completed';
+}
+
+export function reviewScheduleAvailable(
+  summary?: {
+    progressReviewRows?: number | null;
+    mcrRows?: number | null;
+    learnersWithDates?: number | null;
+  },
+  events: CoachCalendarEvent[] = [],
+  issues: readonly unknown[] = [],
+) {
+  const hasResolvedReviews = events.some(event => (
+    event.source === 'progress-review' || event.source === 'mcr'
+  ));
+  const hasResolvedSummary = (
+    (summary?.progressReviewRows ?? 0) > 0
+    || (summary?.mcrRows ?? 0) > 0
+    || (summary?.learnersWithDates ?? 0) > 0
+  );
+
+  return hasResolvedReviews || hasResolvedSummary || issues.length === 0;
+}
+
+export function latestCompletedReviewDate(
+  events: CoachCalendarEvent[],
+  learnerId: string,
+  source: 'mcr' | 'progress-review',
+) {
+  const latest = events
+    .filter(event => (
+      isCompletedEvent(event)
+      && event.source === source
+      && String(event.learnerId || '') === String(learnerId)
+    ))
+    .map(event => ({
+      value: event.reviewCompletedAt,
+      date: parseLocalDate(event.reviewCompletedAt),
+    }))
+    .filter((entry): entry is { value: string; date: Date } => Boolean(entry.value && entry.date))
+    .sort((left, right) => right.date.getTime() - left.date.getTime())[0];
+
+  return latest?.value ?? null;
 }
 
 export function canJoinMeeting(event: CoachCalendarEvent, referenceDate = new Date()) {
@@ -585,7 +665,17 @@ export function canJoinMeeting(event: CoachCalendarEvent, referenceDate = new Da
 }
 
 export function isUpcomingEvent(event: CoachCalendarEvent) {
-  return !['completed', 'confirmed', 'cancelled'].includes(event.status);
+  return !['completed', 'cancelled'].includes(event.status);
+}
+
+export function isEventInMonth(event: CoachCalendarEvent, referenceDate = new Date()) {
+  const displayDate = parseLocalDate(eventDisplayDate(event));
+  if (!displayDate) return false;
+
+  return (
+    displayDate.getFullYear() === referenceDate.getFullYear()
+    && displayDate.getMonth() === referenceDate.getMonth()
+  );
 }
 
 export function isAtRiskEvent(event: CoachCalendarEvent, referenceDate = new Date()) {
@@ -618,13 +708,7 @@ export function isEventThisWeek(event: CoachCalendarEvent, referenceDate = new D
 }
 
 export function isEventThisMonth(event: CoachCalendarEvent, referenceDate = new Date()) {
-  const displayDate = parseLocalDate(eventDisplayDate(event));
-  if (!displayDate || isCompletedEvent(event)) return false;
-
-  return (
-    displayDate.getFullYear() === referenceDate.getFullYear()
-    && displayDate.getMonth() === referenceDate.getMonth()
-  );
+  return !isCompletedEvent(event) && isEventInMonth(event, referenceDate);
 }
 
 export function isAtRiskProgressReview(event: CoachCalendarEvent, referenceDate = new Date()) {

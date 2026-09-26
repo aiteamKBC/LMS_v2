@@ -30,12 +30,13 @@ export type StatusFilter =
 export type SortKey =
   | 'risk'
   | 'name'
-  | 'progress'
+  | 'activity'
+  | 'progress-review'
+  | 'monthly-coaching'
   | 'attendance'
   | 'otjh'
   | 'components'
-  | 'ksb'
-  | 'gateway';
+  | 'ksb';
 
 export type SortDirection = 'asc' | 'desc';
 
@@ -120,6 +121,9 @@ export interface Learner {
   attendanceConsecutiveMissed?: number | null;
   attendanceLastSession?: string;
   attendanceLastSessionDate?: string | null;
+  lastActivity?: string;
+  lastActivityDate?: string | null;
+  lastActivityLabel?: string;
 
   nextCoaching: string;
   nextReview: string;
@@ -137,7 +141,6 @@ export interface Learner {
   coachName?: string;
   coachEmail?: string;
   rawProgramStatus?: string;
-  coachRag?: string;
   email?: string;
   employerEmail?: string;
   employerPhone?: string;
@@ -152,7 +155,11 @@ export interface CaseloadApiLearner extends Omit<Learner, 'enrollmentStatus' | '
   startDate?: string;
   gatewayReviewDate?: string;
   plannedEndDate?: string;
+  lastPr?: string | null;
+  lastMcm?: string | null;
 }
+
+export type EmbeddedCaseloadLearner = Partial<CaseloadApiLearner>;
 
 export interface CaseloadApiResponse {
   owner?: {
@@ -160,6 +167,21 @@ export interface CaseloadApiResponse {
     email?: string;
   };
   learners?: CaseloadApiLearner[];
+  results?: CaseloadApiLearner[];
+  pagination?: {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+    hasNext: boolean;
+    hasPrevious: boolean;
+  };
+  filterOptions?: {
+    cohort: FilterOption[];
+    group: FilterOption[];
+    programStatus: FilterOption[];
+    employer: FilterOption[];
+  };
 }
 
 export interface AttendanceApiLearner {

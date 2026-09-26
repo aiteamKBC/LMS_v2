@@ -92,7 +92,18 @@ describe('review before sending', () => {
     expect(options.html).toContain('https://teams.microsoft.com/meet/synthetic');
     const sent = JSON.parse(fetchMock.mock.calls[1][1].body);
     expect(sent).not.toHaveProperty('attendees');
+    expect(sent.notifyAttendees).toBe(true);
     expect(fetchMock.mock.calls[1][1].method).toBe('PATCH');
+  });
+
+  it('saves an existing calendar silently only when that choice is explicit', async () => {
+    vi.mocked(Swal.fire).mockResolvedValueOnce({ isConfirmed: false, isDenied: true, isDismissed: false });
+    await updateTeamsMeetingSchedule('LIVE-SYNTHETIC', input());
+    const options = vi.mocked(Swal.fire).mock.calls[0][0] as unknown as SweetAlertOptions;
+    expect(options.showDenyButton).toBe(true);
+    expect(options.denyButtonText).toBe('Save without email');
+    const sent = JSON.parse(fetchMock.mock.calls[1][1].body);
+    expect(sent.notifyAttendees).toBe(false);
   });
 
   it('cancelling Save makes only its read request', async () => {

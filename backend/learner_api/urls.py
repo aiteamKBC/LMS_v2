@@ -1,8 +1,9 @@
-from .coach_availability import coach_available_slots
+from .coach_availability import coach_available_slots, case_owner_available_slots
 from . import presentation_design
 from . import personal_learning
 from . import learner_import
 from . import monthly_reflection_ai
+from .assignment_ai_check import assignment_ai_check
 from . import ksb_generation
 from django.urls import path
 from . import monthly_logs
@@ -14,15 +15,17 @@ from .attendance_lectures import attendance_lectures
 from .attendance_confirmation import confirm_attendance
 from .meeting_attendance import meeting_attendance, confirm_meeting_attendance
 from .attendance_mode import attendance_mode, review_attendance_mode
+from .first_session_bookings import first_session_bookings
 
 from . import certificates, monthly_assignment, legacy_assignments, quiz_reading, review_history
 from . import historical_evidence
-from . import absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, ilr_document, monthly_assignment, monthly_reports, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, training_plan_dashboard, videos, views
+from . import extra_activities, absence_reports, apprenticeship_agreement, attendance, calendar, components, curriculum, calendar_connections, employer_portal, employers, evidence, free_courses_view, ilr_document, monthly_assignment, monthly_reports, training_plan_document, written_agreement, learner_detail, learning_plan, lms_schema, media_proxy, module_shift, quizzes, reflection_ai, reflection_submissions, review_form, student_activity, time_tracking, training_plan_view, training_plan_dashboard, videos, views
 
 from curriculum_api import session_results
 from .session_recovery import link_catchup
 
 urlpatterns = [
+    path("reflection/extra-activities/", extra_activities.list_extra_activities, name="learner-extra-activities"),
     path('personal-learning/courses/', personal_learning.courses),
     path('personal-learning/verify/<uuid:token>/', personal_learning.verify_certificate),
     path('personal-learning/<str:identity>/request/', personal_learning.learner_request),
@@ -31,6 +34,8 @@ urlpatterns = [
     path('session-results/<str:kind>/<int:learner_id>/<str:series_id>/sessions/<int:session_number>/', session_results.learner_results),
     path('session-results/<str:kind>/<int:learner_id>/<str:series_id>/artifacts/<str:artifact_id>/', session_results.learner_content),
     path("calendar/<str:kind>/<int:pk>/coach-availability/", coach_available_slots, name="coach-available-slots"),
+    # Enrolment: no learner exists yet, so the case owner is named directly.
+    path("calendar/case-owner-availability/", case_owner_available_slots, name="case-owner-availability"),
     path('monthly-logs/learners/', monthly_logs.learners, name='monthly-log-learners'),
     path('monthly-logs/<int:learner_id>/', monthly_logs.summary, name='monthly-log-summary'),
     path('monthly-logs/<int:learner_id>/documents/<uuid:file_id>/', monthly_logs.document, name='monthly-log-document'),
@@ -47,6 +52,8 @@ urlpatterns = [
     path('attendance-mode/review/', review_attendance_mode, name='attendance-mode-review'),
     path('profile-photo/<str:kind>/<int:pk>/', learner_profile_photo, name='learner-profile-photo'),
     path("tutor-learners/", views.tutor_learners, name="tutor-learners"),
+    # Enrolment workspace: every learner's first-session booking, read only.
+    path("first-session-bookings/", first_session_bookings, name="first-session-bookings"),
     path("enrolment-users/", views.enrolment_users, name="enrolment-users"),
     path("enrolment-users/import-template/", learner_import.import_template, name="enrolment-users-import-template"),
     path("enrolment-users/import/", learner_import.import_students, name="enrolment-users-import"),
@@ -151,6 +158,11 @@ urlpatterns = [
     path("subject-covers/<int:pk>/", student_activity.subject_covers, name="subject-covers"),
     path("subject-cover/<str:subject_ref>/", student_activity.upload_subject_cover, name="subject-cover-upload"),
     path("training-plan/<str:kind>/<int:pk>/", training_plan_view.training_plan, name="training-plan"),
+    # The free courses assigned to this learner, each with its authored
+    # week/activity tree. Read-only; no hours/KSBs/progress (see free_courses_view).
+    path("free-courses/<str:kind>/<int:pk>/", free_courses_view.free_courses, name="learner-free-courses"),
+    path("free-courses/<str:kind>/<int:pk>/complete/", free_courses_view.complete_free_course_activity, name="learner-free-course-complete"),
+    path("free-courses/<str:kind>/<int:pk>/quiz/<str:component_id>/submit/", free_courses_view.submit_free_course_quiz, name="learner-free-course-quiz-submit"),
     path("training-plan-dashboard/<str:kind>/<int:pk>/", training_plan_dashboard.training_plan_dashboard, name="training-plan-dashboard"),
     path("certificates/verify/<uuid:token>/", certificates.verify_certificate, name="learner-certificate-verify"),
     path("certificates/<str:kind>/<int:pk>/modules/<str:module_ref>/", certificates.learner_module_certificate_status, name="learner-module-certificate-status"),
@@ -200,6 +212,7 @@ urlpatterns = [
     ),
     path("monthly-reports/<str:kind>/<int:pk>/", monthly_reports.monthly_reports, name="learner-monthly-reports"),
     path("reflection/assignment/check/", monthly_assignment.check_assignment, name="monthly-assignment-check"),
+    path("reflection/assignment/ai-check/", assignment_ai_check, name="monthly-assignment-ai-check"),
     path("reflection/assignment/legacy-document/<int:evidence_id>/", legacy_assignments.open_legacy_assignment_document, name="legacy-assignment-document"),
     path("reflection/assignment/presentation-design/", presentation_design.upload_design, name="presentation-design"),
     path("reflection/assignment/presentation/", monthly_assignment.export_presentation, name="monthly-assignment-presentation"),
@@ -210,6 +223,9 @@ urlpatterns = [
     path("calendar/<str:kind>/<int:pk>/reschedule/", calendar.learner_calendar_reschedule, name="learner-calendar-reschedule"),
     path("calendar/<str:kind>/<int:pk>/cancel/", calendar.learner_calendar_cancel, name="learner-calendar-cancel"),
     path("calendar/<str:kind>/<int:pk>/onboarding-reviews/", calendar.learner_onboarding_reviews, name="learner-onboarding-reviews"),
+    # The learner's own first session: whether it is booked, and whether the
+    # day has come. Drives both the booking screen and the access gate.
+    path("calendar/<str:kind>/<int:pk>/first-session/", calendar.learner_first_session, name="learner-first-session"),
     path("calendar/<str:kind>/<int:pk>/events/<str:event_key>/artifacts/", calendar.learner_calendar_event_artifacts, name="learner-calendar-event-artifacts"),
     path("calendar/<str:kind>/<int:pk>/events/<str:event_key>/artifacts/<str:artifact_type>/<str:artifact_id>/content/", calendar.learner_calendar_event_artifact_content, name="learner-calendar-event-artifact-content"),
     path("calendar/<str:kind>/<int:pk>/events/<str:event_key>/sign/", calendar.learner_progress_review_sign, name="learner-progress-review-sign"),

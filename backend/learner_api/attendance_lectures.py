@@ -424,6 +424,7 @@ def build_lectures(register, legacy_meta, legacy_activities, components, kind, l
             if component:
                 lecture['title'] = component['title'] or lecture['title']
                 lecture['contentSummary'] = component['description'] or component['settings'].get('sessionPurpose') or ''
+                lecture['componentHref'] = f"/learner/component/{kind}/{learner_id}/{component['id']}"
                 lecture['ksbs'] = _component_ksbs(component)
                 if lecture['ksbs']:
                     lecture['ksbScope'] = 'lecture'

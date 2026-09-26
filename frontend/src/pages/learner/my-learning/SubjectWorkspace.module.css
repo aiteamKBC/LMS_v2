@@ -1,4 +1,5 @@
 .learningPage {
+  --learner-purple: var(--action-primary, #5b21b6);
   --learning-accent-ink: var(--learner-purple, #673ab7);
   --learning-success-ink: var(--learner-success, #167853);
   width: 100%;
@@ -24,6 +25,7 @@
 /* Keep this page's typography and composed search field independent of the
    compatibility rules applied to every heading/input in WorkspaceShell. */
 .learningPage .cardTitle, .learningPage .weekCard h3 { font-size: 17px !important; line-height: 1.45; }
+.learningPage .freeCard .cardTitle { font-size: 19px !important; height: auto; min-height: 52px; line-height: 1.4; }
 .learningPage .subjectHeading h2 { font-size: 22px !important; }
 .learningPage .asidePanel h2 { font-size: 16px !important; }
 .learningPage .search input {
@@ -42,6 +44,27 @@
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
   align-items: stretch;
   gap: 18px;
+}
+
+/* Free courses run as a standalone gallery (no dense 4-up subjects container),
+   so the cards are given more room: wider tracks, a taller cover and roomier
+   body than the programme grid. */
+.freeGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr));
+  align-items: stretch;
+  gap: 24px;
+}
+.freeCard .cardBody { padding: 24px; }
+.freeCard .cardDescription { min-height: 44px; font-size: 14px; }
+.freeCard .nextActivity { min-height: 66px; }
+.freeCard .cardAction { min-height: 46px; font-size: 13px; }
+@container learning (min-width: 1500px) {
+  .freeGrid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@container learning (max-width: 600px) {
+  .freeGrid { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .freeCard .cardBody { padding: 18px; }
 }
 
 .card {
@@ -160,6 +183,26 @@
   line-height: 1.4;
 }
 
+/* Free-course marker: tinted in each card's own accent tone, so a free course
+   reads as part of the module language rather than a separate widget. */
+.freeBadge {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 1px solid color-mix(in srgb, var(--subject-accent, #673ab7) 30%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--subject-accent, #673ab7) 10%, var(--kbc-surface, #fff));
+  color: var(--subject-ink, #673ab7);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  line-height: 1.4;
+}
+.freeBadge svg { color: var(--subject-accent, #673ab7); }
+
 .cardBody {
   display: flex;
   flex: 1;
@@ -192,6 +235,11 @@
   line-height: 24px;
 }
 
+.moduleDetails { display: none; }
+.moduleDetails > div { min-width: 0; }
+.moduleDetails dt { color: var(--kbc-muted, #697a8b); font-size: 10px; font-weight: 650; letter-spacing: .04em; line-height: 1.4; text-transform: uppercase; }
+.moduleDetails dd { margin-top: 4px; overflow-wrap: anywhere; color: var(--kbc-text, #1c3048); font-size: 12px; font-weight: 650; line-height: 1.45; }
+
 .cardProgress { margin-top: auto; padding-top: 18px; }
 .cardProgress span { color: var(--kbc-muted, #697a8b); }
 .cardProgress [role='progressbar'] > div { background: var(--subject-accent, var(--learner-purple, #673ab7)); }
@@ -215,15 +263,15 @@
 .cardAction svg { transition: transform 160ms; }
 .cardButton:hover .cardAction svg { transform: translateX(3px); }
 
-.hero { display: flex; align-items: center; justify-content: space-between; gap: 30px; padding: 12px 0 0; color: var(--learner-navy, #182d48); }
-.eyebrow { color: var(--learner-purple, #673ab7); font-size: 10px; font-weight: 700; letter-spacing: .15em; text-transform: uppercase; }
-.hero h1 { margin-top: 8px; font-size: clamp(27px, 2.5vw, 38px); font-weight: 750; line-height: 1.2; letter-spacing: -.035em; }
-.hero > div > p:last-child { margin-top: 10px; color: #637388; font-size: 14px; line-height: 1.7; max-width: 680px; }
-.heroJourney { position: relative; flex-shrink: 0; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 8px 16px; width: 340px; padding: 15px 20px; border-radius: 20px; background: linear-gradient(110deg, #f0eaf880, #edf1f640); }
-.heroIcon { display: grid; place-items: center; grid-row: span 2; width: 65px; height: 65px; border-radius: 50%; color: var(--learner-purple, #673ab7); background: #fff9; }
-.heroJourney p { font-size: 13px; line-height: 1.8; letter-spacing: .01em; color: #536780; }
-.heroJourney strong { color: var(--learner-navy, #182d48); font-weight: 600; }
-.journeyDots { display: flex; align-items: center; max-width: 140px; }
+.hero { display: flex; align-items: center; justify-content: space-between; gap: clamp(24px, 3cqi, 52px); padding: 12px 0 0; color: var(--learner-navy, #182d48); }
+.eyebrow { color: var(--learner-purple, #673ab7); font-size: 12px; font-weight: 700; letter-spacing: .15em; text-transform: uppercase; }
+.hero h1 { margin-top: 8px; font-size: clamp(38px, 3.8cqi, 64px); font-weight: 750; line-height: 1.12; letter-spacing: -.035em; }
+.hero > div > p:last-child { margin-top: 12px; color: #637388; font-size: 17px; line-height: 1.6; max-width: 680px; }
+.heroJourney { position: relative; isolation: isolate; flex: 0 1 clamp(420px, 46cqi, 780px); min-height: clamp(190px, 15cqi, 255px); padding: clamp(24px, 3cqi, 42px); overflow: hidden; border: 1px solid rgb(255 255 255 / .72); border-radius: 24px; background: linear-gradient(90deg, rgb(255 255 255 / .9) 0%, rgb(255 255 255 / .62) 42%, rgb(255 255 255 / .08) 78%), url('/learner-learning-journey.webp') center / cover no-repeat; box-shadow: 0 14px 32px rgb(103 58 183 / .08); }
+.heroJourney p { position: relative; z-index: 1; max-width: 65%; margin: 0; font-size: clamp(16px, 1.35cqi, 23px); line-height: 1.45; letter-spacing: .01em; color: #1d1553; }
+.heroJourney strong { color: var(--learner-purple, #5b21b6); font-weight: 700; }
+.heroTag { position: absolute; z-index: 1; top: 30px; right: 28px; color: rgb(103 58 183 / .68); font-size: 10px; font-weight: 700; letter-spacing: .28em; line-height: 1.75; text-align: right; }
+.journeyDots { position: absolute; z-index: 1; bottom: 26px; left: 42px; display: flex; align-items: center; width: 132px; }
 .journeyDots i { width: 7px; height: 7px; border-radius: 50%; background: #b6a0d7; }
 .journeyDots i:first-child { background: var(--learner-purple, #673ab7); }
 .journeyDots span { height: 1px; flex: 1; background: #d8cde7; }
@@ -232,7 +280,10 @@
 .catalogueMain { container: subjects / inline-size; }
 .catalogueAside { display: grid; width: 100%; max-width: 100%; gap: 18px; }
 .stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
-.stat { display: flex; align-items: center; gap: 16px; min-width: 0; min-height: 118px; padding: 20px; border: 1px solid #e1e7ef; border-radius: 14px; background: #fff; box-shadow: 0 3px 8px #182d4804; }
+.catalogueTabs { justify-content: center; margin-top: 22px; margin-bottom: 38px; }
+.catalogueTabs :global(button[aria-pressed='true']) { border-color: var(--learner-purple, #5b21b6); background: var(--learner-purple, #5b21b6); }
+.catalogueTabs :global(button:not([aria-pressed='true'])) { color: var(--learner-purple, #5b21b6); }
+.stat { display: flex; align-items: center; gap: 16px; min-width: 0; min-height: 150px; padding: 24px; border: 1px solid #e1e7ef; border-radius: 14px; background: #fff; box-shadow: 0 3px 8px #182d4804; }
 .stat > div { min-width: 0; }
 .stat p { font-size: 13px; font-weight: 600; color: #637388; line-height: 1.6; }
 .stat strong { display: block; font-size: 29px; line-height: 1.35; color: var(--learner-navy, #182d48); font-weight: 750; font-variant-numeric: tabular-nums; }
@@ -292,14 +343,37 @@
 .empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 15px; padding: 40px 20px; border: 1px dashed #d7dfeb; border-radius: 14px; font-size: 13px; color: #637388; background: #fff; text-align: center; }
 .empty button { color: var(--learner-purple, #673ab7); font-weight: 650; text-decoration: underline; }
 .list { display: grid; gap: 14px; }
-.list .cardButton { flex-direction: row; align-items: stretch; }
-.list .cardButton > div:first-child { width: 170px; flex-shrink: 0; }
-.list .cover { height: 100%; min-height: 160px; }
-.list .cardBody { display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: 10px 22px; align-items: center; }
-.list .cardTitle { min-height: auto; margin: 0; }
+.list .cardButton { height: 196px; min-height: 0; flex: 0 0 196px; flex-direction: row; align-items: stretch; overflow: hidden; }
+.list .cardButton > div:first-child { width: 170px; height: 100%; min-height: 0; flex-shrink: 0; overflow: hidden; }
+.list .cover { height: 100%; min-height: 0; }
+.list .cardBody {
+  display: grid;
+  grid-template-areas:
+    "eyebrow details progress"
+    "title details progress"
+    "next next action";
+  grid-template-columns: minmax(190px, .85fr) minmax(330px, 1.35fr) minmax(170px, .7fr);
+  gap: 10px 22px;
+  align-items: center;
+}
+.list .cardMetaRow { grid-area: eyebrow; }
+.list .cardTitle { grid-area: title; min-height: auto; margin: 0; }
 .list .cardDescription { display: none; }
-.list .cardEyebrow { grid-column: 1; }
-.list .cardProgress { grid-column: 2; grid-row: 1 / span 2; padding: 0; margin: 0; }
+.list .moduleDetails {
+  grid-area: details;
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) repeat(3, minmax(90px, 1fr));
+  align-self: stretch;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--subject-accent) 14%, var(--kbc-border, #dfe6ee));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--subject-accent) 4%, var(--kbc-surface, #fff));
+}
+.list .moduleDetails > div { display: flex; flex-direction: column; justify-content: center; padding: 11px 13px; }
+.list .moduleDetails > div + div { border-left: 1px solid color-mix(in srgb, var(--subject-accent) 12%, var(--kbc-border, #dfe6ee)); }
+.list .cardProgress { grid-area: progress; padding: 0; margin: 0; }
+.list .nextActivity { grid-area: next; }
+.list .cardAction { grid-area: action; }
 .list .nextActivity, .list .cardAction { margin: 0; }
 .list .nextActivity { min-height: 50px; }
 .mapHero {
@@ -404,7 +478,7 @@
 @container learning (max-width: 1280px) {
   .catalogueLayout { grid-template-columns: minmax(0, 1fr); }
   .catalogueAside { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .heroJourney { display: none; }
+  .heroJourney { flex-basis: min(560px, 48%); }
   .mapHero { align-items: flex-start; }
   .mapHeroActions { flex-direction: column; align-items: flex-start; gap: 18px; }
   .mapToolbar { gap: 16px; }
@@ -424,17 +498,34 @@
 @container subjects (max-width: 900px) {
   .toolbar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; }
   .toolbar .search { grid-column: 1 / -1; }
+  .list .cardBody {
+    grid-template-areas:
+      "eyebrow progress"
+      "title progress"
+      "details details"
+      "next action";
+    grid-template-columns: minmax(0, 1fr) 170px;
+  }
 }
 @container learning (max-width: 760px) {
+  .hero { align-items: flex-start; flex-direction: column; }
+  .heroJourney { width: 100%; flex-basis: auto; }
   .catalogueAside { grid-template-columns: minmax(0, 1fr); }
   .weekCard { padding: 18px 16px 14px; }
   .mapHero { flex-direction: column; padding: 24px; gap: 20px; }
   .mapHeroActions { flex-direction: row; flex-wrap: wrap; align-items: center; justify-content: space-between; width: 100%; gap: 20px; }
-  .list .cardButton { flex-direction: column; }
-  .list .cardButton > div:first-child { width: 100%; }
+  .list .cardButton { height: auto; min-height: 0; flex: 1 1 auto; flex-direction: column; }
+  .list .cardButton > div:first-child { width: 100%; height: auto; }
   .list .cover { height: 112px; min-height: 112px; }
-  .list .cardBody { grid-template-columns: minmax(0, 1fr); gap: 10px; }
-  .list .cardProgress { grid-column: 1; grid-row: auto; }
+  .list .cardBody {
+    grid-template-areas: "eyebrow" "title" "details" "progress" "next" "action";
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+  .list .moduleDetails { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .list .moduleDetails > div + div { border-left: 0; }
+  .list .moduleDetails > div:nth-child(even) { border-left: 1px solid color-mix(in srgb, var(--subject-accent) 12%, var(--kbc-border, #dfe6ee)); }
+  .list .moduleDetails > div:nth-child(n + 3) { border-top: 1px solid color-mix(in srgb, var(--subject-accent) 12%, var(--kbc-border, #dfe6ee)); }
   .list .status { right: 5px; left: 5px; justify-content: center; padding-inline: 5px; font-size: 9px; }
 }
 @container learning (max-width: 500px) {
@@ -486,9 +577,11 @@
 @media (max-width: 1280px) {
   .catalogueLayout { grid-template-columns: minmax(0, 1fr); }
   .catalogueAside { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .heroJourney { display: none; }
+  .heroJourney { flex-basis: min(560px, 48%); }
 }
 @media (max-width: 850px) {
+  .hero { align-items: flex-start; flex-direction: column; }
+  .heroJourney { width: 100%; flex-basis: auto; }
   .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .catalogueAside { grid-template-columns: minmax(0, 1fr); }
   .toolbar { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }

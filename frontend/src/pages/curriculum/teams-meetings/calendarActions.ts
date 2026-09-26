@@ -25,7 +25,7 @@ export async function calendarAction<T extends ActionReview | ActionResult>(live
     if (!response.ok) throw new Error(result.error || 'The calendar action could not be completed.');
     const valid = body.stage === 'review'
       ? result && typeof result.reviewToken === 'string' && result.reviewToken.length > 0
-        && typeof result.timeZone === 'string' && result.notificationRequired === true
+        && typeof result.timeZone === 'string' && typeof result.notificationRequired === 'boolean'
         && ['cancel', 'reschedule'].includes(result.action) && ['series', 'occurrence'].includes(result.scope)
         && Number.isInteger(result.calendarRequests) && result.calendarRequests > 0
         && Array.isArray(result.sessions) && result.sessions.length > 0

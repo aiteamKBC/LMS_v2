@@ -13,6 +13,7 @@ import {
   signWrittenAgreementAsEmployer,
   signReviewAsEmployer,
   fetchEmployerReviewInstance,
+  saveEmployerReviewAnswers,
   type EmployerLearnerDetail,
   type SignableItem,
 } from '@/api/employerPortal';
@@ -67,12 +68,14 @@ function SignModal({
   reviewDefinition,
   onClose,
   onSign,
+  onSaveReviewAnswers,
 }: {
   item: SignableItem;
   employerName: string;
   reviewDefinition?: any;
   onClose: () => void;
   onSign: (name: string, signature: string) => Promise<void>;
+  onSaveReviewAnswers?: (answers: Record<string, unknown>) => Promise<any>;
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -106,7 +109,7 @@ function SignModal({
         </header>
 
         <div className="flex-1 overflow-y-auto p-5 space-y-4">
-          {reviewDefinition?.template ? <LearnerReviewInstanceForm definition={reviewDefinition} /> : null}
+          {reviewDefinition?.template ? <LearnerReviewInstanceForm definition={reviewDefinition} viewerRole="employer" onSaveAnswers={onSaveReviewAnswers} /> : null}
           <SignaturePad
             signatoryName={employerName}
             onCommit={(url) => { void submit(url); }}
@@ -591,6 +594,7 @@ export default function EmployerLearnerPage() {
           reviewDefinition={reviewDefinition}
           onClose={() => setSigning(null)}
           onSign={handleSign}
+          onSaveReviewAnswers={signing.kind === 'review' ? answers => saveEmployerReviewAnswers(employerId, kind, learnerId, signing.eventKey, answers) : undefined}
         />
       )}
     </WorkspaceShell>

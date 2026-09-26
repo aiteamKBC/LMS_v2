@@ -28,9 +28,10 @@ export interface MonthlyAssignment {
   presentationDesign?: { name: string; accent: string; font: string; ratio: number; evidenceId?: string; slideCount?: number; coverSlide?: number; contentSlide?: number };
   presentationReviewed: boolean;
   presentationToken: string;
+  uploadedPresentation?: { id: string; name: string };
 }
 
-export const MONTHLY_STEPS = ['Assignment answer', 'Evidence & cross-referencing', 'KSBs & hours claimed', 'Full-month reflection', 'Impact & employer benefit', 'Action plan & EPA', 'Quality checks', 'Coaching & presentation'];
+export const MONTHLY_STEPS = ['Assignment answer', 'Evidence & cross-referencing', 'KSBs & hours claimed', 'Full-month reflection', 'Impact & employer benefit', 'Action plan & EPA', 'Coaching & presentation', 'Quality checks'];
 
 export function emptyMonthlyAssignment(codes: string[], month: string): MonthlyAssignment {
   return {

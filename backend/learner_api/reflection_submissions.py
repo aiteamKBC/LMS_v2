@@ -10,6 +10,8 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from login.permissions import learner_self_or_admin, learner_self_or_staff
+from .assignment_attempts import HISTORY_KEY, preserve_attempts, submission_attempts
+from .submission_audit import SUBMISSION_AUDIT_SQL, record_submission_row
 
 logger = logging.getLogger(__name__)
 
@@ -178,7 +180,22 @@ def _submit_reflection(request):
     activity_id = _text(payload.get("activityId"))
     learning_reflection = _text(payload.get("learningReflection"))
     submission_mode = "draft" if _text(payload.get("submissionMode")).lower() == "draft" else "submit"
-    is_assignment_form = activity_type.lower() == "assignment"
+    if submission_mode == "submit":
+        # Drafts may be saved before the cohort starts; submitting waits for it.
+        # The API gate lets this path through for drafts, so the submit half is
+        # refused here, before anything is written.
+        from .programme_access import submission_refusal
+        refused = submission_refusal(getattr(request, "login_account", None))
+        if refused is not None:
+            return refused
+    is_extra_activity = activity_type == "extra_activity"
+    is_assignment_form = activity_type.lower() in ("assignment", "extra_activity")
+    if is_extra_activity:
+        from .extra_activities import prepare_extra_activity
+        try:
+            payload = prepare_extra_activity(payload)
+        except ValueError as exc:
+            return _error(str(exc))
     assignment_answer = _text(payload.get("assignmentAnswer"))
     what_you_learned = _text(payload.get("whatYouLearned"))
     business_impact = _text(payload.get("businessImpact"))
@@ -198,7 +215,7 @@ def _submit_reflection(request):
                 missing.append("assignmentAnswer")
             if not what_you_learned:
                 missing.append("whatYouLearned")
-            if not business_impact:
+            if not business_impact and not is_extra_activity:
                 missing.append("businessImpact")
             if missing:
                 return _error("Complete all assignment sections before submitting: " + ", ".join(missing) + ".")
@@ -210,6 +227,13 @@ def _submit_reflection(request):
     # versioned monthly payload in full_submission and use the learning answer here.
     if is_assignment_form:
         learning_reflection = what_you_learned or assignment_answer
+        if is_extra_activity:
+            monthly = _dict(payload.get('monthlyAssignment'))
+            learning_reflection = "\n\n".join([
+                "Activity answer:\n" + assignment_answer, "What I learned:\n" + what_you_learned,
+                "What I understood:\n" + _text(monthly.get('understood')),
+                "Skills I gained:\n" + _text(monthly.get('gainedSkills')),
+            ])
     submission_status = "draft" if submission_mode == "draft" else "submitted_for_tutor_review"
 
     raw_date = _text(payload.get("dateCompleted"))
@@ -237,7 +261,7 @@ def _submit_reflection(request):
             with connections["enrolment"].cursor() as cur:
                 cur.execute(
                     """
-                    select status, full_submission
+                    select status, full_submission, coach_feedback, reviewed_by, reviewed_at, submitted_at
                     from "Learner"."learning_reflection_submissions"
                     where learner_kind = %s
                       and learner_id = %s
@@ -276,9 +300,23 @@ def _submit_reflection(request):
                         409,
                     )
 
+                if is_assignment_form:
+                    preserve_attempts(
+                        full_submission, stored,
+                        status=existing[0] if existing else None,
+                        feedback=existing[2] if existing else None,
+                        reviewer=existing[3] if existing else None,
+                        reviewed_at=existing[4] if existing else None,
+                        submitted_at=existing[5] if existing else None,
+                    )
+
                 if is_assignment_form and submission_mode == "submit":
                     from .monthly_assignment import assignment_checks
-                    checks = assignment_checks(payload)
+                    if is_extra_activity:
+                        from .extra_activities import extra_activity_checks
+                        checks = extra_activity_checks(payload)
+                    else:
+                        checks = assignment_checks(payload)
                     missing_checks = [check["label"] for check in checks if not check["passed"]]
                     if missing_checks:
                         return JsonResponse({"error": "Complete the outstanding submission requirements. Your draft is saved.", "checks": checks}, status=400)
@@ -348,8 +386,11 @@ def _submit_reflection(request):
                     group_ref = excluded.group_ref,
                     module_ref = excluded.module_ref,
                     week_ref = excluded.week_ref,
+                    coach_feedback = CASE WHEN excluded.activity_type IN ('assignment', 'extra_activity') THEN NULL ELSE learning_reflection_submissions.coach_feedback END,
+                    reviewed_by = CASE WHEN excluded.activity_type IN ('assignment', 'extra_activity') THEN NULL ELSE learning_reflection_submissions.reviewed_by END,
+                    reviewed_at = CASE WHEN excluded.activity_type IN ('assignment', 'extra_activity') THEN NULL ELSE learning_reflection_submissions.reviewed_at END,
                     submitted_at = now()
-                returning id
+                returning """ + SUBMISSION_AUDIT_SQL + """
                 """,
                     [
                     str(submission_id),
@@ -392,7 +433,11 @@ def _submit_reflection(request):
                     lineage.get("week_ref") or None,
                     ],
                 )
-                stored_id = cur.fetchone()[0]
+                stored = cur.fetchone()
+                # `id` is the first audited column, so this read is unchanged
+                # by widening the clause.
+                stored_id = stored[0]
+                record_submission_row(stored)
     except DatabaseError:
         logger.exception("Could not save learner reflection submission.")
         return _error("Could not save the reflection for tutor review.", 502)
@@ -401,6 +446,7 @@ def _submit_reflection(request):
         {
             "id": str(stored_id),
             "status": submission_status,
+            "submissionAttempts": submission_attempts(full_submission, submission_status) if is_assignment_form else [],
         },
         status=201,
     )
@@ -430,7 +476,8 @@ def get_reflection_submission(request):
             if not activity_type:
                 cur.execute(
                     """
-                    select activity_type, activity_id, status
+                    select activity_type, activity_id, status,
+                           full_submission -> 'assignmentAttemptHistory'
                     from "Learner"."learning_reflection_submissions"
                     where learner_kind = %s and learner_id = %s
                     """,
@@ -443,6 +490,8 @@ def get_reflection_submission(request):
                                 "activityType": row[0],
                                 "activityId": row[1],
                                 "status": row[2],
+                                **({"submissionCount": len((json.loads(row[3]) if isinstance(row[3], str) else row[3]) or []) + int(bool(row[2]) and row[2] != "draft")}
+                                   if row[0] == "assignment" else {}),
                             }
                             for row in cur.fetchall()
                         ]
@@ -479,10 +528,21 @@ def get_reflection_submission(request):
     if not isinstance(full_submission, dict):
         full_submission = {}
 
+    if request.GET.get("attempt") is not None:
+        from .assignment_attempts import attempt_document
+        try:
+            if activity_type != "assignment":
+                raise ValueError("An assignment is required.")
+            attempt = attempt_document(full_submission, int(request.GET["attempt"]), row[1], row[6], row[3], row[4], row[5])
+        except (ValueError, TypeError):
+            return _error("Submission attempt not found.", 404)
+        return JsonResponse({"submission": {**attempt, "id": str(row[0])}})
+
     return JsonResponse(
         {
             "submission": {
-                **full_submission,
+                **{key: value for key, value in full_submission.items() if key != HISTORY_KEY},
+                "submissionAttempts": submission_attempts(full_submission, row[1], row[6], row[3], row[4], row[5]) if activity_type in ("assignment", "extra_activity") else [],
                 "id": str(row[0]),
                 "status": row[1],
                 "coachFeedback": row[3],

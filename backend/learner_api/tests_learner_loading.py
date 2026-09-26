@@ -14,7 +14,7 @@ class CompactLearnerLoadingTests(SimpleTestCase):
     def test_dashboard_identity_reads_dates_without_loading_plan_or_progress(self):
         source = SimpleNamespace(id=125, username='Learner', email='learner@example.test', phone_number='',
                                  programme='Programme', programme_status='Active', cohort='', group='', employer='',
-                                 employer_id=None, learner_type='apprenticeship', aptem_id=None, start_date='2026-09-01',
+                                 employer_id=None, organization='Example Organization', learner_type='apprenticeship', aptem_id=None, start_date='2026-09-01',
                                  end_date=None, practical_period_end_date='2027-09-01', apprenticeship_end_date=None)
         model = MagicMock()
         model.all_learners.only.return_value.get.return_value = source
@@ -25,6 +25,7 @@ class CompactLearnerLoadingTests(SimpleTestCase):
         payload = json.loads(response.content)
         self.assertEqual(payload['programmeStartDate'], '2026-09-01')
         self.assertEqual(payload['programmeEndDate'], '2027-09-01')
+        self.assertEqual(payload['organization'], 'Example Organization')
         self.assertNotIn('components', payload)
         self.assertNotIn('learning_plan', model.all_learners.only.call_args.args)
         graph.assert_not_called()

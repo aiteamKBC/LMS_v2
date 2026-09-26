@@ -70,3 +70,37 @@ class AssignmentMcmTests(SimpleTestCase):
         payload = json.loads(response.content)
         self.assertEqual(len(payload["artifacts"]), 2)
         self.assertEqual(payload["attendance"], snapshot["attendance"])
+
+    def test_mcm_summary_does_not_expose_raw_generation_errors(self):
+        from coach_api import views as coach
+        record = SimpleNamespace(event_type="mcr")
+        snapshot = {
+            "artifacts": [],
+            "attendance": {"participantCount": 0, "records": []},
+            "attendanceReports": [],
+            "attendanceTracker": {},
+            "errors": [],
+            "partial": False,
+        }
+        failed_summary = {
+            "summary": {"title": "Monthly Coaching Recap", "overview": ""},
+            "status": "failed",
+            "generatedAt": "2026-09-19T19:49:00+00:00",
+            "error": "name 'source' is not defined",
+        }
+        with patch.object(module, "_learner_calendar_record", return_value=record), patch.object(
+            coach, "fetch_coach_meeting_graph_snapshot", return_value=(snapshot, None, 200)
+        ), patch.object(
+            coach, "apply_teams_attendance_status_transition", return_value=False
+        ), patch.object(
+            coach, "persist_coach_meeting_snapshots", return_value={}
+        ), patch.object(
+            coach, "ensure_coach_meeting_summary", return_value=failed_summary
+        ):
+            response = inspect.unwrap(module.learner_calendar_event_artifacts)(
+                RequestFactory().get("/artifacts/"), "commercial", 1, "meeting"
+            )
+
+        payload = json.loads(response.content)
+        self.assertEqual(payload["meetingSummary"]["status"], "failed")
+        self.assertNotIn("error", payload["meetingSummary"])

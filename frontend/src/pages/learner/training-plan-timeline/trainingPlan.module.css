@@ -21,7 +21,7 @@
 .kicker { font-size:11px; margin-bottom:5px !important; }
 .highlight>.primary,.soon,.highlightFooter { grid-column:1/-1; align-self:end; margin-top:4px; }
 .highlight>.primary { min-height:34px; }
-.next { color:white; background:var(--learner-navy); }
+.next { color:white; background:var(--kbc-learner-primary, #4f2d7f); }
 .next .hint,.next .kicker { color:#dee2e8; }
 .next h2 { color:white; }
 .next .tile { background:#ffffff15; }
@@ -37,7 +37,7 @@
 .meter { height:6px; overflow:hidden; border-radius:10px; background:var(--kbc-border); }
 .meter>span { display:block; height:100%; background:var(--learner-purple); border-radius:inherit; }
 .hoursHighlight .meter>span { background:var(--learner-success); }
-.timeline { border:1px solid var(--line); border-radius:18px; background:var(--kbc-surface); padding:18px; margin-bottom:20px; box-shadow:0 2px 5px rgb(24 45 72 / 0.04); }
+.timeline { border:1px solid var(--line); border-radius:18px; background:var(--kbc-surface); padding:18px; margin-bottom:20px; box-shadow:0 2px 5px rgb(79 45 127 / 0.04); }
 .toolbar { display:flex; align-items:center; justify-content:space-between; gap:14px; margin-bottom:18px; flex-wrap:wrap; }
 .toolbar label { display:flex; align-items:center; gap:9px; font-size:12px; color:var(--muted); }
 .root select { border:1px solid var(--line); padding:7px 10px; border-radius:8px; background:var(--kbc-surface); font-size:12px; color:var(--kbc-text); min-height:36px; max-width:100%; }
@@ -51,8 +51,8 @@
 .timelineScroll { overflow:auto; max-height:570px; border:1px solid var(--line); border-radius:12px; }
 .timelineGrid { min-width:1060px; }
 .timelineHeader,.timelineRow { display:grid; grid-template-columns:240px minmax(0,1fr); }
-.timelineHeader { min-height:86px; background:var(--learner-navy); color:white; position:sticky; top:0; z-index:5; }
-.moduleHeading { display:flex; align-items:center; gap:9px; padding:18px; font-size:13px; font-weight:700; border-right:1px solid var(--line); position:sticky; left:0; z-index:4; background:var(--learner-navy); }
+.timelineHeader { min-height:86px; background:var(--kbc-learner-primary, #4f2d7f); color:white; position:sticky; top:0; z-index:5; }
+.moduleHeading { display:flex; align-items:center; gap:9px; padding:18px; font-size:13px; font-weight:700; border-right:1px solid var(--line); position:sticky; left:0; z-index:4; background:var(--kbc-learner-primary, #4f2d7f); }
 .moduleHeading span { font-size:10px; border-radius:6px; padding:2px 6px; background:var(--learner-accent-soft); color:var(--purple); }
 .months { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); }
 .months button { padding:10px 5px; border-right:1px solid var(--line); text-align:center; min-width:0; }
@@ -84,7 +84,7 @@
 .violet { --bar-color:var(--learner-purple); --bar-bg:var(--learner-accent-soft); }
 .green { --bar-color:var(--learner-success); --bar-bg:var(--learner-success-soft); }
 .amber { --bar-color:var(--learner-warning); --bar-bg:var(--learner-warning-soft); }
-.blue { --bar-color:var(--learner-navy); --bar-bg:var(--learner-soft); }
+.blue { --bar-color:var(--kbc-learner-primary, #4f2d7f); --bar-bg:var(--learner-soft); }
 .pink { --bar-color:var(--learner-purple); --bar-bg:var(--learner-accent-soft); }
 .todayLine { position:absolute; top:0; bottom:0; border-left:1px dashed var(--learner-danger); z-index:1; pointer-events:none; }
 .noDates { position:absolute; left:20px; font-size:11px; color:var(--muted); display:flex; align-items:center; gap:6px; }
@@ -96,7 +96,7 @@
 .reviewMarker small { font-size:8px; }
 .reviewMarker:hover { background:var(--learner-accent-soft); }
 .details { display:grid; grid-template-columns:1.2fr 1fr 1fr; align-items:start; gap:18px; }
-.panel { background:var(--kbc-surface); border:1px solid var(--line); border-top:3px solid var(--learner-navy); border-radius:16px; padding:20px; min-width:0; }
+.panel { background:var(--kbc-surface); border:1px solid var(--line); border-top:3px solid var(--kbc-learner-primary, #4f2d7f); border-radius:16px; padding:20px; min-width:0; }
 .panelHeading { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:10px; }
 .panelHeading h2 { color:var(--ink); font-size:16px; font-weight:750; margin-top:4px; }
 .panelHeading>.primary { font-size:10px; padding:6px 9px; min-height:32px; flex-shrink:0; }

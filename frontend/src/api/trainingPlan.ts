@@ -20,3 +20,14 @@ export interface TrainingPlanModule {
   weeks: TrainingPlanWeek[];
 }
 export type TrainingPlan = TrainingPlanModule[];
+
+// A free course assigned to a learner. Deliberately NOT part of TrainingPlan:
+// free courses are a pure assignment record with no hours, KSBs or progress, so
+// the backend stores them in a separate column and never feeds them into OTJH or
+// the KSB snapshot. `addedAt` is an ISO timestamp stamped when the course is
+// added in the wizard.
+export interface FreeCourseAssignment {
+  freeCourseId: string;
+  courseName: string;
+  addedAt?: string;
+}

@@ -32,6 +32,13 @@ export function parseClockSeconds(value: string | null | undefined): number | nu
     : units[0] * 60 + units[1];
 }
 
+/** The saved reflection always stores hours; show it in the field's unit. */
+function savedActualTime(hours: string, inMinutes: boolean): string {
+  if (!inMinutes || !hours.trim()) return hours;
+  const value = Number(hours);
+  return Number.isFinite(value) && value >= 0 ? String(Number((value * 60).toFixed(2))) : '';
+}
+
 export function formatRecordedClock(value: string | null | undefined): string | null {
   const totalSeconds = parseClockSeconds(value);
   return totalSeconds == null ? null : formatClock(totalSeconds);
@@ -53,6 +60,14 @@ const TABS = [
 ] as const;
 
 type TabId = (typeof TABS)[number]['id'];
+
+const KSB_GROUPS = [
+  { key: 'K', label: 'Knowledge' },
+  { key: 'S', label: 'Skills' },
+  { key: 'B', label: 'Behaviours' },
+] as const;
+
+type KsbGroupKey = (typeof KSB_GROUPS)[number]['key'];
 
 const BENEFITS = [
   'Improved productivity',
@@ -91,6 +106,7 @@ export function ReflectionWindow({
   learnerKsbs,
   plannedTimeLabel,
   plannedHours: plannedHoursProp,
+  actualTimeUnit = 'hours',
   noun = 'quiz',
   submitting,
   submitError,
@@ -122,6 +138,14 @@ export function ReflectionWindow({
    * hours and submitted as such. Callers now convert to hours once, here.
    */
   plannedHours?: number;
+  /**
+   * Unit of the "Actual time spent" field. Quizzes use minutes because their
+   * planned time is shown in minutes; a bare "14" typed beside "60 minutes"
+   * was otherwise read as 14 hours. Minutes are submitted with an explicit
+   * unit ("14 minutes") so every OTJ parser reads them the same way, and the
+   * reflection record still receives hours.
+   */
+  actualTimeUnit?: 'hours' | 'minutes';
   noun?: string;
   submitting: boolean;
   submitError: string | null;
@@ -144,10 +168,15 @@ export function ReflectionWindow({
   // so "1.71" and "2" both read correctly while 102 minutes can no longer
   // arrive as 102 hours. Falls back to blank rather than to a parsed label: an
   // empty field is an honest "unknown", a wrong number is not.
+  const inMinutes = actualTimeUnit === 'minutes';
   const plannedHours =
     plannedHoursProp != null && Number.isFinite(plannedHoursProp) && plannedHoursProp > 0
-      ? String(Number(plannedHoursProp.toFixed(2)))
+      ? String(Number((inMinutes ? plannedHoursProp * 60 : plannedHoursProp).toFixed(2)))
       : '';
+  const actualTimeHours = () => {
+    const value = actualTime.trim();
+    return inMinutes && value ? String(Number((Number(value) / 60).toFixed(4))) : value;
+  };
   const [tab, setTab] = useState<TabId>('learning');
   const [reflection, setReflection] = useState('');
   const [selectedKsbs, setSelectedKsbs] = useState<string[]>([]);
@@ -185,12 +214,34 @@ export function ReflectionWindow({
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimeoutRef = useRef<number | null>(null);
 
+  const hasAuthoredKsbs = Array.isArray(autoKsbs) && autoKsbs.length > 0;
+  // A component with no authored mapping falls back to the programme's KSBs:
+  // the learner picks the ones this activity developed and must pick at least
+  // one (when the programme has any) before the KSB section is complete.
+  const selectingFromProgramme = Array.isArray(autoKsbs) && autoKsbs.length === 0;
+  const selectionRequired = selectingFromProgramme && learnerKsbs.length > 0;
+
+  const [ksbGroup, setKsbGroup] = useState<KsbGroupKey>('K');
+  const programmeKsbGroups = useMemo(() => {
+    const groups: Record<KsbGroupKey, LearnerKsbItem[]> = { K: [], S: [], B: [] };
+    for (const item of learnerKsbs) {
+      const kind = String(item.type || item.code || '').trim().charAt(0).toUpperCase();
+      // Anything that is not an S or B code is listed with Knowledge so it can
+      // still be selected.
+      groups[kind === 'S' || kind === 'B' ? kind : 'K'].push(item);
+    }
+    return groups;
+  }, [learnerKsbs]);
+  const activeKsbGroup = programmeKsbGroups[ksbGroup].length
+    ? ksbGroup
+    : KSB_GROUPS.find(group => programmeKsbGroups[group.key].length)?.key ?? ksbGroup;
+
   const mappedKsbs = useMemo(() => {
-    if (Array.isArray(autoKsbs)) return autoKsbs;
+    if (hasAuthoredKsbs) return autoKsbs!;
     return learnerKsbs
       .filter(item => selectedKsbs.includes(item.code))
       .map(item => ({ code: item.code, description: item.description, weight: 0, classification: 'possible' }));
-  }, [autoKsbs, learnerKsbs, selectedKsbs]);
+  }, [autoKsbs, hasAuthoredKsbs, learnerKsbs, selectedKsbs]);
 
   const mappedKsbWeightSummary = useMemo(() => mappedKsbs.reduce(
     (summary, item) => {
@@ -203,17 +254,21 @@ export function ReflectionWindow({
     { total: 0, K: 0, S: 0, B: 0 },
   ), [mappedKsbs]);
 
-  const ksbCodes = Array.isArray(autoKsbs) ? autoKsbs.map(item => item.code) : selectedKsbs;
+  const ksbCodes = hasAuthoredKsbs
+    ? autoKsbs!.map(item => item.code)
+    : selectingFromProgramme ? mappedKsbs.map(item => item.code) : selectedKsbs;
   const ksbWeights = Object.fromEntries(
     mappedKsbs.map(item => [item.code, Number(item.weight) || 0]),
   );
   const wordCount = reflection.trim().split(/\s+/).filter(Boolean).length;
   const learningReady = wordCount >= 100;
-  const ksbReady = ksbCodes.length === 0 || ksbCodes.every(code =>
-    Boolean(ksbExplanations[code]?.trim())
-    && confidenceBefore[code] !== undefined
-    && confidenceAfter[code] !== undefined
-  );
+  const ksbReady = ksbCodes.length === 0
+    ? !selectionRequired
+    : ksbCodes.every(code =>
+      Boolean(ksbExplanations[code]?.trim())
+      && confidenceBefore[code] !== undefined
+      && confidenceAfter[code] !== undefined
+    );
   const applicationReady = Boolean(applicationType && applicationText.trim());
   const allEvidenceFileNames = [
     ...storedEvidenceFileNames,
@@ -237,7 +292,12 @@ export function ReflectionWindow({
 
   const checklist = [
     { label: 'Reflection (≥ 100 words)', complete: learningReady },
-    { label: ksbCodes.length ? 'Mapped KSBs explained and rated' : 'No mapped KSBs to rate', complete: ksbReady },
+    {
+      label: selectionRequired
+        ? 'Programme KSBs selected, explained and rated'
+        : ksbCodes.length ? 'Mapped KSBs explained and rated' : 'No mapped KSBs to rate',
+      complete: ksbReady,
+    },
     { label: 'Workplace application or support request', complete: applicationReady },
     { label: 'Consent confirmed (if evidence uploaded)', complete: evidenceReady },
     { label: 'Employer benefit selected and explained', complete: benefitReady },
@@ -262,7 +322,11 @@ export function ReflectionWindow({
       : !learningReady
         ? [`Increase the reflection to at least 100 words (currently ${wordCount})`]
         : []),
-    ...(!ksbReady ? ['Explain and rate every mapped KSB'] : []),
+    ...(!ksbReady
+      ? [selectionRequired && ksbCodes.length === 0
+        ? 'Select at least one programme KSB this activity developed'
+        : 'Explain and rate every mapped KSB']
+      : []),
     ...(!applicationReady ? ['Describe workplace application or the support you need'] : []),
     ...(!benefitReady ? ['Select and explain an employer or business benefit'] : []),
     ...(!otjhReady ? ['Complete and confirm the OTJH record'] : []),
@@ -310,7 +374,7 @@ export function ReflectionWindow({
         setCoachVisibilityConfirmed(Boolean(saved.evidenceConsentConfirmed));
         setSelectedBenefits(Array.isArray(saved.selectedBenefits) ? saved.selectedBenefits : []);
         setBenefitExplanation(saved.benefitExplanation || '');
-        setActualTime(saved.actualTimeHours || plannedHours);
+        setActualTime(savedActualTime(saved.actualTimeHours || '', inMinutes) || plannedHours);
         setPaidHours(saved.completedDuringPaidHours || 'yes');
         setDateCompleted(saved.dateCompleted || new Date().toISOString().split('T')[0]);
         setOtjhConfirmed(Boolean(saved.otjhConfirmed));
@@ -331,7 +395,7 @@ export function ReflectionWindow({
     return () => {
       cancelled = true;
     };
-  }, [evidenceSectionRef, learnerId, learnerKind, noun, plannedHours]);
+  }, [evidenceSectionRef, learnerId, learnerKind, noun, plannedHours, inMinutes]);
 
   const handleNext = () => {
     const nextTab = TABS[activeIndex + 1];
@@ -357,7 +421,7 @@ export function ReflectionWindow({
     const result: ReflectionSubmission = {
       ksbs: ksbCodes,
       feedback: reflection.trim(),
-      reportedTime: actualTime.trim(),
+      reportedTime: inMinutes && actualTime.trim() ? `${actualTime.trim()} minutes` : actualTime.trim(),
       confidenceBefore,
       confidenceAfter,
       ksbExplanations,
@@ -398,7 +462,7 @@ export function ReflectionWindow({
         evidenceConsentConfirmed: coachVisibilityConfirmed,
         selectedBenefits,
         benefitExplanation: benefitExplanation.trim(),
-        actualTimeHours: actualTime.trim(),
+        actualTimeHours: actualTimeHours(),
         completedDuringPaidHours: paidHours,
         dateCompleted,
         otjhConfirmed,
@@ -586,7 +650,10 @@ export function ReflectionWindow({
           <MetaItem label="Learner" value={learnerName} />
           <MetaItem label="Programme" value={programmeName} />
           <MetaItem label="Planned OTJH" value={plannedTimeLabel || 'Not set'} />
-          <MetaItem label="Mapped KSBs" value={ksbCodes.length ? ksbCodes.join(', ') : 'None'} />
+          <MetaItem
+            label={selectingFromProgramme ? 'Selected KSBs' : 'Mapped KSBs'}
+            value={ksbCodes.length ? ksbCodes.join(', ') : 'None'}
+          />
         </div>
 
         <div className="mt-7 flex items-center gap-3">
@@ -647,7 +714,7 @@ export function ReflectionWindow({
 
       <fieldset
         disabled={submissionLocked || loadingExisting}
-        className="border-t border-[#d7e0e8] px-5 py-5 disabled:cursor-not-allowed md:px-8 md:py-6"
+        className="min-w-0 border-t border-[#d7e0e8] px-5 py-5 disabled:cursor-not-allowed md:px-8 md:py-6"
       >
         {tab === 'learning' && (
           <section>
@@ -708,10 +775,12 @@ export function ReflectionWindow({
           <section>
             <h2 className="text-sm font-semibold text-foreground-900">KSB confidence check</h2>
             <p className="mt-1 text-xs text-foreground-500">
-              Explain each mapped KSB, then rate your confidence before and after this {noun}.
+              {selectionRequired
+                ? `No KSBs are mapped to this activity. Select at least one KSB from your programme that this ${noun} developed, then explain each one and rate your confidence before and after this ${noun}.`
+                : `Explain each mapped KSB, then rate your confidence before and after this ${noun}.`}
             </p>
 
-            {mappedKsbs.length > 0 && (
+            {mappedKsbs.length > 0 && !selectingFromProgramme && (
               <div className="mt-4 overflow-hidden rounded-2xl border border-primary-200 bg-gradient-to-r from-primary-50 via-white to-white shadow-sm">
                 <div className="flex flex-col gap-4 p-4 sm:flex-row sm:items-center sm:justify-between">
                   <div>
@@ -733,6 +802,72 @@ export function ReflectionWindow({
                       </div>
                     ))}
                   </div>
+                </div>
+              </div>
+            )}
+
+            {selectionRequired && (
+              <div className="mt-4 min-w-0 rounded-xl border border-foreground-200 bg-white p-3">
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-xs font-semibold text-foreground-700">Select the programme KSBs this activity developed</p>
+                  <span className="shrink-0 text-xs text-foreground-500">{ksbCodes.length} selected</span>
+                </div>
+                <div role="tablist" aria-label="KSB type" className="mb-3 inline-flex gap-1 rounded-lg bg-background-100 p-1">
+                  {KSB_GROUPS.map(group => {
+                    const count = programmeKsbGroups[group.key].length;
+                    const selectedCount = programmeKsbGroups[group.key]
+                      .filter(item => selectedKsbs.includes(item.code)).length;
+                    const active = activeKsbGroup === group.key;
+                    return (
+                      <button
+                        key={group.key}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        disabled={count === 0}
+                        title={group.label}
+                        onClick={() => setKsbGroup(group.key)}
+                        className={`rounded-md px-3 py-1 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                          active ? 'bg-white text-primary-700 shadow-sm' : 'text-foreground-600 hover:text-foreground-900'
+                        }`}
+                      >
+                        {group.key}
+                        <span className="ml-1 font-normal text-foreground-500">
+                          {selectedCount > 0 ? `${selectedCount}/${count}` : count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div role="tabpanel" aria-label={KSB_GROUPS.find(group => group.key === activeKsbGroup)?.label} className="max-h-64 space-y-1.5 overflow-y-auto pr-1">
+                  {programmeKsbGroups[activeKsbGroup].map(item => {
+                    const selected = selectedKsbs.includes(item.code);
+                    return (
+                      <label
+                        key={item.code}
+                        className={`flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 transition-colors ${
+                          selected
+                            ? 'border-primary-500 bg-primary-50'
+                            : 'border-foreground-200 hover:border-primary-300'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selected}
+                          onChange={() => setSelectedKsbs(previous =>
+                            previous.includes(item.code)
+                              ? previous.filter(code => code !== item.code)
+                              : [...previous, item.code]
+                          )}
+                          className="mt-0.5 shrink-0 accent-primary-600"
+                        />
+                        <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold ${
+                          selected ? 'bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-600'
+                        }`}>{item.code}</span>
+                        <span className="min-w-0 break-words text-xs leading-relaxed text-foreground-600">{item.description}</span>
+                      </label>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -780,9 +915,11 @@ export function ReflectionWindow({
                         <p className="text-xs leading-relaxed text-foreground-600">{item.description}</p>
                       </div>
                       <div className="flex shrink-0 items-center gap-2">
-                        <span className="rounded-lg bg-primary-50 px-2.5 py-1.5 text-[10px] font-bold text-primary-700 ring-1 ring-primary-100">
-                          {formatKsbWeight(item.weight)} weight
-                        </span>
+                        {!selectingFromProgramme && (
+                          <span className="rounded-lg bg-primary-50 px-2.5 py-1.5 text-[10px] font-bold text-primary-700 ring-1 ring-primary-100">
+                            {formatKsbWeight(item.weight)} weight
+                          </span>
+                        )}
                         <span className={`inline-flex items-center gap-1 rounded-lg px-2.5 py-1.5 text-[10px] font-semibold ${
                           requirementsComplete
                             ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100'
@@ -817,7 +954,13 @@ export function ReflectionWindow({
                 );
               })}
               {mappedKsbs.length === 0 && (
-                <p className="rounded-xl bg-background-100 p-4 text-sm text-foreground-500">No KSBs are mapped to this activity.</p>
+                <p className="rounded-xl bg-background-100 p-4 text-sm text-foreground-500">
+                  {selectionRequired
+                    ? 'Select at least one KSB above to explain and rate it.'
+                    : selectingFromProgramme
+                      ? 'No KSBs are mapped to this activity and your programme has no KSBs to choose from.'
+                      : 'No KSBs are mapped to this activity.'}
+                </p>
               )}
             </div>
           </section>
@@ -962,14 +1105,14 @@ export function ReflectionWindow({
                   {plannedTimeLabel || 'Not set'}
                 </div>
               </Field>
-              <Field label="Actual time spent (hours)">
+              <Field label={`Actual time spent (${inMinutes ? 'minutes' : 'hours'})`}>
                 <input
                   type="number"
                   min="0"
-                  step="0.25"
+                  step={inMinutes ? '1' : '0.25'}
                   value={actualTime}
                   onChange={event => setActualTime(event.target.value)}
-                  placeholder="e.g. 2"
+                  placeholder={inMinutes ? 'e.g. 30' : 'e.g. 2'}
                   className="h-11 w-full rounded-xl border border-foreground-200 bg-white px-3 text-sm focus:border-primary-400 focus:outline-none"
                 />
               </Field>

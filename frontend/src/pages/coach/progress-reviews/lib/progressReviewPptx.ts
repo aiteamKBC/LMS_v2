@@ -71,12 +71,12 @@ function shapeXml(shape: Shape, index: number) {
   </p:sp>`;
 }
 
-function titleShapes(deck: ProgressReviewSlidesDeck, slide: ProgressReviewSlide): Shape[] {
+function titleShapes(deck: ProgressReviewSlidesDeck, slide: ProgressReviewSlide, documentLabel: string): Shape[] {
   const { programme, employer } = reviewDeckMetadata(deck);
   return [
     { x: 0, y: 0, w: SLIDE_W, h: inches(0.55), fill: '24103F' },
     { x: M, y: inches(0.18), w: inches(7.5), h: inches(0.2), text: programme.toUpperCase(), fontSize: 7, bold: true, color: 'EDE9FE' },
-    { x: inches(9.7), y: inches(0.18), w: inches(2.8), h: inches(0.2), text: 'PROGRESS REVIEW', fontSize: 7, bold: true, color: 'EDE9FE', align: 'ctr' },
+    { x: inches(9.7), y: inches(0.18), w: inches(2.8), h: inches(0.2), text: documentLabel.toUpperCase(), fontSize: 7, bold: true, color: 'EDE9FE', align: 'ctr' },
     { x: M, y: inches(0.82), w: inches(8.9), h: inches(0.32), text: slide.title.toUpperCase(), fontSize: 8, bold: true, color: '6D28D9' },
     { x: M, y: inches(1.15), w: inches(8.9), h: inches(0.38), text: slide.heading, fontSize: 17, bold: true, color: '111827' },
     { x: M, y: inches(1.55), w: inches(8.9), h: inches(0.38), text: 'subheading' in slide ? slide.subheading : '', fontSize: 9, color: '4B5563' },
@@ -112,8 +112,8 @@ function listItemText(item: ProgressReviewSlideListItem) {
     .join('\n');
 }
 
-function slideShapes(deck: ProgressReviewSlidesDeck, slide: ProgressReviewSlide): Shape[] {
-  const shapes: Shape[] = [{ x: 0, y: 0, w: SLIDE_W, h: SLIDE_H, fill: 'FFFFFF' }, ...titleShapes(deck, slide)];
+function slideShapes(deck: ProgressReviewSlidesDeck, slide: ProgressReviewSlide, documentLabel = 'Progress Review'): Shape[] {
+  const shapes: Shape[] = [{ x: 0, y: 0, w: SLIDE_W, h: SLIDE_H, fill: 'FFFFFF' }, ...titleShapes(deck, slide, documentLabel)];
 
   if (slide.type === 'cover') {
     shapes.push(
@@ -243,13 +243,13 @@ const slideLayout = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 
 const emptyRels = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>`;
 
-export async function saveProgressReviewPptx(deck: ProgressReviewSlidesDeck) {
+export async function saveProgressReviewPptx(deck: ProgressReviewSlidesDeck, documentLabel = 'Progress Review') {
   const zip = new JSZip();
   const slides = deck.slides;
 
   zip.file('[Content_Types].xml', contentTypes(slides.length));
   zip.folder('_rels')?.file('.rels', rootRels);
-  zip.folder('docProps')?.file('core.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${esc(deck.learnerName)} Progress Review</dc:title><dc:creator>KBC LearningOS</dc:creator><cp:lastModifiedBy>KBC LearningOS</cp:lastModifiedBy><dcterms:created xsi:type="dcterms:W3CDTF">${new Date().toISOString()}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${new Date().toISOString()}</dcterms:modified></cp:coreProperties>`);
+  zip.folder('docProps')?.file('core.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:dcmitype="http://purl.org/dc/dcmitype/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"><dc:title>${esc(deck.learnerName)} ${esc(documentLabel)}</dc:title><dc:creator>KBC LearningOS</dc:creator><cp:lastModifiedBy>KBC LearningOS</cp:lastModifiedBy><dcterms:created xsi:type="dcterms:W3CDTF">${new Date().toISOString()}</dcterms:created><dcterms:modified xsi:type="dcterms:W3CDTF">${new Date().toISOString()}</dcterms:modified></cp:coreProperties>`);
   zip.folder('docProps')?.file('app.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes"><Application>KBC LearningOS</Application><PresentationFormat>On-screen Show (16:9)</PresentationFormat><Slides>${slides.length}</Slides></Properties>`);
   zip.folder('ppt')?.file('presentation.xml', presentationXml(slides.length));
   zip.folder('ppt')?.folder('_rels')?.file('presentation.xml.rels', presentationRels(slides.length));
@@ -260,7 +260,7 @@ export async function saveProgressReviewPptx(deck: ProgressReviewSlidesDeck) {
   zip.folder('ppt')?.folder('slideLayouts')?.folder('_rels')?.file('slideLayout1.xml.rels', emptyRels);
 
   slides.forEach((slide, index) => {
-    zip.folder('ppt')?.folder('slides')?.file(`slide${index + 1}.xml`, slideXml(slideShapes(deck, slide)));
+    zip.folder('ppt')?.folder('slides')?.file(`slide${index + 1}.xml`, slideXml(slideShapes(deck, slide, documentLabel)));
     zip.folder('ppt')?.folder('slides')?.folder('_rels')?.file(`slide${index + 1}.xml.rels`, emptyRels);
   });
 
@@ -272,7 +272,8 @@ export async function saveProgressReviewPptx(deck: ProgressReviewSlidesDeck) {
   const a = document.createElement('a');
   const learnerSlug = deck.learnerName.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   a.href = url;
-  a.download = `progress-review-${learnerSlug || 'learner'}.pptx`;
+  const prefix = documentLabel.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  a.download = `${prefix}-${learnerSlug || 'learner'}.pptx`;
   document.body.appendChild(a);
   a.click();
   a.remove();

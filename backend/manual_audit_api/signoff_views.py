@@ -14,6 +14,7 @@ from django.db import DatabaseError, connections
 from django.views.decorators.csrf import csrf_exempt
 from django.http import JsonResponse
 
+from .audit_trail import SIGNOFF_RETURNING, record_signoff
 from .common import CONN, _error, _has_audit_permission, db_is_read_only
 
 
@@ -157,6 +158,7 @@ def learner_signoff(request, learner_id):
                         snapshot_hash = excluded.snapshot_hash,
                         audit_version = excluded.audit_version,
                         updated_at = now()
+                    returning ''' + ', '.join(SIGNOFF_RETURNING) + '''
                     ''',
                     [
                         str(learner_id),
@@ -171,6 +173,10 @@ def learner_signoff(request, learner_id):
                         AUDIT_VERSION,
                     ],
                 )
+                # Signing off a month is the auditor's formal act. The upsert
+                # overwrites the previous sign-off in place, so this is the only
+                # point at which an earlier one can still be recorded.
+                record_signoff(cur.fetchone())
 
             cur.execute(
                 f'''

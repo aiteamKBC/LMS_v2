@@ -32,20 +32,18 @@ Two different lifetimes live here, deliberately kept apart:
     the same row rather than duplicating it (section 24 of the brief: expected
     occurrence vs. persisted instance are kept strictly separate).
 
-Historical integrity: ``definition_snapshot`` freezes the template's
-{signatures, visibility, sections, fields, ...} at the moment the instance is
-first created. A later Curriculum edit changes what *new* instances see, but
-never what an already-created instance's form looked like -- see
-``review_instance_form_definition``. The display TITLE is the one thing that
-stays live: the brief is explicit that a Curriculum rename must be reflected
-everywhere in Coach immediately, including on a historical review's own
-completion screen -- so callers resolve the title from the live template
-separately from the frozen snapshot (``review_instances.py`` never embeds a
-title inside the snapshot itself for that reason).
+Historical integrity: ``definition_snapshot`` is immutable once an instance
+reaches awaiting-signature/completed (or has a signature). Before that gate,
+Curriculum section/field edits remain visible: an untouched instance adopts
+the current section tree, while one with saved answers uses an answer-safe
+merge. The effective tree is persisted only by a draft-save/completion write,
+never by a passive GET. Signature/visibility/lifecycle rules remain frozen
+throughout. The display TITLE also stays live, as it did before this policy.
 """
 from __future__ import annotations
 
 import logging
+from copy import deepcopy
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
@@ -67,6 +65,13 @@ REVIEW_INSTANCE_SIGNATURES_TABLE = 'review_instance_signatures'
 #: attendance transition, a completion, or a signature -- one row per manual
 #: override, and nothing else.
 REVIEW_INSTANCE_MANUAL_OVERRIDES_TABLE = 'review_instance_manual_overrides'
+#: Authorised completed/awaiting-signature -> in-progress REOPENS only (see
+#: reopen_review_instance_for_editing). Deliberately a separate table from
+#: REVIEW_INSTANCE_MANUAL_OVERRIDES_TABLE above, whose contract is one row per
+#: manual scheduled -> in-progress override and nothing else -- see
+#: sql/2026-09-21_curriculum_review_instance_reopens.sql for why that contract
+#: is kept true rather than widened to cover a second lifecycle event.
+REVIEW_INSTANCE_REOPENS_TABLE = 'review_instance_reopens'
 #: One row per coach-created additional Review for a single learner (see
 #: create_learner_review_addition). Deliberately NOT
 #: review_occurrence_overrides -- that table is skip-only (a hard CHECK
@@ -81,6 +86,12 @@ STATUS_SCHEDULED = 'scheduled'
 STATUS_IN_PROGRESS = 'in-progress'
 STATUS_AWAITING_SIGNATURE = 'awaiting-signature'
 STATUS_COMPLETED = 'completed'
+
+EDITABLE_DEFINITION_STATUSES = frozenset({
+    STATUS_NOT_SCHEDULED,
+    STATUS_SCHEDULED,
+    STATUS_IN_PROGRESS,
+})
 
 #: review_instances.occurrence_source values -- see
 #: sql/2026-09-15_curriculum_learner_review_additions.sql for the identity
@@ -100,6 +111,27 @@ LEARNER_REVIEW_ADDITION_REASON_CODES = (
 SIGNATURE_ROLES = reviews.PARTICIPANT_ROLES
 
 _TABLES_READY = False
+
+
+def required_signature_roles(signature_requirements):
+    """Roles required by one Review Instance's frozen signature rules.
+
+    ``definition_snapshot.signatures`` stores booleans, while the serialized
+    form definition exposes the same frozen decision as
+    ``signatures[role].required``. Accepting both shapes keeps lifecycle,
+    signature validation and PDF availability on one resolver without ever
+    consulting the live Curriculum template.
+    """
+    requirements = signature_requirements or {}
+    return tuple(
+        role
+        for role in SIGNATURE_ROLES
+        if bool(
+            requirements.get(role, {}).get('required')
+            if isinstance(requirements.get(role), dict)
+            else requirements.get(role)
+        )
+    )
 
 
 def ensure_review_instance_tables():
@@ -172,6 +204,62 @@ def _provision_review_instance_manual_overrides_table():
         cursor.execute(f'''
             create index if not exists review_instance_manual_overrides_instance_idx
             on {curriculum_views.authoring_table_name(REVIEW_INSTANCE_MANUAL_OVERRIDES_TABLE)} (review_instance_id, changed_at desc)
+        ''')
+
+
+#: Set once this process has provisioned/verified the reopens table, on its own
+#: gate for exactly the reason ensure_review_instance_manual_overrides_table
+#: has one -- see ensure_review_instance_reopens_table.
+_REOPENS_TABLE_READY = False
+
+
+def ensure_review_instance_reopens_table():
+    """Verify/provision review_instance_reopens on its own, narrow gate.
+
+    Same reasoning as ensure_review_instance_manual_overrides_table: folding
+    this into the three core tables' gate would mean every ordinary review
+    operation (schedule, answer, complete, sign) starts failing the moment
+    this code deploys, if sql/2026-09-21_curriculum_review_instance_reopens.sql
+    has not been run against Neon yet. Keeping it separate confines that
+    ordering risk to the reopen action itself.
+    """
+    global _REOPENS_TABLE_READY
+    if _REOPENS_TABLE_READY:
+        return
+    if not schema_gate.runtime_bootstrap_allowed():
+        schema_gate.require_tables(REVIEW_INSTANCE_REOPENS_TABLE)
+        _REOPENS_TABLE_READY = True
+        return
+    _provision_review_instance_reopens_table()
+    _REOPENS_TABLE_READY = True
+
+
+def _provision_review_instance_reopens_table():
+    """Mirrors sql/2026-09-21_curriculum_review_instance_reopens.sql for
+    sqlite/local dev. NOT for production request paths -- see
+    ensure_review_instance_reopens_table/schema_gate."""
+    from django.db import connection
+    json_type = curriculum_views.authoring_json_type()
+    with connection.cursor() as cursor:
+        if connection.vendor == 'postgresql':
+            cursor.execute(f'create schema if not exists {curriculum_views.quote_ident(curriculum_views.CURRICULUM_SCHEMA)}')
+        cursor.execute(f'''
+            create table if not exists {curriculum_views.authoring_table_name(REVIEW_INSTANCE_REOPENS_TABLE)} (
+                id varchar(128) primary key,
+                review_instance_id varchar(128) not null,
+                calendar_event_id integer,
+                previous_status varchar(32) not null,
+                new_status varchar(32) not null,
+                reason_code varchar(64) not null,
+                note text not null default '',
+                changed_by varchar(255) not null,
+                changed_at timestamp not null default current_timestamp,
+                previous_state_snapshot {json_type}
+            )
+        ''')
+        cursor.execute(f'''
+            create index if not exists review_instance_reopens_instance_idx
+            on {curriculum_views.authoring_table_name(REVIEW_INSTANCE_REOPENS_TABLE)} (review_instance_id, changed_at desc)
         ''')
 
 
@@ -1085,7 +1173,24 @@ MANUAL_OVERRIDE_REASON_CODES = (
     'other',
 )
 
+#: Reason codes a coach may give for reopening a completed/awaiting-signature
+#: review for editing (see reopen_review_instance_for_editing). Deliberately
+#: NOT MANUAL_OVERRIDE_REASON_CODES: every code in that tuple describes a
+#: Teams/attendance detection failure, which is never why an already-finished
+#: review is reopened. As there, 'other' requires a note.
+REOPEN_REASON_CODES = (
+    'correction-required',
+    'incorrect-answer',
+    'signature-error',
+    'employer-requested-change',
+    'other',
+)
+
+#: The only two statuses a review may be reopened FROM.
+REOPENABLE_STATUSES = (STATUS_AWAITING_SIGNATURE, STATUS_COMPLETED)
+
 _manual_override_logger = logging.getLogger('curriculum_api.review_instance_manual_override')
+_reopen_logger = logging.getLogger('curriculum_api.review_instance_reopen')
 
 
 def _manual_override_status_rejection(current_status):
@@ -1302,19 +1407,249 @@ def _flatten_snapshot_fields(sections):
     return flat
 
 
+def semantic_review_fields(definition, semantic_key):
+    """Fields carrying one stable semantic marker, at any nesting depth.
+
+    ``definition`` may be either a frozen ``definition_snapshot`` or the
+    serialized form definition built from it. Runtime consumers deliberately
+    do not fall back to editable titles such as "Summary".
+    """
+    semantic_key = curriculum_views.clean_str(semantic_key)
+    if not semantic_key:
+        return []
+    return [
+        field
+        for field in _flatten_snapshot_fields((definition or {}).get('sections', []))
+        if curriculum_views.clean_str((field.get('configuration') or {}).get('semanticKey')) == semantic_key
+    ]
+
+
+def meeting_summary_field(definition):
+    """Return the single explicitly mapped formal Review summary field.
+
+    Multiple markers are ambiguous and therefore behave like no mapping.
+    Template validation prevents new duplicates; this defensive rule keeps
+    existing persisted definitions from being guessed at runtime.
+    """
+    fields = semantic_review_fields(definition, reviews.MEETING_SUMMARY_SEMANTIC_KEY)
+    return fields[0] if len(fields) == 1 else None
+
+
+def _field_index(sections):
+    return {
+        field.get('id'): field
+        for field in _flatten_snapshot_fields(sections)
+        if field.get('id')
+    }
+
+
+def _field_tree_has_answer(field, answered_field_ids):
+    if field.get('id') in answered_field_ids:
+        return True
+    return any(
+        _field_tree_has_answer(child, answered_field_ids)
+        for branch in ('yesFields', 'noFields')
+        for child in field.get(branch, []) or []
+    )
+
+
+def _retained_removed_field(field, *, live_field_ids, answered_field_ids):
+    """Keep only answered legacy branches removed from the live template.
+
+    This is the fail-safe half of the merge: deleting an unanswered question
+    from Curriculum removes it from an editable Review, while deleting one
+    that already owns an answer never makes that answer disappear from the
+    form/PDF. Fields moved elsewhere in the live tree are not duplicated.
+    """
+    if field.get('id') in live_field_ids:
+        return None
+    retained = deepcopy(field)
+    has_answer = field.get('id') in answered_field_ids
+    for branch in ('yesFields', 'noFields'):
+        children = [
+            kept
+            for child in field.get(branch, []) or []
+            if (kept := _retained_removed_field(
+                child,
+                live_field_ids=live_field_ids,
+                answered_field_ids=answered_field_ids,
+            )) is not None
+        ]
+        if branch in retained or children:
+            retained[branch] = children
+        has_answer = has_answer or bool(children)
+    return retained if has_answer else None
+
+
+def _merge_answer_safe_fields(
+    old_fields, live_fields, *, old_field_index, live_field_ids, answered_field_ids,
+):
+    merged = []
+    for live_field in live_fields or []:
+        field_id = live_field.get('id')
+        old_field = old_field_index.get(field_id)
+        if not old_field or not _field_tree_has_answer(old_field, answered_field_ids):
+            merged.append(deepcopy(live_field))
+            continue
+
+        # An answer keeps the old field's data contract (type, required rule,
+        # options and semantic configuration). Presentation text/order may
+        # safely follow Curriculum, and new conditional children are merged in
+        # without discarding answered legacy children.
+        field = deepcopy(old_field)
+        for key in ('title', 'displayOrder'):
+            if key in live_field:
+                field[key] = deepcopy(live_field[key])
+        for branch in ('yesFields', 'noFields'):
+            if branch in old_field or branch in live_field:
+                field[branch] = _merge_answer_safe_fields(
+                    old_field.get(branch, []),
+                    live_field.get(branch, []),
+                    old_field_index=old_field_index,
+                    live_field_ids=live_field_ids,
+                    answered_field_ids=answered_field_ids,
+                )
+        merged.append(field)
+
+    for old_field in old_fields or []:
+        retained = _retained_removed_field(
+            old_field,
+            live_field_ids=live_field_ids,
+            answered_field_ids=answered_field_ids,
+        )
+        if retained is not None:
+            merged.append(retained)
+    return merged
+
+
+def merge_editable_definition_sections(old_sections, live_sections, answered_field_ids):
+    """Return the live form tree without losing any already-answered field.
+
+    With no answer rows the result is exactly the current Curriculum section
+    tree. Once answers exist, new/unanswered fields follow Curriculum while
+    answered fields keep their old structural contract. Removed answered
+    fields/sections remain visible; removed unanswered ones do not.
+    """
+    answered_field_ids = set(answered_field_ids or ())
+    if not answered_field_ids:
+        return deepcopy(live_sections or [])
+
+    old_sections = old_sections or []
+    live_sections = live_sections or []
+    old_sections_by_id = {
+        section.get('id'): section for section in old_sections if section.get('id')
+    }
+    old_field_index = _field_index(old_sections)
+    live_field_ids = set(_field_index(live_sections))
+    live_section_ids = {section.get('id') for section in live_sections if section.get('id')}
+    merged = []
+
+    for live_section in live_sections:
+        old_section = old_sections_by_id.get(live_section.get('id'))
+        old_section_has_answer = bool(old_section) and any(
+            _field_tree_has_answer(field, answered_field_ids)
+            for field in old_section.get('fields', []) or []
+        )
+        section = deepcopy(old_section if old_section_has_answer else live_section)
+        if old_section_has_answer:
+            for key in ('title', 'estimatedMinutes', 'displayOrder'):
+                if key in live_section:
+                    section[key] = deepcopy(live_section[key])
+        section['fields'] = _merge_answer_safe_fields(
+            old_section.get('fields', []) if old_section else [],
+            live_section.get('fields', []),
+            old_field_index=old_field_index,
+            live_field_ids=live_field_ids,
+            answered_field_ids=answered_field_ids,
+        )
+        merged.append(section)
+
+    for old_section in old_sections:
+        if old_section.get('id') in live_section_ids:
+            continue
+        retained_fields = [
+            retained
+            for field in old_section.get('fields', []) or []
+            if (retained := _retained_removed_field(
+                field,
+                live_field_ids=live_field_ids,
+                answered_field_ids=answered_field_ids,
+            )) is not None
+        ]
+        if retained_fields:
+            section = deepcopy(old_section)
+            section['fields'] = retained_fields
+            merged.append(section)
+    return merged
+
+
+def effective_review_definition_snapshot(
+    instance_row, *, snapshot=None, live_snapshot=None,
+    answers_by_field=None, signatures_by_role=None,
+):
+    """Resolve the section tree an instance may safely present right now.
+
+    Passive callers receive the effective snapshot in memory. They never
+    write it. Draft-save/completion persist the same value while holding the
+    Review Instance lock, closing the race with signature/completion.
+    """
+    snapshot = deepcopy(
+        curriculum_views.as_json_value(instance_row.get('definition_snapshot'), {})
+        if snapshot is None else snapshot
+    )
+    if instance_row.get('status') not in EDITABLE_DEFINITION_STATUSES:
+        return snapshot
+
+    instance_id = instance_row.get('id')
+    answers_by_field = (
+        get_review_instance_answers(instance_id)
+        if answers_by_field is None else answers_by_field
+    )
+    signatures_by_role = (
+        get_review_instance_signatures(instance_id)
+        if signatures_by_role is None else signatures_by_role
+    )
+    if any(row.get('signed_at') for row in signatures_by_role.values()):
+        return snapshot
+
+    if live_snapshot is None:
+        live_template = reviews.get_review_template_row(instance_row.get('review_template_id'))
+        if not live_template:
+            return snapshot
+        live_snapshot = build_definition_snapshot(live_template)
+    if not live_snapshot:
+        return snapshot
+
+    snapshot['sections'] = merge_editable_definition_sections(
+        snapshot.get('sections', []),
+        live_snapshot.get('sections', []),
+        answers_by_field.keys(),
+    )
+    snapshot['fieldCount'] = len(_flatten_snapshot_fields(snapshot['sections']))
+    return snapshot
+
+
 def review_instance_form_definition(instance_row):
     """The hierarchical {instance, template, sections[].fields[].answer} shape
     a dynamic form renderer consumes. Sections/fields/signature-and-visibility
-    rules come from the FROZEN definition_snapshot (historical integrity);
-    the display title/status/target date are read live."""
-    snapshot = curriculum_views.as_json_value(instance_row.get('definition_snapshot'), {})
+    rules come from the effective definition_snapshot policy above; terminal
+    Reviews remain frozen while editable Reviews follow safe Curriculum form
+    updates. The display title/status/target date are read live."""
+    stored_snapshot = curriculum_views.as_json_value(instance_row.get('definition_snapshot'), {})
     live_template = reviews.get_review_template_row(instance_row.get('review_template_id'), include_deleted=True)
-    live_name = (live_template or {}).get('name') or snapshot.get('name') or ''
+    live_name = (live_template or {}).get('name') or stored_snapshot.get('name') or ''
     type_row = next((row for row in review_types.review_type_index().values()
                      if row.get('id') == (live_template or {}).get('review_type_id')), None)
 
     answers_by_field = get_review_instance_answers(instance_row.get('id'))
     signatures_by_role = get_review_instance_signatures(instance_row.get('id'))
+    snapshot = effective_review_definition_snapshot(
+        instance_row,
+        snapshot=stored_snapshot,
+        answers_by_field=answers_by_field,
+        signatures_by_role=signatures_by_role,
+    )
+    required_roles = set(required_signature_roles(snapshot.get('signatures', {})))
 
     def _attach_answers(fields):
         decorated = []
@@ -1350,9 +1685,12 @@ def review_instance_form_definition(instance_row):
         'template': {
             'id': instance_row.get('review_template_id'),
             'name': live_name,
-            'reviewTypeId': (live_template or {}).get('review_type_id') or snapshot.get('reviewTypeId'),
-            'reviewTypeCode': (type_row or {}).get('code') or snapshot.get('reviewTypeCode'),
-            'reviewTypeName': (type_row or {}).get('name') or snapshot.get('reviewTypeName'),
+            # Classification is part of the frozen definition. Only legacy
+            # snapshots that predate Review Types fall back to the live row;
+            # the display title above deliberately remains live.
+            'reviewTypeId': snapshot.get('reviewTypeId') or (live_template or {}).get('review_type_id'),
+            'reviewTypeCode': snapshot.get('reviewTypeCode') or (type_row or {}).get('code'),
+            'reviewTypeName': snapshot.get('reviewTypeName') or (type_row or {}).get('name'),
             'signatures': snapshot.get('signatures', {}),
             'visibleTo': snapshot.get('visibleTo', {}),
             'recurrence': snapshot.get('recurrence', {}),
@@ -1362,7 +1700,7 @@ def review_instance_form_definition(instance_row):
         'sections': sections,
         'signatures': {
             role: {
-                'required': bool(snapshot.get('signatures', {}).get(role)),
+                'required': role in required_roles,
                 'signed': bool(signatures_by_role.get(role, {}).get('signed_at')),
                 'signedBy': signatures_by_role.get(role, {}).get('signed_by'),
                 'signedName': signatures_by_role.get(role, {}).get('signed_name'),
@@ -1435,6 +1773,66 @@ def _visible_required_unanswered_fields(sections, answers_by_field):
     return missing
 
 
+def _refresh_locked_editable_definition_snapshot(instance_row, *, actor):
+    """Persist the effective editable form while the instance lock is held."""
+    stored = curriculum_views.as_json_value(instance_row.get('definition_snapshot'), {})
+    effective = effective_review_definition_snapshot(instance_row, snapshot=stored)
+    if effective == stored:
+        return instance_row
+
+    updated = curriculum_views.update_rows(
+        REVIEW_INSTANCES_TABLE,
+        'id = %s and status = %s',
+        [instance_row.get('id'), instance_row.get('status')],
+        {
+            'definition_snapshot': curriculum_views.json_db_value(effective),
+            'updated_by': actor,
+            'updated_at': datetime.utcnow(),
+        },
+    )
+    if not updated:
+        raise ValueError('This review changed while its Curriculum form was being refreshed. Reload it and try again.')
+    refreshed = dict(instance_row)
+    refreshed['definition_snapshot'] = effective
+    refreshed['updated_by'] = actor
+    return refreshed
+
+
+def writable_field_ids_for_role(sections, role):
+    """Field ids in this frozen definition whose configuration opts a
+    non-advisor ``role`` ('participant' or 'employer') into answering them.
+
+    The advisor (coach) is never checked against this list -- coach_api's
+    answer endpoint always allows every field. This is only for the Learner
+    and Employer surfaces, which share the same ReviewFormRenderer but must
+    stay read-only outside whatever the Curriculum template opted them into.
+    """
+    return {
+        field.get('id')
+        for field in _flatten_snapshot_fields(sections)
+        if role in ((field.get('configuration') or {}).get('respondentRoles') or [])
+    }
+
+
+def save_review_instance_answers_for_role(instance_row, answers, role, *, actor='system'):
+    """Like ``save_review_instance_answers``, restricted to the fields this
+    respondent role (participant/employer) is allowed to answer.
+
+    Fails closed: posting even one field id outside the role's allowed set
+    raises rather than silently dropping it, so a stale or tampered payload
+    is rejected instead of partially applied.
+    """
+    definition = review_instance_form_definition(instance_row)
+    allowed_ids = writable_field_ids_for_role(definition.get('sections', []), role)
+    posted_ids = set((answers or {}).keys())
+    disallowed = posted_ids - allowed_ids
+    if disallowed:
+        raise PermissionError(
+            f"Not authorised to answer: {', '.join(sorted(disallowed))}."
+        )
+    return save_review_instance_answers(instance_row, answers, actor=actor)
+
+
 def save_review_instance_answers(instance_row, answers, *, actor='system'):
     """Draft save -- merges posted {fieldId: value} into whatever is already
     stored. A conditional field hidden by its parent's current answer is
@@ -1442,40 +1840,17 @@ def save_review_instance_answers(instance_row, answers, *, actor='system'):
     because it is not visible right now)."""
     if instance_row.get('status') in (STATUS_AWAITING_SIGNATURE, STATUS_COMPLETED):
         raise ValueError('Submitted review answers cannot be changed after the signature step begins.')
-    snapshot = curriculum_views.as_json_value(instance_row.get('definition_snapshot'), {})
-    valid_field_ids = {
-        field.get('id')
-        for field in _flatten_snapshot_fields(snapshot.get('sections', []))
-    }
 
     with transaction.atomic():
-        for field_id, value in (answers or {}).items():
-            if field_id not in valid_field_ids:
-                continue
-            existing_rows = curriculum_views.fetch_all(
-                f'select * from {curriculum_views.table_name(REVIEW_INSTANCE_ANSWERS_TABLE)} '
-                f'where review_instance_id = %s and field_id = %s',
-                [instance_row.get('id'), field_id],
-            )
-            payload = {
-                'answer': curriculum_views.json_db_value(value),
-                'answered_by': actor,
-                'answered_at': datetime.utcnow(),
-                'updated_at': datetime.utcnow(),
-            }
-            if existing_rows:
-                curriculum_views.update_rows(
-                    REVIEW_INSTANCE_ANSWERS_TABLE, 'id = %s', [existing_rows[0]['id']], payload,
-                    allow_null_columns=['answer'],
-                )
-            else:
-                curriculum_views.insert_row(REVIEW_INSTANCE_ANSWERS_TABLE, {
-                    'id': curriculum_views.unique_prefixed_id('REVIA'),
-                    'review_instance_id': instance_row.get('id'),
-                    'field_id': field_id,
-                    'created_at': datetime.utcnow(),
-                    **payload,
-                })
+        # Answer writers and completion lock this same parent first. A stale
+        # save that started before submission therefore re-reads the terminal
+        # status and is rejected instead of changing signed content.
+        locked = get_review_instance(instance_row.get('id'), for_update=True)
+        if not locked:
+            raise ValueError('Review not found.')
+        if locked.get('status') in (STATUS_AWAITING_SIGNATURE, STATUS_COMPLETED):
+            raise ValueError('Submitted review answers cannot be changed after the signature step begins.')
+        _save_review_instance_answers_locked(locked, answers, actor=actor)
 
         # Saving a draft answer is not evidence the meeting started -- it used
         # to flip status to in-progress here, which is exactly the "opened/
@@ -1487,6 +1862,44 @@ def save_review_instance_answers(instance_row, answers, *, actor='system'):
     return review_instance_form_definition(get_review_instance(instance_row.get('id')))
 
 
+def _save_review_instance_answers_locked(instance_row, answers, *, actor):
+    """Merge answer values while the caller holds the instance row lock."""
+    instance_row = _refresh_locked_editable_definition_snapshot(instance_row, actor=actor)
+    snapshot = curriculum_views.as_json_value(instance_row.get('definition_snapshot'), {})
+    valid_field_ids = {
+        field.get('id')
+        for field in _flatten_snapshot_fields(snapshot.get('sections', []))
+    }
+    for field_id, value in (answers or {}).items():
+        if field_id not in valid_field_ids:
+            continue
+        existing_rows = curriculum_views.fetch_all(
+            f'select * from {curriculum_views.table_name(REVIEW_INSTANCE_ANSWERS_TABLE)} '
+            f'where review_instance_id = %s and field_id = %s',
+            [instance_row.get('id'), field_id],
+        )
+        payload = {
+            'answer': curriculum_views.json_db_value(value),
+            'answered_by': actor,
+            'answered_at': datetime.utcnow(),
+            'updated_at': datetime.utcnow(),
+        }
+        if existing_rows:
+            curriculum_views.update_rows(
+                REVIEW_INSTANCE_ANSWERS_TABLE, 'id = %s', [existing_rows[0]['id']], payload,
+                allow_null_columns=['answer'],
+            )
+        else:
+            curriculum_views.insert_row(REVIEW_INSTANCE_ANSWERS_TABLE, {
+                'id': curriculum_views.unique_prefixed_id('REVIA'),
+                'review_instance_id': instance_row.get('id'),
+                'field_id': field_id,
+                'created_at': datetime.utcnow(),
+                **payload,
+            })
+    return instance_row
+
+
 # ------------------------------------------------- progress + RAG snapshots
 
 #: The instance's own frozen copy of what a coach calculated (see
@@ -1495,6 +1908,8 @@ def save_review_instance_answers(instance_row, answers, *, actor='system'):
 #: SET at creation time and is written exactly once, this one is written when
 #: a coach presses Calculate and may be replaced until signing begins.
 PROGRESS_SNAPSHOT_COLUMN = 'progress_snapshot'
+LEGACY_PROGRESS_SNAPSHOT_SCHEMA_VERSION = 1
+LEGACY_PROGRESS_SNAPSHOT_FORMULA_VERSION = 'legacy_unversioned'
 
 #: How a Curriculum-authored question declares itself to BE the RAG question,
 #: so the RAG value is found by the template's own stable marker rather than
@@ -1511,7 +1926,17 @@ def review_instance_progress_snapshot(instance_row):
     the caller can say "not calculated yet", rather than quietly substituting
     the learner's current figures into a historical review.
     """
-    return curriculum_views.as_json_value(instance_row.get(PROGRESS_SNAPSHOT_COLUMN), None)
+    snapshot = curriculum_views.as_json_value(instance_row.get(PROGRESS_SNAPSHOT_COLUMN), None)
+    if not isinstance(snapshot, dict):
+        return snapshot
+    # Interpret old stored JSON explicitly without rewriting it or pretending it
+    # used the current formula. Existing UI/PDF readers ignore these additive
+    # fields and continue to render the frozen values unchanged.
+    return {
+        **snapshot,
+        'schemaVersion': snapshot.get('schemaVersion', LEGACY_PROGRESS_SNAPSHOT_SCHEMA_VERSION),
+        'formulaVersion': snapshot.get('formulaVersion', LEGACY_PROGRESS_SNAPSHOT_FORMULA_VERSION),
+    }
 
 
 def save_review_instance_progress_snapshot(instance_row, snapshot, *, actor='system'):
@@ -1624,7 +2049,7 @@ def progress_review_rag_history(learner_id, *, limit=8):
 
 
 def _all_required_signatures_present(instance_id, snapshot):
-    required_roles = [role for role in SIGNATURE_ROLES if bool(snapshot.get('signatures', {}).get(role))]
+    required_roles = required_signature_roles(snapshot.get('signatures', {}))
     if not required_roles:
         return True
     signatures_by_role = get_review_instance_signatures(instance_id)
@@ -1632,11 +2057,20 @@ def _all_required_signatures_present(instance_id, snapshot):
 
 
 
-def _mirror_linked_calendar_after_signature(instance_row, *, status, completed_at=None):
-    """Project a signature-owned status onto its linked Calendar row atomically."""
+def _locked_linked_calendar_for_mirror(instance_row):
+    """Lock this instance's linked Calendar row and prove it is really the same
+    review, or raise.
+
+    Shared by every mirror that projects an instance-owned status onto Calendar
+    (_mirror_linked_calendar_after_signature and
+    _mirror_linked_calendar_after_reopen): identity, learner, template and
+    coach must all still agree before either is allowed to write. Returns the
+    locked CoachCalendarEvent, or None when this instance has no linked
+    calendar row at all -- a legitimate, silent no-op for both callers.
+    """
     calendar_event_id = instance_row.get('calendar_event_id')
     if not calendar_event_id:
-        return
+        return None
 
     # Import lazily: coach_api.views imports this module at application start.
     from coach_api.models import CoachCalendarEvent
@@ -1674,6 +2108,16 @@ def _mirror_linked_calendar_after_signature(instance_row, *, status, completed_a
             'The linked Calendar event has a different coach; '
             'review reconciliation is required.'
         )
+    return calendar
+
+
+def _mirror_linked_calendar_after_signature(instance_row, *, status, completed_at=None):
+    """Project a signature-owned status onto its linked Calendar row atomically."""
+    from coach_api.models import CoachCalendarEvent
+
+    calendar = _locked_linked_calendar_for_mirror(instance_row)
+    if calendar is None:
+        return
 
     if status == STATUS_AWAITING_SIGNATURE:
         allowed = {
@@ -1711,7 +2155,7 @@ def record_review_instance_signature(instance_row, role, *, signed_by, signed_na
     if role not in SIGNATURE_ROLES:
         raise ValueError(f'Unknown signature role "{role}".')
     snapshot = curriculum_views.as_json_value(instance_row.get('definition_snapshot'), {})
-    if not bool(snapshot.get('signatures', {}).get(role)):
+    if role not in required_signature_roles(snapshot.get('signatures', {})):
         raise ValueError(f'This review does not require a "{role}" signature.')
     if instance_row.get('status') not in (STATUS_AWAITING_SIGNATURE, STATUS_COMPLETED):
         raise ValueError('This review must be finished before it can be signed.')
@@ -1794,7 +2238,7 @@ def _complete_review_instance_status_rejection(current_status):
     return 'This review cannot be completed from its current status.'
 
 
-def complete_review_instance(instance_row, *, actor='system'):
+def complete_review_instance(instance_row, *, actor='system', answers=None):
     """Finishes the form: validates every visible required field is
     answered, then moves the instance to Awaiting Signature (if the
     Curriculum template requires any signature) or straight to Completed (if
@@ -1815,31 +2259,321 @@ def complete_review_instance(instance_row, *, actor='system'):
     if current_status != STATUS_IN_PROGRESS:
         return False, {'status': [_complete_review_instance_status_rejection(current_status)]}
 
-    definition = review_instance_form_definition(instance_row)
-    answers_by_field = get_review_instance_answers(instance_row.get('id'))
-    missing_fields = _visible_required_unanswered_fields(definition['sections'], answers_by_field)
-    if missing_fields:
-        return False, {'fields': missing_fields}
+    with transaction.atomic():
+        # This is the same first lock used by save_review_instance_answers.
+        # Optional browser answers are saved, validated and frozen within this
+        # one critical section, making Send for Signatures an atomic action.
+        locked = get_review_instance(instance_row.get('id'), for_update=True)
+        if not locked:
+            return False, {'status': ['Review not found.']}
+        current_status = locked.get('status')
+        if current_status != STATUS_IN_PROGRESS:
+            return False, {'status': [_complete_review_instance_status_rejection(current_status)]}
+        if answers is not None:
+            locked = _save_review_instance_answers_locked(locked, answers, actor=actor)
+        else:
+            locked = _refresh_locked_editable_definition_snapshot(locked, actor=actor)
 
-    snapshot = curriculum_views.as_json_value(instance_row.get('definition_snapshot'), {})
-    requires_signature = any(bool(snapshot.get('signatures', {}).get(role)) for role in SIGNATURE_ROLES)
-    if requires_signature:
-        updated = curriculum_views.update_rows(
-            REVIEW_INSTANCES_TABLE, 'id = %s and status = %s',
-            [instance_row.get('id'), STATUS_IN_PROGRESS],
-            {'status': STATUS_AWAITING_SIGNATURE, 'updated_by': actor, 'updated_at': datetime.utcnow()},
-        )
-    else:
-        updated = curriculum_views.update_rows(
-            REVIEW_INSTANCES_TABLE, 'id = %s and status = %s',
-            [instance_row.get('id'), STATUS_IN_PROGRESS],
+        snapshot = curriculum_views.as_json_value(locked.get('definition_snapshot'), {})
+        answers_by_field = get_review_instance_answers(locked.get('id'))
+        missing_fields = _visible_required_unanswered_fields(snapshot.get('sections', []), answers_by_field)
+        if missing_fields:
+            return False, {'fields': missing_fields}
+
+        requires_signature = bool(required_signature_roles(snapshot.get('signatures', {})))
+        if requires_signature:
+            updated = curriculum_views.update_rows(
+                REVIEW_INSTANCES_TABLE, 'id = %s and status = %s',
+                [locked.get('id'), STATUS_IN_PROGRESS],
+                {'status': STATUS_AWAITING_SIGNATURE, 'updated_by': actor, 'updated_at': datetime.utcnow()},
+            )
+        else:
+            updated = curriculum_views.update_rows(
+                REVIEW_INSTANCES_TABLE, 'id = %s and status = %s',
+                [locked.get('id'), STATUS_IN_PROGRESS],
+                {
+                    'status': STATUS_COMPLETED, 'completed_at': datetime.utcnow(),
+                    'updated_by': actor, 'updated_at': datetime.utcnow(),
+                },
+            )
+        if not updated:
+            return False, {'status': ['This review is no longer in progress. Reload it and try again.']}
+    return True, None
+
+
+# ------------------------------------------------------------------ reopen
+
+def _reopen_review_instance_status_rejection(current_status):
+    """Why this instance cannot be reopened, phrased for the coach.
+
+    Same shape and purpose as _complete_review_instance_status_rejection: the
+    string is returned inside an ``errors`` dict, never raised.
+    """
+    if current_status == STATUS_NOT_SCHEDULED:
+        return 'This review has not been scheduled yet.'
+    if current_status == STATUS_SCHEDULED:
+        return 'This review has not started yet, so there is nothing to reopen.'
+    if current_status == STATUS_IN_PROGRESS:
+        return 'This review is already in progress.'
+    return 'This review cannot be reopened from its current status.'
+
+
+def _reopen_state_snapshot(instance_row):
+    """Freeze what this instance looked like immediately before a reopen.
+
+    This is the ONLY surviving record of the signatures the reopen is about to
+    clear -- _clear_review_instance_signatures blanks them in place -- so the
+    full signature image (a base64 data URI) is captured here verbatim rather
+    than hashed or summarised. Audit evidence only: nothing reads this back
+    into the live review.
+    """
+    instance_id = instance_row.get('id')
+    answers = get_review_instance_answers(instance_id)
+    signatures = get_review_instance_signatures(instance_id)
+    return json_safe({
+        'capturedAt': datetime.utcnow(),
+        'instance': {
+            'status': instance_row.get('status'),
+            'startedAt': instance_row.get('started_at'),
+            'completedAt': instance_row.get('completed_at'),
+        },
+        'answers': [
             {
-                'status': STATUS_COMPLETED, 'completed_at': datetime.utcnow(),
+                'fieldId': field_id,
+                'answer': curriculum_views.as_json_value(row.get('answer'), None),
+                'answeredBy': row.get('answered_by') or '',
+                'answeredAt': row.get('answered_at'),
+            }
+            for field_id, row in sorted(answers.items())
+        ],
+        'signatures': [
+            {
+                'role': role,
+                'signedBy': row.get('signed_by') or '',
+                'signedName': row.get('signed_name') or '',
+                'signature': row.get('signature') or '',
+                'signedAt': row.get('signed_at'),
+            }
+            for role, row in sorted(signatures.items())
+        ],
+    })
+
+
+def record_review_instance_reopen(
+    *, review_instance_id, calendar_event_id, previous_status, reason_code, note,
+    changed_by, previous_state_snapshot,
+):
+    """Persist ONE row in curriculum.review_instance_reopens.
+
+    Append-only, and ONLY ever called for a reopen that has already succeeded
+    (see reopen_review_instance_for_editing, its sole caller). Never called for
+    a manual scheduled -> in-progress override -- that is a different event
+    with its own table (record_review_instance_manual_override), whose
+    documented contract this deliberately leaves untouched.
+    """
+    ensure_review_instance_reopens_table()
+    return curriculum_views.insert_row(REVIEW_INSTANCE_REOPENS_TABLE, {
+        'id': curriculum_views.unique_prefixed_id('REVIRO'),
+        'review_instance_id': review_instance_id,
+        'calendar_event_id': calendar_event_id,
+        'previous_status': previous_status,
+        'new_status': STATUS_IN_PROGRESS,
+        'reason_code': reason_code,
+        'note': note,
+        'changed_by': changed_by,
+        'changed_at': datetime.utcnow(),
+        'previous_state_snapshot': curriculum_views.json_db_value(previous_state_snapshot),
+    })
+
+
+def list_review_instance_reopens(review_instance_id):
+    """This instance's reopen history, most recent first. Empty for every
+    instance that has never been reopened (i.e. almost all of them)."""
+    ensure_review_instance_reopens_table()
+    return curriculum_views.fetch_all(
+        f'select * from {curriculum_views.table_name(REVIEW_INSTANCE_REOPENS_TABLE)} '
+        f'where review_instance_id = %s order by changed_at desc',
+        [review_instance_id],
+    )
+
+
+def latest_review_instance_reopen(review_instance_id):
+    """The most recent reopen for this instance, or None."""
+    rows = list_review_instance_reopens(review_instance_id)
+    return rows[0] if rows else None
+
+
+def _clear_review_instance_signatures(instance_id):
+    """Blank every signature row for this instance back to its unsigned shape.
+
+    Rows are blanked, never deleted: signed_by/signed_name/signature to '' and
+    signed_at to NULL is exactly what record_review_instance_signature writes
+    for an unsigned submission, and _all_required_signatures_present tests
+    ``signed_at`` truthiness -- so a blanked row correctly reads as "not yet
+    signed" everywhere, with no row churn and no new primary keys.
+
+    The values discarded here are preserved in the reopen's
+    previous_state_snapshot (see _reopen_state_snapshot), written in the same
+    transaction. Returns the number of rows blanked.
+    """
+    rows = curriculum_views.fetch_all(
+        f'select id from {curriculum_views.table_name(REVIEW_INSTANCE_SIGNATURES_TABLE)} '
+        f'where review_instance_id = %s',
+        [instance_id],
+    )
+    for row in rows:
+        curriculum_views.update_rows(
+            REVIEW_INSTANCE_SIGNATURES_TABLE, 'id = %s', [row.get('id')],
+            {
+                'signed_by': '', 'signed_name': '', 'signature': '',
+                'signed_at': None, 'updated_at': datetime.utcnow(),
+            },
+            # Without this, filtered_payload drops the None and signed_at keeps
+            # its old value -- the row would still read as signed.
+            allow_null_columns=['signed_at'],
+        )
+    return len(rows)
+
+
+def _mirror_linked_calendar_after_reopen(instance_row):
+    """Project a reopen back onto its linked Calendar row atomically.
+
+    The inverse of _mirror_linked_calendar_after_signature's completed branch,
+    reusing that function's identity/ownership validation wholesale via
+    _locked_linked_calendar_for_mirror -- an instance may only move a Calendar
+    row it still demonstrably owns.
+    """
+    from coach_api.models import CoachCalendarEvent
+
+    calendar = _locked_linked_calendar_for_mirror(instance_row)
+    if calendar is None:
+        return
+
+    # Strictly the two states a finished review's Calendar row is ever in. The
+    # normal paths keep the two exactly in step -- coach_review_instance_complete
+    # calls _sync_calendar_record_to_review_instance_status immediately after
+    # completing, and the signature mirror advances it again -- so anything else
+    # here means instance and Calendar have genuinely diverged. That is a
+    # reconciliation problem, and this fails loudly rather than quietly
+    # accepting the wider set and writing over it.
+    allowed = {
+        CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
+        CoachCalendarEvent.STATUS_COMPLETED,
+    }
+    if calendar.status not in allowed:
+        raise ValueError(
+            'The linked Calendar event is not in a finished state and cannot be '
+            f'reopened: expected awaiting-signature or completed, found '
+            f'{calendar.status}. Review reconciliation is required.'
+        )
+    calendar.status = CoachCalendarEvent.STATUS_IN_PROGRESS
+    calendar.review_completed_at = None
+    calendar.save(update_fields=['status', 'review_completed_at', 'updated_at'])
+
+
+def reopen_review_instance_for_editing(instance_row, *, reason_code, note='', actor='system'):
+    """Authorised awaiting-signature/completed -> in-progress reopen, so a coach
+    can correct a finished review and re-complete it.
+
+    This edits the SAME review_instances row in place -- no new instance is
+    created, and no revision/series concept is involved. The consequence is
+    deliberate and destructive: every signature already collected is blanked
+    (see _clear_review_instance_signatures), because the answers they were
+    given against are about to change, and a signature must never outlive the
+    content it signed. The pre-reopen answers AND signatures are frozen into
+    curriculum.review_instance_reopens.previous_state_snapshot first, in this
+    same transaction, and that row is the only surviving copy.
+
+    Authorization (the assigned coach, or a super-admin acting through the
+    existing view-as/attributed-write mechanism) is the CALLER's
+    responsibility -- see coach_api.views.coach_review_instance_reopen. This
+    function only enforces the lifecycle/data rules:
+
+    * a valid reason code, with a required note when the reason is "other"
+    * the instance is currently exactly awaiting-signature or completed, held
+      under SELECT ... FOR UPDATE and re-checked after the lock, with the
+      status UPDATE guarded on the status observed under that lock (an atomic
+      compare-and-swap, not a read-then-write) -- so a double submit or a
+      concurrent completion is rejected, never a silent no-op
+    * started_at and target_date are left untouched: this review still
+      happened when it happened. Only status, completed_at, the signatures and
+      the Calendar projection move.
+
+    Returns (ok, errors_or_row): errors is {'reason': [...]}, {'note': [...]}
+    or {'status': [...]} depending on which check failed -- the same contract
+    as mark_review_instance_in_progress_manually. A failed Calendar mirror
+    raises ValueError instead (as it does for signatures), rolling the whole
+    transaction back, since a Calendar row that no longer matches its instance
+    is a reconciliation problem, not a user input error.
+    """
+    reason_code = curriculum_views.clean_str(reason_code).lower()
+    note = curriculum_views.clean_str(note)
+    if reason_code not in REOPEN_REASON_CODES:
+        return False, {'reason': ['Choose a valid reason for reopening this review.']}
+    if reason_code == 'other' and not note:
+        return False, {'note': ['Add details when the reason is "Other".']}
+
+    current_status = instance_row.get('status')
+    if current_status not in REOPENABLE_STATUSES:
+        return False, {'status': [_reopen_review_instance_status_rejection(current_status)]}
+
+    # Provisioned before the transaction opens -- same sqlite/DDL-inside-
+    # atomic() reason documented on mark_review_instance_in_progress_manually.
+    ensure_review_instance_reopens_table()
+
+    with transaction.atomic():
+        # The same lock the completion path takes, so a reopen and a concurrent
+        # completion/signature serialise against each other rather than
+        # interleaving.
+        locked = get_review_instance(instance_row.get('id'), for_update=True)
+        if not locked:
+            return False, {'status': ['Review not found.']}
+        entry_status = locked.get('status')
+        if entry_status not in REOPENABLE_STATUSES:
+            return False, {'status': [_reopen_review_instance_status_rejection(entry_status)]}
+
+        # Captured BEFORE anything is cleared -- this is the audit record.
+        snapshot = _reopen_state_snapshot(locked)
+
+        updated = curriculum_views.update_rows(
+            REVIEW_INSTANCES_TABLE, 'id = %s and status = %s',
+            [locked.get('id'), entry_status],
+            {
+                'status': STATUS_IN_PROGRESS, 'completed_at': None,
                 'updated_by': actor, 'updated_at': datetime.utcnow(),
             },
+            # completed_at must actually become NULL; filtered_payload would
+            # otherwise drop the None and leave the old completion time behind.
+            allow_null_columns=['completed_at'],
         )
-    if not updated:
-        # Lost a race: something else (another completion attempt) moved this
-        # instance off in-progress between the caller's read and this write.
-        return False, {'status': ['This review is no longer in progress. Reload it and try again.']}
-    return True, None
+        if not updated:
+            return False, {'status': [
+                'This review changed while it was being reopened. Reload it and try again.',
+            ]}
+        row = updated[0]
+
+        cleared = _clear_review_instance_signatures(row.get('id'))
+
+        record_review_instance_reopen(
+            review_instance_id=row.get('id'), calendar_event_id=row.get('calendar_event_id'),
+            previous_status=entry_status, reason_code=reason_code, note=note,
+            changed_by=actor, previous_state_snapshot=snapshot,
+        )
+
+        _mirror_linked_calendar_after_reopen(row)
+
+    _reopen_logger.info(
+        'review_instance_reopened',
+        extra={
+            'review_instance_id': row.get('id'),
+            'calendar_event_id': row.get('calendar_event_id'),
+            'previous_status': entry_status,
+            'new_status': STATUS_IN_PROGRESS,
+            'reason_code': reason_code,
+            'note': note,
+            'signatures_cleared': cleared,
+            'changed_by': actor,
+            'changed_at': datetime.utcnow().isoformat(),
+        },
+    )
+    return True, row

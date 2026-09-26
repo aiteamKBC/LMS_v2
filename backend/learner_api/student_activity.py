@@ -2,6 +2,7 @@
 
 import json
 import re
+import time
 from uuid import UUID
 
 from django.db import DatabaseError, connections
@@ -16,14 +17,17 @@ from login.sessions import authenticate_request
 
 from .learner_detail import SOURCE_MODELS
 from .active_users import completed_hours_value_from_progress
-from .models import EnrolmentUser, LearnerProfile
+from .models import EnrolmentUser, LearnerProfile, LearnerProgressEntry
 from .learning_plan import _effective_plan_ids
 from .student_activity_data import (read_audit_hour_totals, read_evidenced_ksb_counts_bulk,
                                     read_student_activity, read_student_material)
 from .student_activity_access import student_activity_available
-from .student_activity_data import summarize_activities, read_curriculum_schedules, apply_curriculum_schedules, read_activity_sources
+from .student_activity_data import (summarize_activities, read_curriculum_schedules,
+                                    apply_curriculum_schedules, read_activity_sources,
+                                    read_activity_source_issues)
 from . import subject_store, subject_source
-from .subject_content import (ContentUnavailable, material_schema, build_material, public_quiz, as_list)
+import logging
+from .subject_content import (ContentUnavailable, material_schema, build_material, public_quiz, as_list, original_is_pdf)
 from .builder_activity_dates import read_builder_activity_dates
 
 CURRENT_SUBJECTS_SQL = '''
@@ -67,13 +71,14 @@ def _direct_progress_records(enrolment_id):
         .filter(component_link_source__in=('direct', 'quiz_ref'))
         .exclude(kind='activity_event')
         .values(
-            'kind', 'component_ref', 'quiz_ref', 'component_title', 'component_type',
+            'id', 'kind', 'component_ref', 'quiz_ref', 'component_title', 'component_type',
             'module_title', 'week_title', 'reported_time', 'claimed_seconds',
             'verified_seconds', 'time_tracking_source', 'expected_otjh',
             'submitted_at', 'passed',
         )
     )
     records = [{
+        'sourceRef': f"progress:{row['id']}" if row.get('id') is not None else None,
         'kind': row['kind'],
         'componentId': row['component_ref'],
         'quizId': row['quiz_ref'],
@@ -114,6 +119,65 @@ def _direct_progress_records(enrolment_id):
     return records
 
 
+def load_direct_progress_records_bulk(enrolment_ids):
+    """Load direct progress for several enrolments without per-learner ORM reads."""
+    ids = [int(value) for value in dict.fromkeys(enrolment_ids or []) if value is not None]
+    if not ids:
+        return {}
+    profiles = list(
+        LearnerProfile.objects.using('enrolment')
+        .filter(enrolment_id__in=ids)
+        .only('id', 'enrolment_id')
+    )
+    result = {enrolment_id: [] for enrolment_id in ids}
+    component_pairs = []
+    entries_by_profile = {}
+    entries = LearnerProgressEntry.objects.using('enrolment').filter(
+        learner_id__in=[profile.id for profile in profiles],
+        component_link_source__in=('direct', 'quiz_ref'),
+    ).exclude(kind='activity_event').values(
+        'id', 'learner_id', 'kind', 'component_ref', 'quiz_ref', 'component_title', 'component_type',
+        'module_title', 'week_title', 'reported_time', 'claimed_seconds', 'verified_seconds',
+        'time_tracking_source', 'expected_otjh', 'submitted_at', 'passed',
+    )
+    for row in entries:
+        entries_by_profile.setdefault(int(row['learner_id']), []).append(row)
+    for profile in profiles:
+        rows = entries_by_profile.get(int(profile.id), [])
+        records = [{
+            'sourceRef': f"progress:{row['id']}" if row.get('id') is not None else None,
+            'kind': row['kind'], 'componentId': row['component_ref'], 'quizId': row['quiz_ref'],
+            'componentTitle': row['component_title'], 'componentType': row['component_type'],
+            'moduleTitle': row['module_title'], 'weekTitle': row['week_title'],
+            'reportedTime': row['reported_time'], 'claimedSeconds': row['claimed_seconds'],
+            'verifiedSeconds': row['verified_seconds'], 'timeTrackingSource': row['time_tracking_source'],
+            'expectedOtjh': float(row['expected_otjh']) if row['expected_otjh'] is not None else None,
+            'submittedAt': row['submitted_at'].isoformat() if row['submitted_at'] else '',
+            'passed': row['passed'],
+        } for row in rows]
+        result[int(profile.enrolment_id)] = records
+        component_pairs.append((profile, records))
+    component_ids = sorted({str(record['componentId']) for _, records in component_pairs for record in records if record.get('componentId')})
+    if not component_ids:
+        return result
+    candidates = sorted({str(value) for profile, _ in component_pairs for value in (profile.enrolment_id, profile.id)})
+    try:
+        with connections['enrolment'].cursor() as cursor:
+            cursor.execute('''SELECT DISTINCT ON (learner_id::text, activity_id) learner_id::text, activity_id, status
+                FROM "Learner"."learning_reflection_submissions"
+                WHERE learner_id::text=ANY(%s) AND activity_id=ANY(%s)
+                ORDER BY learner_id::text, activity_id, submitted_at DESC NULLS LAST''', [candidates, component_ids])
+            statuses = {(learner, str(activity)): str(status or '') for learner, activity, status in cursor.fetchall()}
+    except DatabaseError:
+        statuses = {}
+    for profile, records in component_pairs:
+        for record in records:
+            status = statuses.get((str(profile.enrolment_id), str(record.get('componentId')))) or statuses.get((str(profile.id), str(record.get('componentId'))))
+            if status is not None:
+                record['markingStatus'] = status
+    return result
+
+
 def _direct_progress_otjh(progress):
     return completed_hours_value_from_progress(progress)
 
@@ -130,14 +194,25 @@ def _error(message, status):
 
 
 def _live_subjects(source, aptem_id):
+    started = time.monotonic()
     with _connection().cursor() as cursor:
-        return subject_source.read_learner(cursor, aptem_id, getattr(source, 'email', ''))
+        result = subject_source.read_learner(cursor, aptem_id, getattr(source, 'email', ''))
+    logger.info('learner_live_source stage=live_subjects result=%s aptem_id=%s elapsed_ms=%d', 'success' if result is not None else 'historical_fallback', aptem_id, int((time.monotonic() - started) * 1000))
+    return result
 
 
 def _activity_sources(enrolment_id, group_ids):
     with connections['enrolment'].cursor() as cursor:
         cursor.execute(CURRENT_SUBJECTS_SQL, [enrolment_id])
-        return read_activity_sources(cursor, group_ids, [row[0] for row in cursor.fetchall()])
+        module_ids = [row[0] for row in cursor.fetchall()]
+        return read_activity_sources(cursor, group_ids, module_ids)
+
+
+def _activity_source_issues(enrolment_id, group_ids):
+    with connections['enrolment'].cursor() as cursor:
+        cursor.execute(CURRENT_SUBJECTS_SQL, [enrolment_id])
+        module_ids = [row[0] for row in cursor.fetchall()]
+        return read_activity_source_issues(cursor, group_ids, module_ids)
 
 
 @require_GET
@@ -197,7 +272,8 @@ def student_activity(request, kind, pk):
         return _error('The previous learning identity could not be verified.', 404)
     try:
         live = _live_subjects(source, aptem_id)
-    except DatabaseError:
+    except DatabaseError as exc:
+        logger.warning('learner_live_source_fallback aptem_id=%s stage=database_identity reason=database_error exception=%s', aptem_id, type(exc).__name__)
         live = None
     if material_request:
         payload = subject_source.material(live, group_id, activity_id, payload, (payload or {}).get('learner_name', ''))
@@ -214,7 +290,9 @@ def student_activity(request, kind, pk):
     payload = subject_source.overlay_subjects(payload, live, schedules)
     payload['source_status'] = 'live' if live is not None else 'historical'
     try:
-        payload['activity_sources'] = _activity_sources(pk, [row['id'] for row in payload.get('subjects', [])])
+        group_ids = [row['id'] for row in payload.get('subjects', [])]
+        payload['activity_sources'] = _activity_sources(pk, group_ids)
+        payload['activity_source_issues'] = _activity_source_issues(pk, group_ids)
     except DatabaseError:
         return _error('Could not verify the links between your current and previous activities. Please try again.', 503)
     payload.update(summarize_activities(subject_store.overlay_progress(payload['activities'], saved['progress'])))
@@ -247,7 +325,7 @@ def _cover_url(path):
     return UPLOAD_URL_PREFIX + blob_name_for(path)
 
 
-def _definition_for(stored):
+def _definition_for(stored, group_id=None):
     try:
         schema = material_schema(stored['_source']['activity_id'])
     except ContentUnavailable:
@@ -272,7 +350,18 @@ def _definition_for(stored):
 
         path = _legacy_attachment_upload_path(reference)
         return '/curriculum_api/curriculum/uploads/' + path if path else ''
-    definition = build_material(stored, schema, attachment_resolver=archive_url)
+    definition = build_material(stored, schema, attachment_resolver=archive_url, pdf_checker=original_is_pdf)
+    if group_id is not None and quiz_id and definition.get('quiz') and not definition['quiz']['ready']:
+        from .subject_quiz import imported_quiz
+        try:
+            with _connection().cursor() as cursor:
+                recovered_quiz = imported_quiz(cursor, group_id, quiz_id)
+        except DatabaseError:
+            recovered_quiz = None
+        if recovered_quiz:
+            from .subject_content import quiz_definition
+            definition['quiz'] = quiz_definition(recovered_quiz)
+            definition['available'] = True
     if row.get('quiz_definition_ambiguous') and definition.get('quiz'):
         # The same reading is linked to different quizzes in the original LMS.
         # Show its content/history, but do not grade a newly invented selection.
@@ -292,7 +381,7 @@ def _local_pdf_urls(definition, kind, pk, group_id, activity_id):
 
 def _material_response(request, pk, aptem_id, stored, *, kind=None, group_id=None):
     row = stored['_source']
-    definition = _local_pdf_urls(_definition_for(stored), kind, pk, group_id, row['activity_id'])
+    definition = _local_pdf_urls(_definition_for(stored, group_id), kind, pk, group_id, row['activity_id'])
     try:
         saved = subject_store.state(pk, aptem_id, row['activity_id'], group_id=group_id)
     except DatabaseError:
@@ -357,7 +446,11 @@ def subject_file(request, kind, pk, group_id, activity_id, attachment_id):
         _aptem_id, stored = _owned_material(kind, pk, group_id, activity_id)
         # Resolve the original attachment even if a later import adds an Azure
         # copy. Already-issued file URLs must remain valid after that import.
-        definition = build_material(stored, material_schema(activity_id))
+        try:
+            schema = material_schema(activity_id)
+        except ContentUnavailable:
+            schema = None
+        definition = build_material(stored, schema, pdf_checker=original_is_pdf)
         item = next((item for item in definition['media'] if item.get('kind') == 'pdf'
                      and str(item.get('attachment_id')) == str(attachment_id)), None)
         if item is None:
@@ -374,7 +467,7 @@ def subject_file(request, kind, pk, group_id, activity_id, attachment_id):
 def start_subject_attempt(request, kind, pk, group_id, activity_id):
     try:
         aptem_id, stored = _owned_material(kind, pk, group_id, activity_id)
-        definition = _definition_for(stored)
+        definition = _definition_for(stored, group_id)
         if definition.get('quiz') and not definition['quiz']['ready']:
             return _error(definition['quiz']['message'], 409)
         if not definition['available']:
@@ -509,3 +602,4 @@ def upload_subject_cover(request, subject_ref):
     # Keep a clear response for an older browser tab instead of writing a second
     # cover that would disagree with the module's own artwork.
     return _error('Manage this image in Module Builder using Upload image.', 409)
+logger = logging.getLogger(__name__)

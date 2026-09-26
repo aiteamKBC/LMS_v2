@@ -17,7 +17,7 @@ export function monthName(month: string) {
 }
 
 export function groupMonthlyAssignments(real: LearnerDetail, metadata: CoverMetadata | null,
-  contract: TrainingPlanContract | null, statuses: Record<string, string> | null) {
+  contract: TrainingPlanContract | null, statuses: Record<string, string> | null, submissionCounts: Record<string, number> = {}) {
   const completed = completedComponentIds(real);
   const seen = new Set<string>();
   const assignments = real.components.filter(component => {
@@ -38,6 +38,7 @@ export function groupMonthlyAssignments(real: LearnerDetail, metadata: CoverMeta
     const hasContent = hasComponentContent({ ...component, title: component.component });
     const awaitingBrief = !hasContent && status === 'todo';
     return { ...component, id, date, month, status, submitted, awaitingBrief,
+      submissionCount: submissionCounts[id],
       marking: real.componentMarkingStatus?.[id],
       action: awaitingBrief ? 'Awaiting assignment brief' : status === 'draft' ? 'Continue assignment'
         : revise ? 'Revise assignment' : submitted ? 'View submission' : status === 'todo' ? 'Start assignment' : 'Open assignment' };

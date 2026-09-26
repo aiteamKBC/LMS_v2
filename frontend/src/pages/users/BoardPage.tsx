@@ -11,6 +11,7 @@ import { renderAgreementPdf, agreementFilename } from '@/lib/apprenticeshipAgree
 import { fetchIlrDocument, issueIlrDocument, signIlrDocument, type IlrDocument } from '@/api/ilrDocument';
 import { SignaturePad } from './wizard/steps/SignaturePad';
 import { LearnerHeaderDates } from './components/LearnerHeaderDates';
+import { FirstSessionReschedule } from './components/FirstSessionReschedule';
 import { useAuth } from '@/hooks/useAuth';
 import { renderIlrPdf, ilrFilename } from '@/lib/ilrDocumentPdf';
 import {
@@ -1377,7 +1378,17 @@ function BoardView({ board, onReload }: { board: EnrolmentBoard; onReload: () =>
             programme={board.programme.name}
             employer={board.user.employer}
             onboardingStatus={board.programme.onboardingStatus}
-            dates={<LearnerHeaderDates learnerId={userId} startDate={board.programme.learnerStartDate} endDate={board.programme.learnerEndDate} />}
+            dates={
+              <div className="flex flex-wrap items-start gap-x-6 gap-y-3">
+                <LearnerHeaderDates learnerId={userId} startDate={board.programme.learnerStartDate} endDate={board.programme.learnerEndDate} />
+                {/* Renders nothing unless this learner has a booked first
+                    session, so learners enrolled before the feature — and
+                    Aptem imports, which are skipped — see no empty control.
+                    Moving it rewrites the programme start date, hence the
+                    reload. */}
+                <FirstSessionReschedule kind={kind} learnerId={userId} onMoved={onReload} />
+              </div>
+            }
             status={<HeroProgrammeStatus learnerId={userId} initial={board.programme.status || ''} />}
             actions={
               <>

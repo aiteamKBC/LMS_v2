@@ -9,6 +9,7 @@ import logging
 import re
 from collections import defaultdict
 from functools import wraps
+from types import SimpleNamespace
 
 from django.db import DatabaseError, transaction
 from django.conf import settings
@@ -22,6 +23,7 @@ from login.permissions import audit_admin_learner_action, login_required
 from old_otjh import repository as old_repo, service as old, storage
 from old_otjh.views import public_detail, public_state
 from . import monthly_log_sources as sources
+from . import monthly_log_history as history
 from .subject_content import ContentUnavailable
 
 logger = logging.getLogger(__name__)
@@ -98,8 +100,36 @@ def require_closed_month(month):
 def legacy_summary(learner):
     if not learner.get('aptem_id'):
         return {'months': []}
+    if history.enabled(learner):
+        return public_state(history.summary(learner))
     # Include every retained month, without starting/finalizing a transition on GET.
-    return public_state(old.summary({**learner, '_read_only': True}))
+    result = public_state(old.summary({**learner, '_read_only': True}))
+    targets = signed_training_plan_targets(learner)
+    for month in result['months']:
+        if month['month'] in targets:
+            month['training_plan_target'] = targets[month['month']]
+            month['training_plan_target_source'] = 'signed_training_plan'
+    return result
+
+
+def signed_training_plan_targets(learner):
+    """Monthly targets from the same signed Aptem contract shown by Audit."""
+    if not learner.get('aptem_id'):
+        return {}
+    from .training_plan_dashboard import contract_plan, find_contract
+
+    with old_repo.source_connection().cursor() as cursor:
+        contract = find_contract(cursor, learner['aptem_id'])
+    plan = contract_plan(SimpleNamespace(pk=learner['id']), contract)
+    if plan.get('contractStatus') != 'ready':
+        return {}
+    targets = {}
+    for month, value in (plan.get('months') or {}).items():
+        raw_target = value.get('planned') if isinstance(value, dict) else None
+        target = sources.number(raw_target) if raw_target is not None else None
+        if month <= old_repo.CUTOFF and target is not None:
+            targets[month] = target
+    return targets
 
 
 def signatures(learner):
@@ -194,8 +224,15 @@ def current_months(learner, signs=(), *, include_open=False):
         if learner.get('aptem_id') and month <= old_repo.CUTOFF:
             continue
         grouped[month].append(row)
+    if history.enabled(learner):
+        for month, audit_rows in history.later_rows(learner, open_month).items():
+            if month == open_month and not include_open:
+                continue
+            # Resolve the existing owner-scoped document URLs before merging.
+            public_detail(learner, {'rows': audit_rows})
+            grouped[month] = history.merge_rows(grouped.get(month, []), audit_rows)
     for rows in grouped.values():
-        rows.sort(key=lambda row: (row['activity_date'], row['source_ref']))
+        rows.sort(key=lambda row: (str(row['activity_date'] or ''), row['source_ref'] or ''))
     return grouped
 
 
@@ -207,18 +244,28 @@ def summary_data(learner, *, include_open=False):
                   for month, rows in current_months(learner, signs, include_open=include_open).items())
     months.sort(key=lambda m: m['month'])
     profile = learner.get('_profile') or {}
+    audit_profile = retained.get('profile') or {}
     return {'learner': {'id': learner['id'], 'aptem_id': learner.get('aptem_id'),
                        'name': learner['name'], 'programme': learner['programme'],
-                       'coach_name': profile.get('coach_name') or learner.get('coach_name')},
+                       'coach_name': profile.get('coach_name') or learner.get('coach_name'),
+                       'planned_end_date': audit_profile.get('planned_end_date') or profile.get('end_date')},
             'months': months, 'total_months': len(months),
             'completed_months': sum(m['status'] == 'complete' for m in months),
             'read_only': learner['_view_as']}
 
 
-def detail_data(learner, month, *, include_open=False):
+def detail_data(learner, month, *, include_open=False, demo=False):
     valid_month(month)
     if learner.get('aptem_id') and month <= old_repo.CUTOFF:
-        return {**public_detail(learner, old.month_detail({**learner, '_read_only': True}, month)), 'source': 'legacy'}
+        if history.enabled(learner):
+            detail = public_detail(learner, history.detail(learner, month, demo=demo))
+        else:
+            detail = public_detail(learner, old.month_detail({**learner, '_read_only': True}, month))
+        targets = signed_training_plan_targets(learner)
+        if month in targets:
+            detail['training_plan_target'] = targets[month]
+            detail['training_plan_target_source'] = 'signed_training_plan'
+        return {**detail, 'source': 'legacy', 'demo_only': demo}
     if not include_open:
         require_closed_month(month)
     signs = signatures(learner)
@@ -244,7 +291,7 @@ def summary(request, learner_id):
 @endpoint('GET')
 def detail(request, learner_id, month):
     learner, _ = scope(request, learner_id)
-    return JsonResponse(detail_data(learner, month, include_open=True))
+    return JsonResponse(detail_data(learner, month, include_open=True, demo=request.GET.get('demo') == '1'))
 
 
 @endpoint('GET')
@@ -256,6 +303,19 @@ def content(request, learner_id, month, row_id):
     row = next((r for r in report['rows'] if r['id'] == row_id), None)
     if row is None:
         raise old.ServiceError('Activity not found.', 'not_found', 404)
+    if row.get('_audit_row_id'):
+        original = old_repo.activity_row(learner, month, row['_audit_row_id'])
+        if original is None:
+            raise old.ServiceError('Activity not found.', 'not_found', 404)
+        return JsonResponse({'id': row_id, 'parts': old_repo.activity_parts(learner, original)})
+    if str(row.get('source_ref') or '').startswith('la:'):
+        # LMS rows projected into the historical journal have no manual-row
+        # database id.  Resolve their read-only material by the stable
+        # group/activity source reference instead.
+        from old_otjh.content import resolve
+        resolved = resolve(learner, [row], companions=True).get(row_id)
+        if resolved is not None:
+            return JsonResponse({'id': row_id, 'parts': resolved['parts']})
     return JsonResponse(sources.activity_content(learner, row))
 
 

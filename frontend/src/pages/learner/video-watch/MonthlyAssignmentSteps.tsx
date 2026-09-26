@@ -1,3 +1,5 @@
+import { ExtraActivities } from '../monthly-submission/ExtraActivities';
+import { useExtraActivities } from '@/api/extraActivities';
 import { monthlyPresentation, slideIssue, fillEmptyPresentationSlides } from './monthlyPresentation';
 import { AssignmentCoachingBooking } from './AssignmentCoachingBooking';
 import { useImpactStatements } from '@/hooks/useImpactStatements';
@@ -11,19 +13,27 @@ import { exportMonthlyPresentation, type MonthlyAssignment, type AssignmentQuali
 import { proofreadLearningReflection, transcribeVoiceReflection } from '@/api/reflectionVoice';
 import type { LearningReflectionSubmissionInput } from '@/api/reflectionSubmission';
 import type { AssignmentAnswers } from './AssignmentSubmissionWizard';
-import { CheckCircle2, Circle, Loader2, Info, AlertCircle } from 'lucide-react';
+import { CheckCircle2, Circle, Loader2, Info, AlertCircle, ArrowRight } from 'lucide-react';
 import { startLiveDictation } from '@/utils/liveDictation';
 import { Modal } from '@/pages/users/components/Modal';
 import { AssignmentTimeEntries } from './AssignmentTimeEntries';
+import { LocalAiTextCheck, LocalAiWritingHint } from './LocalAiTextCheck';
+import { McmPresentationUpload } from './McmPresentationUpload';
 import { learningFetch, parsePersonalLearning } from '@/lib/personalLearning';
+
+// Keys are supplied by the monthly assignment quality-check endpoint.
+const QUALITY_CHECK_STEPS: Record<string, number> = {
+  answer: 0, learning: 0, evidence: 1, ksbs: 2, planned: 2, declarations: 2,
+  hours: 2, reflection: 3, benefit: 4, impact: 4, action: 5, meeting: 6, presentation: 6,
+};
 
 const inputClass = 'mt-2 w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-sm text-slate-900 focus:border-blue-400 focus:ring-2 focus:ring-blue-100 disabled:bg-slate-50';
 const buttonClass = 'rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-800 shadow-sm hover:bg-blue-50 disabled:opacity-40';
 
 /** AI never silently replaces a learner's answer: suggestions require acceptance. */
-export function MonthlyAnswerField({ label, value, onChange, disabled, title, rows = 5, minimumWords = 0, onePointPerLine = false, generation }: {
+export function MonthlyAnswerField({ label, value, onChange, disabled, title, rows = 5, minimumWords = 0, onePointPerLine = false, generation, qualityTarget }: {
   label: string; value: string; onChange: (value: string) => void; disabled: boolean; title: string; rows?: number;
-  minimumWords?: number; onePointPerLine?: boolean;
+  minimumWords?: number; onePointPerLine?: boolean; qualityTarget?: string;
   generation?: { enabled: boolean; busy: boolean; onGenerate: () => void };
 }) {
   const [busy, setBusy] = useState(false);
@@ -99,7 +109,8 @@ export function MonthlyAnswerField({ label, value, onChange, disabled, title, ro
     } catch (e) { setError(e instanceof Error ? e.message : 'Microphone access failed.'); }
     finally { if (active.current) setBusy(false); }
   };
-  return <div className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+  return <div data-quality-target={qualityTarget} tabIndex={qualityTarget ? -1 : undefined} className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
+    <LocalAiWritingHint />
     <label className="block text-sm font-semibold leading-6 text-slate-900">{label}
       <textarea className={inputClass} rows={rows} value={value} disabled={disabled || busy || recording} onChange={e => { setSuggestion(''); onChange(e.target.value); }} />
     </label>
@@ -115,33 +126,31 @@ export function MonthlyAnswerField({ label, value, onChange, disabled, title, ro
       {suggestionTooShort && <p role="alert" className="mt-2 text-xs text-red-700">This suggestion is below the {minimumWords}-word minimum. Add more detail from your own experience to your answer, then try again.</p>}
       <div className="mt-2 flex gap-2"><button type="button" disabled={disabled || busy || recording || suggestionTooShort} className={buttonClass} onClick={() => { onChange(suggestion); setSuggestion(''); }}>Use suggestion</button><button type="button" className={buttonClass} onClick={() => setSuggestion('')}>Keep my answer</button></div>
     </div>}
+    <LocalAiTextCheck text={value} disabled={disabled || busy || recording} />
     {voiceNotice && <p role="status" className="mt-2 text-xs text-slate-600">{voiceNotice}</p>}
     {error && <p role="alert" className="mt-2 text-xs text-red-700">{error}</p>}
   </div>;
 }
 
-export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer, kind, learnerId, title, plannedOtjh, mappings, evidenceFiles, evidenceUploader, timeControl, disabled, payload, checks, checking, onCheck, onSave, historical = false, question = '', activityId = '' }: {
+export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer, kind, learnerId, title, plannedOtjh, mappings, evidenceFiles, evidenceUploader, timeControl, disabled, payload, checks, checking, onCheck, onSave, historical = false, question = '', activityId = '', revisingRejected = false, onNavigateToCheck }: {
   step: number; data: MonthlyAssignment; onChange: Dispatch<SetStateAction<MonthlyAssignment>>;
   answers: AssignmentAnswers; onAnswer: (key: keyof AssignmentAnswers, value: string) => void;
   kind: LearnerKind; learnerId: string; title: string; plannedOtjh: number | null;
   mappings: ComponentKsbMapping[]; evidenceFiles: EvidenceRecord[]; evidenceUploader: ReactNode; timeControl: ReactNode;
   disabled: boolean; payload: () => LearningReflectionSubmissionInput;
   checks: AssignmentQualityCheck[]; checking: boolean; onCheck: () => Promise<boolean>; onSave: () => Promise<boolean>;
-  historical?: boolean; question?: string; activityId?: string;
+  historical?: boolean; question?: string; activityId?: string; revisingRejected?: boolean;
+  onNavigateToCheck?: (step: number, target: string) => void;
 }) {
   const personal = parsePersonalLearning(learnerId);
   const personalStudy = personal?.mode === 'study';
   useEffect(() => {
-    if (step !== 7 || disabled || historical) return;
+    if (step !== 7 || disabled || historical || data.uploadedPresentation) return;
     if (fillEmptyPresentationSlides(data, answers.whatYouLearned, answers.businessImpact) === data) return;
     onChange(current => fillEmptyPresentationSlides(current, answers.whatYouLearned, answers.businessImpact));
   }, [step, disabled, historical, data, answers.whatYouLearned, answers.businessImpact, onChange]);
   const ksbGenerationStatus = useAssignedKsbExplanations(step === 2 && !disabled && !historical,
     { learnerId, learnerKind: kind, activityId, question, answer: answers.assignmentAnswer, mappings }, data, onChange);
-  const impactGeneration = useImpactStatements(step === 4 && !disabled && !historical, learnerId, activityId, question,
-    answers.assignmentAnswer, answers.whatYouLearned, data, answers.businessImpact, onChange, value => onAnswer('businessImpact', value));
-  const actionGeneration = useImpactStatements(step === 5 && !disabled && !historical, learnerId, activityId, question,
-    answers.assignmentAnswer, answers.whatYouLearned, data, answers.businessImpact, onChange, value => onAnswer('businessImpact', value), 'action');
   const presentationContext = `${kind}:${learnerId}:${activityId}:${data.month}`;
   const presentationContextRef = useRef(presentationContext);
   presentationContextRef.current = presentationContext;
@@ -149,14 +158,20 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
   const [activityDetails, setActivityDetails] = useState<{ title: string; date: string; text: string } | null>(null);
   const [showLibrary, setShowLibrary] = useState(false);
   const [detail, setDetail] = useState<LearnerDetail | null>(null);
-  const monthlyReflectionStatus = useMonthlyReflections(step === 3 && !disabled && !historical && Boolean(detail), learnerId,
+  const extra = useExtraActivities(kind, learnerId, data.month, [3, 4, 5].includes(step));
+  const monthlyActivities = (detail?.activityFeed || []).filter(a => a.at.slice(0, 7) === data.month).map(a => {
+    const records = a.kind === 'quiz' ? detail?.quizAttempts || [] : a.kind === 'video' ? detail?.videoProgress || [] : detail?.componentProgress || [];
+    const progress = records.find(p => p.submittedAt === a.at && (a.componentId ? p.componentId === a.componentId : a.kind === 'quiz' && 'quizId' in p && p.quizId === a.quizId));
+    return { title: a.title, date: a.at.slice(0, 10), reflection: progress?.feedback || '', ksbs: progress?.ksbs || [] };
+  }).concat(extra.activities.filter(activity => activity.status !== 'draft').map(activity => ({ title: activity.title, date: activity.submittedAt || '', reflection: activity.reflection || activity.answer, ksbs: activity.ksbs })));
+  const impactGeneration = useImpactStatements(step === 4 && !disabled && !historical && Boolean(detail) && !extra.loading && !extra.error, learnerId, activityId, question,
+    answers.assignmentAnswer, answers.whatYouLearned, data, answers.businessImpact, onChange, value => onAnswer('businessImpact', value), 'impact', monthlyActivities);
+  const actionGeneration = useImpactStatements(step === 5 && !disabled && !historical && Boolean(detail) && !extra.loading && !extra.error, learnerId, activityId, question,
+    answers.assignmentAnswer, answers.whatYouLearned, data, answers.businessImpact, onChange, value => onAnswer('businessImpact', value), 'action', monthlyActivities);
+  const monthlyReflectionStatus = useMonthlyReflections(step === 3 && !disabled && !historical && Boolean(detail) && !extra.loading && !extra.error, learnerId,
     { month: data.month, question, answer: answers.assignmentAnswer,
       learning: { learned: answers.whatYouLearned, understood: data.understood, skills: data.gainedSkills },
-      activities: (detail?.activityFeed || []).filter(a => a.at.slice(0, 7) === data.month).map(a => {
-        const records = a.kind === 'quiz' ? detail?.quizAttempts || [] : a.kind === 'video' ? detail?.videoProgress || [] : detail?.componentProgress || [];
-        const progress = records.find(p => p.submittedAt === a.at && (a.componentId ? p.componentId === a.componentId : a.kind === 'quiz' && 'quizId' in p && p.quizId === a.quizId));
-        return { title: a.title, date: a.at.slice(0, 10), reflection: progress?.feedback || '', ksbs: progress?.ksbs || [] };
-      }) }, data, onChange);
+      activities: monthlyActivities }, data, onChange);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
@@ -176,8 +191,8 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
     finally { setKsbLoading(false); }
   };
   const patch = (value: Partial<MonthlyAssignment>) => onChange(current => ({ ...current, ...value }));
-  const field = (key: keyof MonthlyAssignment, label: string, minimumWords = 0) => <MonthlyAnswerField label={label} title={title} value={String(data[key] || '')} onChange={value => patch({ [key]: value })} disabled={disabled || busy} minimumWords={minimumWords} />;
-  const check = (key: keyof MonthlyAssignment, label: string) => <label className="flex min-h-14 cursor-pointer items-center gap-3 rounded-xl bg-slate-50 px-4 py-3"><input type="checkbox" checked={data[key] === true} disabled={disabled || busy} onChange={e => patch({ [key]: e.target.checked })} className="m-0 h-4 w-4 shrink-0 accent-blue-600 disabled:cursor-not-allowed" /><span className="min-w-0 text-sm font-medium leading-6 tracking-normal text-slate-800">{label}</span></label>;
+  const field = (key: keyof MonthlyAssignment, label: string, minimumWords = 0, qualityTarget?: string) => <MonthlyAnswerField qualityTarget={qualityTarget} label={label} title={title} value={String(data[key] || '')} onChange={value => patch({ [key]: value })} disabled={disabled || busy} minimumWords={minimumWords} />;
+  const check = (key: keyof MonthlyAssignment, label: string, qualityTarget?: string) => <label data-quality-target={qualityTarget} tabIndex={qualityTarget ? -1 : undefined} className="flex min-h-14 cursor-pointer items-center gap-3 rounded-xl bg-slate-50 px-4 py-3"><input type="checkbox" checked={data[key] === true} disabled={disabled || busy} onChange={e => patch({ [key]: e.target.checked })} className="m-0 h-4 w-4 shrink-0 accent-blue-600 disabled:cursor-not-allowed" /><span className="min-w-0 text-sm font-medium leading-6 tracking-normal text-slate-800">{label}</span></label>;
   const monthEnd = /^\d{4}-\d{2}$/.test(data.month) ? new Date(Number(data.month.slice(0, 4)), Number(data.month.slice(5)), 0).getDate() : 0;
   const minBooking = `${data.month}-${String(monthEnd - 9).padStart(2, '0')}`;
   const nextMonth = new Date(Number(data.month.slice(0, 4)), Number(data.month.slice(5)), 5);
@@ -185,7 +200,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
   useEffect(() => {
     let active = true;
     if (historical) return;
-    if ([2, 3].includes(step)) fetchLearnerDetail(kind, learnerId).then(result => { if (active) setDetail(result); }).catch(e => { if (active) setError(e.message); });
+    if ([2, 3, 4, 5].includes(step)) fetchLearnerDetail(kind, learnerId).then(result => { if (active) setDetail(result); }).catch(e => { if (active) setError(e.message); });
     return () => { active = false; };
   }, [step, kind, learnerId, historical]);
   const addFile = (file: EvidenceRecord) => {
@@ -248,7 +263,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
     finally { setBusy(false); }
   };
   return <div className="space-y-5">
-    {step === 0 && <section className="space-y-4 border-t border-slate-200 pt-6">
+    {step === 0 && <section data-quality-target="learning" tabIndex={-1} className="space-y-4 border-t border-slate-200 pt-6">
       <div><h3 className="text-lg font-semibold text-slate-900">Your learning statements</h3><p className="mt-1 text-sm leading-6 text-slate-600">Review each statement and make it your own. Each field needs at least 20 words.</p></div>
       <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-3">
       <MonthlyAnswerField title={title} label="I learned… (at least 20 words)" value={answers.whatYouLearned} disabled={disabled} onChange={value => onAnswer('whatYouLearned', value)} minimumWords={20} />
@@ -256,7 +271,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
       {field('gainedSkills', 'I gained skills in… (at least 20 words)', 20)}
     </div></section>}
     {step === 1 && <>
-      <h3 className="text-lg font-semibold">Evidence & cross-referencing</h3>
+      <h3 data-quality-target="evidence" tabIndex={-1} className="text-lg font-semibold">Evidence & cross-referencing</h3>
       <p className="text-sm text-slate-600">Uploading files, reusing evidence and adding links are optional. You can continue and submit without evidence. If you attach any, linking it to numbered answer points is also optional.</p>
       <ol className="list-inside list-decimal rounded-xl bg-blue-50 p-4 text-sm">{answers.assignmentAnswer.split('\n').filter(line => line.trim()).map((line, i) => <li className="mb-2" key={i}>{line}</li>)}</ol>
       <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">
@@ -292,7 +307,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
     </>}
     {step === 2 && <section className="mx-auto w-full max-w-6xl space-y-6">
       <header><h3 className="text-xl font-semibold text-slate-900">KSBs & hours claimed</h3><p className="mt-2 text-sm leading-6 text-slate-600">Record your learning time and review each KSB explanation. Selecting supporting evidence is optional.</p></header>
-      <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:p-6" aria-label="Learning time">
+      <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:p-6" aria-label="Learning time" data-quality-target="hours" tabIndex={-1}>
         <div className="flex flex-wrap items-center justify-between gap-3"><h4 className="font-semibold text-slate-900">Your learning time</h4><span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-sm">Planned: {plannedOtjh == null ? 'Not set' : `${plannedOtjh} hours`}</span></div>
         {disabled && !data.timeEntries?.length ? <fieldset disabled>{timeControl}</fieldset> :
           <AssignmentTimeEntries kind={kind} learnerId={learnerId} month={data.month} entries={data.timeEntries || []} disabled={disabled} onChange={timeEntries => patch({ timeEntries })} />}
@@ -303,7 +318,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
         <p className="mt-2 text-sm leading-6 text-blue-900">Assigned KSBs are drafted from your answer. Evidence is optional; readable attachments are considered when available. Review the drafts and complete any blank fields. Write your own explanation for KSBs you add yourself. Existing explanations are preserved.</p>
         {ksbGenerationStatus && <p role="status" className="mt-3 border-t border-blue-200 pt-3 text-sm leading-6 text-blue-900">{ksbGenerationStatus}</p>}
       </section>
-      <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="text-lg font-semibold text-slate-900">Your KSB claims</h4><span className="text-sm text-slate-600">{data.claims.length} claims</span></div>
+      <div className="flex flex-wrap items-center justify-between gap-2"><h4 data-quality-target="ksbs" tabIndex={-1} className="text-lg font-semibold text-slate-900">Your KSB claims</h4><span className="text-sm text-slate-600">{data.claims.length} claims</span></div>
       <div className="grid grid-cols-1 items-start gap-5 xl:grid-cols-2">
       {data.claims.map((claim, index) => {
         const mapping = mappings.find(m => m.code === claim.code);
@@ -318,9 +333,11 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
           </header>
           <div className="space-y-5 p-4 sm:p-5">
             <div>
+              <LocalAiWritingHint />
               <label className="block text-sm font-semibold text-slate-900">How did you apply this KSB?
                 <textarea rows={5} className={`${inputClass} min-h-36 resize-y font-normal leading-6`} value={claim.explanation} disabled={disabled} placeholder="Describe what you did, how you applied this KSB and what you learned." onChange={e => patch({ claims: data.claims.map((c, i) => i === index ? { ...c, explanation: e.target.value } : c) })} />
               </label>
+              <LocalAiTextCheck text={claim.explanation} disabled={disabled} />
               <div className="mt-2 flex flex-wrap justify-between gap-2 text-xs"><span className="text-slate-500">At least 20 words</span><span className={words >= 20 ? 'font-medium text-emerald-700' : 'font-medium text-amber-800'}>{words} words{words < 20 ? ' ? Needs more detail' : ''}</span></div>
             </div>
             <fieldset className="min-w-0 border-t border-slate-100 pt-4">
@@ -356,14 +373,14 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
       </div>}
       <section className="space-y-3 rounded-2xl border border-slate-200 p-4 sm:p-6">
       <h4 className="font-semibold text-slate-900">Confirm your learning</h4>
-      <p className="text-sm text-slate-600">Review these declarations before continuing.</p>
-      {check('plannedReviewed', 'I have reviewed the planned hours and KSBs against my actual learning.')}
-      {check('newKnowledge', 'This activity developed new knowledge.')}
+      <p className="text-sm text-slate-600">All four declarations are required before you can submit your assignment. You can save a draft and return to them later.</p>
+      {check('plannedReviewed', 'I have reviewed the planned hours and KSBs against my actual learning.', 'planned')}
+      {check('newKnowledge', 'This activity developed new knowledge.', 'declarations')}
       {check('newSkills', 'This activity developed new skills or behaviours.')}
       {check('sharingConsent', 'If I include evidence, my employer accepts sharing it and it contains no confidential information.')}
       </section>
     </section>}
-    {step === 3 && <>
+    {step === 3 && <><ExtraActivities kind={kind} learnerId={learnerId} month={data.month} />
       <h3 className="text-lg font-semibold">Full-month reflection — {data.month}</h3>
       <div className="overflow-x-auto rounded-xl border border-slate-200">
         <table className="w-full text-left text-xs">
@@ -399,39 +416,45 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
         <p className="mt-1">These two reflections are drafted automatically from your assignment answer and this month's recorded activities. Review them before submitting. Your existing text is preserved.</p>
         {monthlyReflectionStatus && <p role="status" className="mt-3 border-t border-blue-200 pt-3">{monthlyReflectionStatus}</p>}
       </section>
-      {field('lmsReflection', 'Reflect on your LMS activities and assignment (at least 20 words)')}
+      {field('lmsReflection', 'Reflect on your LMS activities and assignment (at least 20 words)', 0, 'reflection')}
       {field('extraActivities', 'Additional activities outside the LMS (optional)')}
       {field('integratedReflection', 'How does the learning fit together? (at least 20 words)')}
     </>}
     {step === 4 && <>
       <section className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
         <h3 className="font-semibold">Your impact drafts</h3>
-        <p className="mt-1">These fields are drafted from your assignment answer and learning reflections. Review and edit them to match your experience. Existing text is preserved; confirm the employer declaration yourself.</p>
+        <p className="mt-1">These fields are drafted from your assignment answer, this month's recorded activities and learning reflections. Review and edit them to match your experience. Existing text is preserved; confirm the employer declaration yourself.</p>
         {impactGeneration.status && <div role={impactGeneration.phase === 'error' ? 'alert' : 'status'} aria-live="polite" className={`mt-4 flex items-start gap-3 rounded-xl border p-4 ${impactGeneration.phase === 'error' ? 'border-red-200 bg-red-50 text-red-900' : impactGeneration.phase === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-blue-200 bg-white text-blue-900'}`}>
           {impactGeneration.phase === 'loading' ? <Loader2 aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 animate-spin" /> : impactGeneration.phase === 'success' ? <CheckCircle2 aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" /> : impactGeneration.phase === 'error' ? <AlertCircle aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" /> : <Info aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" />}
           <div className="min-w-0"><p className="font-semibold">{impactGeneration.phase === 'loading' ? 'Generating your impact drafts...' : impactGeneration.phase === 'success' ? 'Your drafts are ready' : impactGeneration.phase === 'error' ? 'Generation could not finish' : 'More details needed'}</p><p className="mt-1">{impactGeneration.status}</p></div>
         </div>}
       </section>
-      {field('careerImpact', 'Impact on your career (at least 20 words)')}{field('jobImpact', 'Impact on your job performance (at least 20 words)')}{field('employerImpact', 'Impact on employer performance (at least 20 words)')}{check('employerBenefit', 'I can explain how my employer has benefited from this learning.')}<MonthlyAnswerField title={title} label="Measurable business outcomes (at least 20 words)" value={answers.businessImpact} onChange={value => onAnswer('businessImpact', value)} disabled={disabled} minimumWords={20} /></>}
+      {field('careerImpact', 'Impact on your career (at least 20 words)', 0, 'impact')}{field('jobImpact', 'Impact on your job performance (at least 20 words)')}{field('employerImpact', 'Impact on employer performance (at least 20 words)')}{check('employerBenefit', 'I can explain how my employer has benefited from this learning.', 'benefit')}<MonthlyAnswerField title={title} label="Measurable business outcomes (at least 20 words)" value={answers.businessImpact} onChange={value => onAnswer('businessImpact', value)} disabled={disabled} minimumWords={20} /></>}
     {step === 5 && <>
       <section className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
         <h3 className="font-semibold">Your action plan & EPA drafts</h3>
-        <p className="mt-1">These drafts use your assignment answer and reflections. Review the proposed actions and EPA preparation before submitting. Your existing text is preserved.</p>
+        <p className="mt-1">These drafts use your assignment answer, this month's recorded activities and reflections. Review the proposed actions and EPA preparation before submitting. Your existing text is preserved.</p>
         {actionGeneration.status && <div role={actionGeneration.phase === 'error' ? 'alert' : 'status'} aria-live="polite" className={`mt-4 flex items-start gap-3 rounded-xl border p-4 ${actionGeneration.phase === 'error' ? 'border-red-200 bg-red-50 text-red-900' : actionGeneration.phase === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-blue-200 bg-white text-blue-900'}`}>
           {actionGeneration.phase === 'loading' ? <Loader2 aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 animate-spin" /> : actionGeneration.phase === 'success' ? <CheckCircle2 aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" /> : actionGeneration.phase === 'error' ? <AlertCircle aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" /> : <Info aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" />}
           <div className="min-w-0"><p className="font-semibold">{actionGeneration.phase === 'loading' ? 'Generating your action plan & EPA drafts...' : actionGeneration.phase === 'success' ? 'Your drafts are ready' : actionGeneration.phase === 'error' ? 'Generation could not finish' : 'More details needed'}</p><p className="mt-1">{actionGeneration.status}</p></div>
         </div>}
       </section>
-      {field('actionPlan', 'Your action plan for next month (at least 20 words)')}{field('epaPreparedness', 'How has this prepared you for EPA? (at least 20 words)')}</>}
-    {step === 6 && <><h3 className="text-lg font-semibold">Submission quality checks</h3><p className="text-sm text-slate-600">{personalStudy ? 'Complete your presentation in Step 8, then run the checks again. All remaining assignment requirements must be met.' : 'All checks must be green before you can submit your assignment. Complete the coaching meeting booking and presentation in Step 8 (Coaching & presentation), then run the checks again.'}</p><button type="button" className={buttonClass} disabled={checking || disabled} onClick={() => void onCheck()}>{checking ? 'Checking…' : 'Run quality checks'}</button>{checks.map(c => <div key={c.key} className={`rounded-xl border p-3 text-sm ${c.passed ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-900'}`}>{c.passed ? <CheckCircle2 aria-hidden="true" className="mr-1 inline h-4 w-4 align-[-0.2em]" /> : <Circle aria-hidden="true" className="mr-1 inline h-4 w-4 align-[-0.2em]" />}{c.label}</div>)}</>}
-    {step === 7 && <>
-      <h3 className="text-lg font-semibold">{personalStudy ? 'Presentation' : 'Coaching & presentation'}</h3>
-      {!personalStudy && <p className="text-sm text-slate-600">Book coaching in the submission-month window ({minBooking} to {maxBooking}) or the next-month window shown below. You can finish both tasks here and keep the whole submission as a draft until ready.</p>}
-      {personal
-        ? <p className="rounded-xl border bg-blue-50 p-4 text-sm">{personalStudy ? 'Coaching booking is not required for personal learning. Complete your presentation and all other assignment requirements. Tutor review still applies.' : 'Preview does not create coaching bookings or send Teams invitations. No submission is saved.'}</p>
-        : <AssignmentCoachingBooking kind={kind} learnerId={learnerId} month={data.month} title={title} meetingKey={data.meetingKey} disabled={disabled || historical} onSave={onSave} onSelect={meetingKey => patch({ meetingKey })} />}
-      <section className="space-y-5 rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">
-        <div className="flex items-start gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-100 text-sm font-bold text-primary-700">2</span><div><h4 className="text-base font-semibold text-slate-900">Prepare your presentation</h4><p className="mt-1 text-sm text-slate-600">Generate slides from your answers, edit and review them, then export your PowerPoint.</p></div></div>
+      {field('actionPlan', 'Your action plan for next month (at least 20 words)', 0, 'action')}{field('epaPreparedness', 'How has this prepared you for EPA? (at least 20 words)')}</>}
+    {step === 7 && <><h3 className="text-lg font-semibold">Submission quality checks</h3><p className="text-sm text-slate-600">{revisingRejected ? 'Run quality checks again for this revised submission. You can select any check to return to that section and make corrections. A verified MCM booking from your rejected submission in the same month satisfies the booking requirement; you do not need to book again. Your presentation must still pass its check.' : 'All checks must be green before you can submit your assignment. Complete the coaching meeting booking and presentation in Step 7 (Coaching & presentation), then run the checks again.'}</p><button type="button" className={buttonClass} disabled={checking || disabled} onClick={() => void onCheck()}>{checking ? 'Checking…' : 'Run quality checks'}</button>{checks.map(c => {
+      const targetStep = QUALITY_CHECK_STEPS[c.key];
+      const content = <>{c.passed ? <CheckCircle2 aria-hidden="true" className="h-4 w-4 shrink-0" /> : <Circle aria-hidden="true" className="h-4 w-4 shrink-0" />}<span className="flex-1">{c.label}</span></>;
+      const classes = `flex w-full items-center gap-2 rounded-xl border p-3 text-left text-sm ${c.passed ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-900'}`;
+      return targetStep !== undefined && onNavigateToCheck
+        ? <button key={c.key} type="button" className={`${classes} cursor-pointer transition-shadow hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600`} onClick={() => onNavigateToCheck(targetStep, c.key)}>{content}<span className="sr-only"> - Go to Step {targetStep + 1}</span><ArrowRight aria-hidden="true" className="h-4 w-4 shrink-0" /></button>
+        : <div key={c.key} className={classes}>{content}</div>;
+    })}</>}
+    {step === 6 && <>
+      {revisingRejected && <p className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">You do not need a new MCM booking when your rejected submission already has a verified booking for this submission month. The final quality checks verify this automatically.</p>}
+        <h3 data-quality-target="meeting" tabIndex={-1} className="text-lg font-semibold">Coaching & presentation</h3>
+      <p className="text-sm text-slate-600">Book coaching in the submission-month window ({minBooking} to {maxBooking}) or the next-month window shown below. You can finish both tasks here and keep the whole submission as a draft until ready.</p>
+      <AssignmentCoachingBooking kind={kind} learnerId={learnerId} month={data.month} title={title} meetingKey={data.meetingKey} disabled={disabled || historical} onSave={onSave} onSelect={meetingKey => patch({ meetingKey })} />
+      <section data-quality-target="presentation" tabIndex={-1} className="space-y-5 rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">
+        <div className="flex items-start gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-100 text-sm font-bold text-primary-700">2</span><div><h4 className="text-base font-semibold text-slate-900">Prepare your presentation</h4><p className="mt-1 text-sm text-slate-600">Generate, review and export your slides, or upload your own MCM PowerPoint below.</p></div></div>
       <section className="space-y-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">
         <div>
           <p className="text-sm font-semibold">PowerPoint design reference (optional)</p>
@@ -463,15 +486,13 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
       {data.slides.map((slide, i) => <fieldset id={`assignment-slide-${i}`} disabled={disabled || busy} key={i} className={`rounded-xl border p-4 sm:p-5 ${slideIssue(slide) ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200 bg-slate-50'}`}><legend className="px-2 text-sm">Slide {i + 1}</legend>{slideIssue(slide) && <p className="mb-3 text-sm font-medium text-amber-900">{slideIssue(slide)}</p>}<label className="block text-xs">Title<input className={inputClass} value={slide.title} onChange={e => patch({ slides: data.slides.map((s, index) => index === i ? { ...s, title: e.target.value } : s), presentationReviewed: false, presentationToken: '' })} /></label><label className="block text-xs">Content<textarea className={inputClass} rows={5} value={slide.body} onChange={e => patch({ slides: data.slides.map((s, index) => index === i ? { ...s, body: e.target.value } : s), presentationReviewed: false, presentationToken: '' })} /></label><button type="button" className={buttonClass} onClick={() => { if (window.confirm(`Remove slide ${i + 1}${slide.title.trim() ? `: "${slide.title.trim()}"` : ''}? Its content will be deleted from this presentation.`)) patch({ slides: data.slides.filter((_, index) => index !== i), presentationReviewed: false, presentationToken: '' }); }}>Remove slide</button></fieldset>)}
       </div>
       <div className="space-y-4 border-t border-slate-200 pt-5">
+      <McmPresentationUpload kind={kind} learnerId={learnerId} activityId={activityId} month={data.month} disabled={disabled || historical || busy} uploaded={data.uploadedPresentation} onUploaded={file => patch({ uploadedPresentation: file, presentationReviewed: false, presentationToken: '' })} />
       {check('presentationReviewed', 'I have reviewed the slides and they accurately represent my own work.')}
       <button type="button" className={buttonClass} disabled={busy || !data.slides.length} onClick={() => void exportDeck()}>{busy ? 'Please wait…' : 'Export PowerPoint (.pptx)'}</button>
       {data.presentationToken && <p className="text-sm text-emerald-700">PowerPoint export complete. Editing your submission content or slides requires another reviewed export.</p>}
       </div>
       </section>
-      <section className="flex flex-col gap-4 rounded-2xl border border-primary-100 bg-primary-50 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-6">
-        <div><h4 className="text-base font-semibold text-slate-900">Ready to submit?</h4><p className="mt-1 text-sm text-slate-600">{personalStudy ? 'Recheck after completing your presentation. The booking exemption does not change the remaining submission requirements.' : 'Recheck after completing your meeting booking and presentation. All 13 checks must be green before you can submit.'}</p></div>
-      <button type="button" className={buttonClass + ' shrink-0'} disabled={checking || disabled} onClick={() => void onCheck()}>Recheck submission requirements</button>
-      </section>
+
     </>}
     {notice && <p role="status" className="rounded-xl bg-blue-50 p-3 text-sm text-blue-900">{notice}</p>}
     {error && <p role="alert" className="rounded-xl bg-red-50 p-3 text-sm text-red-700">{error}</p>}

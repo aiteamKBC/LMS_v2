@@ -92,6 +92,56 @@ SELECT_COLS = (
     '"Employer_signed_name", "Employer_signed_at", ("Employer_signature" is not null and "Employer_signature" <> \'\')'
 )
 
+# What a write returns so it can be recorded in the Audit Trail: the reader's
+# columns plus the learner the document belongs to, which `SELECT_COLS` has no
+# reason to carry and the trail cannot place a record without. Appended rather
+# than folded into SELECT_COLS so `_row_to_json` -- which indexes positionally
+# -- keeps reading exactly the columns it always did.
+AUDIT_COLS = SELECT_COLS + ', "Learner_kind", "Learner_id", "Learner_name"'
+
+
+def _record_document(row):
+    """Record one document write in the Audit Trail. Never raises.
+
+    Uploading, replacing and signing an enrolment document are the actions a
+    compliance reader asks about years later, and none of them went through the
+    ORM, so no signal ever saw them.
+
+    The signature images are not recorded -- `SELECT_COLS` already reduces each
+    one to "is there a signature", which is the fact a signing trail needs --
+    and neither is `Doc_path`: a blob URL is a way to fetch the file rather than
+    a fact about it.
+    """
+    if not row:
+        return
+    try:
+        from system_audit.writes import record_table_rows
+
+        record_table_rows(
+            'Enrolment_Documents',
+            [{
+                'id': str(row[0]),
+                'doc_type': row[1],
+                'doc_name': row[2],
+                'size_bytes': row[4],
+                'signed': row[5],
+                'generated_at': row[6],
+                'learner_signed_name': row[7],
+                'learner_signed_at': row[8],
+                'learner_has_signature': bool(row[9]),
+                'employer_signed_name': row[10],
+                'employer_signed_at': row[11],
+                'employer_has_signature': bool(row[12]),
+                'learner_kind': row[13],
+                'learner_id': row[14],
+                'learner_name': row[15],
+            }],
+            using='enrolment',
+        )
+    except Exception:
+        logger.warning('Could not record an enrolment document write.', exc_info=True)
+
+
 # Which parties must sign before a document counts as fully signed. Documents not
 # listed keep the previous behaviour: the employer alone signs them.
 SIGNING_PARTIES = {
@@ -183,12 +233,14 @@ def documents(request, kind, learner_id):
                        "Doc_name", "Container", "Blob_name", "Doc_path", "Content_type",
                        "Size_bytes", "Signed", "Generated_at")
                     values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    returning ''' + AUDIT_COLS + '''
                     ''',
                     [str(doc_id), kind, int(learner_id),
                      (request.POST.get("learner_name") or "").strip() or None,
                      doc_type, f.name, container, blob_name, path,
                      f.content_type, f.size, signed, timezone.now()],
                 )
+                _record_document(cur.fetchone())
         except DatabaseError as exc:
             logger.warning("Could not record enrolment document: %s", exc)
             return _error("Document stored but could not be recorded.", 502)
@@ -302,11 +354,12 @@ def replace_document_file(request, kind, learner_id, doc_id):
                 update enrolment."Enrolment_Documents"
                 set "Blob_name" = %s, "Doc_path" = %s, "Size_bytes" = %s
                 where id = %s and "Learner_kind" = %s and "Learner_id" = %s
-                returning {SELECT_COLS}
+                returning {AUDIT_COLS}
                 ''',
                 [blob_name, path, f.size, str(doc_id), kind, int(learner_id)],
             )
             updated = cur.fetchone()
+            _record_document(updated)
     except DatabaseError as exc:
         logger.warning("Could not record document replacement: %s", exc)
         return _error("Document stored but could not be recorded.", 502)
@@ -391,10 +444,15 @@ def sign_document(request, kind, learner_id, doc_id):
             complete = all(doc[p]["signed"] for p in required)
             cur.execute(
                 f'update enrolment."Enrolment_Documents" set "Signed" = %s '
-                f'where id = %s returning {SELECT_COLS}',
+                f'where id = %s returning {AUDIT_COLS}',
                 [complete, str(doc_id)],
             )
             row = cur.fetchone()
+            # Recorded from the second statement only. The pair is one action --
+            # a party signs, and the summary flag is recomputed from it -- so
+            # this row is the settled state, and recording the first as well
+            # would report one signature as two edits.
+            _record_document(row)
     except DatabaseError as exc:
         logger.warning("Could not sign enrolment document: %s", exc)
         return _error("Could not save the signature.", 502)

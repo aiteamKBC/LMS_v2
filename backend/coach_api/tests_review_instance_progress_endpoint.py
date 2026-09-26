@@ -11,13 +11,14 @@ learner's OWN programme start date and the server's own clock, never a
 cohort/group date and never anything the client sent.
 """
 import json
-from datetime import date, datetime
+from datetime import date
 from inspect import unwrap
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.db import connection
 from django.test import RequestFactory, TestCase
+from django.utils import timezone
 
 from curriculum_api import review_instances, review_types, reviews
 from curriculum_api import views as curriculum_views
@@ -195,11 +196,12 @@ class ReviewProgressEndpointTestCase(TestCase):
 
     def test_the_calculation_time_is_the_servers_own_clock(self):
         instance = self._instance()
-        before = datetime.utcnow()
+        before = timezone.now()
         _response, builder = self._calculate(instance['id'])
-        after = datetime.utcnow()
+        after = timezone.now()
         calculated_at = builder.call_args.kwargs['calculated_at']
         self.assertTrue(before <= calculated_at <= after)
+        self.assertIsNotNone(calculated_at.utcoffset())
         self.assertEqual(builder.call_args.kwargs['calculated_by'], COACH_EMAIL)
 
     def test_a_learner_with_no_start_date_of_their_own_is_refused_not_defaulted(self):

@@ -3,13 +3,13 @@ import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useSensor, us
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { restrictToParentElement, restrictToVerticalAxis } from '@dnd-kit/modifiers';
 import { CSS } from '@dnd-kit/utilities';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { formatHoursMinutes } from '@/lib/format';
-import { fetchFreeProgrammeModules, saveFreeProgrammeModules, type FreeProgrammeComponentInput, type FreeProgrammeModule, type FreeProgrammeModuleInput } from '@/lib/curriculumApi';
+import { fetchCurriculumProgrammeDetail, fetchCurriculumProgrammes, fetchFreeProgrammeModules, importModuleToFreeCourses, injectFreeCourseIntoGroup, saveFreeProgrammeModules, type ConvertFreeCourseResult, type CurriculumModule, type CurriculumProgramme, type CurriculumProgrammeDetail, type FreeProgrammeComponentInput, type FreeProgrammeModule, type FreeProgrammeModuleInput } from '@/lib/curriculumApi';
 import {
   fetchWeekTemplateDetail,
   fetchWeekTemplates,
@@ -190,6 +190,70 @@ export default function FreeCoursesPage() {
   const [savedCoursesLoading, setSavedCoursesLoading] = useState(true);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editingCourseKey, setEditingCourseKey] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const [convertCard, setConvertCard] = useState<SavedFreeCourseCard | null>(null);
+  const [convertMode, setConvertMode] = useState<'clone' | 'move'>('clone');
+  const [convertProgrammes, setConvertProgrammes] = useState<CurriculumProgramme[]>([]);
+  const [convertProgrammesLoading, setConvertProgrammesLoading] = useState(false);
+  const [convertProgrammeId, setConvertProgrammeId] = useState('');
+  const [convertDetail, setConvertDetail] = useState<CurriculumProgrammeDetail | null>(null);
+  const [convertDetailLoading, setConvertDetailLoading] = useState(false);
+  const [convertCohortId, setConvertCohortId] = useState('');
+  const [convertGroupId, setConvertGroupId] = useState('');
+  const [converting, setConverting] = useState(false);
+  // Real programmes only — never offer the synthetic FREE-COURSES container.
+  const convertProgrammeOptions = useMemo(
+    () => convertProgrammes.filter(programme => programme.structureType !== 'free' && (programme.sourceId || programme.id) !== 'FREE-COURSES'),
+    [convertProgrammes],
+  );
+  const convertCohorts = convertDetail?.cohorts ?? [];
+  const convertGroups = convertCohorts.find(cohort => cohort.id === convertCohortId)?.groups ?? [];
+  // Import a programme module -> a new free course (the reverse direction).
+  const [importOpen, setImportOpen] = useState(false);
+  const [importProgrammeId, setImportProgrammeId] = useState('');
+  const [importDetail, setImportDetail] = useState<CurriculumProgrammeDetail | null>(null);
+  const [importLoading, setImportLoading] = useState(false);
+  const [importCohortId, setImportCohortId] = useState('');
+  const [importGroupId, setImportGroupId] = useState('');
+  const [importSearch, setImportSearch] = useState('');
+  const [importSelectedId, setImportSelectedId] = useState('');
+  const [importMode, setImportMode] = useState<'clone' | 'move'>('clone');
+  const [importing, setImporting] = useState(false);
+  const moduleKey = (module: CurriculumModule) => module.moduleCatalogueId || module.id;
+  const importCohorts = importDetail?.cohorts ?? [];
+  const importGroups = useMemo(
+    () => importDetail?.cohorts.find(cohort => cohort.id === importCohortId)?.groups ?? [],
+    [importDetail, importCohortId],
+  );
+  // Narrow to the picked group, else the picked cohort's groups, else the whole
+  // programme. A module attached to several groups is listed once.
+  const importModules = useMemo(() => {
+    if (!importDetail) return [];
+    const scoped = importGroupId
+      ? importGroups.find(group => group.id === importGroupId)?.modules ?? []
+      : importCohortId
+        ? importGroups.flatMap(group => group.modules)
+        : importDetail.flat.modules;
+    const seen = new Set<string>();
+    return scoped.filter(module => {
+      const key = moduleKey(module);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [importDetail, importGroups, importCohortId, importGroupId]);
+  // Live, convertible modules only — hide programme-deleted/archived ones.
+  const importOptions = useMemo(
+    () => importModules.filter(module => !module.isProgrammeDeleted && (module.status || '').toLowerCase() !== 'archived'),
+    [importModules],
+  );
+  const importFiltered = useMemo(() => {
+    const term = importSearch.trim().toLowerCase();
+    if (!term) return importOptions;
+    return importOptions.filter(module =>
+      [module.name, module.cohort, module.group].filter(Boolean).some(value => String(value).toLowerCase().includes(term)),
+    );
+  }, [importOptions, importSearch]);
   const selectedComponent = course.components.find(component => component.id === selectedComponentId) || course.components[0];
   const firstLockedIndex = course.components.findIndex(component => component.kind === 'quiz');
   const learnerCompletedCount = course.components.filter(component => completedPreviewIds.has(component.id)).length;
@@ -231,6 +295,57 @@ export default function FreeCoursesPage() {
       });
     return () => controller.abort();
   }, []);
+
+  // Load the programme list the first time the convert or import dialog opens.
+  // The re-entry guard is the loaded result only (never the loading flag): under
+  // StrictMode's mount/abort/remount, gating on the flag would leave it stuck
+  // true after the first run's fetch aborts, and the dropdown would never fill.
+  useEffect(() => {
+    if ((!convertCard && !importOpen) || convertProgrammes.length) return;
+    const controller = new AbortController();
+    let active = true;
+    setConvertProgrammesLoading(true);
+    fetchCurriculumProgrammes(controller.signal, { visibility: 'all' })
+      .then(programmes => { if (active) setConvertProgrammes(programmes); })
+      .catch(() => { if (active) setConvertProgrammes([]); })
+      .finally(() => { if (active) setConvertProgrammesLoading(false); });
+    return () => { active = false; controller.abort(); };
+  }, [convertCard, importOpen, convertProgrammes.length]);
+
+  // Load the selected programme's cohorts + groups for the cascading dropdowns.
+  useEffect(() => {
+    if (!convertProgrammeId) {
+      setConvertDetail(null);
+      return;
+    }
+    const controller = new AbortController();
+    let active = true;
+    setConvertDetailLoading(true);
+    setConvertDetail(null);
+    fetchCurriculumProgrammeDetail(convertProgrammeId, controller.signal, { visibility: 'all' })
+      .then(detail => { if (active) setConvertDetail(detail); })
+      .catch(() => { if (active) setConvertDetail(null); })
+      .finally(() => { if (active) setConvertDetailLoading(false); });
+    return () => { active = false; controller.abort(); };
+  }, [convertProgrammeId]);
+
+  // Load only the picked programme's modules (with its cohorts + groups for the
+  // narrowing dropdowns) — never the whole site's module catalogue.
+  useEffect(() => {
+    if (!importProgrammeId) {
+      setImportDetail(null);
+      return;
+    }
+    const controller = new AbortController();
+    let active = true;
+    setImportLoading(true);
+    setImportDetail(null);
+    fetchCurriculumProgrammeDetail(importProgrammeId, controller.signal, { visibility: 'all', skipCache: true })
+      .then(detail => { if (active) setImportDetail(detail); })
+      .catch(() => { if (active) setImportDetail(null); })
+      .finally(() => { if (active) setImportLoading(false); });
+    return () => { active = false; controller.abort(); };
+  }, [importProgrammeId]);
 
   const totals = useMemo(() => ({
     weeks: selectedWeekIds.size,
@@ -550,6 +665,124 @@ export default function FreeCoursesPage() {
     });
   };
 
+  const openConvertWizard = (card: SavedFreeCourseCard) => {
+    setConvertCard(card);
+    setConvertMode('clone');
+    setConvertProgrammeId('');
+    setConvertDetail(null);
+    setConvertCohortId('');
+    setConvertGroupId('');
+  };
+
+  const closeConvertWizard = () => {
+    if (converting) return;
+    setConvertCard(null);
+  };
+
+  const submitConvert = async () => {
+    const card = convertCard;
+    if (!card || converting) return;
+    const groupId = convertGroupId.trim();
+    if (!groupId) {
+      await showCurriculumAlert({
+        title: 'Pick a destination',
+        text: 'Choose the programme, cohort and group to inject this course into.',
+        icon: 'warning',
+      });
+      return;
+    }
+    const isMove = convertMode === 'move';
+    const programme = convertProgrammeOptions.find(item => (item.sourceId || item.id) === convertProgrammeId);
+    const groupLabel = convertGroups.find(group => group.id === groupId)?.name || 'the selected group';
+    const programmeLabel = programme?.name || 'the programme';
+    let result: ConvertFreeCourseResult | null = null;
+    setConverting(true);
+    try {
+      await showCurriculumConfirm({
+        title: isMove ? 'Move into this group?' : 'Add to this group?',
+        text: isMove
+          ? `"${card.title}" will be added to "${groupLabel}" in ${programmeLabel}, then DELETED as a free course — and removed from any learner currently assigned it.`
+          : `"${card.title}" will be added as a module to "${groupLabel}" in ${programmeLabel}. The free course stays exactly as it is.`,
+        icon: isMove ? 'warning' : 'question',
+        confirmButtonText: isMove ? 'Move it' : 'Add module',
+        cancelButtonText: 'Cancel',
+        onConfirm: async () => {
+          result = await injectFreeCourseIntoGroup('FREE-COURSES', {
+            courseId: card.courseId,
+            mode: convertMode,
+            groupId,
+          });
+          if (isMove) {
+            // The free course has gone; refresh the list from the source of truth.
+            const modules = await fetchFreeProgrammeModules('FREE-COURSES');
+            setSavedModules(modules);
+            if (editingCourseKey === card.key) resetDraftCourse();
+          }
+        },
+        successTitle: isMove ? 'Free course moved' : 'Module added',
+        successText: 'Opening the Module Builder to add KSBs and hours.',
+      });
+    } finally {
+      setConverting(false);
+    }
+    if (result) {
+      setConvertCard(null);
+      const injected: ConvertFreeCourseResult = result;
+      const params = new URLSearchParams({ module: injected.moduleCatalogueId });
+      if (injected.programmeId) params.set('programme', injected.programmeId);
+      navigate(`/curriculum/module-builder?${params.toString()}`);
+    }
+  };
+
+  const openImportPicker = () => {
+    setImportOpen(true);
+    setImportCohortId('');
+    setImportGroupId('');
+    setImportSearch('');
+    setImportSelectedId('');
+    setImportMode('clone');
+  };
+
+  const closeImportPicker = () => {
+    if (importing) return;
+    setImportOpen(false);
+  };
+
+  const submitImport = async () => {
+    if (!importSelectedId || importing) return;
+    const module = importOptions.find(item => moduleKey(item) === importSelectedId);
+    if (!module) return;
+    const isMove = importMode === 'move';
+    let imported = false;
+    setImporting(true);
+    try {
+      await showCurriculumConfirm({
+        title: isMove ? 'Move to a free course?' : 'Copy to a free course?',
+        text: isMove
+          ? `"${module.name}" will be copied into a new free course, then ARCHIVED from ${module.programme || 'its programme'}. Its KSB mappings and hours are not carried over.`
+          : `"${module.name}" will be copied into a new free course. The module stays in ${module.programme || 'its programme'}. Its KSB mappings and hours are not carried over.`,
+        icon: isMove ? 'warning' : 'question',
+        confirmButtonText: isMove ? 'Move it' : 'Create free course',
+        cancelButtonText: 'Cancel',
+        onConfirm: async () => {
+          const result = await importModuleToFreeCourses('FREE-COURSES', { moduleCatalogueId: moduleKey(module), mode: importMode });
+          setSavedModules(result.modules || []);
+          imported = true;
+        },
+        successTitle: isMove ? 'Module moved to free courses' : 'Free course created',
+        successText: `"${module.name}" is now available under Free courses.`,
+      });
+    } finally {
+      setImporting(false);
+    }
+    if (imported) {
+      setImportOpen(false);
+      // Drop the loaded programme so the next open refetches it: a move archives
+      // the source module, and the cached list would still offer it.
+      setImportProgrammeId('');
+    }
+  };
+
   return (
     <WorkspaceShell
       role="curriculum"
@@ -576,14 +809,24 @@ export default function FreeCoursesPage() {
             { label: 'Quizzes', value: String(totals.quizzes), icon: 'ri-questionnaire-line' },
           ]}
           actions={(
-            <button
-              type="button"
-              onClick={openAddWizard}
-              className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-white px-4 text-sm font-bold text-primary-900 transition hover:bg-primary-50"
-            >
-              <AppIcon name="ri-add-line" size={16} />
-              Add free course
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={openImportPicker}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-primary-300 bg-white/70 px-4 text-sm font-bold text-primary-800 transition hover:bg-white"
+              >
+                <AppIcon name="ri-download-2-line" size={16} />
+                Import from a programme
+              </button>
+              <button
+                type="button"
+                onClick={openAddWizard}
+                className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-white px-4 text-sm font-bold text-primary-900 transition hover:bg-primary-50"
+              >
+                <AppIcon name="ri-add-line" size={16} />
+                Add free course
+              </button>
+            </div>
           )}
         />
 
@@ -604,6 +847,7 @@ export default function FreeCoursesPage() {
                     card={card}
                     onEdit={() => openEditWizard(card)}
                     onDelete={() => { void deleteFreeCourse(card); }}
+                    onConvert={() => openConvertWizard(card)}
                   />
                 ))}
               </div>
@@ -960,6 +1204,311 @@ export default function FreeCoursesPage() {
               </div>
             </div>
           )}
+
+          {convertCard && (
+            <div className="fixed inset-0 z-50 overflow-y-auto bg-foreground-950/55 px-4 py-6 backdrop-blur-sm">
+              <div className="mx-auto max-w-[560px] overflow-hidden rounded-xl bg-white shadow-2xl">
+                <div className="flex items-center justify-between gap-3 border-b border-background-200 px-5 py-4">
+                  <div>
+                    <h2 className="font-heading text-xl font-bold text-foreground-950">Convert to programme</h2>
+                    <p className="mt-1 text-sm text-foreground-500">Turn “{convertCard.title}” into a real, enrolable programme module.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeConvertWizard}
+                    disabled={converting}
+                    className="flex h-9 w-9 items-center justify-center rounded-lg text-foreground-500 transition hover:bg-background-100 hover:text-foreground-900 disabled:opacity-50"
+                    aria-label="Close convert dialog"
+                  >
+                    <AppIcon name="ri-close-line" size={18} />
+                  </button>
+                </div>
+
+                <div className="space-y-5 px-5 py-5">
+                  <div>
+                    <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-foreground-500">Mode</span>
+                    <div className="grid grid-cols-2 gap-2">
+                      {([
+                        { value: 'clone', title: 'Clone', hint: 'Keep the free course as-is' },
+                        { value: 'move', title: 'Move', hint: 'Delete the free course after' },
+                      ] as const).map(option => (
+                        <button
+                          key={option.value}
+                          type="button"
+                          onClick={() => setConvertMode(option.value)}
+                          className={`rounded-lg border px-3 py-2.5 text-left transition ${
+                            convertMode === option.value
+                              ? option.value === 'move'
+                                ? 'border-red-300 bg-red-50 ring-1 ring-red-200'
+                                : 'border-primary-300 bg-primary-50 ring-1 ring-primary-200'
+                              : 'border-background-300 bg-white hover:border-background-400'
+                          }`}
+                        >
+                          <span className={`flex items-center gap-1.5 text-sm font-bold ${convertMode === option.value && option.value === 'move' ? 'text-red-700' : 'text-foreground-900'}`}>
+                            <AppIcon name={option.value === 'move' ? 'ri-scissors-cut-line' : 'ri-file-copy-line'} size={15} />
+                            {option.title}
+                          </span>
+                          <span className="mt-0.5 block text-[11px] text-foreground-500">{option.hint}</span>
+                        </button>
+                      ))}
+                    </div>
+                    {convertMode === 'move' && (
+                      <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-5 text-red-700">
+                        <AppIcon name="ri-alert-line" size={14} className="mt-0.5 shrink-0" />
+                        The free course will be deleted and removed from any learner currently assigned it.
+                      </p>
+                    )}
+                  </div>
+
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-foreground-500">Programme</span>
+                    <select
+                      value={convertProgrammeId}
+                      onChange={event => { setConvertProgrammeId(event.target.value); setConvertCohortId(''); setConvertGroupId(''); }}
+                      disabled={convertProgrammesLoading}
+                      className="w-full rounded-lg border border-background-300 bg-white px-3 py-2.5 text-sm text-foreground-900 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:opacity-60"
+                    >
+                      <option value="">{convertProgrammesLoading ? 'Loading programmes…' : 'Select a programme'}</option>
+                      {convertProgrammeOptions.map(programme => (
+                        <option key={programme.sourceId || programme.id} value={programme.sourceId || programme.id}>{programme.name}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-foreground-500">Cohort</span>
+                      <select
+                        value={convertCohortId}
+                        onChange={event => { setConvertCohortId(event.target.value); setConvertGroupId(''); }}
+                        disabled={!convertProgrammeId || convertDetailLoading}
+                        className="w-full rounded-lg border border-background-300 bg-white px-3 py-2.5 text-sm text-foreground-900 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:opacity-60"
+                      >
+                        <option value="">{!convertProgrammeId ? 'Select a programme first' : convertDetailLoading ? 'Loading cohorts…' : convertCohorts.length ? 'Select a cohort' : 'No cohorts in this programme'}</option>
+                        {convertCohorts.map(cohort => (
+                          <option key={cohort.id} value={cohort.id}>{cohort.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-foreground-500">Group</span>
+                      <select
+                        value={convertGroupId}
+                        onChange={event => setConvertGroupId(event.target.value)}
+                        disabled={!convertCohortId}
+                        className="w-full rounded-lg border border-background-300 bg-white px-3 py-2.5 text-sm text-foreground-900 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:opacity-60"
+                      >
+                        <option value="">{!convertCohortId ? 'Select a cohort first' : convertGroups.length ? 'Select a group' : 'No groups in this cohort'}</option>
+                        {convertGroups.map(group => (
+                          <option key={group.id} value={group.id}>{group.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  <p className="rounded-lg border border-background-200 bg-background-50 px-3 py-2.5 text-[11px] leading-5 text-foreground-500">
+                    The course is added as a module to the group you pick. KSB mappings and off-the-job hours aren’t carried over — free courses don’t have them. You’ll add those in the Module Builder, which opens automatically.
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-end gap-3 border-t border-background-200 px-5 py-4">
+                  <button
+                    type="button"
+                    onClick={closeConvertWizard}
+                    disabled={converting}
+                    className="inline-flex h-10 items-center justify-center rounded-lg px-4 text-sm font-bold text-foreground-600 transition hover:bg-background-100 disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { void submitConvert(); }}
+                    disabled={converting || !convertGroupId}
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-700 px-4 text-sm font-bold text-white transition hover:bg-primary-600 disabled:opacity-60"
+                  >
+                    <AppIcon name={converting ? 'ri-loader-4-line' : 'ri-exchange-line'} className={converting ? 'animate-spin' : ''} size={15} />
+                    {convertMode === 'move' ? 'Move into group' : 'Add module'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {importOpen && (
+            <div className="fixed inset-0 z-50 overflow-y-auto bg-foreground-950/55 px-4 py-6 backdrop-blur-sm">
+              <div className="mx-auto flex max-h-[calc(100vh-48px)] max-w-[680px] flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
+                <div className="flex items-center justify-between gap-3 border-b border-background-200 px-5 py-4">
+                  <div>
+                    <h2 className="font-heading text-xl font-bold text-foreground-950">Import from a programme</h2>
+                    <p className="mt-1 text-sm text-foreground-500">Turn a programme module into a free course. KSBs and hours aren’t carried over.</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={closeImportPicker}
+                    disabled={importing}
+                    className="flex h-9 w-9 items-center justify-center rounded-lg text-foreground-500 transition hover:bg-background-100 hover:text-foreground-900 disabled:opacity-50"
+                    aria-label="Close import dialog"
+                  >
+                    <AppIcon name="ri-close-line" size={18} />
+                  </button>
+                </div>
+
+                <div className="space-y-3 border-b border-background-200 px-5 py-3">
+                  <label className="block">
+                    <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-foreground-500">Programme</span>
+                    <select
+                      value={importProgrammeId}
+                      onChange={event => { setImportProgrammeId(event.target.value); setImportCohortId(''); setImportGroupId(''); setImportSelectedId(''); }}
+                      disabled={convertProgrammesLoading}
+                      className="w-full rounded-lg border border-background-300 bg-white px-3 py-2.5 text-sm text-foreground-900 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:opacity-60"
+                    >
+                      <option value="">{convertProgrammesLoading ? 'Loading programmes…' : 'Select a programme'}</option>
+                      {convertProgrammeOptions.map(programme => (
+                        <option key={programme.sourceId || programme.id} value={programme.sourceId || programme.id}>{programme.name}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-foreground-500">Cohort</span>
+                      <select
+                        value={importCohortId}
+                        onChange={event => { setImportCohortId(event.target.value); setImportGroupId(''); setImportSelectedId(''); }}
+                        disabled={!importDetail || !importCohorts.length}
+                        className="w-full rounded-lg border border-background-300 bg-white px-3 py-2.5 text-sm text-foreground-900 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:opacity-60"
+                      >
+                        <option value="">{!importProgrammeId ? 'Select a programme first' : importLoading ? 'Loading cohorts…' : importCohorts.length ? 'All cohorts' : 'No cohorts in this programme'}</option>
+                        {importCohorts.map(cohort => (
+                          <option key={cohort.id} value={cohort.id}>{cohort.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block">
+                      <span className="mb-1.5 block text-xs font-bold uppercase tracking-wide text-foreground-500">Group</span>
+                      <select
+                        value={importGroupId}
+                        onChange={event => { setImportGroupId(event.target.value); setImportSelectedId(''); }}
+                        disabled={!importCohortId || !importGroups.length}
+                        className="w-full rounded-lg border border-background-300 bg-white px-3 py-2.5 text-sm text-foreground-900 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-100 disabled:opacity-60"
+                      >
+                        <option value="">{!importCohortId ? 'Select a cohort first' : importGroups.length ? 'All groups' : 'No groups in this cohort'}</option>
+                        {importGroups.map(group => (
+                          <option key={group.id} value={group.id}>{group.name}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  <div className="flex h-10 items-center gap-2 rounded-lg border border-background-300 px-3 focus-within:border-primary-400 focus-within:ring-2 focus-within:ring-primary-100">
+                    <AppIcon name="ri-search-line" size={16} className="text-foreground-400" />
+                    <input
+                      type="text"
+                      value={importSearch}
+                      onChange={event => setImportSearch(event.target.value)}
+                      disabled={!importDetail}
+                      placeholder="Search modules by name…"
+                      className="h-full w-full bg-transparent text-sm text-foreground-900 outline-none placeholder:text-foreground-400 disabled:cursor-not-allowed"
+                    />
+                  </div>
+                </div>
+
+                <div className="min-h-[180px] flex-1 overflow-y-auto px-2 py-2">
+                  {!importProgrammeId ? (
+                    <p className="px-3 py-6 text-center text-sm text-foreground-500">Select a programme to see its modules.</p>
+                  ) : importLoading ? (
+                    <p className="flex items-center gap-2 px-3 py-6 text-sm text-foreground-500"><AppIcon name="ri-loader-4-line" className="animate-spin" size={16} />Loading modules…</p>
+                  ) : importFiltered.length === 0 ? (
+                    <p className="px-3 py-6 text-center text-sm text-foreground-500">{importOptions.length === 0 ? 'No modules are available to import here.' : 'No modules match your search.'}</p>
+                  ) : (
+                    <ul className="space-y-1">
+                      {importFiltered.map(module => {
+                        const key = moduleKey(module);
+                        const selected = key === importSelectedId;
+                        const context = [module.programme, module.cohort, module.group].filter(Boolean).join(' · ');
+                        const facts = [`${module.weeks || 0} ${module.weeks === 1 ? 'week' : 'weeks'}`, `${module.lessons || 0} lessons`, `${module.quizzes || 0} quizzes`].join(' · ');
+                        return (
+                          <li key={key}>
+                            <button
+                              type="button"
+                              onClick={() => setImportSelectedId(key)}
+                              className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition ${
+                                selected ? 'border-primary-300 bg-primary-50 ring-1 ring-primary-200' : 'border-transparent hover:border-background-300 hover:bg-background-50'
+                              }`}
+                            >
+                              <span className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-background-100 text-foreground-400">
+                                {module.coverImage ? <img src={module.coverImage} alt="" className="h-full w-full object-cover" /> : <AppIcon name="ri-book-2-line" size={18} />}
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate text-sm font-bold text-foreground-900">{module.name || 'Untitled module'}</span>
+                                {context && <span className="block truncate text-[11px] text-foreground-500">{context}</span>}
+                                <span className="mt-0.5 block text-[11px] text-foreground-400">{facts}</span>
+                              </span>
+                              {selected && <AppIcon name="ri-checkbox-circle-fill" size={18} className="shrink-0 text-primary-600" />}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  )}
+                </div>
+
+                <div className="border-t border-background-200 px-5 py-4">
+                  <span className="mb-2 block text-xs font-bold uppercase tracking-wide text-foreground-500">Mode</span>
+                  <div className="grid grid-cols-2 gap-2">
+                    {([
+                      { value: 'clone', title: 'Clone', hint: 'Keep the module in its programme' },
+                      { value: 'move', title: 'Move', hint: 'Archive the module after' },
+                    ] as const).map(option => (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => setImportMode(option.value)}
+                        className={`rounded-lg border px-3 py-2.5 text-left transition ${
+                          importMode === option.value
+                            ? option.value === 'move'
+                              ? 'border-red-300 bg-red-50 ring-1 ring-red-200'
+                              : 'border-primary-300 bg-primary-50 ring-1 ring-primary-200'
+                            : 'border-background-300 bg-white hover:border-background-400'
+                        }`}
+                      >
+                        <span className={`flex items-center gap-1.5 text-sm font-bold ${importMode === option.value && option.value === 'move' ? 'text-red-700' : 'text-foreground-900'}`}>
+                          <AppIcon name={option.value === 'move' ? 'ri-scissors-cut-line' : 'ri-file-copy-line'} size={15} />
+                          {option.title}
+                        </span>
+                        <span className="mt-0.5 block text-[11px] text-foreground-500">{option.hint}</span>
+                      </button>
+                    ))}
+                  </div>
+                  {importMode === 'move' && (
+                    <p className="mt-2 flex items-start gap-1.5 text-[11px] leading-5 text-red-700">
+                      <AppIcon name="ri-alert-line" size={14} className="mt-0.5 shrink-0" />
+                      The module will be archived from its programme (reversible). Enrolled learners’ saved training plans are not changed.
+                    </p>
+                  )}
+                  <div className="mt-4 flex items-center justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={closeImportPicker}
+                      disabled={importing}
+                      className="inline-flex h-10 items-center justify-center rounded-lg px-4 text-sm font-bold text-foreground-600 transition hover:bg-background-100 disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { void submitImport(); }}
+                      disabled={importing || !importSelectedId}
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-700 px-4 text-sm font-bold text-white transition hover:bg-primary-600 disabled:opacity-60"
+                    >
+                      <AppIcon name={importing ? 'ri-loader-4-line' : 'ri-download-2-line'} className={importing ? 'animate-spin' : ''} size={15} />
+                      {importMode === 'move' ? 'Move to free course' : 'Convert to free course'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </section>
       </main>
     </WorkspaceShell>
@@ -998,7 +1547,7 @@ function groupSavedFreeCourses(modules: FreeProgrammeModule[]): SavedFreeCourseC
   }));
 }
 
-function SavedFreeCourseCardView({ card, onEdit, onDelete }: { card: SavedFreeCourseCard; onEdit: () => void; onDelete: () => void }) {
+function SavedFreeCourseCardView({ card, onEdit, onDelete, onConvert }: { card: SavedFreeCourseCard; onEdit: () => void; onDelete: () => void; onConvert: () => void }) {
   const shownWeeks = card.weeks.slice(0, 3);
   const hiddenWeekCount = Math.max(0, card.weeks.length - shownWeeks.length);
   const otjhLabel = formatHoursMinutes(card.totalOtjh);
@@ -1063,13 +1612,19 @@ function SavedFreeCourseCardView({ card, onEdit, onDelete }: { card: SavedFreeCo
           )}
         </div>
 
-        <div className="mt-auto grid grid-cols-[minmax(0,1fr)_44px] gap-3 pt-5">
-          <button type="button" onClick={onEdit} className="primary-action inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-primary-700 px-3 text-sm font-bold text-white transition hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-200">
-            <AppIcon name="ri-edit-2-line" size={15} />
-            Edit
-          </button>
-          <button type="button" onClick={onDelete} className="inline-flex h-11 items-center justify-center rounded-lg bg-red-50 text-red-600 transition hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-red-100" aria-label={`Delete ${card.title}`}>
-            <AppIcon name="ri-delete-bin-line" size={16} />
+        <div className="mt-auto space-y-2 pt-5">
+          <div className="grid grid-cols-[minmax(0,1fr)_44px] gap-3">
+            <button type="button" onClick={onEdit} className="primary-action inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-primary-700 px-3 text-sm font-bold text-white transition hover:bg-primary-600 focus:outline-none focus:ring-2 focus:ring-primary-200">
+              <AppIcon name="ri-edit-2-line" size={15} />
+              Edit
+            </button>
+            <button type="button" onClick={onDelete} className="inline-flex h-11 items-center justify-center rounded-lg bg-red-50 text-red-600 transition hover:bg-red-100 focus:outline-none focus:ring-2 focus:ring-red-100" aria-label={`Delete ${card.title}`}>
+              <AppIcon name="ri-delete-bin-line" size={16} />
+            </button>
+          </div>
+          <button type="button" onClick={onConvert} className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-background-300 bg-white px-3 text-sm font-bold text-foreground-700 transition hover:border-primary-300 hover:bg-primary-50 hover:text-primary-800 focus:outline-none focus:ring-2 focus:ring-primary-100">
+            <AppIcon name="ri-exchange-line" size={15} />
+            Convert to programme
           </button>
         </div>
       </div>

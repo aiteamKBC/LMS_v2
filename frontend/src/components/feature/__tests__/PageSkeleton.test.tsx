@@ -19,6 +19,7 @@ import { beforeEach, describe, it, expect } from 'vitest';
 import { render } from '@testing-library/react';
 import { PageSkeleton } from '../Skeletons';
 import { SIDEBAR_RAIL_WIDTH, SIDEBAR_EXPANDED_WIDTH } from '../Sidebar';
+import { LEARNER_SIDEBAR_WIDTH } from '../learnerShellAssets';
 
 beforeEach(() => localStorage.clear());
 
@@ -58,5 +59,22 @@ describe('PageSkeleton', () => {
     localStorage.setItem('kbc_sidebar_pinned', 'true');
     const { container } = render(<PageSkeleton />);
     expect(container.querySelector<HTMLElement>('[style*="width"]')?.style.width).toBe(`${SIDEBAR_EXPANDED_WIDTH}px`);
+  });
+
+  it('can omit the sidebar while preserving the loading chrome', () => {
+    const { container } = render(<PageSkeleton workspaceRole="coach" hideSidebar />);
+    expect(container.querySelector('[style*="width"]')).toBeNull();
+    expect(container.querySelector('.h-16')).not.toBeNull();
+    expect(container.firstElementChild).toHaveAttribute('data-workspace-role', 'coach');
+  });
+
+  it('keeps learner loading chrome aligned with the expanded learner shell', () => {
+    const { container } = render(<PageSkeleton workspaceRole="learner" />);
+    const root = container.firstElementChild;
+    const rail = container.querySelector<HTMLElement>('.kbc-learner-route-skeleton-sidebar');
+    expect(root).toHaveClass('kbc-learner-route-skeleton');
+    expect(rail?.style.width).toBe(`${LEARNER_SIDEBAR_WIDTH}px`);
+    expect(rail).toHaveClass('hidden', 'lg:block');
+    expect(container.querySelector('.kbc-learner-route-skeleton-header')).not.toBeNull();
   });
 });
