@@ -329,7 +329,7 @@ describe('learner loading and recovery', () => {
     expect(card.queryByText('100%')).not.toBeInTheDocument();
   });
 
-  it('keeps programme and KSB metrics while using canonical metrics for completed hours', async () => {
+  it('keeps programme and KSB metrics while using Monthly Logs for completed hours', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
       const url = String(input);
       if (url.includes('/overview-week/')) return new Response(JSON.stringify({
@@ -364,10 +364,10 @@ describe('learner loading and recovery', () => {
     expect(programme.getByText('36 / 307', { selector: 'p' })).toBeVisible();
 
     const otjh = within(screen.getByRole('link', { name: 'Open OTJ Hours' }));
-    await waitFor(() => expect(otjh.getByText('Actual').nextElementSibling).toHaveTextContent('15.00 h'));
+    await waitFor(() => expect(otjh.getByText('Actual').nextElementSibling).toHaveTextContent('12.50 h'));
     expect(otjh.getByText('Planned hours').nextElementSibling).toHaveTextContent('50.00 h');
-    expect(otjh.getByText('15.00 / 50.00 h', { selector: 'p' })).toBeVisible();
-    expect(otjh.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '30');
+    expect(otjh.getByText('12.50 / 50.00 h', { selector: 'p' })).toBeVisible();
+    expect(otjh.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '25');
 
     const ksb = within(screen.getByRole('link', { name: 'Open KSB Progress' }));
     expect(ksb.getByText('Current').nextElementSibling).toHaveTextContent('43.75%');
@@ -379,7 +379,7 @@ describe('learner loading and recovery', () => {
     expect(requests.filter(url => url.includes('/metrics/'))).toHaveLength(1);
   });
 
-  it.each(['logs', 'pdf'])('keeps the card aligned with the chart when the %s source fails', async (failed) => {
+  it.each(['logs', 'pdf'])('keeps the card aligned with Monthly Logs when the %s source fails', async (failed) => {
     vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
       const url = String(input);
       if (url.includes('/monthly-logs/')) return new Response(JSON.stringify(failed === 'logs'
@@ -396,31 +396,35 @@ describe('learner loading and recovery', () => {
     const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
     const card = within(await screen.findByRole('link', { name: 'Open OTJ Hours' }));
-    await waitFor(() => expect(card.getByText('Actual').nextElementSibling).toHaveTextContent('402.00 h'));
+    await waitFor(() => expect(card.getByText('Actual').nextElementSibling).toHaveTextContent(failed === 'logs' ? 'Unavailable' : '5.00 h'));
     await waitFor(() => expect(card.getByText('Planned hours').nextElementSibling).toHaveTextContent(failed === 'pdf' ? 'Unavailable' : '50.00 h'));
     if (failed === 'pdf') expect(card.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow');
   });
 
-  it.each([null, 0])('preserves completed actual %s without falling back to legacy metric hours', async (completed) => {
+  it('uses Monthly Logs even when the legacy metrics value differs', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
       const url = String(input);
       if (url.includes('/metrics/')) return new Response(JSON.stringify({
         ...(payload(url) as Record<string, unknown>),
         migrated: true, aptem_planned_total: 410,
-        otjh: { historical: 400, actual: 500, new: 100, planned: 600, completed_actual: completed },
+        otjh: { historical: 400, actual: 500, new: 100, planned: 600, completed_actual: 999 },
+      }));
+      if (url.includes('/monthly-logs/')) return new Response(JSON.stringify({
+        learner: { id: 125, aptem_id: 7001, name: 'Test learner', programme: 'Leadership', coach_name: '' },
+        months: [{ month: '2026-09', source: 'lms', training_plan_target: 30, actual_hours: 2.5, not_accepted_hours: 0 }],
+        total_months: 1, completed_months: 0, read_only: false, csrf_token: 'csrf',
       }));
       return new Response(JSON.stringify(payload(url)));
     }));
     const Page = (await modules['/src/pages/workspace/learner/page.tsx']()).default;
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
     const card = within(await screen.findByRole('link', { name: 'Open OTJ Hours' }));
-    await waitFor(() => expect(card.getByText('Actual').nextElementSibling).toHaveTextContent(completed == null ? 'Unavailable' : '0.00 h'));
+    await waitFor(() => expect(card.getByText('Actual').nextElementSibling).toHaveTextContent('2.50 h'));
     await waitFor(() => expect(card.getByText('Planned hours').nextElementSibling).toHaveTextContent('410.00 h'));
-    if (completed == null) expect(card.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow');
-    else expect(card.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '0');
+    expect(card.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '1');
   });
 
-  it('does not add Monthly Logs again to the retained Audit and completed LMS total', async () => {
+  it('uses the accepted Monthly Logs total across retained and LMS months', async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
       const url = String(input);
       if (url.includes('/metrics/')) return new Response(JSON.stringify({
@@ -443,7 +447,7 @@ describe('learner loading and recovery', () => {
     render(<MemoryRouter><ToastProvider><Page /></ToastProvider></MemoryRouter>);
 
     const otjh = within(await screen.findByRole('link', { name: 'Open OTJ Hours' }));
-    await waitFor(() => expect(otjh.getByText('Actual').nextElementSibling).toHaveTextContent('297.13 h'));
+    await waitFor(() => expect(otjh.getByText('Actual').nextElementSibling).toHaveTextContent('20.50 h'));
     expect(otjh.getByText('Planned hours').nextElementSibling).toHaveTextContent('410.00 h');
   });
 
