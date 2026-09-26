@@ -6,10 +6,11 @@ import type { CoachCalendarEvent } from '../shared/calendarEvents';
 import CoachMonthlyCoaching from './page';
 import CoachMeetingDetail from '../meeting-detail/page';
 
-const { fetchEvents, scheduleEvent, savePptx, coach } = vi.hoisted(() => ({
+const { fetchEvents, scheduleEvent, savePptx, openReview, coach } = vi.hoisted(() => ({
   fetchEvents: vi.fn(),
   scheduleEvent: vi.fn(),
   savePptx: vi.fn(),
+  openReview: vi.fn(),
   coach: { email: 'coach@example.com', name: 'Coach Example', isInitialized: true, isViewingAsCoach: false },
 }));
 
@@ -26,13 +27,15 @@ vi.mock('../shared/calendarEvents', async importOriginal => ({
 vi.mock('../shared/CoachMeetingArtifactsPanel', () => ({ CoachMeetingArtifactsPanel: () => null }));
 vi.mock('../shared/ReviewInstanceModal', () => ({ ReviewInstanceModal: () => null }));
 vi.mock('../progress-reviews/lib/progressReviewPptx', () => ({ saveProgressReviewPptx: savePptx }));
+vi.mock('@/api/reviewInstances', () => ({ openReviewInstanceForEvent: openReview }));
 
 function meeting(index: number, overrides: Partial<CoachCalendarEvent> = {}): CoachCalendarEvent {
   return {
     id: `meeting-${index}`, eventKey: `mcr:${index}`, title: `Monthly coaching meeting ${index}`,
     type: 'coaching', source: 'mcr', learner: `Learner ${index}`, learnerId: String(index),
     learnerType: 'apprenticeship', status: 'not-scheduled', targetDate: '2026-09-20',
-    group: 'Alpha', durationMinutes: 60, ...overrides,
+    group: 'Alpha', durationMinutes: 60, reviewSource: 'curriculum',
+    reviewTemplateId: 'REV-MCM', enrolmentId: `ENR-${index}`, ...overrides,
   };
 }
 
@@ -74,8 +77,10 @@ beforeEach(() => {
   fetchEvents.mockReset();
   scheduleEvent.mockReset();
   savePptx.mockReset();
+  openReview.mockReset();
   scheduleEvent.mockResolvedValue({ event: meetings[0] });
   savePptx.mockResolvedValue(undefined);
+  openReview.mockResolvedValue({ instanceId: 'REVI-APTEM' });
   fetchEvents.mockResolvedValue({ owner: { name: 'Coach Example' }, events: meetings });
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
@@ -164,6 +169,51 @@ describe('restored monthly coaching list', () => {
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/monthly-coaching');
   });
 
+  it('restores Schedule and Reschedule popups for imported Aptem meetings', async () => {
+    fetchEvents.mockResolvedValue({ events: [
+      meeting(20, { id: 'imported-review:20', eventKey: 'imported-review:20', learner: 'Imported Unscheduled', status: 'not-scheduled', reviewSource: 'aptem', aptemReviewId: '20', hasReviewForm: true }),
+      meeting(21, { id: 'imported-review:21', eventKey: 'imported-review:21', learner: 'Imported Scheduled', status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00', reviewSource: 'aptem', aptemReviewId: '21', hasReviewForm: true }),
+    ] });
+    mount('/coach/monthly-coaching?filter=all');
+    await screen.findByText('Imported Scheduled');
+
+    fireEvent.click(within(screen.getByText('Imported Unscheduled').closest('tr')!).getByRole('button', { name: 'Schedule' }));
+    expect(screen.getByRole('dialog', { name: 'Schedule meeting' })).toBeVisible();
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Schedule meeting' })).getByRole('button', { name: 'Cancel' }));
+
+    fireEvent.click(within(screen.getByText('Imported Scheduled').closest('tr')!).getByRole('button', { name: 'Reschedule' }));
+    expect(within(screen.getByRole('dialog', { name: 'Schedule meeting' })).getByLabelText('Date')).toHaveValue('2026-09-23');
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Schedule meeting' })).getByRole('button', { name: 'Cancel' }));
+
+    const scheduledRow = within(screen.getByText('Imported Scheduled').closest('tr')!);
+    expect(scheduledRow.getAllByRole('button').map(button => button.textContent)).toEqual([
+      'Reschedule', 'View', 'View Form', 'Create Slides',
+    ]);
+    fireEvent.click(scheduledRow.getByRole('button', { name: 'View' }));
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/meetings/imported-review%3A21');
+  });
+
+  it('opens an imported Aptem View Form directly instead of the learner profile', async () => {
+    fetchEvents.mockResolvedValue({ events: [
+      meeting(21, { id: 'imported-review:21', eventKey: 'imported-review:21', learner: 'Imported Completed', status: 'completed', scheduledDate: '2026-09-23', reviewSource: 'aptem', aptemReviewId: '21', hasReviewForm: true }),
+    ] });
+    mount('/coach/monthly-coaching?filter=all');
+    const row = within((await screen.findByText('Imported Completed')).closest('tr')!);
+    fireEvent.click(row.getByRole('button', { name: 'View Form' }));
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A21');
+    expect(screen.getByTestId('route')).not.toHaveTextContent('/coach/learner-case-file');
+  });
+
+  it('opens Curriculum questions for a non-terminal imported Aptem meeting', async () => {
+    fetchEvents.mockResolvedValue({ events: [
+      meeting(22, { id: 'imported-review:22', eventKey: 'imported-review:22', learner: 'Imported Draft', status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00', reviewSource: 'aptem', aptemReviewId: '22', hasReviewForm: true, reviewTemplateId: undefined }),
+    ] });
+    mount('/coach/monthly-coaching?filter=all');
+    fireEvent.click(within((await screen.findByText('Imported Draft')).closest('tr')!).getByRole('button', { name: 'View Form' }));
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A22');
+    expect(openReview).not.toHaveBeenCalled();
+  });
+
   it('renders the requested table columns and coaching actions', async () => {
     mount();
     await screen.findByText('Scheduled Learner');
@@ -171,7 +221,7 @@ describe('restored monthly coaching list', () => {
     expect(within(table).getAllByRole('columnheader').map(header => header.textContent)).toEqual([
       'Learner', 'Cohort', 'Date & time', 'Status', 'Schedule', 'Actions',
     ]);
-    expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'Form' })).toBeVisible();
+    expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'View Form' })).toBeVisible();
     expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'Create Slides' })).toBeVisible();
     expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'View' })).toBeVisible();
     expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'Reschedule' })).toBeVisible();
@@ -194,14 +244,14 @@ describe('restored monthly coaching list', () => {
     expect(within(screen.getByText('Awaiting Signature Learner').closest('tr')!).queryByRole('button', { name: /Schedule/ })).toBeNull();
   });
 
-  it('shows only View for completed and awaiting-signature meetings', async () => {
+  it('keeps safe completed and awaiting-signature actions without scheduling', async () => {
     mount();
     await screen.findByText('Scheduled Learner');
     for (const learner of ['Completed Learner', 'Awaiting Signature Learner']) {
       const row = within(screen.getByText(learner).closest('tr')!);
       expect(row.getByRole('button', { name: 'View' })).toBeVisible();
-      expect(row.queryByRole('button', { name: 'Form' })).toBeNull();
-      expect(row.queryByRole('button', { name: 'Create Slides' })).toBeNull();
+      expect(row.getByRole('button', { name: 'View Form' })).toBeVisible();
+      expect(row.getByRole('button', { name: 'Create Slides' })).toBeVisible();
       expect(row.queryByRole('button', { name: 'Join' })).toBeNull();
     }
   });
@@ -211,7 +261,7 @@ describe('restored monthly coaching list', () => {
     await screen.findByText('Scheduled Learner');
     const row = within(screen.getByText('In Progress Learner').closest('tr')!);
     expect(row.queryByRole('button', { name: /Schedule/ })).toBeNull();
-    expect(row.getByRole('button', { name: 'Form' })).toBeVisible();
+    expect(row.getByRole('button', { name: 'View Form' })).toBeVisible();
     expect(row.getByRole('button', { name: 'Create Slides' })).toBeVisible();
   });
 
@@ -260,7 +310,7 @@ describe('restored monthly coaching list', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
     expect(visibleLearners()).toHaveLength(2);
     const returnTo = screen.getByTestId('route').textContent;
-    fireEvent.click(screen.getAllByRole('button', { name: 'Form' })[0]);
+    fireEvent.click(screen.getAllByRole('button', { name: 'View' })[0]);
     const back = await screen.findByRole('link', { name: 'Back to Coaching Meetings' });
     expect(back).toHaveAttribute('href', returnTo);
     fireEvent.click(back);

@@ -86,6 +86,8 @@ EXCLUDED = (
     '/set-password',
     '/verify-certificate',
     '/verify-personal-certificate',
+    # Public coach booking pages have no signed-in account to attribute.
+    '/coach-booking/',
     # The learner content runner. One row per quiz question or video is noise,
     # and the learner's own progress records say it better.
     '/learner/quiz/',

@@ -198,6 +198,7 @@ export const employerNavItems: SidebarNavItem[] = [
 // CURRICULUM STUDIO — Grouped sidebar
 // ============================================================================
 export const curriculumNavItems: SidebarNavItem[] = [
+  { id: 'curriculumNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/curriculum/coach-directory' },
   { id: 'curriculum-home', label: 'Home', icon: 'ri-home-5-line', href: '/workspace/curriculum' },
   {
     id: 'curriculum-programmes',
@@ -326,6 +327,8 @@ export const engagementNavItems: SidebarNavItem[] = [
  * live on the learner's own page (see BoardPage's Programme panel).
  */
 export const apprenticeNavItems: SidebarNavItem[] = [
+  { id: 'apprenticeNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/users/coach-directory' },
+  { id: 'apprenticeNavItems-first-sessions', label: 'First sessions', icon: 'ri-calendar-check-line', href: '/users/first-sessions' },
   { id: 'apprentice-users', label: 'Users', icon: 'ri-group-line', href: '/users', statusDot: 'blue' },
 ];
 
@@ -334,6 +337,8 @@ export const apprenticeNavItems: SidebarNavItem[] = [
  * compliance workspace pages (ILR, evidence packs, funding risk, …) rely on.
  */
 export const enrolmentNavItems: SidebarNavItem[] = [
+  { id: 'enrolmentNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/users/coach-directory' },
+  { id: 'enrolmentNavItems-first-sessions', label: 'First sessions', icon: 'ri-calendar-check-line', href: '/users/first-sessions' },
   { id: 'enrolment-users', label: 'Users', icon: 'ri-group-line', href: '/users', statusDot: 'blue' },
 ];
 
@@ -575,6 +580,7 @@ export const leadershipNavItems: SidebarNavItem[] = [
 export const adminNavItems: SidebarNavItem[] = [
   // Dashboard
   { id: 'admin-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/admin' },
+  { id: 'admin-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/admin/coach_directory' },
 
   // User & Access Control — login."Login_accounts" and the four real roles
   {
@@ -608,6 +614,17 @@ export const adminNavItems: SidebarNavItem[] = [
 
   // Every headline count in one place, each row naming its source table.
   { id: 'admin-platform-report', label: 'Platform Report', icon: 'ri-bar-chart-box-line', href: '/admin/platform-report' },
+
+  // College sites outside the LMS — open in a new tab.
+  {
+    id: 'admin-group-external',
+    label: 'External tools',
+    icon: 'ri-external-link-line',
+    children: [
+      { id: 'admin-positive-moments', label: 'Positive Moments', icon: 'ri-heart-line', href: 'https://positive-moments.kentbusinesscollege.net', external: true },
+      { id: 'admin-tutor-dashboard', label: 'Tutor Dashboard', icon: 'ri-dashboard-line', href: 'https://tutordashboard.kentbusinesscollege.net', external: true },
+    ],
+  },
 ];
 
 // ============================================================================

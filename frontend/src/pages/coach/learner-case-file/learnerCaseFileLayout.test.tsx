@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CoachLearnerCaseFileData } from './data';
+import type { CaseFileReviewMeeting, CoachLearnerCaseFileData } from './data';
 import LearnerCaseFile from './page';
 
 const mocks = vi.hoisted(() => ({
@@ -37,6 +37,14 @@ vi.mock('@/pages/workspace/learner/DashboardTrainingPlan', () => ({
     <span>{activityOverviewOnly ? 'Activity overview only' : 'Full plan'}</span>
     <span>{showRewards === false ? 'Rewards hidden' : 'Rewards visible'}</span>
   </div>,
+}));
+vi.mock('@/pages/learner/reviews/ImportedReviewHistory', () => ({
+  ImportedReviewHistory: ({ kind, learnerId, category, reviewId }: { kind: string; learnerId: string; category: string; reviewId?: string }) => (
+    <div data-testid="imported-review-form">{`${kind}:${learnerId}:${category}:${reviewId}`}</div>
+  ),
+}));
+vi.mock('./components/AssignmentsTab', () => ({
+  default: ({ kind, learnerId }: { kind: string; learnerId: string }) => <div data-testid="assignments-tab">{`${kind}:${learnerId}`}</div>,
 }));
 vi.mock('./data', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./data')>();
@@ -156,9 +164,131 @@ describe('Learner Case File design', () => {
     expect(screen.getByText('Activity overview only')).toBeInTheDocument();
     expect(screen.getByText('Rewards hidden')).toBeInTheDocument();
     expect(mocks.useDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true);
-    expect(screen.getAllByRole('tab')).toHaveLength(4);
+    // Overview, OTJH & KSB Progress, Attendance, Learning Plan, Reviews, Assignments.
+    expect(screen.getAllByRole('tab')).toHaveLength(6);
+    expect(screen.getByRole('tab', { name: 'Assignments' })).toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: 'Programme & Employer' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('tab', { name: 'Reviews & Meetings' })).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Reviews' })).toBeInTheDocument();
+  });
+
+  it('shows learner review summaries, classification, filters, canonical dates and only available actions', () => {
+    const completedReview = {
+      id: 'review-1', eventKey: 'review-1', reviewInstanceId: 'instance-1', source: 'progress-review',
+      reviewTypeName: 'Progress Review', title: 'Progress Review', date: '10 Sep 2026', plannedDate: '08 Sep 2026',
+      completedDate: '10 Sep 2026', time: '10:00', detail: '', status: 'completed', statusLabel: 'Completed',
+      isNext: false, reviewer: 'Test Coach', hasForm: true, hasTranscript: false, hasAttendance: true,
+    } satisfies CaseFileReviewMeeting;
+    const upcomingMeeting = {
+      id: 'meeting-1', eventKey: 'meeting-1', source: 'mcr', reviewTypeName: 'Monthly Coaching Meeting',
+      title: 'Monthly Coaching Meeting', date: '28 Sep 2026', plannedDate: '28 Sep 2026', completedDate: '--',
+      time: '09:00', detail: '', status: 'confirmed', statusLabel: 'Confirmed', isNext: true,
+      reviewer: 'Test Coach', hasForm: false, hasTranscript: false, hasAttendance: false,
+    } satisfies CaseFileReviewMeeting;
+    mocks.data = {
+      ...caseFileData,
+      progressReviews: [completedReview],
+      monthlyCoachMeetings: [upcomingMeeting],
+      reviewGroups: [
+        { key: 'progress review', title: 'Progress Review', items: [completedReview] },
+        { key: 'monthly coaching meeting', title: 'Monthly Coaching Meeting', items: [upcomingMeeting] },
+      ],
+    };
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42&tab=reviews']}><LearnerCaseFile /></MemoryRouter>);
+
+    expect(screen.getByLabelText('Review summary')).toHaveTextContent('2Total Reviews');
+    expect(screen.getByLabelText('Review summary')).toHaveTextContent('1Progress Reviews');
+    expect(screen.getByLabelText('Review summary')).toHaveTextContent('1Monthly Coaching Meetings');
+    expect(screen.getByRole('cell', { name: '08 Sep 2026' })).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: '10 Sep 2026' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'View Form' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'View Attendance' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'View Transcript' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Completed' }));
+    expect(screen.getByText('Progress Review', { selector: 'td' })).toBeInTheDocument();
+    expect(screen.queryByText('Monthly Coaching Meeting', { selector: 'td' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Upcoming' }));
+    expect(screen.getByText('Monthly Coaching Meeting', { selector: 'td' })).toBeInTheDocument();
+    expect(screen.queryByText('Progress Review', { selector: 'td' })).not.toBeInTheDocument();
+  });
+
+  it('opens the requested imported review form instead of the general review history', () => {
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42&kind=apprenticeship&enrolmentId=125&tab=reviews&reviewId=A72']}><LearnerCaseFile /></MemoryRouter>);
+
+    expect(screen.getByTestId('imported-review-form')).toHaveTextContent('apprenticeship:125:reviews:A72');
+    expect(screen.queryByRole('heading', { name: 'Review History' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Review summary')).not.toBeInTheDocument();
+  });
+
+  it('keeps the reviews loading skeleton distinct from the empty state', () => {
+    mocks.data = { ...caseFileData, reviewsLoading: true };
+    const { rerender } = render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42&tab=reviews']}><LearnerCaseFile /></MemoryRouter>);
+    expect(screen.getByLabelText('Loading reviews')).toBeInTheDocument();
+    expect(screen.queryByText('No reviews found for this learner.')).not.toBeInTheDocument();
+
+    mocks.data = { ...caseFileData, reviewsLoading: false };
+    rerender(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42&tab=reviews']}><LearnerCaseFile /></MemoryRouter>);
+    expect(screen.getByText('No reviews found for this learner.')).toBeInTheDocument();
+  });
+
+  it('paginates filtered review history in ten-row pages and resets filters to page one', () => {
+    const reviews = Array.from({ length: 36 }, (_, index): CaseFileReviewMeeting => ({
+      id: `review-${index + 1}`,
+      eventKey: `review-${index + 1}`,
+      source: index < 8 ? 'progress-review' : 'mcr',
+      reviewTypeName: index < 8 ? 'Progress Review' : 'Monthly Coaching Meeting',
+      title: `Review ${index + 1}`,
+      date: `${String(index + 1).padStart(2, '0')} Sep 2026`,
+      plannedDate: `${String(index + 1).padStart(2, '0')} Sep 2026`,
+      completedDate: '--',
+      time: '09:00',
+      detail: '',
+      status: 'scheduled',
+      statusLabel: 'Scheduled',
+      isNext: false,
+      reviewer: `Reviewer ${index + 1}`,
+      hasForm: false,
+      hasTranscript: false,
+      hasAttendance: false,
+    }));
+    mocks.data = {
+      ...caseFileData,
+      reviewGroups: [
+        { key: 'all reviews', title: 'Reviews', items: reviews },
+      ],
+    };
+
+    const { rerender } = render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42&tab=reviews']}><LearnerCaseFile /></MemoryRouter>);
+
+    const table = screen.getByRole('table');
+    const pagination = screen.getByRole('navigation', { name: 'Review pagination' });
+    expect(within(table).getAllByRole('row')).toHaveLength(11);
+    expect(pagination).toHaveTextContent('Showing 1-10 of 36 reviews');
+    expect(within(pagination).getByRole('button', { name: 'Previous' })).toBeDisabled();
+    expect(within(pagination).getByRole('button', { name: 'Next' })).toBeEnabled();
+    for (const pageNumber of [1, 2, 3, 4]) {
+      expect(within(pagination).getByRole('button', { name: `Go to page ${pageNumber}` })).toBeVisible();
+    }
+
+    fireEvent.click(within(pagination).getByRole('button', { name: 'Go to page 4' }));
+    expect(within(table).getAllByRole('row')).toHaveLength(7);
+    expect(pagination).toHaveTextContent('Showing 31-36 of 36 reviews');
+    expect(within(pagination).getByRole('button', { name: 'Previous' })).toBeEnabled();
+    expect(within(pagination).getByRole('button', { name: 'Next' })).toBeDisabled();
+
+    mocks.data = {
+      ...caseFileData,
+      reviewGroups: [{ key: 'all reviews', title: 'Reviews', items: reviews.slice(0, 12) }],
+    };
+    rerender(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42&tab=reviews']}><LearnerCaseFile /></MemoryRouter>);
+    expect(within(table).getAllByRole('row')).toHaveLength(3);
+    expect(pagination).toHaveTextContent('Showing 11-12 of 12 reviews');
+    expect(within(pagination).getByRole('button', { name: 'Next' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Progress Review' }));
+    expect(within(table).getAllByRole('row')).toHaveLength(9);
+    expect(screen.queryByRole('navigation', { name: 'Review pagination' })).not.toBeInTheDocument();
+    expect(screen.getByText('Reviewer 1')).toBeVisible();
   });
 
   it('uses browser evidence rather than canonical KSB status for the header metric', () => {
@@ -343,7 +473,7 @@ describe('Learner Case File design', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Learning Plan' }));
 
     expect(screen.getByText('1 / 2 completed')).toBeInTheDocument();
-    expect(screen.getByText('Completed', { selector: 'span' }).parentElement).toHaveTextContent('1 / 2');
+    expect(screen.getByText('1 / 2', { selector: 'span' }).parentElement).toHaveTextContent('Completed');
     expect(screen.queryByRole('heading', { name: 'Recent Assessments' })).not.toBeInTheDocument();
   });
 
@@ -536,4 +666,17 @@ describe('Learner Case File design', () => {
     expect(screen.queryByRole('button', { name: 'Add evidence' })).not.toBeInTheDocument();
   });
 
+
+  it('opens the Assignments tab for the enrolment record of the learner, from the tab bar or a link', () => {
+    const { unmount } = render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
+    expect(screen.queryByTestId('assignments-tab')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('tab', { name: 'Assignments' }));
+    expect(screen.getByRole('tab', { name: 'Assignments' })).toHaveAttribute('aria-selected', 'true');
+    // The enrolment id, not the profile id: assignments are read from the learner's own endpoints.
+    expect(screen.getByTestId('assignments-tab')).toHaveTextContent('apprenticeship:125');
+    unmount();
+
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42&tab=assignments']}><LearnerCaseFile /></MemoryRouter>);
+    expect(screen.getByTestId('assignments-tab')).toBeInTheDocument();
+  });
 });

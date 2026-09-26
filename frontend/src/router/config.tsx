@@ -17,6 +17,7 @@ const AdminAccessLogsPage = lazyRoute(() => import("../pages/admin/access-logs/p
 const SystemAuditTrailPage = lazyRoute(() => import("../pages/admin/audit-trail/page"));
 const SystemAuditTrailPersonPage = lazyRoute(() => import("../pages/admin/audit-trail/person/page"));
 const AdminDashboard = lazyRoute(() => import("../pages/workspace/admin/page"));
+const EmployerWorkspacePage = lazyRoute(() => import("../pages/workspace/admin/employers/page"));
 const AdminCertificatesPage = lazyRoute(() => import("../pages/admin/certificates/page"));
 const AdminDocumentsPage = lazyRoute(() => import("../pages/admin/documents/page"));
 const AdminEvidencePage = lazyRoute(() => import("../pages/admin/evidence/page"));
@@ -24,6 +25,8 @@ const AdminNotificationsPage = lazyRoute(() => import("../pages/admin/notificati
 const AdminPermissionsPage = lazyRoute(() => import("../pages/admin/permissions/page"));
 const AdminRolesPage = lazyRoute(() => import("../pages/admin/roles/page"));
 const AdminSystemSettingsPage = lazyRoute(() => import("../pages/admin/system/page"));
+const CoachDirectoryPage = lazyRoute(() => import("../pages/admin/coach-directory/page"));
+const CoachBookingPage = lazyRoute(() => import("../pages/coach-booking/page"));
 const AdminUsersPage = lazyRoute(() => import("../pages/admin/users/page"));
 const PlatformReportPage = lazyRoute(() => import("../pages/admin/platform-report/page"));
 const AttendancePage = lazyRoute(() => import("../pages/learner/attendance/page"));
@@ -196,6 +199,7 @@ const MisTimetablesPage = lazyRoute(() => import("../pages/mis/timetables/page")
 const MisTutorAssignmentPage = lazyRoute(() => import("../pages/mis/tutor-assignment/page"));
 const ModuleBuilder = lazyRoute(() => import("../pages/curriculum/module-builder/page"));
 const ModulesPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
+const ExtraActivityPage = lazyRoute(() => import("../pages/learner/monthly-submission/ExtraActivityPage"));
 const MonthlySubmissionPage = lazyRoute(() => import("../pages/learner/monthly-submission/page"));
 const HistoricalAssignmentPage = lazyRoute(() => import("../pages/learner/monthly-submission/HistoricalAssignmentPage"));
 const MyLearningPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
@@ -274,6 +278,7 @@ const TutorResourcesPage = lazyRoute(() => import("../pages/tutor/resources/page
 const TutorSessionsPage = lazyRoute(() => import("../pages/tutor/sessions/page"));
 const UserGuidePage = lazyRoute(() => import("../pages/user-guide/page"));
 const UsersListPage = lazyRoute(() => import("../pages/users/page"));
+const FirstSessionBookingsPage = lazyRoute(() => import("../pages/users/first-sessions/page"));
 const VideoWatchPage = lazyRoute(() => import("../pages/learner/video-watch/page"));
 const VoucherClaimsPage = lazyRoute(() => import("../pages/engagement/voucher-claims/page"));
 const WeekDetailPage = lazyRoute(() => import("../pages/learner/week-detail/page"));
@@ -382,6 +387,11 @@ const routes: RouteObject[] = [
   {
     path: "/workspace/admin",
     element: <AdminDashboard />,
+  },
+  {
+    // Every employer as a card; each opens /employers/:employerId.
+    path: "/workspace/admin/employers",
+    element: <EmployerWorkspacePage />,
   },
   {
     path: "/workspace/admin/certificates",
@@ -644,6 +654,10 @@ const routes: RouteObject[] = [
     element: <MonthlySubmissionPage />,
   },
   {
+    path: "/learner/monthly-submission/:kind/:id/extra-activities",
+    element: <ExtraActivityPage />,
+  },
+  {
     path: "/learner/monthly-submission/:kind/:id/:componentId",
     element: <VideoWatchPage />,
   },
@@ -885,6 +899,26 @@ const routes: RouteObject[] = [
     // being pasted into a message.
     path: "/admin/audit-trail/people/:email",
     element: <SystemAuditTrailPersonPage />,
+  },
+  {
+    path: "/admin/coach_directory",
+    element: <CoachDirectoryPage />,
+  },
+  {
+    path: "/users/coach-directory",
+    element: <CoachDirectoryPage workspaceRole="compliance" />,
+  },
+  {
+    path: "/users/first-sessions",
+    element: <FirstSessionBookingsPage />,
+  },
+  {
+    path: "/curriculum/coach-directory",
+    element: <CoachDirectoryPage workspaceRole="curriculum" />,
+  },
+  {
+    path: "/coach-booking/:slug",
+    element: <CoachBookingPage />,
   },
   {
     path: "/admin/system",
@@ -1635,6 +1669,7 @@ const routes: RouteObject[] = [
  * with no session at all.
  */
 const PUBLIC_PATHS = new Set([
+  "/coach-booking/:slug",
   "/",
   "/login",
   "/access-required",

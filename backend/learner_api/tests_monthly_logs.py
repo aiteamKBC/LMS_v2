@@ -126,6 +126,15 @@ class MonthlyLogsTests(SimpleTestCase):
         self.assertEqual(summary['months'][0]['student_signature']['url'], 'saved')
         self.assertEqual(summary['completed_months'], 1)
 
+    def test_summary_exposes_audit_planned_end_date(self):
+        learner = {**self.learner, '_profile': {'coach_name': 'Coach', 'end_date': date(2026, 1, 31)}}
+        with patch.object(logs, 'legacy_summary', return_value={
+                 'months': [], 'profile': {'planned_end_date': date(2027, 10, 17)}}), \
+             patch.object(logs, 'signatures', return_value=[]), \
+             patch.object(logs, 'current_months', return_value={}):
+            summary = logs.summary_data(learner)
+        self.assertEqual(summary['learner']['planned_end_date'], date(2027, 10, 17))
+
     def test_lms_month_appears_only_after_month_end_with_all_its_activities(self):
         last_day = sources.row('progress:2', '2026-09-30', 'End-of-month reflection', 'Assignment')
         future = sources.row('progress:3', '2026-10-01', 'Next month', 'Reading')

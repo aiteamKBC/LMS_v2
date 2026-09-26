@@ -35,6 +35,46 @@ def read_activity_sources(cursor, group_ids, module_ids):
             for component, values in candidates.items() if len(values) == 1 for value in values}
 
 
+def read_activity_source_issues(cursor, group_ids, module_ids):
+    """Explain why an assigned Builder component has no unique Aptem lineage."""
+    if not module_ids:
+        return {}
+    cursor.execute('''SELECT id FROM curriculum.components
+        WHERE module_catalogue_id=ANY(%s)
+          AND (deleted_at IS NULL OR COALESCE(deleted_via_parent, '') <> '')''',
+                   [sorted(set(module_ids))])
+    component_ids = {str(row[0]) for row in cursor.fetchall()}
+    if not group_ids:
+        return {component: 'missing_group_id_activity_id' for component in component_ids}
+    cursor.execute('''WITH exports AS (
+        SELECT course_id,CASE WHEN jsonb_typeof(curriculum)='string'
+            THEN (curriculum #>> '{}')::jsonb ELSE curriculum END AS payload
+        FROM "MBA".course_curriculum WHERE course_id=ANY(%s))
+        SELECT material->>'component_id',e.course_id,material->>'source_component_id'
+        FROM exports e CROSS JOIN LATERAL jsonb_array_elements(payload->'sections') section
+        CROSS JOIN LATERAL jsonb_array_elements(section->'materials') material
+        WHERE material->>'component_id'=ANY(%s)''', [sorted(set(group_ids)), sorted(component_ids)])
+    rows = {}
+    for component, group_id, activity_id in cursor.fetchall():
+        if component:
+            rows.setdefault(str(component), []).append((group_id, activity_id))
+    issues = {}
+    for component in component_ids:
+        candidates = rows.get(component, [])
+        if not candidates:
+            issues[component] = 'missing_source_component_id'
+            continue
+        valid = {(int(group), int(activity)) for group, activity in candidates
+                 if group is not None and activity and str(activity).isdigit()}
+        if len(valid) > 1:
+            issues[component] = 'ambiguous_lineage'
+        elif not valid:
+            issues[component] = ('missing_source_component_id'
+                                 if all(not activity for _, activity in candidates)
+                                 else 'missing_group_id_activity_id')
+    return issues
+
+
 CURRICULUM_SCHEDULE_SQL = '''
     WITH exports AS (
         SELECT course_id,
@@ -158,6 +198,7 @@ ITEM_FIELDS = (
     "activity_id", "source_activity_id", "group_id", "group_name", "date",
     "category", "activity", "status", "completed", "actual", "planned",
     "hours_mapped", "quiz_score", "quiz_maximum_score",
+    "video_started", "reading_viewed", "quiz_attempted",
 )
 
 

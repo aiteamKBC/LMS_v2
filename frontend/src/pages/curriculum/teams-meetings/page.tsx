@@ -1176,9 +1176,13 @@ export default function CurriculumTeamsMeetingsPage() {
   /** The module's own session dates, in the shape the Teams endpoints take. */
   const scheduledOccurrences = (row: MeetingRow) => teamsCalendarOccurrences(row);
 
-  const pushDates = async (row: MeetingRow) => {
+  const pushDates = async (
+    row: MeetingRow,
+    options: { announce?: boolean; includeMissingComponents?: boolean } = {},
+  ): Promise<boolean> => {
+    const announce = options.announce !== false;
     const summary = row.summary;
-    if (!summary || !row.sessions.length) return;
+    if (!summary || !row.sessions.length) return false;
     setBusy(`${row.catalogueId}:dates`);
     setNotice(null);
     try {
@@ -1190,12 +1194,32 @@ export default function CurriculumTeamsMeetingsPage() {
         fetchModuleSessionPlan(row.catalogueId),
         loadModuleStructure(row.catalogueId),
       ]);
-      const planned = liveSessionPlan(module, plan).filter(session => String(session.date || '').trim());
+      const authoredPlan = liveSessionPlan(module, plan);
+      let selectedPlan = authoredPlan;
+      if (options.includeMissingComponents) {
+        // The re-attach action fills only the number of components the tracked
+        // Teams series says are missing. Keep every explicitly authored live
+        // session (including one deliberately held on a holiday), then take the
+        // earliest non-holiday empty delivery slots. This inserts 9 October
+        // without turning the 2 October content-only holiday into a lecture.
+        const expectedCount = Math.max(authoredPlan.length, summary.occurrenceCount || row.sessions.length);
+        const selectedNumbers = new Set(authoredPlan.map(session => Number(session.sessionNumber)));
+        const additions = (plan.sessions || []).filter(session => (
+          !selectedNumbers.has(Number(session.sessionNumber))
+          && !(session.skippedHolidays || []).length
+        )).slice(0, Math.max(0, expectedCount - authoredPlan.length));
+        selectedPlan = [...authoredPlan, ...additions]
+          .sort((left, right) => Number(left.sessionNumber) - Number(right.sessionNumber));
+      }
+      const planned = selectedPlan.filter(session => String(session.date || '').trim());
       if (!planned.length) throw new Error('This module has no planned session dates to send.');
       const firstStart = planned[0].startTime || row.groupPattern?.startTime || '09:00';
       const fallbackDuration = Math.max(15, row.groupPattern?.durationMinutes || summary.durationMinutes || DEFAULT_DURATION_MINUTES);
       const occurrences = planned.map((session, index) => ({
-        sessionNumber: session.sessionNumber || index + 1,
+        // The module plan also numbers holiday/content-only slots. Teams
+        // occurrences number only live sessions, so a skipped 2 October slot
+        // must not leave a hole between 25 September and 9 October.
+        sessionNumber: index + 1,
         startDateTimeUtc: zonedNaiveToUtcIso(`${session.date}T${session.startTime || firstStart}`, summary.timeZone),
         durationMinutes: session.durationMinutes || Math.max(15, minutesBetween(session.startTime || firstStart, session.endTime || '') || fallbackDuration),
       }));
@@ -1226,14 +1250,18 @@ export default function CurriculumTeamsMeetingsPage() {
           text: `${row.name}: the session dates are saved here, but Microsoft Teams did not accept every shifted meeting. ${warning}`,
         });
       }
-      await showCurriculumAlert({
-        title: warning ? 'Sent with warnings' : 'Teams calendar updated',
-        text: `${occurrences.length} session date${occurrences.length === 1 ? '' : 's'} sent to the Teams calendar for ${row.name}.`,
-        timer: warning ? undefined : 2000,
-      });
+      if (announce) {
+        await showCurriculumAlert({
+          title: warning ? 'Sent with warnings' : 'Teams calendar updated',
+          text: `${occurrences.length} session date${occurrences.length === 1 ? '' : 's'} sent to the Teams calendar for ${row.name}.`,
+          timer: warning ? undefined : 2000,
+        });
+      }
+      return true;
     } catch (err) {
-      if (isTeamsReviewCancelled(err)) return;
+      if (isTeamsReviewCancelled(err)) return false;
       setNotice({ tone: 'error', text: err instanceof Error ? err.message : 'The session dates could not be sent to Teams.' });
+      return false;
     } finally {
       setBusy('');
     }
@@ -1251,6 +1279,10 @@ export default function CurriculumTeamsMeetingsPage() {
     setBusy(`${row.catalogueId}:reattach`);
     setNotice(null);
     try {
+      // Microsoft is updated and verified first. Only then may the local
+      // structure create its missing component, so a Graph rejection cannot
+      // leave every later component attached to the previous occurrence.
+      if (!(await pushDates(row, { announce: false, includeMissingComponents: true }))) return;
       const result = await restoreModuleTeamsMeeting(row.catalogueId, { createMissingComponents: true });
       const created = result.createdComponents || 0;
       const updated = result.updatedComponents || 0;

@@ -1,3 +1,5 @@
+import { ExtraActivities } from '../monthly-submission/ExtraActivities';
+import { useExtraActivities } from '@/api/extraActivities';
 import { monthlyPresentation, slideIssue, fillEmptyPresentationSlides } from './monthlyPresentation';
 import { AssignmentCoachingBooking } from './AssignmentCoachingBooking';
 import { useImpactStatements } from '@/hooks/useImpactStatements';
@@ -130,14 +132,14 @@ export function MonthlyAnswerField({ label, value, onChange, disabled, title, ro
   </div>;
 }
 
-export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer, kind, learnerId, title, plannedOtjh, mappings, evidenceFiles, evidenceUploader, timeControl, disabled, payload, checks, checking, onCheck, onSave, historical = false, question = '', activityId = '', onNavigateToCheck }: {
+export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer, kind, learnerId, title, plannedOtjh, mappings, evidenceFiles, evidenceUploader, timeControl, disabled, payload, checks, checking, onCheck, onSave, historical = false, question = '', activityId = '', revisingRejected = false, onNavigateToCheck }: {
   step: number; data: MonthlyAssignment; onChange: Dispatch<SetStateAction<MonthlyAssignment>>;
   answers: AssignmentAnswers; onAnswer: (key: keyof AssignmentAnswers, value: string) => void;
   kind: LearnerKind; learnerId: string; title: string; plannedOtjh: number | null;
   mappings: ComponentKsbMapping[]; evidenceFiles: EvidenceRecord[]; evidenceUploader: ReactNode; timeControl: ReactNode;
   disabled: boolean; payload: () => LearningReflectionSubmissionInput;
   checks: AssignmentQualityCheck[]; checking: boolean; onCheck: () => Promise<boolean>; onSave: () => Promise<boolean>;
-  historical?: boolean; question?: string; activityId?: string;
+  historical?: boolean; question?: string; activityId?: string; revisingRejected?: boolean;
   onNavigateToCheck?: (step: number, target: string) => void;
 }) {
   const personal = parsePersonalLearning(learnerId);
@@ -149,10 +151,6 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
   }, [step, disabled, historical, data, answers.whatYouLearned, answers.businessImpact, onChange]);
   const ksbGenerationStatus = useAssignedKsbExplanations(step === 2 && !disabled && !historical,
     { learnerId, learnerKind: kind, activityId, question, answer: answers.assignmentAnswer, mappings }, data, onChange);
-  const impactGeneration = useImpactStatements(step === 4 && !disabled && !historical, learnerId, activityId, question,
-    answers.assignmentAnswer, answers.whatYouLearned, data, answers.businessImpact, onChange, value => onAnswer('businessImpact', value));
-  const actionGeneration = useImpactStatements(step === 5 && !disabled && !historical, learnerId, activityId, question,
-    answers.assignmentAnswer, answers.whatYouLearned, data, answers.businessImpact, onChange, value => onAnswer('businessImpact', value), 'action');
   const presentationContext = `${kind}:${learnerId}:${activityId}:${data.month}`;
   const presentationContextRef = useRef(presentationContext);
   presentationContextRef.current = presentationContext;
@@ -160,14 +158,20 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
   const [activityDetails, setActivityDetails] = useState<{ title: string; date: string; text: string } | null>(null);
   const [showLibrary, setShowLibrary] = useState(false);
   const [detail, setDetail] = useState<LearnerDetail | null>(null);
-  const monthlyReflectionStatus = useMonthlyReflections(step === 3 && !disabled && !historical && Boolean(detail), learnerId,
+  const extra = useExtraActivities(kind, learnerId, data.month, [3, 4, 5].includes(step));
+  const monthlyActivities = (detail?.activityFeed || []).filter(a => a.at.slice(0, 7) === data.month).map(a => {
+    const records = a.kind === 'quiz' ? detail?.quizAttempts || [] : a.kind === 'video' ? detail?.videoProgress || [] : detail?.componentProgress || [];
+    const progress = records.find(p => p.submittedAt === a.at && (a.componentId ? p.componentId === a.componentId : a.kind === 'quiz' && 'quizId' in p && p.quizId === a.quizId));
+    return { title: a.title, date: a.at.slice(0, 10), reflection: progress?.feedback || '', ksbs: progress?.ksbs || [] };
+  }).concat(extra.activities.filter(activity => activity.status !== 'draft').map(activity => ({ title: activity.title, date: activity.submittedAt || '', reflection: activity.reflection || activity.answer, ksbs: activity.ksbs })));
+  const impactGeneration = useImpactStatements(step === 4 && !disabled && !historical && Boolean(detail) && !extra.loading && !extra.error, learnerId, activityId, question,
+    answers.assignmentAnswer, answers.whatYouLearned, data, answers.businessImpact, onChange, value => onAnswer('businessImpact', value), 'impact', monthlyActivities);
+  const actionGeneration = useImpactStatements(step === 5 && !disabled && !historical && Boolean(detail) && !extra.loading && !extra.error, learnerId, activityId, question,
+    answers.assignmentAnswer, answers.whatYouLearned, data, answers.businessImpact, onChange, value => onAnswer('businessImpact', value), 'action', monthlyActivities);
+  const monthlyReflectionStatus = useMonthlyReflections(step === 3 && !disabled && !historical && Boolean(detail) && !extra.loading && !extra.error, learnerId,
     { month: data.month, question, answer: answers.assignmentAnswer,
       learning: { learned: answers.whatYouLearned, understood: data.understood, skills: data.gainedSkills },
-      activities: (detail?.activityFeed || []).filter(a => a.at.slice(0, 7) === data.month).map(a => {
-        const records = a.kind === 'quiz' ? detail?.quizAttempts || [] : a.kind === 'video' ? detail?.videoProgress || [] : detail?.componentProgress || [];
-        const progress = records.find(p => p.submittedAt === a.at && (a.componentId ? p.componentId === a.componentId : a.kind === 'quiz' && 'quizId' in p && p.quizId === a.quizId));
-        return { title: a.title, date: a.at.slice(0, 10), reflection: progress?.feedback || '', ksbs: progress?.ksbs || [] };
-      }) }, data, onChange);
+      activities: monthlyActivities }, data, onChange);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
@@ -196,7 +200,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
   useEffect(() => {
     let active = true;
     if (historical) return;
-    if ([2, 3].includes(step)) fetchLearnerDetail(kind, learnerId).then(result => { if (active) setDetail(result); }).catch(e => { if (active) setError(e.message); });
+    if ([2, 3, 4, 5].includes(step)) fetchLearnerDetail(kind, learnerId).then(result => { if (active) setDetail(result); }).catch(e => { if (active) setError(e.message); });
     return () => { active = false; };
   }, [step, kind, learnerId, historical]);
   const addFile = (file: EvidenceRecord) => {
@@ -376,7 +380,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
       {check('sharingConsent', 'If I include evidence, my employer accepts sharing it and it contains no confidential information.')}
       </section>
     </section>}
-    {step === 3 && <>
+    {step === 3 && <><ExtraActivities kind={kind} learnerId={learnerId} month={data.month} />
       <h3 className="text-lg font-semibold">Full-month reflection — {data.month}</h3>
       <div className="overflow-x-auto rounded-xl border border-slate-200">
         <table className="w-full text-left text-xs">
@@ -419,7 +423,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
     {step === 4 && <>
       <section className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
         <h3 className="font-semibold">Your impact drafts</h3>
-        <p className="mt-1">These fields are drafted from your assignment answer and learning reflections. Review and edit them to match your experience. Existing text is preserved; confirm the employer declaration yourself.</p>
+        <p className="mt-1">These fields are drafted from your assignment answer, this month's recorded activities and learning reflections. Review and edit them to match your experience. Existing text is preserved; confirm the employer declaration yourself.</p>
         {impactGeneration.status && <div role={impactGeneration.phase === 'error' ? 'alert' : 'status'} aria-live="polite" className={`mt-4 flex items-start gap-3 rounded-xl border p-4 ${impactGeneration.phase === 'error' ? 'border-red-200 bg-red-50 text-red-900' : impactGeneration.phase === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-blue-200 bg-white text-blue-900'}`}>
           {impactGeneration.phase === 'loading' ? <Loader2 aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 animate-spin" /> : impactGeneration.phase === 'success' ? <CheckCircle2 aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" /> : impactGeneration.phase === 'error' ? <AlertCircle aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" /> : <Info aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" />}
           <div className="min-w-0"><p className="font-semibold">{impactGeneration.phase === 'loading' ? 'Generating your impact drafts...' : impactGeneration.phase === 'success' ? 'Your drafts are ready' : impactGeneration.phase === 'error' ? 'Generation could not finish' : 'More details needed'}</p><p className="mt-1">{impactGeneration.status}</p></div>
@@ -429,14 +433,14 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
     {step === 5 && <>
       <section className="rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
         <h3 className="font-semibold">Your action plan & EPA drafts</h3>
-        <p className="mt-1">These drafts use your assignment answer and reflections. Review the proposed actions and EPA preparation before submitting. Your existing text is preserved.</p>
+        <p className="mt-1">These drafts use your assignment answer, this month's recorded activities and reflections. Review the proposed actions and EPA preparation before submitting. Your existing text is preserved.</p>
         {actionGeneration.status && <div role={actionGeneration.phase === 'error' ? 'alert' : 'status'} aria-live="polite" className={`mt-4 flex items-start gap-3 rounded-xl border p-4 ${actionGeneration.phase === 'error' ? 'border-red-200 bg-red-50 text-red-900' : actionGeneration.phase === 'success' ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-blue-200 bg-white text-blue-900'}`}>
           {actionGeneration.phase === 'loading' ? <Loader2 aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 animate-spin" /> : actionGeneration.phase === 'success' ? <CheckCircle2 aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" /> : actionGeneration.phase === 'error' ? <AlertCircle aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" /> : <Info aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0" />}
           <div className="min-w-0"><p className="font-semibold">{actionGeneration.phase === 'loading' ? 'Generating your action plan & EPA drafts...' : actionGeneration.phase === 'success' ? 'Your drafts are ready' : actionGeneration.phase === 'error' ? 'Generation could not finish' : 'More details needed'}</p><p className="mt-1">{actionGeneration.status}</p></div>
         </div>}
       </section>
       {field('actionPlan', 'Your action plan for next month (at least 20 words)', 0, 'action')}{field('epaPreparedness', 'How has this prepared you for EPA? (at least 20 words)')}</>}
-    {step === 7 && <><h3 className="text-lg font-semibold">Submission quality checks</h3><p className="text-sm text-slate-600">All checks must be green before you can submit your assignment. Complete the coaching meeting booking and presentation in Step 7 (Coaching & presentation), then run the checks again.</p><button type="button" className={buttonClass} disabled={checking || disabled} onClick={() => void onCheck()}>{checking ? 'Checking…' : 'Run quality checks'}</button>{checks.map(c => {
+    {step === 7 && <><h3 className="text-lg font-semibold">Submission quality checks</h3><p className="text-sm text-slate-600">{revisingRejected ? 'Run quality checks again for this revised submission. You can select any check to return to that section and make corrections. A verified MCM booking from your rejected submission in the same month satisfies the booking requirement; you do not need to book again. Your presentation must still pass its check.' : 'All checks must be green before you can submit your assignment. Complete the coaching meeting booking and presentation in Step 7 (Coaching & presentation), then run the checks again.'}</p><button type="button" className={buttonClass} disabled={checking || disabled} onClick={() => void onCheck()}>{checking ? 'Checking…' : 'Run quality checks'}</button>{checks.map(c => {
       const targetStep = QUALITY_CHECK_STEPS[c.key];
       const content = <>{c.passed ? <CheckCircle2 aria-hidden="true" className="h-4 w-4 shrink-0" /> : <Circle aria-hidden="true" className="h-4 w-4 shrink-0" />}<span className="flex-1">{c.label}</span></>;
       const classes = `flex w-full items-center gap-2 rounded-xl border p-3 text-left text-sm ${c.passed ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : 'border-amber-200 bg-amber-50 text-amber-900'}`;
@@ -445,7 +449,8 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
         : <div key={c.key} className={classes}>{content}</div>;
     })}</>}
     {step === 6 && <>
-      <h3 data-quality-target="meeting" tabIndex={-1} className="text-lg font-semibold">Coaching & presentation</h3>
+      {revisingRejected && <p className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">You do not need a new MCM booking when your rejected submission already has a verified booking for this submission month. The final quality checks verify this automatically.</p>}
+        <h3 data-quality-target="meeting" tabIndex={-1} className="text-lg font-semibold">Coaching & presentation</h3>
       <p className="text-sm text-slate-600">Book coaching in the submission-month window ({minBooking} to {maxBooking}) or the next-month window shown below. You can finish both tasks here and keep the whole submission as a draft until ready.</p>
       <AssignmentCoachingBooking kind={kind} learnerId={learnerId} month={data.month} title={title} meetingKey={data.meetingKey} disabled={disabled || historical} onSave={onSave} onSelect={meetingKey => patch({ meetingKey })} />
       <section data-quality-target="presentation" tabIndex={-1} className="space-y-5 rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">

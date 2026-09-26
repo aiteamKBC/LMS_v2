@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { BookOpen, CalendarDays, CalendarOff, ChevronLeft, ChevronRight, Clock3, ExternalLink, Search, Target, Users, Video } from 'lucide-react';
+import { BookOpen, CalendarDays, CalendarOff, ChevronLeft, ChevronRight, Clock3, ExternalLink, Search, Users, Video } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
@@ -175,24 +175,11 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
             </div>}
           </div>
 
-          {isTeachingWeek && <div className="mt-5 grid gap-4 xl:grid-cols-2">
-            <section aria-labelledby="weekly-outcomes-heading" className="flex min-h-[136px] gap-4 rounded-xl border border-primary-100 bg-primary-50/45 p-5">
-              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-primary-100 text-primary-700 ring-1 ring-primary-200/70">
-                <Target size={23} aria-hidden="true" />
-              </span>
-              <div className="min-w-0">
-              <h3 id="weekly-outcomes-heading" className="text-sm font-bold text-foreground-900">Learning outcomes for this week</h3>
-              {selectedWeek.learningOutcomes?.length ? <ul className="mt-2 list-disc space-y-1.5 pl-4 text-sm leading-6 text-foreground-700 marker:text-primary-600">
-                {selectedWeek.learningOutcomes.map(outcome => <li key={outcome}>{outcome}</li>)}
-              </ul> : <p className="mt-2 text-sm leading-6 text-foreground-500">Learning outcomes for this week have not been published yet.</p>}
-              </div>
-            </section>
-
-          <section aria-labelledby="weekly-session-heading">
+          {isTeachingWeek && <section aria-labelledby="weekly-session-heading" className="mt-5">
             {selectedWeek.start ? <LiveSessionSummary week={selectedWeek} now={now} headingId="weekly-session-heading" />
               : <p id="weekly-session-heading" className="flex min-h-[136px] items-center rounded-xl border border-foreground-100 bg-background-50 p-5 text-sm text-foreground-500">No live session is scheduled for this week.</p>}
           </section>
-          </div>}
+          }
 
           {!isTeachingWeek && <section aria-labelledby="weekly-session-heading" className="mt-5">
             <ReadingWeekPanel week={selectedWeek as ReadingWeekRow} />
@@ -248,16 +235,16 @@ function LiveSessionSummary({ week, now, headingId }: { week: SessionRow; now: n
   const end = week.minutes ? new Date(startMs + week.minutes * 60_000) : null;
   const hasJoinUrl = !!week.joinUrl;
   const sessionEnded = Number.isFinite(startMs) && startMs <= now;
-  return <div className="flex min-h-[136px] flex-col gap-4 rounded-xl border border-emerald-100 bg-emerald-50/45 p-5 md:flex-row md:items-center md:justify-between">
+  return <div className={cn('flex min-h-[136px] flex-col gap-4 rounded-xl border p-5 md:flex-row md:items-center md:justify-between', planLayout.secondaryLiveCard)}>
     <div className="flex min-w-0 gap-4">
-      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200/70">
+      <span className={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ring-1', planLayout.secondaryLiveIcon)}>
         <Users size={22} aria-hidden="true" />
       </span>
       <div className="min-w-0">
         <h3 id={headingId} className="text-sm font-bold text-foreground-900">Scheduled live session</h3>
         <div className="mt-1 flex flex-wrap items-center gap-2">
           <p className="font-semibold text-foreground-950">{week.title}</p>
-          <StatusBadge tone="positive" label="Live session" size="sm" dot={false} className="bg-emerald-100 text-emerald-700" />
+          <StatusBadge tone="positive" label="Live session" size="sm" dot={false} className={planLayout.secondaryLiveBadge} />
         </div>
         <dl className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs font-medium text-foreground-600">
           <div className="inline-flex items-center gap-1.5">
@@ -386,14 +373,14 @@ function ActivitiesTableModern({ components, completedIds, kind, learnerId, week
     <ActivitiesHeading count={components.length} controls={controls} />
     {!filteredComponents.length ? <EmptyState size="sm" title="No matching activities" description="Try changing your search or filters." className="m-4" /> : <>
     <div className="max-w-full" style={{ overflowX: 'auto' }}>
-      <table className="w-full min-w-[860px] table-fixed text-left text-[11px]">
+      <table className="w-full min-w-[620px] table-fixed text-left text-[10px]">
         <caption className="sr-only">This week's learning activities</caption>
-        <colgroup><col className="w-12" /><col className="w-32" /><col /><col className="w-32" /><col className="w-32" /><col className="w-32" /><col className="w-28" /></colgroup>
+        <colgroup><col className="w-9" /><col className="w-24" /><col /><col className="w-24" /><col className="w-24" /><col className="w-24" /><col className="w-24" /></colgroup>
         <thead className="bg-background-100/90">
           <tr>
             {['#', 'Type', 'Title', 'Expected time', 'KSB mapping', 'Status', 'Action'].map(label => (
               <th key={label} scope="col" className={cn(
-                'px-3 py-3 text-left text-[10px] font-bold uppercase tracking-[0.06em] text-foreground-500',
+                'px-2 py-2 text-left text-[9px] font-bold uppercase tracking-[0.05em] text-foreground-500',
                 ['Expected time', 'KSB mapping', 'Status', 'Action'].includes(label) && 'text-center',
               )}>
                 {label}
@@ -408,26 +395,26 @@ function ActivitiesTableModern({ components, completedIds, kind, learnerId, week
             const typeLabel = activityTypeLabel(component);
             const meta = resourceTypeMeta(component.type || typeLabel);
             return <tr key={component.componentId || component.title} className="border-t border-foreground-100 transition-colors hover:bg-primary-50/30">
-              <td className="px-3 py-3 text-center align-middle font-semibold tabular-nums text-foreground-500">{safePage * ACTIVITY_PAGE_SIZE + index + 1}</td>
-              <td className="px-3 py-2.5 align-middle">
-                <div className="flex min-w-0 items-center gap-2">
-                <span className={cn('inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg', meta.bg, meta.color)}>
+              <td className="px-2 py-2 text-center align-middle font-semibold tabular-nums text-foreground-500">{safePage * ACTIVITY_PAGE_SIZE + index + 1}</td>
+              <td className="px-2 py-2 align-middle">
+                <div className="flex min-w-0 items-center gap-1.5">
+                <span className={cn('inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-lg', meta.bg, meta.color)}>
                   <AppIcon className={meta.icon} size={14} aria-label={typeLabel} />
                 </span>
-                <span className="truncate text-[11px] font-semibold text-foreground-700" title={typeLabel}>{typeLabel}</span>
+                <span className="truncate text-[10px] font-semibold text-foreground-700" title={typeLabel}>{typeLabel}</span>
                 </div>
               </td>
-              <td className="px-3 py-2.5 text-left align-middle">
-                <p className="line-clamp-2 text-xs font-semibold leading-4 text-foreground-900" title={component.title}>{component.title}</p>
+              <td className="px-2 py-2 text-left align-middle">
+                <p className="line-clamp-2 text-[11px] font-semibold leading-4 text-foreground-900" title={component.title}>{component.title}</p>
               </td>
-              <td className="px-3 py-2.5 text-center align-middle text-[11px] font-semibold tabular-nums text-foreground-700">
+              <td className="px-2 py-2 text-center align-middle text-[10px] font-semibold tabular-nums text-foreground-700">
                 <span className="inline-flex items-center justify-center gap-1 whitespace-nowrap"><Clock3 size={12} className="text-foreground-400" aria-hidden="true" />{activityExpectedTimeLabel(component)}</span>
               </td>
-              <td className="px-3 py-2.5 text-center align-middle"><div className="flex justify-center"><KsbChips codes={activityKsbCodes(component)} /></div></td>
-              <td className="px-3 py-2.5 text-center align-middle"><StatusBadge tone={STATUS_TONE[status]} label={STATUS_LABEL[status]} size="sm" showIcon={status === 'completed'} className="whitespace-nowrap text-[10px]" /></td>
-              <td className="px-3 py-2.5 text-center align-middle">
+              <td className="px-2 py-2 text-center align-middle"><div className="flex justify-center"><KsbChips codes={activityKsbCodes(component)} /></div></td>
+              <td className="px-2 py-2 text-center align-middle"><StatusBadge tone={STATUS_TONE[status]} label={STATUS_LABEL[status]} size="sm" showIcon={status === 'completed'} className="whitespace-nowrap text-[10px]" /></td>
+              <td className="px-2 py-2 text-center align-middle">
                 {href ? <Link to={href} className={cn(
-                  'inline-flex min-h-7 min-w-[72px] items-center justify-center whitespace-nowrap rounded-lg px-2 text-[10px] font-bold leading-none transition',
+                  'inline-flex min-h-7 min-w-[64px] items-center justify-center whitespace-nowrap rounded-lg px-1.5 text-[10px] font-bold leading-none transition',
                   status === 'in-progress' ? 'bg-primary-600 text-white shadow-sm hover:bg-primary-700' : 'border border-primary-200 bg-background-50 text-primary-700 hover:border-primary-300 hover:bg-primary-50',
                 )}>{activityActionLabel(status)}</Link> : <span className="inline-block whitespace-nowrap text-[10px] text-foreground-400">Not available</span>}
               </td>

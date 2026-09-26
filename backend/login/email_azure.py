@@ -188,8 +188,12 @@ def _access_token(force_refresh=False):
         return token
 
 
-def send_mail(*, to, subject, html_body, text_body=None, sender_name=None):
+def send_mail(*, to, subject, html_body, text_body=None, sender_name=None, save_to_sent=False):
     """Send one message. Returns ``(sent, detail)``.
+
+    ``save_to_sent`` keeps a copy in the sender mailbox's Sent Items. Off by
+    default so routine notifications do not pile up in the shared mailbox;
+    invitations and password resets opt in so staff can see what was sent.
 
     ``sent`` is True only when Graph accepted it. When Azure is not configured
     this returns ``(False, "not-configured: …")`` after logging the message —
@@ -241,9 +245,7 @@ def send_mail(*, to, subject, html_body, text_body=None, sender_name=None):
                     **({"from": {"emailAddress": {"address": cfg["sender"], "name": sender_name.strip()}}}
                        if isinstance(sender_name, str) and sender_name.strip() else {}),
                 },
-                # These are security notifications; keeping them out of Sent
-                # Items avoids a shared mailbox filling with reset mail.
-                "saveToSentItems": False,
+                "saveToSentItems": bool(save_to_sent),
             },
             timeout=_HTTP_TIMEOUT,
         )

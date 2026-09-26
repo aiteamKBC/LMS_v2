@@ -147,7 +147,7 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
           ) : (
             <>
               {view === 'catalogue' && <LearningHero />}
-              {view === 'catalogue' && <PageTabs items={tabs} value={tab} onChange={(v) => setTab(v as TabKey)} label="My Learning section" />}
+              {view === 'catalogue' && <PageTabs className={learningStyles.catalogueTabs} items={tabs} value={tab} onChange={(v) => setTab(v as TabKey)} label="My Learning section" />}
 
               {tab === 'modules' ? (
                 <ModulesTab key={`${kind}:${id}`} real={real} loading={loading} loadError={loadError} kind={kind} id={id} showReadOnlyNotice={showReadOnlyNotice} view={view} onRefresh={refresh} />

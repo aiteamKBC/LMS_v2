@@ -131,8 +131,18 @@ export function rolesForRoute(path: string): readonly Role[] {
 }
 
 /** Whether `account` is admitted to `path`. */
-export function mayAccessRoute(path: string, account: Pick<AuthUser, 'role' | 'access'>): boolean {
+export function mayAccessRoute(path: string, account: Pick<AuthUser, 'role' | 'access' | 'accessWorkspaces'>): boolean {
   if (account.access === 'record-monitor') return path === '/old-otjh' || path.startsWith('/old-otjh/');
+  if (['/admin/coach_directory', '/users/coach-directory', '/curriculum/coach-directory'].includes(path)) {
+    const grants = [account.access, ...(account.accessWorkspaces ?? []).map(workspace => workspace.access)];
+    return STAFF.includes(account.role) && grants.some(grant => ['super-admin', 'enrolment', 'curriculum'].includes(grant ?? ''));
+  }
+  if (path === '/users/first-sessions') {
+    // Enrolment only (super-admin passes everywhere) -- the same grant the API
+    // enforces in learner_api/first_session_bookings.py.
+    const grants = [account.access, ...(account.accessWorkspaces ?? []).map(workspace => workspace.access)];
+    return STAFF.includes(account.role) && grants.some(grant => ['super-admin', 'enrolment'].includes(grant ?? ''));
+  }
   if (path === '/old-otjh/monitor') return account.access === 'super-admin';
   return rolesForRoute(path).includes(account.role);
 }

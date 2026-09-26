@@ -1100,6 +1100,7 @@ def to_learner_detail(source, learner_profile):
         "group": _s(source.group),
         "employer": _s(getattr(source, "employer", "")),
         "employerId": getattr(source, "employer_id", None),
+        "organization": _s(getattr(source, "organization", "")),
         "lineManager": _s(getattr(source, "line_manager", "")),
         "isActive": programme_status(source).casefold() == "active",
         "modules": modules,

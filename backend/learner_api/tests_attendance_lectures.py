@@ -220,6 +220,7 @@ class AttendanceLectureTests(SimpleTestCase):
         other_week = {**activity, 'id': 'c3', 'week_id': 'w3', 'ksb_mappings': ['S4']}
         unrelated = {**activity, 'id': 'c4', 'module_catalogue_id': 'other', 'ksb_mappings': ['K99']}
         result = build_lectures([row], {}, [], [component, activity, other_week, unrelated], 'commercial', 12)[0]
+        self.assertEqual(result['componentHref'], '/learner/component/commercial/12/c1')
         self.assertEqual((result['ksbs'], result['ksbScope']), (['K3'], 'activities'))
         result = build_lectures([row], {}, [], [activity, other_week, unrelated], 'commercial', 12)[0]
         self.assertEqual((result['ksbs'], result['ksbScope']), (['K3', 'S4'], 'module'))

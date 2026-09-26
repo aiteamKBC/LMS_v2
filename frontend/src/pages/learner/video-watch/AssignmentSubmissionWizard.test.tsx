@@ -1,3 +1,4 @@
+vi.mock('@/api/extraActivities', () => ({ useExtraActivities: () => ({ activities: [], loading: false, error: '', refresh: vi.fn() }) }));
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -355,4 +356,46 @@ it('restores and saves an uploaded presentation without requiring generated slid
     evidenceFiles: ['My MCM.pptx'],
     monthlyAssignment: expect.objectContaining({ uploadedPresentation: monthly.uploadedPresentation, presentationReviewed: true, slides: [] }),
   })));
+});
+
+
+it.each(['commercial', 'apprenticeship'] as const)('requires fresh checks when revising a rejected %s submission and after editing', async kind => {
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({
+    id: 'rejected-original', status: 'rejected', assignmentAnswer: 'Original submitted answer',
+    monthlyAssignment: { ...emptyMonthlyAssignment([], '2026-09'), step: 7, meetingKey: 'existing-mcm' },
+  } as Awaited<ReturnType<typeof loadLearningReflectionSubmission>>);
+  render(<AssignmentSubmissionWizard {...props} kind={kind} />);
+  await screen.findByText(/Run quality checks again for this revised submission/);
+  expect(screen.getByText('Quality checks not run yet')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Submit assignment' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
+  await screen.findByText('13/13 checks passed at last check');
+  fireEvent.click(screen.getByRole('button', { name: /Check answer/ }));
+  const answer = screen.getByDisplayValue('Original submitted answer');
+  fireEvent.change(answer, { target: { value: 'Corrected submitted answer' } });
+  fireEvent.click(screen.getByRole('button', { name: /Quality checks/ }));
+  expect(screen.getByText('Quality checks not run yet')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Submit assignment' })).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
+  await screen.findByText('13/13 checks passed at last check');
+  expect(vi.mocked(checkMonthlyAssignment).mock.calls.at(-1)?.[0]).toMatchObject({
+    assignmentAnswer: 'Corrected submitted answer', monthlyAssignment: { meetingKey: 'existing-mcm' },
+  });
+});
+
+
+it('discards in-flight quality results if submission data changes before the response', async () => {
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({
+    id: 'revision', status: 'rejected', monthlyAssignment: { ...emptyMonthlyAssignment([], '2026-09'), step: 7 },
+  } as Awaited<ReturnType<typeof loadLearningReflectionSubmission>>);
+  const view = render(<AssignmentSubmissionWizard {...props} />);
+  await screen.findByText(/Run quality checks again for this revised submission/);
+  let resolveChecks!: (checks: Awaited<ReturnType<typeof checkMonthlyAssignment>>) => void;
+  vi.mocked(checkMonthlyAssignment).mockImplementationOnce(() => new Promise(resolve => { resolveChecks = resolve; }));
+  fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
+  view.rerender(<AssignmentSubmissionWizard {...props} outsideWorkingHoursConfirmed />);
+  await act(async () => resolveChecks(Array.from({ length: 13 }, (_, i) => ({ key: String(i), label: `Old check ${i}`, passed: true }))));
+  expect(screen.getByText('Quality checks not run yet')).toBeInTheDocument();
+  expect(screen.queryByText('Old check 0')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Submit assignment' })).toBeDisabled();
 });

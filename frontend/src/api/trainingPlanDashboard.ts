@@ -71,7 +71,7 @@ export type TrainingPlanDashboard = {
   moduleLinks: Record<string, { id: string; title: string }>;
   sessions: PlanSession[];
   reviews: PlanReview[];
-  coach: { name: string; bookingUrl: string | null };
+  coach: { name: string; email?: string; phone?: string; bookingUrl: string | null };
   contractStatus: string;
   generatedAt: string;
 };

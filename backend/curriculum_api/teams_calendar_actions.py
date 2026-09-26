@@ -19,6 +19,7 @@ from .teams_cancellation_checks import CalendarStateError, cancellation_plan
 from .session_overrides import schedule_override, session_overrides, validate_exception_plan
 
 SALT = 'curriculum.teams.calendar-action.v1'
+SILENT_UPDATE_HEADERS = {'Prefer': 'outlook.send-invitations="none"'}
 
 
 class ActionNotSent(CalendarStateError):
@@ -181,11 +182,11 @@ def action_preview(live_id, payload, actor):
         })
     return {'reviewToken': signing.dumps(operation, salt=SALT, compress=True), 'action': action, 'scope': scope,
             'title': series.get('module_title') or 'Teams calendar', 'organizer': series.get('organizer_email'),
-            'timeZone': str(zone), 'notificationRequired': True, 'calendarRequests': len(commands),
+            'timeZone': str(zone), 'notificationRequired': action == 'cancel', 'calendarRequests': len(commands),
             'sessions': reviewed_sessions, 'warnings': plan['errors']}
 
 
-def graph_action(series, command, comment):
+def graph_action(series, command, comment, notify_attendees=True):
     """Exactly one attempted mutation. Transport errors are never auto-retried."""
     from coach_api.views import get_graph_settings, microsoft_graph_token
     try:
@@ -219,8 +220,12 @@ def graph_action(series, command, comment):
             if 400 <= response.status_code < 500 and response.status_code not in (408, 409):
                 raise ActionNotSent('Microsoft rejected the cancellation. No cancellation was confirmed.')
             return response.status_code == 202
-        response = client.patch(path, json={'start': {'dateTime': command['start'], 'timeZone': 'UTC'},
-                                           'end': {'dateTime': command['end'], 'timeZone': 'UTC'}, 'hideAttendees': True})
+        response = client.patch(
+            path,
+            json={'start': {'dateTime': command['start'], 'timeZone': 'UTC'},
+                  'end': {'dateTime': command['end'], 'timeZone': 'UTC'}, 'hideAttendees': True},
+            headers=None if notify_attendees else SILENT_UPDATE_HEADERS,
+        )
         if 400 <= response.status_code < 500 and response.status_code not in (408, 409):
             try:
                 code = (response.json().get('error') or {}).get('code')
@@ -277,11 +282,22 @@ def persist_move(series, rows, module, command, snapshot):
 
 
 def confirm_action(live_id, payload, actor):
-    if payload.get('acknowledgeNotifications') is not True:
-        raise ValueError('Confirm the Microsoft calendar notification before continuing.')
     operation = signing.loads(payload.get('reviewToken') or '', salt=SALT, max_age=600)
     if operation.get('liveId') != live_id or operation.get('actor') != actor:
         raise ValueError('This review belongs to another calendar or account.')
+    # Older clients sent only acknowledgeNotifications and always notified.
+    # New clients make the choice explicit so a reschedule can be saved without
+    # mail. Cancellations are the exception: Graph always sends their notice.
+    notify_attendees = payload.get('notifyAttendees')
+    if notify_attendees is None:
+        notify_attendees = payload.get('acknowledgeNotifications') is True
+    if not isinstance(notify_attendees, bool):
+        raise ValueError('Choose whether Microsoft should notify invitees.')
+    if operation.get('action') == 'cancel' and notify_attendees is not True:
+        raise ValueError('Microsoft cancellation notices cannot be suppressed.')
+    if notify_attendees and payload.get('acknowledgeNotifications') is not True:
+        raise ValueError('Confirm the Microsoft calendar notification before continuing.')
+    operation['notifyAttendees'] = notify_attendees
     with transaction.atomic():
         series, rows, snapshot = load_calendar_state(live_id, lock=True)
         module = load_module(series, lock=True)
@@ -337,7 +353,10 @@ def continue_action(live_id, operation_id, send=False):
                     command['state'] = 'attempted'
                     operation['leaseUntil'] = (datetime.now(timezone.utc) + timedelta(seconds=90)).isoformat()
                     store_snapshot(live_id, snapshot)
-                accepted = graph_action(series, command, operation['comment'])
+                accepted = graph_action(
+                    series, command, operation['comment'],
+                    operation.get('notifyAttendees', True),
+                )
                 if not accepted:
                     raise CalendarStateError('Microsoft did not confirm the request. Check calendar status before any further action.')
             elif original['state'] == 'pending':

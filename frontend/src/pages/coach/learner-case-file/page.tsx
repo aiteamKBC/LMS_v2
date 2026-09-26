@@ -14,6 +14,7 @@ import { StatusBadge } from '@/components/ui/StatusBadge';
 import { LearnerAvatar } from '@/pages/coach/shared/LearnerIdentity';
 import { DashboardTrainingPlan } from '@/pages/workspace/learner/DashboardTrainingPlan';
 import { useDashboardPlan } from '@/pages/workspace/learner/useDashboardPlan';
+import { ImportedReviewHistory } from '@/pages/learner/reviews/ImportedReviewHistory';
 import OTJHTab from './components/OTJHTab';
 import KSBsTab from './components/KSBsTab';
 import EvidenceTab from './components/EvidenceTab';
@@ -22,6 +23,7 @@ import ActivityTab from './components/ActivityTab';
 import DocumentsTab from './components/DocumentsTab';
 import NetworkTab from './components/NetworkTab';
 import LearningPlanTab from './components/OverviewTab';
+import AssignmentsTab from './components/AssignmentsTab';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import {
   createLearnerReviewAddition,
@@ -52,6 +54,8 @@ const CASE_FILE_TABS = [
   { id: 'progress', label: 'OTJH & KSB Progress', icon: 'ri-line-chart-line' },
   { id: 'attendance', label: 'Attendance', icon: 'ri-calendar-check-line' },
   { id: 'support', label: 'Learning Plan', icon: 'ri-route-line' },
+  { id: 'reviews', label: 'Reviews', icon: 'ri-file-list-3-line' },
+  { id: 'assignments', label: 'Assignments', icon: 'ri-file-text-line' },
   { id: 'otjh', label: 'OTJH', icon: 'ri-time-line' },
   { id: 'ksbs', label: 'KSBs', icon: 'ri-award-line' },
   { id: 'evidence', label: 'Evidence', icon: 'ri-folder-upload-line' },
@@ -125,6 +129,7 @@ export default function LearnerCaseFile() {
   const state = (location.state || {}) as LocationState;
 
   const requestedTab = searchParams.get('tab') || state.tab;
+  const requestedReviewId = searchParams.get('reviewId') || undefined;
   const learnerId = searchParams.get('id') || state.learnerId;
   const learnerName = state.learnerName;
   const explicitKind = parseLearnerKind(searchParams.get('kind') || state.kind);
@@ -216,10 +221,12 @@ export default function LearnerCaseFile() {
         return <ReferenceReviewsContent
           data={data}
           onOpen={handleOpenReviewMeeting}
-          onChanged={refresh}
-          onOpenNotes={() => setActiveTab('coach-notes')}
-          onOpenMonthlyLogs={() => data.detail?.id && navigate(`/coach/monthly-logs/${data.detail.id}`)}
+          requestedReviewId={requestedReviewId}
         />;
+      case 'assignments':
+        return dashboardKind && (data.enrolmentId || data.learnerId)
+          ? <AssignmentsTab kind={dashboardKind} learnerId={data.enrolmentId || data.learnerId} />
+          : <EmptyState text="Assignments are unavailable because this learner's record type is unknown." />;
       case 'coach-notes':
         return <DocumentsTab data={data} />;
       case 'support':
@@ -1042,31 +1049,64 @@ function ReferenceAttendanceContent({ data }: { data: CoachLearnerCaseFileData }
 function ReferenceReviewsContent({
   data,
   onOpen,
-  onChanged,
-  onOpenNotes,
-  onOpenMonthlyLogs,
+  requestedReviewId,
 }: {
   data: CoachLearnerCaseFileData;
   onOpen: (item: CaseFileReviewMeeting) => void;
-  onChanged: () => void;
-  onOpenNotes: () => void;
-  onOpenMonthlyLogs: () => void;
+  requestedReviewId?: string;
 }) {
-  const [addOpen, setAddOpen] = useState(false);
+  type ReviewFilter = 'all' | 'progress-review' | 'mcr' | 'completed' | 'upcoming';
+  const pageSize = 10;
+  const [filter, setFilter] = useState<ReviewFilter>('all');
+  const [page, setPage] = useState(1);
   const reviewsLoading = data.reviewsLoading && data.reviewGroups.length === 0;
   const reviewItems = data.reviewGroups.flatMap(group => group.items);
-  const timeline = [
-    { label: 'Progress Review', description: 'Formal progress review against programme goals and targets.', icon: 'ri-clipboard-line', match: (item: CaseFileReviewMeeting) => item.source === 'progress-review' },
-    { label: 'Monthly Coaching Meeting', description: 'Regular coaching meeting to discuss progress, support needs and next steps.', icon: 'ri-group-line', match: (item: CaseFileReviewMeeting) => item.source === 'mcr' },
-    { label: 'Catch-up', description: 'Additional meeting to address specific topics or concerns.', icon: 'ri-file-list-3-line', match: (item: CaseFileReviewMeeting) => item.source === 'catch-up' },
-  ].map(entry => ({ ...entry, item: reviewItems.find(entry.match) }));
+  const isUpcoming = (item: CaseFileReviewMeeting) => !['completed', 'cancelled'].includes(item.status);
+  const visibleItems = reviewItems.filter(item => {
+    if (filter === 'all') return true;
+    if (filter === 'completed') return item.status === 'completed';
+    if (filter === 'upcoming') return isUpcoming(item);
+    return item.source === filter;
+  });
+  const totalPages = Math.max(1, Math.ceil(visibleItems.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * pageSize;
+  const paginatedItems = visibleItems.slice(pageStart, pageStart + pageSize);
+  const pageNumbers = Array.from({ length: totalPages }, (_, index) => index + 1)
+    .filter(pageNumber => totalPages <= 7 || pageNumber === 1 || pageNumber === totalPages || Math.abs(pageNumber - currentPage) <= 1);
+  const paginationItems = pageNumbers.reduce<Array<number | 'ellipsis'>>((items, pageNumber, index) => {
+    if (index > 0 && pageNumber - pageNumbers[index - 1] > 1) items.push('ellipsis');
+    items.push(pageNumber);
+    return items;
+  }, []);
+
+  useEffect(() => {
+    if (page !== currentPage) setPage(currentPage);
+  }, [currentPage, page]);
+  const summaries = [
+    ['Total Reviews', reviewItems.length],
+    ['Progress Reviews', reviewItems.filter(item => item.source === 'progress-review').length],
+    ['Monthly Coaching Meetings', reviewItems.filter(item => item.source === 'mcr').length],
+    ['Completed', reviewItems.filter(item => item.status === 'completed').length],
+    ['Upcoming', reviewItems.filter(isUpcoming).length],
+  ] as const;
+  const filters: Array<{ id: ReviewFilter; label: string }> = [
+    { id: 'all', label: 'All' },
+    { id: 'progress-review', label: 'Progress Review' },
+    { id: 'mcr', label: 'Monthly Coaching Meeting' },
+    { id: 'completed', label: 'Completed' },
+    { id: 'upcoming', label: 'Upcoming' },
+  ];
 
   return (
     <div className={styles.stack}>
-      <ReferencePanel title="Reviews & Meetings" subtitle="Manage learner-specific reviews and coaching meetings from this case file." icon="ri-group-line" tone="primary"
-        actions={<button type="button" onClick={() => setAddOpen(true)} className={styles.solidButton}><AppIcon className="ri-add-line" />Add Review</button>}>
-        <span className="sr-only">Review and meeting controls</span>
-      </ReferencePanel>
+      {requestedReviewId ? <ImportedReviewHistory
+        kind={data.kind}
+        learnerId={data.enrolmentId || data.learnerId}
+        category="reviews"
+        reviewId={requestedReviewId}
+      /> : null}
+      {!requestedReviewId && <>
       {data.reviewGenerationIssues.map(issue => (
         <div key={issue.code} className="flex items-start gap-3 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900" role="status">
           <AppIcon className="ri-error-warning-line mt-0.5 shrink-0 text-[18px]"></AppIcon>
@@ -1076,38 +1116,63 @@ function ReferenceReviewsContent({
           </div>
         </div>
       ))}
-      <div className={styles.reviewsGrid}>
-        <ReferencePanel title="Review Timeline" subtitle="Key reviews and meetings for this learner" icon="ri-calendar-line" tone="primary">
-          {reviewsLoading ? <RowsSkeleton rows={3} avatar={false} /> : <div className={styles.timeline}>
-            {timeline.map(entry => <div key={entry.label} className={styles.timelineItem}>
-              <span className={styles.timelineIcon}><AppIcon className={entry.icon} /></span>
-              <div><strong>{entry.label}</strong><p>{entry.description}</p></div>
-              <button type="button" disabled={!entry.item} className={styles.timelineStatus} onClick={() => entry.item && onOpen(entry.item)}>
-                {entry.item?.statusLabel || 'Not scheduled'}
-              </button>
-            </div>)}
-          </div>}
-        </ReferencePanel>
-        <ReferencePanel title="Quick Actions" subtitle="Common tasks for reviews and meetings" icon="ri-flashlight-line" tone="primary">
-          <div className={styles.quickActions}>
-            <button type="button" className={styles.quickAction} onClick={() => setAddOpen(true)}><AppIcon className="ri-calendar-line" /><span><strong>Schedule Review</strong><span>Add a progress review for this learner</span></span><AppIcon className="ri-arrow-right-s-line" /></button>
-            <button type="button" className={styles.quickAction} onClick={onOpenNotes}><AppIcon className="ri-file-list-3-line" /><span><strong>Add Meeting Note</strong><span>Record notes from a coaching meeting</span></span><AppIcon className="ri-arrow-right-s-line" /></button>
-            <button type="button" className={styles.quickAction} onClick={onOpenMonthlyLogs}><AppIcon className="ri-file-text-line" /><span><strong>View Monthly Logs</strong><span>See all monthly coaching logs</span></span><AppIcon className="ri-arrow-right-s-line" /></button>
-          </div>
-        </ReferencePanel>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5" aria-label="Review summary">
+        {summaries.map(([label, value]) => <div key={label} className="rounded-xl border border-foreground-200/70 bg-white p-4 shadow-sm">
+          <strong className="block text-2xl text-foreground-950">{value}</strong>
+          <span className="mt-1 block text-xs font-semibold text-foreground-500">{label}</span>
+        </div>)}
       </div>
-      <ReferencePanel title="Session History" subtitle="All reviews and coaching meetings for this learner" icon="ri-file-list-3-line" tone="primary">
-        {reviewsLoading ? <RowsSkeleton rows={3} avatar={false} /> : reviewItems.length
-          ? <ReviewMeetingList items={reviewItems} itemLabel="review" onOpen={onOpen} />
-          : <div className={styles.empty}><div><AppIcon className="ri-file-list-3-line text-lg" /><p className="mt-2">No review or coaching meeting records are available yet.</p><button type="button" className={cn(styles.solidButton, 'mt-3')} onClick={() => setAddOpen(true)}>Create first review</button></div></div>}
+      <ReferencePanel title="Review History" subtitle="Progress reviews and monthly coaching meetings for this learner" icon="ri-file-list-3-line" tone="primary">
+        <div className="mb-4 flex flex-wrap gap-2" aria-label="Review filters">
+          {filters.map(option => <button key={option.id} type="button" aria-pressed={filter === option.id} onClick={() => { setFilter(option.id); setPage(1); }}
+            className={cn('rounded-full border px-3 py-1.5 text-xs font-semibold transition', filter === option.id ? 'border-primary-600 bg-primary-600 text-white' : 'border-foreground-200 bg-white text-foreground-700 hover:border-primary-300')}>
+            {option.label}
+          </button>)}
+        </div>
+        {reviewsLoading ? <div aria-label="Loading reviews"><RowsSkeleton rows={5} avatar={false} /></div> : reviewItems.length === 0
+          ? <div className={styles.empty}><p>No reviews found for this learner.</p></div>
+          : visibleItems.length === 0 ? <div className={styles.empty}><p>No reviews match this filter.</p></div>
+          : <><div className="overflow-x-auto"><table className="w-full min-w-[850px] text-left text-xs">
+            <thead><tr className="border-b border-foreground-200 text-foreground-500">
+              {['Review Type', 'Planned Date', 'Completed Date', 'Status', 'Reviewer', 'Actions'].map(label => <th key={label} className="px-3 py-3 font-semibold">{label}</th>)}
+            </tr></thead>
+            <tbody>{paginatedItems.map(item => <tr key={item.id} className="border-b border-foreground-100 last:border-0">
+              <td className="px-3 py-3 font-semibold text-foreground-900">{item.reviewTypeName}</td>
+              <td className="px-3 py-3 text-foreground-700">{item.plannedDate}</td>
+              <td className="px-3 py-3 text-foreground-700">{item.completedDate}</td>
+              <td className="px-3 py-3"><StatusBadge status={item.status} label={item.statusLabel} size="sm" /></td>
+              <td className="px-3 py-3 text-foreground-700">{item.reviewer}</td>
+              <td className="px-3 py-3"><div className="flex flex-wrap gap-2">
+                <button type="button" className="font-semibold text-primary-700 hover:text-primary-900" onClick={() => onOpen(item)}>View</button>
+                {item.hasForm ? <button type="button" className="font-semibold text-primary-700 hover:text-primary-900" onClick={() => onOpen(item)}>View Form</button> : null}
+                {item.hasTranscript ? <button type="button" className="font-semibold text-primary-700 hover:text-primary-900" onClick={() => onOpen(item)}>View Transcript</button> : null}
+                {item.hasAttendance ? <button type="button" className="font-semibold text-primary-700 hover:text-primary-900" onClick={() => onOpen(item)}>View Attendance</button> : null}
+              </div></td>
+            </tr>)}</tbody>
+          </table></div>
+          {visibleItems.length > pageSize && <nav className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-foreground-100 pt-4" aria-label="Review pagination">
+            <p className="text-xs font-medium text-foreground-500">
+              Showing {pageStart + 1}-{Math.min(pageStart + pageSize, visibleItems.length)} of {visibleItems.length} reviews
+            </p>
+            <div className="flex flex-wrap items-center gap-1.5">
+              <button type="button" disabled={currentPage === 1} onClick={() => setPage(value => Math.max(1, value - 1))}
+                className="rounded-lg border border-foreground-200 bg-white px-3 py-1.5 text-xs font-semibold text-foreground-700 transition hover:border-primary-300 disabled:cursor-not-allowed disabled:opacity-45">
+                Previous
+              </button>
+              {paginationItems.map((item, index) => item === 'ellipsis'
+                ? <span key={`ellipsis-${index}`} className="px-1 text-xs text-foreground-400" aria-hidden="true">...</span>
+                : <button key={item} type="button" aria-label={`Go to page ${item}`} aria-current={item === currentPage ? 'page' : undefined} onClick={() => setPage(item)}
+                    className={cn('h-8 min-w-8 rounded-lg border px-2 text-xs font-semibold transition', item === currentPage ? 'border-primary-600 bg-primary-600 text-white' : 'border-foreground-200 bg-white text-foreground-700 hover:border-primary-300')}>
+                    {item}
+                  </button>)}
+              <button type="button" disabled={currentPage === totalPages} onClick={() => setPage(value => Math.min(totalPages, value + 1))}
+                className="rounded-lg border border-foreground-200 bg-white px-3 py-1.5 text-xs font-semibold text-foreground-700 transition hover:border-primary-300 disabled:cursor-not-allowed disabled:opacity-45">
+                Next
+              </button>
+            </div>
+          </nav>}</>}
       </ReferencePanel>
-      {addOpen ? (
-        <AddLearnerReviewModal
-          data={data}
-          onClose={() => setAddOpen(false)}
-          onChanged={onChanged}
-        />
-      ) : null}
+      </>}
     </div>
   );
 }

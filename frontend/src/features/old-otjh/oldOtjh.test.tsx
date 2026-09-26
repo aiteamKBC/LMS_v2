@@ -30,8 +30,8 @@ const initial: Summary = {
   learner: { id: 7, aptem_id: 42, name: 'Test student', programme: 'Programme', coach_name: 'Test coach' },
   total_months: 2, completed_months: 1, months: [{ ...month, month: '2026-07', status: 'complete' }, month],
 };
-function page(path = '/old-otjh') {
-  return render(<OldOtjhProvider><MemoryRouter initialEntries={[path]}><Routes>
+function page(path = '/old-otjh', state?: unknown) {
+  return render(<OldOtjhProvider><MemoryRouter initialEntries={[state ? { pathname: path, state } : path]}><Routes>
     <Route path="/old-otjh" element={<OldOtjhPage />} />
     <Route path="/old-otjh/months" element={<OldOtjhPage />} />
     <Route path="/old-otjh/months/:month" element={<OldOtjhPage />} />
@@ -112,16 +112,20 @@ describe('previous learning portal', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Open LMS' })).toBeEnabled());
     expect(screen.getByRole('link', { name: 'Review previous record' })).toHaveAttribute('href', '/old-otjh/months');
   });
-  it('asks an incomplete student to contact their coach on LMS click', async () => {
+  it('opens the LMS for an incomplete student without requiring signatures', async () => {
     page(); await waitFor(() => expect(screen.getByRole('button', { name: 'Open LMS' })).toBeEnabled());
     fireEvent.click(screen.getByRole('button', { name: 'Open LMS' }));
+    expect(await screen.findByText('New LMS content')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+  it('still shows the coach contact dialog when requested', async () => {
+    page('/old-otjh', { contactCoach: true });
     const dialog = await screen.findByRole('dialog', { name: 'Your next chapter is nearly ready' });
-    expect(dialog).toHaveTextContent('1 of 2 months complete');
+    await waitFor(() => expect(dialog).toHaveTextContent('1 of 2 months complete'));
     expect(dialog).toHaveTextContent('1 remaining');
     expect(dialog).toHaveTextContent('Test coach');
-    expect(screen.queryByText('New LMS content')).not.toBeInTheDocument();
   });
-  it.each([0, 1, 2])('shows the actual signing status for %i signed months without granting LMS access', async signedCount => {
+  it.each([0, 1, 2])('shows the actual signing status for %i signed months and still opens the LMS', async signedCount => {
     const signature = { url: '/signature.png', signer_name: 'Test student', signed_at: '2026-09-12' };
     vi.mocked(getSummary).mockResolvedValue({ ...initial, months: initial.months.map((item, index) => ({
       ...item, student_signature: index < signedCount ? signature : null,
@@ -130,10 +134,9 @@ describe('previous learning portal', () => {
     expect(await screen.findByText(signedCount === 2 ? 'All months signed' : 'Signatures pending')).toBeInTheDocument();
     expect(screen.queryByText(signedCount === 2 ? 'Signatures pending' : 'All months signed')).not.toBeInTheDocument();
     expect(screen.getByText('Review in progress')).toBeInTheDocument();
-    expect(screen.getByText('LMS access pending')).toBeInTheDocument();
+    expect(screen.getByText('LMS access available')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Open LMS' }));
-    expect(await screen.findByRole('dialog', { name: 'Your next chapter is nearly ready' })).toBeInTheDocument();
-    expect(screen.queryByText('New LMS content')).not.toBeInTheDocument();
+    expect(await screen.findByText('New LMS content')).toBeInTheDocument();
   });
   it('opens LMS directly after all reviews and signatures are complete', async () => {
     vi.mocked(getSummary).mockResolvedValue({ ...initial, can_access_lms: true, state: 'completed', completed_months: 2 });
@@ -148,7 +151,7 @@ describe('previous learning portal', () => {
     expect(screen.getByRole('button', { name: 'Complete' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'July 2026' }).closest('section')).toHaveTextContent('Complete');
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '50');
-    expect(screen.queryByRole('link', { name: 'Continue to new LMS' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Continue to new LMS' })).toHaveAttribute('href', '/learner/home');
   });
   it('lets the learner open all-month signing from the month list', async () => {
     page('/old-otjh/months');
@@ -280,13 +283,13 @@ describe('previous learning portal', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Close Original learning activity' }));
     expect(screen.queryByTitle('Audio')).not.toBeInTheDocument();
   });
-  it('shows both cards while the record loads and keeps LMS closed', () => {
+  it('shows both cards while the record loads and keeps LMS available', async () => {
     vi.mocked(getSummary).mockImplementation(() => new Promise(() => {}));
     page();
     expect(screen.getByRole('status')).toHaveTextContent('Loading your previous record');
-    expect(screen.getByRole('button', { name: 'Open LMS' })).toBeDisabled();
     expect(screen.getByRole('link', { name: 'Review previous record' })).toBeInTheDocument();
-    expect(screen.queryByText('New LMS content')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Open LMS' }));
+    expect(await screen.findByText('New LMS content')).toBeInTheDocument();
   });
   it('shows an error and retry without signing the account out', async () => {
     vi.mocked(getSummary).mockRejectedValue(new Error('Please contact support.'));
@@ -295,8 +298,7 @@ describe('previous learning portal', () => {
     expect(screen.getByRole('heading', { name: 'Open your LMS' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Review previous record' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Open LMS' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Please contact support.');
-    expect(screen.queryByText('New LMS content')).not.toBeInTheDocument();
+    expect(await screen.findByText('New LMS content')).toBeInTheDocument();
   });
   it('shows the empty state', async () => {
     vi.mocked(getSummary).mockResolvedValue({ ...initial, months: [], total_months: 0, completed_months: 0 });
@@ -321,9 +323,8 @@ describe('previous learning portal', () => {
   });
 
   it('opens the first outstanding month from the dialog', async () => {
-    page();
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Open LMS' })).toBeEnabled());
-    fireEvent.click(screen.getByRole('button', { name: 'Open LMS' }));
+    page('/old-otjh', { contactCoach: true });
+    await screen.findByRole('link', { name: 'Review first month' });
     fireEvent.click(await screen.findByRole('button', { name: 'Review outstanding months' }));
     expect(await screen.findByRole('table', { name: 'Monthly activity log' })).toBeInTheDocument();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
@@ -331,11 +332,10 @@ describe('previous learning portal', () => {
 
   it('shows an empty progress bar at zero and restores focus when closing the dialog', async () => {
     vi.mocked(getSummary).mockResolvedValue({ ...initial, completed_months: 0 });
-    page();
+    page('/old-otjh', { contactCoach: true });
     const trigger = screen.getByRole('button', { name: 'Open LMS' });
-    await waitFor(() => expect(trigger).toBeEnabled());
-    trigger.focus(); fireEvent.click(trigger);
     const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(within(dialog).getByText(/0 of 2 months complete/)).toBeInTheDocument());
     const progress = within(dialog).getByRole('progressbar');
     expect(progress).toHaveAttribute('aria-valuenow', '0');
     expect(progress.firstElementChild).toHaveStyle({ width: '0%' });

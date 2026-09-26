@@ -108,7 +108,7 @@
   border: 1px solid rgb(255 255 255 / 0.6);
   border-radius: 0.875rem;
   background: #fff;
-  color: var(--learner-navy);
+  color: var(--kbc-learner-primary, #4f2d7f);
   box-shadow: 0 3px 8px rgb(0 0 0 / 0.08);
   font-size: 0.875rem;
   font-weight: 600;
@@ -207,43 +207,95 @@
 }
 
 .metric {
-  --metric-icon-background: var(--learner-soft);
-  --metric-icon-color: var(--learner-navy);
+  --metric-fill: var(--kbc-learner-primary, #4f2d7f);
+  --metric-track: #edf2f7;
+  --metric-text: var(--kbc-learner-primary-dark, #362055);
+  position: relative;
   container-type: inline-size;
   display: flex;
-  flex-direction: column;
+  align-items: stretch;
   min-width: 0;
-  min-height: 13rem;
-  padding: clamp(1.125rem, 1.5cqi, 1.5rem);
+  min-height: 9.5rem;
+  padding: 1.25rem 1.5rem;
   border: 1px solid oklch(var(--foreground-100) / 0.55);
-  border-radius: 1.125rem;
+  border-radius: 1.25rem;
   background: var(--kbc-surface);
-  box-shadow: var(--kbc-shadow-card);
+  box-shadow: 0 2px 8px rgb(79 45 127 / 0.08), 0 12px 24px -20px rgb(79 45 127 / 0.22);
   transition: border-color 150ms, box-shadow 150ms;
 }
 
-.metric[data-tone='positive'] {
-  --metric-icon-background: var(--learner-success-soft);
-  --metric-icon-color: var(--learner-success);
+.metric[data-accent='green'] {
+  --metric-fill: var(--learner-success);
 }
 
-.metric[data-tone='caution'] {
-  --metric-icon-background: var(--learner-warning-soft);
-  --metric-icon-color: var(--learner-warning);
+.dashboardCardsRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+  min-width: 0;
 }
 
-.metric[data-tone='critical'] {
-  --metric-icon-background: var(--learner-danger-soft);
-  --metric-icon-color: var(--learner-danger);
+.dashboardCardsRow > :first-child,
+.dashboardCardsRow > :last-child {
+  min-width: 0;
 }
 
-.metric[data-tone='neutral'] {
-  --metric-icon-color: var(--kbc-muted);
+@container learnerOverview (min-width: 68rem) {
+  .dashboardCardsRow {
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: .75rem;
+  }
+
+  .dashboardCardsRow > :first-child { grid-column: span 3; }
+  .dashboardCardsRow > :last-child {
+    grid-column: span 4;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: .75rem;
+  }
+
+  .metricsInline .metric {
+    min-height: 9.5rem;
+    padding: .75rem;
+    border-radius: .75rem;
+  }
+
+  .metricsInline {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: .75rem;
+  }
+
+  .metricsInline .metricTop {
+    column-gap: .5rem;
+  }
+
+  .metricsInline .metricRing {
+    width: 4.25rem;
+    height: 4.25rem;
+    flex-basis: 4.25rem;
+  }
+
+  .metricsInline .metricRing::after { inset: .5rem; }
+  .metricsInline .metricRingValue { font-size: .85rem; }
+  .metricsInline .metricLabel { font-size: .8rem; line-height: 1.2; }
+  .metricsInline .metricDetail { font-size: .68rem; line-height: 1.25; }
+}
+
+.metric[data-accent='yellow'] {
+  --metric-fill: var(--kbc-learner-secondary, #f5c94f);
+}
+
+.metric .metricFill {
+  background: var(--metric-fill);
+}
+
+:global([data-theme='dark']) .metric[data-accent='purple'] {
+  --metric-fill: var(--learner-purple);
+  --metric-track: #2d3c50;
 }
 
 .metric:hover {
-  border-color: rgb(var(--learner-navy-300));
-  box-shadow: 0 10px 26px -15px rgb(var(--learner-navy-500) / 0.25);
+  border-color: rgb(var(--learner-purple-300));
+  box-shadow: 0 10px 26px -15px rgb(var(--learner-purple-500) / 0.25);
 }
 
 .metric:focus-visible {
@@ -253,104 +305,92 @@
 
 .metricTop {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  column-gap: 1rem;
-  row-gap: 0.375rem;
+  column-gap: 1.5rem;
   min-width: 0;
+  width: 100%;
 }
 
-.metricIcon {
+.metricRing {
+  --metric-progress: 0%;
+  position: relative;
   display: grid;
-  width: 3.5rem;
-  height: 3.5rem;
-  border-radius: 45%;
+  width: 6.25rem;
+  height: 6.25rem;
+  flex: 0 0 6.25rem;
+  border-radius: 50%;
   place-items: center;
-  background: var(--metric-icon-background);
-  color: var(--metric-icon-color);
+  background: conic-gradient(from -90deg, var(--metric-fill) var(--metric-progress), var(--metric-track) 0);
 }
 
-.metricIcon > svg {
-  width: 1.75rem;
-  height: 1.75rem;
+.metricRing::after {
+  position: absolute;
+  inset: 0.75rem;
+  border-radius: 50%;
+  background: var(--kbc-surface);
+  content: '';
+}
+
+.metricRingValue {
+  position: relative;
+  z-index: 1;
+  color: var(--metric-text);
+  font-size: 1.25rem;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.metricBody {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  justify-content: center;
 }
 
 .metricLabel {
-  color: var(--kbc-text);
-  font-size: 1rem;
-  font-weight: 600;
+  color: var(--metric-text);
+  font-size: 1.125rem;
+  font-weight: 650;
   line-height: 1.4;
 }
 
-.metricArrow {
-  width: 1.125rem;
-  height: 1.125rem;
-  color: var(--kbc-muted);
-}
-
-.metricValues {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.75rem;
+.metricHeading {
   min-width: 0;
 }
 
-.metricValues > div + div {
-  padding-left: 0.75rem;
-  border-left: 1px solid var(--kbc-border);
+.metricArrow {
+  display: none;
 }
 
-.metricSubLabel {
-  color: var(--kbc-muted);
-  font-size: 0.75rem;
-  font-weight: 500;
-  text-transform: uppercase;
-  line-height: 1.4;
+.metricA11yData,
+.metricA11yProgress {
+  position: absolute;
+  width: 1px !important;
+  height: 1px !important;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 
-.metricValue {
-  margin-top: 0.25rem;
-  font-size: clamp(1rem, 7.5cqi, 1.375rem);
-  font-weight: 600;
-  line-height: 1.4;
-  font-variant-numeric: tabular-nums;
+.metricDetail {
+  margin-top: 0.35rem;
+  color: var(--metric-text);
+  font-size: 0.9375rem;
+  line-height: 1.45;
   overflow-wrap: anywhere;
 }
 
-.metricBar {
-  margin-top: auto;
-  flex-shrink: 0;
-}
-
-.metricValueDetail {
-  display: block;
-  margin-top: 0.25rem;
-  color: var(--kbc-muted);
-  font-size: 0.8125rem;
-  font-weight: 400;
-  line-height: 1.5;
-}
-
-.metricTop,
-.metricValues {
-  margin-bottom: 1.125rem;
+.metricTop {
+  margin-bottom: 0;
 }
 
 .metricCaption {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.5rem;
-  margin-top: 1.25rem;
+  margin-top: 0.25rem;
   color: var(--kbc-muted);
-  font-size: 0.8125rem;
+  font-size: 0.75rem;
   line-height: 1.5;
-}
-
-.metricCaption > svg {
-  width: 1rem;
-  height: 1rem;
-  margin-top: 0.125rem;
-  flex-shrink: 0;
 }
 
 @container learnerOverview (min-width: 32rem) {
