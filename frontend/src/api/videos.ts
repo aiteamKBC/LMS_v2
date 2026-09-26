@@ -15,6 +15,8 @@ export interface VideoProgressSubmission {
   startedAt: string;
   timeTakenSeconds: number;
   timeEntrySource?: 'timer' | 'input';
+  insideWorkingHoursConfirmed?: boolean;
+  insideWorkingHoursConfirmedAt?: string | null;
   outsideWorkingHoursConfirmed?: boolean;
   trackingToken: string;
   videoTitle?: string | null;
@@ -39,6 +41,8 @@ export interface VideoProgressRecord {
   serverSessionSeconds: number;
   verifiedSeconds: number;
   outsideWorkingHours?: boolean;
+  insideWorkingHoursConfirmed?: boolean;
+  insideWorkingHoursConfirmedAt?: string | null;
   outsideWorkingHoursConfirmed?: boolean;
   outsideWorkingHoursConfirmedAt?: string | null;
 }

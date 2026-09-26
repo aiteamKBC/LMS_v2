@@ -137,6 +137,12 @@ export function mayAccessRoute(path: string, account: Pick<AuthUser, 'role' | 'a
     const grants = [account.access, ...(account.accessWorkspaces ?? []).map(workspace => workspace.access)];
     return STAFF.includes(account.role) && grants.some(grant => ['super-admin', 'enrolment', 'curriculum'].includes(grant ?? ''));
   }
+  if (path === '/users/first-sessions') {
+    // Enrolment only (super-admin passes everywhere) -- the same grant the API
+    // enforces in learner_api/first_session_bookings.py.
+    const grants = [account.access, ...(account.accessWorkspaces ?? []).map(workspace => workspace.access)];
+    return STAFF.includes(account.role) && grants.some(grant => ['super-admin', 'enrolment'].includes(grant ?? ''));
+  }
   if (path === '/old-otjh/monitor') return account.access === 'super-admin';
   return rolesForRoute(path).includes(account.role);
 }

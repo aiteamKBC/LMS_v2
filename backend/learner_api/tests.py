@@ -1696,7 +1696,7 @@ class ComponentWriteSoftDeleteTests(SimpleTestCase):
 class ComponentWriteEndpointRejectionTests(SimpleTestCase):
     """The service-layer rejections must surface as a client error, not a 200."""
 
-    def _post(self, component_id, *, access_time=None, payload=None):
+    def _post(self, component_id, *, access_time=None, payload=None, holiday=False):
         access_time = access_time or datetime(2026, 1, 15, 12, 0, tzinfo=timezone.utc)
         tracking = issue_tracking_session(
             activity_kind="component",
@@ -1716,7 +1716,7 @@ class ComponentWriteEndpointRejectionTests(SimpleTestCase):
         view = submit_component_progress
         while hasattr(view, "__wrapped__"):
             view = view.__wrapped__
-        with patch("learner_api.components.timezone.now", return_value=access_time):
+        with patch("learner_api.components.timezone.now", return_value=access_time), patch('learner_api.time_tracking.is_working_hours_holiday', return_value=holiday):
             return view(request, component_id)
 
     def _run(self, save_side_effect=None, **post_options):
@@ -1754,15 +1754,17 @@ class ComponentWriteEndpointRejectionTests(SimpleTestCase):
             payload={
                 "timeTakenSeconds": 10,
                 "timeEntrySource": "timer",
-                "outsideWorkingHoursConfirmed": True,
+                "insideWorkingHoursConfirmed": True,
             },
         )
         self.assertEqual(response.status_code, 200)
         record = save.call_args.args[1]
         self.assertEqual(record["verifiedSeconds"], 10)
         self.assertTrue(record["outsideWorkingHours"])
-        self.assertTrue(record["outsideWorkingHoursConfirmed"])
-        self.assertEqual(record["outsideWorkingHoursConfirmedAt"], record["submittedAt"])
+        self.assertFalse(record["outsideWorkingHoursConfirmed"])
+        self.assertTrue(record["insideWorkingHoursConfirmed"])
+        self.assertIsNone(record["outsideWorkingHoursConfirmedAt"])
+        self.assertEqual(record["insideWorkingHoursConfirmedAt"], record["submittedAt"])
 
     def test_out_of_hours_completion_requires_confirmation(self):
         save = Mock()
@@ -1774,6 +1776,38 @@ class ComponentWriteEndpointRejectionTests(SimpleTestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("Confirm", json.loads(response.content)["error"])
         save.assert_not_called()
+
+    def test_legacy_outside_confirmation_does_not_confirm_inside_work(self):
+        save = Mock()
+        response = self._run(save, access_time=datetime(2026, 1, 18, 22, 0, tzinfo=timezone.utc),
+                             payload={"outsideWorkingHoursConfirmed": True})
+        self.assertEqual(response.status_code, 400)
+        save.assert_not_called()
+
+    def test_weekday_holiday_requires_inside_hours_confirmation(self):
+        save = Mock()
+        response = self._run(save, holiday=True)
+        self.assertEqual(response.status_code, 400)
+        save.assert_not_called()
+        response = self._run(save, holiday=True, payload={'insideWorkingHoursConfirmed': True})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(save.call_args.args[1]['insideWorkingHoursConfirmed'])
+
+    def test_calendar_failure_does_not_save_progress(self):
+        save = Mock()
+        with patch('learner_api.components.outside_uk_working_hours', side_effect=DatabaseError):
+            response = self._run(save)
+        self.assertEqual(response.status_code, 503)
+        save.assert_not_called()
+
+    def test_in_hours_submission_does_not_require_or_record_declaration(self):
+        save = Mock()
+        response = self._run(save)
+        self.assertEqual(response.status_code, 200)
+        record = save.call_args.args[1]
+        self.assertFalse(record['outsideWorkingHours'])
+        self.assertFalse(record['insideWorkingHoursConfirmed'])
+        self.assertIsNone(record['insideWorkingHoursConfirmedAt'])
 
 
 class ProgressAchievementRuleTests(SimpleTestCase):

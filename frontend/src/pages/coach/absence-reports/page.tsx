@@ -533,9 +533,10 @@ export default function CoachAbsenceReports() {
 
             {/* Session Info Card */}
             {selectedReport.recoveryMethod && <div className="rounded-xl border border-foreground-200 p-3 text-xs">
-              <p className="font-semibold">Learner's catch-up plan</p>
-              <p className="mt-1">{selectedReport.recoveryMethod === 'recorded' ? 'Watch the lecture recording' : 'Catch-up session booked or requested'}</p>
-              {selectedReport.catchupEventKey && <p className="mt-1 text-foreground-500">Booking reference: {selectedReport.catchupEventKey}</p>}
+              <p className="font-semibold">Learner's recovery plan</p>
+              <p className="mt-1">{selectedReport.recoveryMethod === 'recorded' ? 'Watch the lecture recording — attendance is not recovered' : selectedReport.recoveryMethod === 'alternative' ? 'Attend the equivalent session with another cohort group' : 'Coach catch-up session booked or requested'}</p>
+              {selectedReport.recoveryMethod === 'alternative' && selectedReport.alternativeSession && <p className="mt-1 text-foreground-500">{selectedReport.alternativeSession.group || selectedReport.alternativeSession.cohort} · {selectedReport.alternativeSession.dateIso} · {selectedReport.alternativeSession.startTime}</p>}
+              {selectedReport.recoveryMethod === 'catch-up' && selectedReport.catchupEventKey && <p className="mt-1 text-foreground-500">Booking reference: {selectedReport.catchupEventKey}</p>}
             </div>}
             <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-4 space-y-3">
               <h4 className="text-[12px] font-semibold text-foreground-500 uppercase tracking-wider flex items-center gap-1.5">

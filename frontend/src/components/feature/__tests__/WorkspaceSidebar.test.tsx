@@ -142,9 +142,11 @@ it('keeps an administrator in the selected coach workspace', () => {
   viewer.isAdmin = true;
   const { sidebar, rail } = showWorkspace('coach', '/workspace/coach');
   expect(sidebar.closest('.workspace-shell')).toHaveAttribute('data-workspace-role', 'coach');
-  expect(within(rail).getAllByRole('link').slice(0, 3).map(link => link.textContent)).toEqual(['Dashboard', 'Attendance', 'Marking']);
+  expect(within(rail).getAllByRole('link').slice(0, 4).map(link => link.textContent)).toEqual(['Dashboard', 'Notifications', 'Attendance', 'Marking']);
+  expect(within(rail).getByRole('link', { name: 'Notifications' })).toHaveAttribute('href', '/notifications');
   expect(within(rail).getByRole('button', { name: 'Meetings' })).toBeVisible();
   expect(within(rail).getByRole('link', { name: 'Marking' })).toHaveAttribute('href', '/coach/marking-queue');
+  expect(within(rail).getByRole('link', { name: 'Absence Reports' })).toHaveAttribute('href', '/coach/absence-reports');
   expect(within(rail).getByRole('link', { name: 'Marking' }).querySelector('svg')).not.toBeNull();
   expect(within(sidebar).queryByRole('button', { name: 'Open account settings' })).toBeNull();
 });

@@ -100,7 +100,7 @@ export default function HistoricalAssignmentPage() {
           weekTitle={submission.weekTitle || ''} plannedOtjh={null} ksbMappings={[]}
           questionText="The original assignment is preserved in the attached file."
           evidenceFiles={files} evidenceDetails={{}} timeSeconds={null} timeControl={<p>See the original record for time evidence.</p>}
-          outsideWorkingHours={false} outsideWorkingHoursConfirmed={false} submittingProgress={false}
+          outsideWorkingHours={false} insideWorkingHoursConfirmed={false} submittingProgress={false}
           onEvidenceChanged={() => {}} onRestoreTime={() => {}} onSubmitProgress={async () => {}}
           resolveEvidenceUrl={resolveEvidenceUrl} renderEvidencePreview={(file, url) => <HistoricalFilePreview key={file.id} file={file} url={url} />} />
         {!submission.legacyAssignment?.content && (submission.legacyAssignment?.feedbacks || []).map((feedback, index) => <section key={index} className="rounded-xl border bg-white p-5">

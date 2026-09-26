@@ -84,6 +84,10 @@ def save_weekday_calendar(payload, graph_settings, series=None):
         **payload,
         'hideAttendees': True,
     }
+    # Existing calendars are repaired silently by default.  A caller must opt
+    # in to publishing a new attendee list; creation keeps the historical
+    # publish behaviour so a newly-created meeting still invites its roster.
+    notify_attendees = v.truthy(combined.get('notifyAttendees')) if series else True
     # An existing calendar always belongs to its stored organizer's mailbox.
     organizer = v.clean_str(series.get('organizer_email')) or v.teams_new_meeting_organizer(combined.get('organizerEmail'))
     if not organizer:
@@ -159,7 +163,10 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                 except CalendarMismatch:
                     pass
                 if patch:
-                    event = microsoft_graph_request('PATCH', f'users/{owner}/events/{quote(event_id, safe="")}', payload=patch) or {}
+                    event = microsoft_graph_request(
+                        'PATCH', f'users/{owner}/events/{quote(event_id, safe="")}', payload=patch,
+                        extra_headers=v.GRAPH_SILENT_INVITE_HEADERS,
+                    ) or {}
                 event = {**event, 'id': event_id}
             else:
                 event = microsoft_graph_request('POST', f'users/{owner}/events', payload={**body, 'attendees': []})
@@ -183,7 +190,7 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                 first_event = event
             applied, meeting, option_warnings = v.apply_teams_meeting_options(
                 organizer, join_url, recording=combined.get('recording') or 'none',
-                lobby_bypass=combined.get('lobbyBypass') or 'invited', spoken_language=combined.get('spokenLanguage') or 'en-GB',
+                lobby_bypass=combined.get('lobbyBypass') or v.DEFAULT_TEAMS_LOBBY_BYPASS, spoken_language=combined.get('spokenLanguage') or 'en-GB',
                 attendees=attendees, presenters=presenters, co_organizers=co_organizers,
                 online_meeting_id=previous.get('onlineMeetingId'),
             )
@@ -232,10 +239,11 @@ def save_weekday_calendar(payload, graph_settings, series=None):
         if warnings or not settings_applied:
             raise RuntimeError('Microsoft did not accept every reviewed session or meeting option. New invitations remain pending.')
         # Every weekday must pass before any new invitation list is published.
-        for checked, recipients, targets, recurring in publish_queue:
-            publish_attendees(microsoft_graph_request, owner, checked, recipients)
-            verify_calendar(microsoft_graph_request, owner, checked['id'], targets,
-                            (checked.get('onlineMeeting') or {}).get('joinUrl'), recurring)
+        if notify_attendees:
+            for checked, recipients, targets, recurring in publish_queue:
+                publish_attendees(microsoft_graph_request, owner, checked, recipients)
+                verify_calendar(microsoft_graph_request, owner, checked['id'], targets,
+                                (checked.get('onlineMeeting') or {}).get('joinUrl'), recurring)
 
         days = {day for day, _ in groups}
         for old in list(manifest):
@@ -257,7 +265,7 @@ def save_weekday_calendar(payload, graph_settings, series=None):
             'repeat_occurrences': len(requested_numbers), 'module_title': v.teams_calendar_subject(combined, series),
             'attendees': v.json_db_value(attendees), 'presenters': v.json_db_value(presenters), 'co_organizers': v.json_db_value(co_organizers),
             'recording': combined.get('recording') or 'none',
-            'lobby_bypass': combined.get('lobbyBypass') or 'invited',
+            'lobby_bypass': combined.get('lobbyBypass') or v.DEFAULT_TEAMS_LOBBY_BYPASS,
             'spoken_language': combined.get('spokenLanguage') or 'en-GB',
             'warnings': v.json_db_value(warnings), 'updated_at': datetime.utcnow(),
             'hide_attendees': True,

@@ -65,6 +65,7 @@ export const learnerNavItems: SidebarNavItem[] = [
 // ============================================================================
 export const coachNavItems: SidebarNavItem[] = [
   { id: 'coach-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/coach' },
+  { id: 'coach-notifications', label: 'Notifications', icon: 'ri-notification-3-line', href: '/notifications' },
   {
     id: 'coach-meetings',
     label: 'Meetings',
@@ -96,6 +97,7 @@ export const coachNavItems: SidebarNavItem[] = [
     href: '/coach/monthly-logs',
     matchPaths: ['/coach/monthly-cycle'],
   },
+  { id: 'coach-absence-reports', label: 'Absence Reports', icon: 'ri-error-warning-line', href: '/coach/absence-reports' },
 ];
 
 // ============================================================================
@@ -183,6 +185,7 @@ export const employerNavItems: SidebarNavItem[] = [
     label: 'Communication',
     icon: 'ri-mail-line',
     children: [
+      { id: 'employer-notifications', label: 'Notifications', icon: 'ri-notification-3-line', href: '/notifications' },
       { id: 'employer-messages', label: 'Messages', icon: 'ri-mail-line', href: '/messages', statusDot: 'blue' },
       { id: 'employer-support', label: 'Support Requests', icon: 'ri-question-line', href: '/employer/support' },
     ],
@@ -326,6 +329,7 @@ export const engagementNavItems: SidebarNavItem[] = [
  */
 export const apprenticeNavItems: SidebarNavItem[] = [
   { id: 'apprenticeNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/users/coach-directory' },
+  { id: 'apprenticeNavItems-first-sessions', label: 'First sessions', icon: 'ri-calendar-check-line', href: '/users/first-sessions' },
   { id: 'apprentice-users', label: 'Users', icon: 'ri-group-line', href: '/users', statusDot: 'blue' },
 ];
 
@@ -335,6 +339,7 @@ export const apprenticeNavItems: SidebarNavItem[] = [
  */
 export const enrolmentNavItems: SidebarNavItem[] = [
   { id: 'enrolmentNavItems-coach-directory', label: 'Coach directory', icon: 'ri-team-line', href: '/users/coach-directory' },
+  { id: 'enrolmentNavItems-first-sessions', label: 'First sessions', icon: 'ri-calendar-check-line', href: '/users/first-sessions' },
   { id: 'enrolment-users', label: 'Users', icon: 'ri-group-line', href: '/users', statusDot: 'blue' },
 ];
 
@@ -610,6 +615,17 @@ export const adminNavItems: SidebarNavItem[] = [
 
   // Every headline count in one place, each row naming its source table.
   { id: 'admin-platform-report', label: 'Platform Report', icon: 'ri-bar-chart-box-line', href: '/admin/platform-report' },
+
+  // College sites outside the LMS — open in a new tab.
+  {
+    id: 'admin-group-external',
+    label: 'External tools',
+    icon: 'ri-external-link-line',
+    children: [
+      { id: 'admin-positive-moments', label: 'Positive Moments', icon: 'ri-heart-line', href: 'https://positive-moments.kentbusinesscollege.net', external: true },
+      { id: 'admin-tutor-dashboard', label: 'Tutor Dashboard', icon: 'ri-dashboard-line', href: 'https://tutordashboard.kentbusinesscollege.net', external: true },
+    ],
+  },
 ];
 
 // ============================================================================

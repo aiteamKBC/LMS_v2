@@ -1174,6 +1174,11 @@ TEAMS_LOBBY_VALUES = {
     'everyone': 'everyone',
     'organizer': 'organizer',
 }
+# LMS-created meetings are open-entry by policy: learners should not have to
+# wait for a coach to admit them from the lobby.  The value remains a Graph
+# scope (rather than a boolean) so existing per-meeting overrides continue to
+# be understood while new meetings use the direct-entry default.
+DEFAULT_TEAMS_LOBBY_BYPASS = 'everyone'
 
 
 def ensure_live_sessions_table():
@@ -1216,7 +1221,7 @@ def provision_live_sessions_table():
                 duration_minutes integer not null default 60,
                 repeat_pattern varchar(32) not null default 'none',
                 repeat_occurrences integer not null default 1,
-                lobby_bypass varchar(64) not null default 'invited',
+                lobby_bypass varchar(64) not null default 'everyone',
                 recording varchar(64) not null default 'none',
                 spoken_language varchar(32) not null default 'en-GB',
                 meeting_type varchar(64) not null default 'live-session',
@@ -1500,6 +1505,10 @@ def replace_live_session_occurrences(live_session_id, payload, utc_start, durati
     now = datetime.utcnow()
     rows = scheduled_live_session_occurrences(payload, utc_start, duration, repeat, occurrences)
     existing_rows = authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [live_session_id])
+    # Keep this local because the occurrence writer is also exercised by the
+    # isolated no-database calendar tests, which deliberately load only the
+    # functions needed for a Graph update rather than this whole module.
+    off_calendar_statuses = {'cancelled', 'canceled', 'declined', 'deleted', 'removed'}
     def occurrence_number(row):
         try:
             return int((row or {}).get('session_number') or 0)
@@ -1509,14 +1518,66 @@ def replace_live_session_occurrences(live_session_id, payload, utc_start, durati
         occurrence_number(row): row
         for row in existing_rows
         if occurrence_number(row) > 0
+        and clean_str(row.get('status')).lower() not in off_calendar_statuses
     }
+
+    # A holiday/date repair can insert a target before already-booked sessions
+    # (for example, restoring 25 September while keeping 9 October).  Matching
+    # only by session number would shift every existing row and take its
+    # attendance/artifacts with it.  Match exact calendar instants first, then
+    # fall back to the old number for genuinely moved sessions.  Row ids are
+    # retained, so historical attendance remains attached to the occurrence it
+    # was collected for.
+    existing_by_start = {}
+    for row in existing_rows:
+        key = teams_calendar_minute_key(row.get('scheduled_start'))
+        if key and key not in existing_by_start and clean_str(row.get('status')).lower() not in off_calendar_statuses:
+            existing_by_start[key] = row
+    assignments = [(item, None) for item in rows]
+    used_ids = set()
+    # Claim every exact-date row first.  If a new early target is inserted,
+    # its old session number may belong to a later target that is still on the
+    # calendar; consuming that row as a fallback would move its identity and
+    # attendance to the wrong date.
+    for index, (item, _unused) in enumerate(assignments):
+        match = existing_by_start.get(teams_calendar_minute_key(item['start']))
+        if match is None:
+            continue
+        match_id = clean_str(match.get('id'))
+        if match_id and match_id not in used_ids:
+            assignments[index] = (item, match)
+            used_ids.add(match_id)
+    for index, (item, match) in enumerate(assignments):
+        if match is not None:
+            continue
+        fallback = existing_by_number.get(item['session_number'])
+        fallback_id = clean_str((fallback or {}).get('id'))
+        if fallback is not None and fallback_id not in used_ids:
+            assignments[index] = (item, fallback)
+            used_ids.add(fallback_id)
+
+    # Session numbers are unique per series.  Move all retained rows out of the
+    # public range before applying the final numbering, otherwise inserting a
+    # missing early date can collide with the next row's old number.
+    temporary_rows = [
+        row for row in existing_rows
+        if clean_str(row.get('id'))
+        and clean_str(row.get('status')).lower() not in off_calendar_statuses
+    ]
+    for index, row in enumerate(temporary_rows):
+        update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [row['id']], {
+            'session_number': 1000000 + index,
+            'updated_at': now,
+        })
+
     active_numbers = set()
-    for item in rows:
+    assigned_ids = set()
+    for item, existing in assignments:
+        existing = existing or {}
         session_number = item['session_number']
         active_numbers.add(session_number)
-        existing = existing_by_number.get(session_number) or {}
-        authoring_upsert(LIVE_SESSION_OCCURRENCES_TABLE, ['live_session_id', 'session_number'], {
-            'id': clean_str(existing.get('id')) or f'OCC-{uuid.uuid4().hex.upper()}',
+        existing_id = clean_str(existing.get('id'))
+        values = {
             'live_session_id': live_session_id,
             'session_number': session_number,
             'graph_event_id': clean_str(event_id),
@@ -1526,18 +1587,43 @@ def replace_live_session_occurrences(live_session_id, payload, utc_start, durati
             'status': 'completed' if existing.get('status') == 'completed' else 'scheduled',
             'created_at': existing.get('created_at') or now,
             'updated_at': now,
+        }
+        if existing_id:
+            assigned_ids.add(existing_id)
+            update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [existing_id], values)
+        else:
+            authoring_upsert(LIVE_SESSION_OCCURRENCES_TABLE, ['live_session_id', 'session_number'], {
+                'id': f'OCC-{uuid.uuid4().hex.upper()}', **values,
+            })
+
+    # Rows no longer represented by the reviewed plan stay as cancelled audit
+    # records.  Give them a negative number while they are off-calendar so they
+    # cannot collide with a newly-added target and remain excluded everywhere
+    # that filters cancelled occurrences.
+    next_cancelled_number = min(
+        [occurrence_number(row) for row in existing_rows if occurrence_number(row) < 0] or [-999]
+    ) - 1
+    for row in temporary_rows:
+        row_id = clean_str(row.get('id'))
+        if row_id in assigned_ids:
+            continue
+        update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [row_id], {
+            'session_number': next_cancelled_number,
+            'status': 'cancelled',
+            'updated_at': now,
         })
-    if active_numbers:
-        stale_ids = [clean_str(row.get('id')) for row in existing_rows if occurrence_number(row) not in active_numbers]
-        if stale_ids:
-            placeholders = ', '.join(['%s'] * len(stale_ids))
-            update_authoring_rows(
-                LIVE_SESSION_OCCURRENCES_TABLE,
-                f"id in ({placeholders})",
-                stale_ids,
-                {'status': 'cancelled', 'updated_at': now},
-            )
-    return rows
+        next_cancelled_number -= 1
+    # Callers immediately attach these occurrences to module components. Return
+    # the persisted rows (with ids, event/link overrides and scheduled_* field
+    # names), not the planner-shaped input rows; otherwise a successful Teams
+    # repair leaves every component holding blank occurrence metadata until a
+    # later manual re-attach.
+    return authoring_fetch_all(
+        LIVE_SESSION_OCCURRENCES_TABLE,
+        'live_session_id = %s and status != %s',
+        [live_session_id, 'cancelled'],
+        'session_number asc',
+    )
 
 
 def persist_live_session_series(payload, event, warnings, graph_settings, organizer, attendees, presenters, online_meeting_id='', co_organizers=(), *, persist_occurrences=True):
@@ -1592,7 +1678,7 @@ def persist_live_session_series(payload, event, warnings, graph_settings, organi
         'duration_minutes': max(15, min(1440, int(payload.get('durationMinutes') or 60))),
         'repeat_pattern': clean_str(payload.get('repeat')).lower() or 'none',
         'repeat_occurrences': max(1, min(52, int(payload.get('repeatOccurrences') or 1))),
-        'lobby_bypass': clean_str(payload.get('lobbyBypass')).lower() or 'invited',
+        'lobby_bypass': clean_str(payload.get('lobbyBypass')).lower() or DEFAULT_TEAMS_LOBBY_BYPASS,
         'recording': clean_str(payload.get('recording')).lower() or 'none',
         'spoken_language': clean_str(payload.get('spokenLanguage')) or 'en-GB',
         'meeting_type': clean_str(payload.get('meetingType')) or 'live-session',
@@ -1627,10 +1713,19 @@ def link_live_session_series_to_module(module_catalogue_id, payload):
             live_session_id = clean_str(settings_payload.get('teamsLiveSessionId'))
             if live_session_id:
                 live_session_ids.add(live_session_id)
-    delivery_metadata = payload.get('deliveryMetadata') if isinstance(payload.get('deliveryMetadata'), dict) else {}
-    metadata_id = clean_str(delivery_metadata.get('teamsLiveSessionId'))
-    if metadata_id:
-        live_session_ids.add(metadata_id)
+    # A full structure save is authoritative about which components own a
+    # calendar.  Module responses also carry a convenience copy of the calendar
+    # id in deliveryMetadata; accepting that duplicate field here let a newly
+    # duplicated module steal the source module's live_sessions row even though
+    # every copied component had correctly had its booking identity removed.
+    # Keep the metadata fallback only for legacy partial saves that send no
+    # structure at all.
+    has_explicit_structure = 'weekStructure' in payload or 'weeks' in payload
+    if not has_explicit_structure:
+        delivery_metadata = payload.get('deliveryMetadata') if isinstance(payload.get('deliveryMetadata'), dict) else {}
+        metadata_id = clean_str(delivery_metadata.get('teamsLiveSessionId'))
+        if metadata_id:
+            live_session_ids.add(metadata_id)
     for live_session_id in live_session_ids:
         update_authoring_rows(
             LIVE_SESSIONS_TABLE,
@@ -2213,7 +2308,9 @@ def apply_teams_occurrence_shifts(
     return warnings, recreated_details
 
 
-def reschedule_single_live_session_occurrence(series, occurrence, new_start_utc, duration):
+def reschedule_single_live_session_occurrence(
+    series, occurrence, new_start_utc, duration, *, notify_attendees=False,
+):
     """Move one session of a live-session series to a new instant via Graph.
 
     The module schedule sets every session's time; this is the escape hatch for
@@ -2252,7 +2349,10 @@ def reschedule_single_live_session_occurrence(series, occurrence, new_start_utc,
         actual_link = clean_str((current.get('onlineMeeting') or {}).get('joinUrl'))
         if current.get('isCancelled') or actual_link != join_url or not safe_teams_join_url(actual_link):
             raise RuntimeError('The session join link or calendar identity could not be verified.')
-        microsoft_graph_request('PATCH', path, payload=patch_body)
+        microsoft_graph_request(
+            'PATCH', path, payload=patch_body,
+            extra_headers=None if notify_attendees else GRAPH_SILENT_INVITE_HEADERS,
+        )
         verify_calendar(microsoft_graph_request, owner_key, instance_id, [
             {'session_number': occurrence.get('session_number') or 1,
              'start': utc_datetime(new_start_utc), 'end': utc_datetime(new_end_utc)},
@@ -2326,7 +2426,7 @@ def apply_teams_meeting_options(
     organizer,
     join_url,
     recording='none',
-    lobby_bypass='invited',
+    lobby_bypass=DEFAULT_TEAMS_LOBBY_BYPASS,
     spoken_language='en-GB',
     attendees=(),
     presenters=(),
@@ -2378,10 +2478,10 @@ def apply_teams_meeting_options(
             'detail': '',
         }]
 
-    lobby_choice = clean_str(lobby_bypass).lower() or 'invited'
+    lobby_choice = clean_str(lobby_bypass).lower() or DEFAULT_TEAMS_LOBBY_BYPASS
     if lobby_choice not in TEAMS_LOBBY_VALUES:
-        lobby_choice = 'invited'
-    recording_choice = clean_str(recording).lower() or 'none'
+        lobby_choice = DEFAULT_TEAMS_LOBBY_BYPASS
+    recording_choice = (clean_str(recording).lower() or 'none') if recording is not None else None
     # Never `list(...)` these: a caller that passes the stored JSON text instead
     # of a parsed list would have it split into characters here.
     co_organizer_emails = teams_series_email_list(co_organizers)
@@ -2401,11 +2501,18 @@ def apply_teams_meeting_options(
             'scope': TEAMS_LOBBY_VALUES[lobby_choice],
             'isDialInBypassEnabled': False,
         },
-        'allowRecording': recording_choice != 'none',
-        'recordAutomatically': recording_choice != 'none',
-        'allowTranscription': recording_choice == 'record-transcribe',
-        'meetingSpokenLanguageTag': clean_str(spoken_language) or 'en-GB',
     }
+    # ``None`` is used by the one-time lobby migration so it can leave an
+    # existing meeting's recording/transcription and spoken-language settings
+    # untouched while changing only who may enter directly.
+    if recording_choice is not None:
+        patch.update({
+            'allowRecording': recording_choice != 'none',
+            'recordAutomatically': recording_choice != 'none',
+            'allowTranscription': recording_choice == 'record-transcribe',
+        })
+    if spoken_language is not None:
+        patch['meetingSpokenLanguageTag'] = clean_str(spoken_language) or 'en-GB'
     # The roster goes on the meeting whether or not anyone presents: it is what
     # tells Teams these people belong to this meeting rather than being guests who
     # found the link. `allowedPresenters` stays at the tenant default until a
@@ -2487,7 +2594,7 @@ def teams_standalone_occurrence_meeting(owner_key, event, target, invited_people
             options.get('organizer', ''),
             join_url,
             recording=options.get('recording', 'none'),
-            lobby_bypass=options.get('lobby_bypass', 'invited'),
+            lobby_bypass=options.get('lobby_bypass', DEFAULT_TEAMS_LOBBY_BYPASS),
             spoken_language=options.get('spoken_language', 'en-GB'),
             attendees=invited_people,
             presenters=options.get('presenters') or [],
@@ -2710,9 +2817,9 @@ def curriculum_teams_meeting(request):
                           status=500, meetingCreated=True, eventId=event_id)
 
     warnings = []
-    lobby_choice = clean_str(payload.get('lobbyBypass')).lower() or 'invited'
+    lobby_choice = clean_str(payload.get('lobbyBypass')).lower() or DEFAULT_TEAMS_LOBBY_BYPASS
     if lobby_choice not in TEAMS_LOBBY_VALUES:
-        lobby_choice = 'invited'
+        lobby_choice = DEFAULT_TEAMS_LOBBY_BYPASS
     recording = clean_str(payload.get('recording')).lower() or 'none'
     spoken_language = clean_str(payload.get('spokenLanguage')) or 'en-GB'
     meeting_options = {
@@ -2922,27 +3029,15 @@ def graph_item_with_occurrence_link(item, occurrence, launch=None):
 
 
 def attendance_identity(record):
-    identity = record.get('identity') if isinstance(record.get('identity'), dict) else {}
-    for key in ('user', 'guest', 'phone', 'encrypted'):
-        value = identity.get(key)
-        if isinstance(value, dict):
-            display_name = clean_str(value.get('displayName') or value.get('name'))
-            identity_id = clean_str(value.get('id'))
-            if display_name or identity_id:
-                return display_name, identity_id
-    return '', ''
+    from .session_results_policy import attendance_identity as policy_attendance_identity
+    return policy_attendance_identity(record)
 
 
 def attendance_display_name(record):
-    if not isinstance(record, dict):
-        return ''
-    display_name, _identity_id = attendance_identity(record)
+    from .session_results_policy import attendance_display_name as policy_attendance_display_name
+    display_name = policy_attendance_display_name(record)
     if display_name:
         return display_name
-    for key in ('displayName', 'participantDisplayName', 'name'):
-        display_name = clean_str(record.get(key))
-        if display_name:
-            return display_name
     email = clean_str(record.get('emailAddress') or record.get('email')).lower()
     if email and '@' in email:
         local = email.split('@', 1)[0]
@@ -3091,6 +3186,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     payload = json_body(request)
     if not isinstance(payload, dict):
         return json_error('A valid JSON body is required.')
+    notify_attendees = truthy(payload.get('notifyAttendees'))
     series = series_rows[0]
     # Omitted options retain their saved values for schedule-only callers.
     option_fields = {'recording': 'recording', 'lobbyBypass': 'lobby_bypass', 'spokenLanguage': 'spoken_language'}
@@ -3191,6 +3287,10 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         'end': graph_calendar_time(targets[0]['end'], graph_timezone_iana(graph_settings), graph_settings.get('timezone') or series.get('timezone') or 'GMT Standard Time'),
     }
     event_patch['recurrence'] = recurrence if repeat != 'none' else None
+    calendar_attendees = [
+        {'emailAddress': {'address': email, 'name': email.split('@', 1)[0]}, 'type': 'required'}
+        for email in invited_people
+    ]
 
     owner_key = urllib_parse.quote(organizer, safe='')
     event_key = urllib_parse.quote(event_id, safe='')
@@ -3211,13 +3311,22 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             # Saving people must not reapply a series pattern and revive cancelled slots.
             event = current
             if current.get('hideAttendees') is not True:
-                microsoft_graph_request('PATCH', f'users/{owner_key}/events/{event_key}', payload={'hideAttendees': True})
+                microsoft_graph_request(
+                    'PATCH', f'users/{owner_key}/events/{event_key}',
+                    payload={'hideAttendees': True}, extra_headers=GRAPH_SILENT_INVITE_HEADERS,
+                )
         elif dates_already_verified:
             event = current
             if current.get('subject') != title:
-                event = microsoft_graph_request('PATCH', f'users/{owner_key}/events/{event_key}', payload={'subject': title})
+                event = microsoft_graph_request(
+                    'PATCH', f'users/{owner_key}/events/{event_key}',
+                    payload={'subject': title}, extra_headers=GRAPH_SILENT_INVITE_HEADERS,
+                )
         else:
-            event = microsoft_graph_request('PATCH', f'users/{owner_key}/events/{event_key}', payload=event_patch)
+            event = microsoft_graph_request(
+                'PATCH', f'users/{owner_key}/events/{event_key}', payload=event_patch,
+                extra_headers=GRAPH_SILENT_INVITE_HEADERS,
+            )
         if not isinstance(event, dict):
             event = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}')
     except RuntimeError as exc:
@@ -3227,7 +3336,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     meeting_options = {
         'organizer': organizer,
         'recording': option_updates.get('recording', clean_str(series.get('recording')).lower() or 'none'),
-        'lobby_bypass': option_updates.get('lobby_bypass', clean_str(series.get('lobby_bypass')).lower() or 'invited'),
+        'lobby_bypass': option_updates.get('lobby_bypass', clean_str(series.get('lobby_bypass')).lower() or DEFAULT_TEAMS_LOBBY_BYPASS),
         'spoken_language': option_updates.get('spoken_language', clean_str(series.get('spoken_language')) or 'en-GB'),
         'presenters': presenters,
         'co_organizers': co_organizers,
@@ -3259,11 +3368,19 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         if warnings or not _applied:
             raise RuntimeError('Microsoft did not accept every calendar or meeting option change.')
         event = verify_calendar(microsoft_graph_request, owner_key, event_id, targets, join_url, repeat != 'none')
-        publish_attendees(microsoft_graph_request, owner_key, event, [
-            {'emailAddress': {'address': email, 'name': email.split('@', 1)[0]}, 'type': 'required'}
-            for email in invited_people
-        ])
-        event = verify_calendar(microsoft_graph_request, owner_key, event_id, targets, join_url, repeat != 'none')
+        # Keep the saved attendee/presenter/co-organizer roles in the online
+        # meeting, but do not send another invitation during a repair/update.
+        # The admin review flow can opt in explicitly with notifyAttendees=true.
+        if notify_attendees:
+            # Only notify after the organizer's master and every exception have
+            # been reconciled and verified. Updating the master then lets
+            # Exchange send the final series/exception state to attendees; it
+            # also avoids telling learners about a half-applied repair.
+            event = microsoft_graph_request(
+                'PATCH', f'users/{owner_key}/events/{event_key}',
+                payload={'subject': title, 'hideAttendees': True, 'attendees': calendar_attendees},
+            ) or event
+            event = verify_calendar(microsoft_graph_request, owner_key, event_id, targets, join_url, repeat != 'none')
     except RuntimeError as exc:
         update_authoring_rows(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id], {
             'warnings': json_db_value([*warnings, {'code': 'teams_calendar_unverified', 'message': str(exc)}]),
@@ -3389,6 +3506,7 @@ def curriculum_teams_meeting_occurrence_schedule(request, live_session_id, sessi
 
     join_url, online_meeting_id, event_id, warnings = reschedule_single_live_session_occurrence(
         series, occurrence, new_start, duration,
+        notify_attendees=truthy(payload.get('notifyAttendees')),
     )
 
     # Only persist a time Teams actually adopted. The helper moves the recurring
@@ -3595,7 +3713,7 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
                 organizer,
                 join_url,
                 recording=clean_str(series.get('recording')).lower() or 'none',
-                lobby_bypass=clean_str(series.get('lobby_bypass')).lower() or 'invited',
+                lobby_bypass=clean_str(series.get('lobby_bypass')).lower() or DEFAULT_TEAMS_LOBBY_BYPASS,
                 spoken_language=clean_str(series.get('spoken_language')) or 'en-GB',
                 attendees=teams_series_email_list(series.get('attendees')),
                 presenters=teams_series_email_list(series.get('presenters')),
@@ -14162,7 +14280,7 @@ COMPONENT_SETTINGS_SCHEMA = {
         'teamsProvider': '',
         'teamsRepeat': 'none',
         'teamsRepeatOccurrences': 1,
-        'teamsLobbyBypass': 'invited',
+        'teamsLobbyBypass': DEFAULT_TEAMS_LOBBY_BYPASS,
         'teamsRecording': 'record-transcribe',
         'teamsSpokenLanguage': 'en-GB',
         'teamsMeetingType': 'live-session',
@@ -15737,7 +15855,7 @@ def live_session_row_to_component_settings(row):
         'sessionTimeZone': GRAPH_WINDOWS_TO_IANA.get(clean_str(row.get('timezone')), graph_timezone_iana({})),
         'teamsRepeat': clean_str(row.get('repeat_pattern')) or 'none',
         'teamsRepeatOccurrences': parse_int(row.get('repeat_occurrences'), 1),
-        'teamsLobbyBypass': clean_str(row.get('lobby_bypass')) or 'invited',
+        'teamsLobbyBypass': clean_str(row.get('lobby_bypass')) or DEFAULT_TEAMS_LOBBY_BYPASS,
         'teamsRecording': clean_str(row.get('recording')) or 'none',
         'teamsSpokenLanguage': clean_str(row.get('spoken_language')) or 'en-GB',
         'teamsMeetingType': clean_str(row.get('meeting_type')) or 'live-session',
@@ -15776,6 +15894,20 @@ def live_occurrence_component_settings(occurrence, series_settings):
         settings['sessionDateTimeUtc'] = start_value
     start_at = parse_graph_datetime(occurrence.get('scheduled_start'))
     end_at = parse_graph_datetime(end_value)
+    if start_at:
+        zone_name = clean_str(series_settings.get('sessionTimeZone')) or graph_timezone_iana({})
+        try:
+            zone = ZoneInfo(zone_name)
+        except Exception:
+            zone = timezone.utc
+        local_start = start_at.replace(tzinfo=start_at.tzinfo or timezone.utc).astimezone(zone)
+        # A verified Microsoft occurrence is authoritative for the component's
+        # visible date and clock.  Leaving an older authored date here makes the
+        # module builder, learner calendar and Teams drawer disagree after a
+        # repair even though they all point at the same occurrence id.
+        settings['sessionDate'] = local_start.date().isoformat()
+        settings['sessionDay'] = local_start.strftime('%A')
+        settings['sessionTime'] = local_start.strftime('%H:%M')
     if start_at and end_at and end_at > start_at:
         minutes = int((end_at - start_at).total_seconds() // 60)
         if minutes:
@@ -15873,16 +16005,6 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
         if not occurrence and stored_calendar_series(series_row):
             return {key: '' for key in ('teamsMeetingUrl', 'liveSessionUrl', 'teamsEventId', 'teamsOnlineMeetingId', 'teamsOccurrenceId', 'teamsLiveSessionId', 'teamsSessionNumber', 'sessionDateTimeUtc', 'teamsStartDateTimeUtc')}
         session_settings = live_occurrence_component_settings(occurrence, series_settings)
-        # Imported defaults may still be stored on an unbooked component even
-        # though Create used its group's current clock. Stamp the verified clock
-        # when first attaching; subsequent restores keep confirmed overrides.
-        if occurrence and not (clean_str(existing_settings.get('teamsLiveSessionId'))
-                               and parse_int(existing_settings.get('teamsSessionNumber'), 0) > 0):
-            start = parse_graph_datetime(occurrence.get('scheduled_start'))
-            if start:
-                zone = ZoneInfo(series_settings.get('sessionTimeZone') or graph_timezone_iana({}))
-                local = start.replace(tzinfo=start.tzinfo or timezone.utc).astimezone(zone)
-                session_settings['sessionTime'] = local.strftime('%H:%M')
         shared_series_settings = {
             key: value
             for key, value in series_settings.items()
@@ -15919,6 +16041,10 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
     # number the occurrences the same way.
     occurrence_index = 0
     sessions_per_week = delivery_days_per_week(module_row)
+    expected_occurrence_count = sum(
+        1 for row in occurrence_rows
+        if clean_str(row.get('status')).lower() not in TEAMS_OFF_CALENDAR_OCCURRENCE_STATUSES
+    )
     for week_row in week_rows:
         week_id = clean_str(week_row.get('id'))
         live_rows = [row for row in components_by_week.get(week_id, []) if frontend_component_type(row.get('type')) == 'live-session']
@@ -15936,12 +16062,20 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                 })
             updated += 1
         if not create_missing:
-            if not live_rows and not session_rows:
-                # A content-only week still occupies one dated slot, matching the
-                # structure payload's backward-compatible week-header walk.
-                session_index += 1
+            if not live_rows:
+                # A content-only or holiday week still occupies its own plan
+                # slot. It consumes no Teams occurrence, but the next live
+                # component must stay paired with the next week's date.
+                session_index += 1 if session_index < len(session_plan) else 0
             continue
-        missing_count = 0 if session_rows else max(0, sessions_per_week - len(live_rows))
+        planned = session_plan[session_index] if session_index < len(session_plan) else {}
+        planned_holiday = bool(planned.get('skippedHolidays'))
+        # If Teams already has more tracked occurrences than the authoring
+        # structure has live components, create the missing component in the
+        # first non-holiday delivery week. A holiday slot remains content-only.
+        missing_count = 0
+        if not live_rows and not planned_holiday and occurrence_index < expected_occurrence_count:
+            missing_count = min(sessions_per_week, expected_occurrence_count - occurrence_index)
         for offset in range(missing_count):
             settings_for_week = settings_for_session(session_index, occurrence_index)
             session_index += 1
@@ -15985,6 +16119,8 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                 'is_programme_deleted': False,
             })
             created += 1
+        if not live_rows and not missing_count:
+            session_index += 1 if session_index < len(session_plan) else 0
 
     # A live-session component whose week is gone still holds a join link, and
     # what this endpoint promises is that every one of them points at the

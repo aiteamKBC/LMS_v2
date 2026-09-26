@@ -30,20 +30,44 @@ def learning_access(source):
     return {'blocked': start is None or start > today, 'startDate': start.isoformat() if start else ''}
 
 
+#: Open before the cohort starts, so a learner can prepare work early. Each one
+#: only returns generated text or checks, or holds learner-owned draft material;
+#: none of them submits, completes or records hours.
+DRAFTING_PATHS = frozenset({
+    '/learner_api/reflection/transcribe/',
+    '/learner_api/reflection/proofread/',
+    '/learner_api/reflection/ksb-explanations/',
+    '/learner_api/reflection/monthly-reflections/',
+    '/learner_api/reflection/learning-statements/',
+    '/learner_api/reflection/assignment/check/',
+    '/learner_api/reflection/assignment/ai-check/',
+    '/learner_api/reflection/assignment/presentation-design/',
+    '/learner_api/reflection/assignment/presentation/',
+})
+
+#: Saves a draft *or* submits, depending on the body. The gate cannot see the
+#: body, so the view refuses the submit half itself (``submission_refusal``).
+SUBMISSIONS_PATH = '/learner_api/reflection/submissions/'
+
+#: Evidence upload and delete: files a learner attaches to a draft.
+_EVIDENCE_DRAFTING = re.compile(r'^/learner_api/evidence/[^/]+/\d+/(?:upload/|[0-9a-fA-F-]{36}/)$')
+
+
 def requires_started_programme(path, method='GET'):
     if path.startswith(('/learner_api/time-tracking/', '/learner_api/quizzes/',
                         '/learner_api/videos/', '/learner_api/components/')):
         return True
     if re.match(r'^/learner_api/student-activity/[^/]+/\d+/\d+/\d+/', path):
         return True
+    if path in DRAFTING_PATHS or path == SUBMISSIONS_PATH or _EVIDENCE_DRAFTING.match(path):
+        return False
     return method not in {'GET', 'HEAD', 'OPTIONS'} and path.startswith((
         '/learner_api/reflection/', '/learner_api/evidence/', '/learner_api/monthly-reports/',
     ))
 
 
-def refusal(path, account, method='GET'):
-    if account.role != 'learner' or not requires_started_programme(path, method):
-        return None
+def _start_refusal(account, *, submitting=False):
+    """403 while this learner's cohort has not started; None once it has."""
     try:
         source = EnrolmentUser.all_learners.only('programme', 'cohort', 'start_date').get(pk=account.subject_id)
         access = learning_access(source)
@@ -54,8 +78,31 @@ def refusal(path, account, method='GET'):
                              'code': 'programme_access_unavailable'}, status=503)
     if not access['blocked']:
         return None
-    message = (f"Learning activities open on {access['startDate']}. You can view your programme and training plan now."
-               if access['startDate'] else 'Your cohort start date must be confirmed before you can begin learning.')
+    if submitting:
+        message = (f"Submissions open on {access['startDate']}. Save your work as a draft until then."
+                   if access['startDate'] else
+                   'Your cohort start date must be confirmed before you can submit. Save your work as a draft until then.')
+    else:
+        message = (f"Learning activities open on {access['startDate']}. Until then you can view your programme and "
+                   "training plan, and save drafts of your work."
+                   if access['startDate'] else 'Your cohort start date must be confirmed before you can begin learning.')
     response = JsonResponse({'error': message, 'code': 'programme_not_started', **access}, status=403)
     response['Cache-Control'] = 'private, no-store'
     return response
+
+
+def refusal(path, account, method='GET'):
+    if account.role != 'learner' or not requires_started_programme(path, method):
+        return None
+    return _start_refusal(account)
+
+
+def submission_refusal(account):
+    """Refuse a learner's *submission* before their cohort starts.
+
+    Drafts are not asked about -- saving one is allowed early. Staff and admins
+    acting for a learner are not held back, the same as ``refusal``.
+    """
+    if getattr(account, 'role', None) != 'learner':
+        return None
+    return _start_refusal(account, submitting=True)

@@ -375,6 +375,7 @@ export default function QuizTakePage() {
             noun="quiz"
             plannedTimeLabel={quiz.duration ? `${quiz.duration} ${quiz.timeUnit || 'min'}` : ''}
             plannedHours={quizPlannedHours}
+            actualTimeUnit="minutes"
             learnerKsbs={learnerKsbs}
             elapsedSeconds={elapsedSeconds}
               submitting={submitting}
