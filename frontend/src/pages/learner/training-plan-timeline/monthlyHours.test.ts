@@ -50,6 +50,17 @@ describe('monthly OTJH totals', () => {
     expect(totalCompletedHours(data, '2026-07', '2026-10')).toBeNull();
   });
 
+  it('falls back to the contract target when a Monthly Logs target is missing', () => {
+    const data = dashboard();
+    data.monthlyLogOtjh!['2026-07'].target = null;
+
+    expect(monthlyHours(data, '2026-07', '2026-09').map(row => [row.key, row.target])).toEqual([
+      ['2026-07', 70],
+      ['2026-08', 44],
+      ['2026-09', 18],
+    ]);
+  });
+
   it('limits the card total to the same programme months as the chart', () => {
     expect(totalCompletedHours(dashboard(), '2026-08', '2026-09')).toBe(26);
   });

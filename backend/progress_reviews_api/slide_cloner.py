@@ -247,6 +247,11 @@ def replace_picture_fill(shape, image_bytes: bytes, slide_part) -> None:
     blip = _blip_of(shape)
     if blip is not None:
         blip.set(R_EMBED, rId)
+        # The template's crop was tuned to its sample photo; the new image is
+        # already cropped to the frame, so drop it and stretch to fill.
+        src_rect = blip.getparent().find(qn("a:srcRect"))
+        if src_rect is not None:
+            blip.getparent().remove(src_rect)
 
 
 def set_proportional_fill_width(fill_shape, track_shape, fraction: float) -> None:

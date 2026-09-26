@@ -40,12 +40,15 @@
 .hero .subtitle { color: #fff; font-size: .8rem; font-weight: 650; }
 .hero .chevron { color: #e3d0ff; }
 .hero .status { border-color: rgb(213 188 255 / .2); background: rgb(29 16 64 / .24); color: #e7d8ff; }
-.hero .actionButton { border-color: rgb(213 188 255 / .2); background: rgb(29 16 64 / .24); color: #e7d8ff; }
+.hero .actionButton { width: 100%; align-self: stretch; margin-top: auto; border-color: rgb(213 188 255 / .2); background: rgb(29 16 64 / .24); color: #e7d8ff; }
 .hero .actionButton:hover, .hero .actionButton:focus-visible { border-color: rgb(213 188 255 / .48); background: rgb(128 74 212 / .4); color: #fff; }
 .hero .status > span { background: #b196d7; }
 .hero .session .status { border-color: rgb(213 188 255 / .2); background: rgb(29 16 64 / .24); color: #e7d8ff; }
 .hero .session .status > span { background: #77e3ff; }
 .hero .due .status { border-color: rgb(213 188 255 / .2); background: rgb(29 16 64 / .24); color: #e7d8ff; }
 .hero .due .status > span { background: #fff394; }
+.hero .action .actionButton { border-color: rgb(211 177 255 / .58); background: rgb(82 38 143 / .62); color: #fff; }
+.hero .session .actionButton { border-color: rgb(119 227 255 / .58); background: rgb(20 91 124 / .68); color: #effcff; }
+.hero .due .actionButton { border-color: rgb(255 243 148 / .62); background: rgb(125 91 0 / .72); color: #fffbe3; }
 .hero .description { margin-top: .1rem; color: #ddccef; }
 @media (max-width: 760px) { .cards { flex-direction: column; } .card { width: auto; height: 9.5rem; flex: 0 0 auto !important; } .hero .card { height: 9.5rem; min-height: 9.5rem; } }

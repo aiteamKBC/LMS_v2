@@ -213,6 +213,7 @@ export function ReflectionWindow({
   const microphoneStreamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const recordingTimeoutRef = useRef<number | null>(null);
+  const submissionInFlightRef = useRef(false);
 
   const hasAuthoredKsbs = Array.isArray(autoKsbs) && autoKsbs.length > 0;
   // A component with no authored mapping falls back to the programme's KSBs:
@@ -403,6 +404,7 @@ export function ReflectionWindow({
   };
 
   const handleSubmit = async () => {
+    if (submissionInFlightRef.current) return;
     if (submissionLocked) {
       setReflectionSaveError('This reflection has already been accepted and can no longer be changed.');
       return;
@@ -436,6 +438,7 @@ export function ReflectionWindow({
       signedDeclaration,
     };
 
+    submissionInFlightRef.current = true;
     setReflectionSaving(true);
     setReflectionSaveError('');
     try {
@@ -473,6 +476,7 @@ export function ReflectionWindow({
     } catch (error) {
       setReflectionSaveError(error instanceof Error ? error.message : 'Could not save the reflection for tutor review.');
     } finally {
+      submissionInFlightRef.current = false;
       setReflectionSaving(false);
     }
   };

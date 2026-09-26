@@ -44,6 +44,13 @@ export function monthlyHours(data: TrainingPlanDashboard, programmeStartMonth = 
     const monthlyLog = data.monthlyLogOtjh?.[key];
     const current = data.monthlyOtjh?.[key];
     const historical = data.actual.filter(row => row.month === key).reduce((sum, row) => sum + row.hours, 0);
+    // A Monthly Logs row can legitimately have no stored target (for example,
+    // when the log was created before the contract target was imported).  The
+    // target is a plan value, so use the contract/current-plan value as a
+    // fallback while keeping the log as the authoritative source when it has
+    // one.  This lets cumulative target-to-date calculations remain usable
+    // without changing the completed-hours provenance rules below.
+    const planned = data.months[key]?.planned ?? current?.planned ?? null;
     // Marking contributes to submitted. Retained Audit and accepted LMS hours
     // contribute to completed, exactly once, through Monthly Logs when present.
     const submitted = monthlyLog ? monthlyLog.submitted : useAudit ? null : recordedAvailable ? (current?.submitted ?? 0) : null;
@@ -51,7 +58,7 @@ export function monthlyHours(data: TrainingPlanDashboard, programmeStartMonth = 
     return {
       key,
       label: new Date(`${key}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }),
-      target: monthlyLog ? monthlyLog.target : useAudit ? null : data.months[key]?.planned ?? current?.planned ?? null,
+      target: monthlyLog?.target ?? planned,
       submitted,
       completed,
     };

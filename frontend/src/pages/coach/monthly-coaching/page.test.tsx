@@ -26,7 +26,12 @@ vi.mock('../shared/calendarEvents', async importOriginal => ({
 }));
 vi.mock('../shared/CoachMeetingArtifactsPanel', () => ({ CoachMeetingArtifactsPanel: () => null }));
 vi.mock('../shared/ReviewInstanceModal', () => ({ ReviewInstanceModal: () => null }));
-vi.mock('../progress-reviews/lib/progressReviewPptx', () => ({ saveProgressReviewPptx: savePptx }));
+vi.mock('../progress-reviews/components/ProgressReviewPptxModal', () => ({
+  default: (props: { kind?: string; access?: string; target: { learnerName?: string } | null }) => {
+    savePptx(props);
+    return <div role="dialog">{props.kind} slides for {props.target?.learnerName}</div>;
+  },
+}));
 vi.mock('@/api/reviewInstances', () => ({ openReviewInstanceForEvent: openReview }));
 
 function meeting(index: number, overrides: Partial<CoachCalendarEvent> = {}): CoachCalendarEvent {
@@ -42,7 +47,7 @@ function meeting(index: number, overrides: Partial<CoachCalendarEvent> = {}): Co
 const meetings = [
   meeting(1, { learner: 'Overdue Learner', targetDate: '2026-09-01' }),
   meeting(2, { learner: 'Due Soon Learner', learnerType: 'commercial' }),
-  meeting(3, { learner: 'Scheduled Learner', status: 'scheduled', scheduledDate: '2026-09-22', scheduledTime: '10:30', group: 'Beta' }),
+  meeting(3, { learner: 'Scheduled Learner', enrolmentId: '42', status: 'scheduled', scheduledDate: '2026-09-22', scheduledTime: '10:30', group: 'Beta' }),
   meeting(4, { learner: 'In Progress Learner', status: 'in-progress', scheduledDate: '2026-09-14' }),
   meeting(9, { learner: 'Awaiting Signature Learner', status: 'awaiting-signature', scheduledDate: '2026-09-11' }),
   meeting(5, { learner: 'Completed Learner', status: 'completed', scheduledDate: '2026-09-10', group: undefined, cohort: 'Gamma' }),
@@ -187,7 +192,7 @@ describe('restored monthly coaching list', () => {
 
     const scheduledRow = within(screen.getByText('Imported Scheduled').closest('tr')!);
     expect(scheduledRow.getAllByRole('button').map(button => button.textContent)).toEqual([
-      'Reschedule', 'View', 'View Form', 'Create Slides',
+      'Reschedule', 'View', 'View Form', 'View Slides',
     ]);
     fireEvent.click(scheduledRow.getByRole('button', { name: 'View' }));
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/meetings/imported-review%3A21');
@@ -222,19 +227,19 @@ describe('restored monthly coaching list', () => {
       'Learner', 'Cohort', 'Date & time', 'Status', 'Schedule', 'Actions',
     ]);
     expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'View Form' })).toBeVisible();
-    expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'Create Slides' })).toBeVisible();
+    expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'View Slides' })).toBeVisible();
     expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'View' })).toBeVisible();
     expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'Reschedule' })).toBeVisible();
     expect(screen.getByText('Scheduled Learner').closest('tr')).toHaveTextContent('10:30 - 11:30');
   });
 
-  it('creates the selected MCM slide deck from the meeting row', async () => {
+  it('opens the learner-owned MCM slides read-only from the meeting row', async () => {
     mount();
     await screen.findByText('Scheduled Learner');
-    fireEvent.click(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'Create Slides' }));
-    await waitFor(() => expect(savePptx).toHaveBeenCalledWith(expect.objectContaining({
-      learnerName: 'Scheduled Learner', reviewLabel: 'Monthly Coaching Agenda', slides: expect.any(Array),
-    }), 'Monthly Coaching Agenda'));
+    fireEvent.click(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'View Slides' }));
+    // The learner creates and edits their MCM slides; the coach only views them.
+    expect(await screen.findByRole('dialog')).toHaveTextContent('mcm slides for Scheduled Learner');
+    expect(savePptx).toHaveBeenCalledWith(expect.objectContaining({ kind: 'mcm', access: 'viewer' }));
   });
 
   it('removes scheduling for completed and awaiting-signature meetings', async () => {
@@ -251,7 +256,7 @@ describe('restored monthly coaching list', () => {
       const row = within(screen.getByText(learner).closest('tr')!);
       expect(row.getByRole('button', { name: 'View' })).toBeVisible();
       expect(row.getByRole('button', { name: 'View Form' })).toBeVisible();
-      expect(row.getByRole('button', { name: 'Create Slides' })).toBeVisible();
+      expect(row.getByRole('button', { name: 'View Slides' })).toBeVisible();
       expect(row.queryByRole('button', { name: 'Join' })).toBeNull();
     }
   });
@@ -262,7 +267,7 @@ describe('restored monthly coaching list', () => {
     const row = within(screen.getByText('In Progress Learner').closest('tr')!);
     expect(row.queryByRole('button', { name: /Schedule/ })).toBeNull();
     expect(row.getByRole('button', { name: 'View Form' })).toBeVisible();
-    expect(row.getByRole('button', { name: 'Create Slides' })).toBeVisible();
+    expect(row.getByRole('button', { name: 'View Slides' })).toBeVisible();
   });
 
   it('shows only selected-month status counts and supports awaiting signature', async () => {
