@@ -152,8 +152,7 @@ class BookingEndpointRestrictionTests(SimpleTestCase):
         # own booking rule and must never reach a database or Microsoft Graph.
         view = inspect.unwrap(module.learner_calendar_book)
 
-        # TEMPORARY for testing: catch-ups may be booked at weekends; restore after testing.
-        for session_type in [value for value in module.BOOKABLE_TYPES if value != "catch-up"]:
+        for session_type in module.BOOKABLE_TYPES:
             with self.subTest(session_type=session_type), \
                     patch.object(module, "SOURCE_MODELS", {"commercial": source_model}), \
                     patch.object(module, "learner_profile_for_source", return_value=mirror), \

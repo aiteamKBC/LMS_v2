@@ -195,9 +195,8 @@ class LearnerCalendarConflictTests(SimpleTestCase):
 
     @patch("coach_api.views.find_learner_same_session_in_week")
     def test_duplicate_session_message_offers_reschedule(self, find_same):
-        # Catch-ups are exempt from the weekly limit, so use another bookable type.
         find_same.return_value = SimpleNamespace(
-            event_type="student-support",
+            event_type="catch-up",
             sequence=2,
             scheduled_date=date(2026, 9, 8),
             scheduled_time=time(10, 30),
@@ -210,35 +209,12 @@ class LearnerCalendarConflictTests(SimpleTestCase):
             ensure_learner_session_not_booked_in_week(
                 learner_id=7,
                 learner_email="learner@example.com",
-                session_type="student-support",
+                session_type="catch-up",
                 scheduled_date=date(2026, 9, 8),
             )
 
+        self.assertIn("Catch-up Session 2", str(raised.exception))
         self.assertIn("Tuesday, 8 September 2026 at 10:30", str(raised.exception))
-
-    @patch("coach_api.views.find_learner_same_session_in_week")
-    def test_catchups_are_not_limited_to_one_per_week(self, find_same):
-        ensure_learner_session_not_booked_in_week(
-            learner_id=7,
-            learner_email="learner@example.com",
-            session_type="catch-up",
-            scheduled_date=date(2026, 9, 8),
-        )
-
-        find_same.assert_not_called()
-
-    def test_only_catchups_may_be_booked_at_weekends(self):
-        # TEMPORARY for testing: remove with the weekend exemption.
-        from coach_api.views import booking_non_delivery_reason
-        from learner_api.booking_calendar import booking_date_restriction
-
-        saturday = date(2026, 10, 3)
-        with patch("coach_api.views.england_non_delivery_reason",
-                   return_value="Sessions and meetings can only be booked Monday to Friday."):
-            self.assertEqual(booking_non_delivery_reason("catch-up", saturday), "")
-            self.assertTrue(booking_non_delivery_reason("mcr", saturday))
-        self.assertIsNone(booking_date_restriction(saturday, today=date(2026, 9, 26), allow_weekend=True))
-        self.assertEqual(booking_date_restriction(saturday, today=date(2026, 9, 26)).code, "weekend")
 
     @patch("coach_api.views.find_learner_calendar_conflict")
     def test_any_session_time_conflict_identifies_existing_slot_and_offers_reschedule(
