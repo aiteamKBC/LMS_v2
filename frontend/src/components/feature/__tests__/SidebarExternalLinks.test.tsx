@@ -51,11 +51,12 @@ describe('Super Admin external tools', () => {
     expect(internal).not.toHaveAttribute('rel');
   });
 
-  it('marks only the two college sites as external', () => {
+  it('includes the Inclusion sign-in alongside the college sites', () => {
     const external = adminNavItems.flatMap(item => [item, ...(item.children ?? [])]).filter(item => item.external);
     expect(external.map(item => item.href)).toEqual([
       'https://positive-moments.kentbusinesscollege.net',
       'https://tutordashboard.kentbusinesscollege.net',
+      adminNavItems.find(item => item.id === 'admin-inclusion')!.href,
     ]);
   });
 });

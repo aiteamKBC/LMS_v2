@@ -1,6 +1,8 @@
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
 import { CHAT_ENABLED } from '@/lib/featureFlags';
 
+const inclusionLoginUrl = `${(import.meta.env.VITE_INCLUSION_URL || "https://admin.kentbusinesscollege.net").replace(/\/$/, "")}/login`;
+
 // ============================================================================
 // Learner tools reached from the dashboard, with the same permission IDs as
 // their former Community navigation entries. No sample counters or badges.
@@ -97,6 +99,7 @@ export const coachNavItems: SidebarNavItem[] = [
     href: '/coach/monthly-logs',
     matchPaths: ['/coach/monthly-cycle'],
   },
+  { id: 'coach-inclusion', label: 'Inclusion Ticket System', icon: 'ri-heart-pulse-line', href: inclusionLoginUrl, external: true },
   { id: 'coach-absence-reports', label: 'Absence Reports', icon: 'ri-error-warning-line', href: '/coach/absence-reports' },
 ];
 
@@ -627,6 +630,7 @@ export const adminNavItems: SidebarNavItem[] = [
       { id: 'admin-tutor-dashboard', label: 'Tutor Dashboard', icon: 'ri-dashboard-line', href: 'https://tutordashboard.kentbusinesscollege.net', external: true },
     ],
   },
+  { id: 'admin-inclusion', label: 'Inclusion System', icon: 'ri-heart-pulse-line', href: inclusionLoginUrl, external: true },
 ];
 
 // ============================================================================
