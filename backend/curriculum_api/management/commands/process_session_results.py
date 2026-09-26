@@ -10,6 +10,18 @@ from django.test import RequestFactory
 from curriculum_api.session_archive import archive_series, provision_container
 
 
+def sync_post_lecture_feedback(series_id):
+    """Best-effort side effect; it must not change the Teams sync verdict."""
+    try:
+        from engagement_api.feedback_delivery import sync_post_lecture_feedback_from_attendance
+        sync_post_lecture_feedback_from_attendance(live_session_ids=[series_id])
+    except Exception as feedback_failure:
+        logging.getLogger(__name__).warning(
+            'Post-lecture feedback sync failed for %s: %s',
+            series_id, type(feedback_failure).__name__,
+        )
+
+
 class Command(BaseCommand):
     help = 'Process saved session sync jobs. Schedule every five minutes; never run on a web request.'
 
@@ -68,6 +80,8 @@ class Command(BaseCommand):
                     errors.append('Teams sync could not complete.')
                 errors.extend(archive_series(series_id, lease_id=lease))
                 error = '; '.join(errors)
+                if not error:
+                    sync_post_lecture_feedback(series_id)
             except Exception as failure:
                 logging.getLogger(__name__).warning('Session job %s failed: %s', series_id, type(failure).__name__)
                 error = 'Session processing failed. Check Graph, database and Azure configuration.'

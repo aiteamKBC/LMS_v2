@@ -17,7 +17,7 @@ const field = 'w-full rounded-lg border border-foreground-200/70 bg-white px-3 p
 const emptyCurriculumOptions: FeedbackCurriculumOptions = { programmes: [], cohorts: [], groups: [], modules: [] };
 
 const emptyForm = (): FeedbackFormInput => ({
-  title: '', formType: 'post_lecture', programmeId: '', cohortId: '', groupId: '', moduleCatalogueId: '',
+  title: '', formType: 'post_lecture', deliveryScope: 'all_modules', programmeId: '', cohortId: '', groupId: '', moduleCatalogueId: '',
   description: '', instructions: '', startDate: null, dueDate: null, anonymousResponses: false,
   allowSaveContinue: true, allowEditAfterSubmission: false, sections: [emptySection()],
 });
@@ -28,8 +28,9 @@ export function FormBuilder() {
   const [model, setModel] = useState<FeedbackFormInput>(emptyForm);
   const [curriculumOptions, setCurriculumOptions] = useState<FeedbackCurriculumOptions>(emptyCurriculumOptions);
   const [curriculumError, setCurriculumError] = useState('');
-  const [curriculumLoading, setCurriculumLoading] = useState(true);
+  const [curriculumLoading, setCurriculumLoading] = useState(false);
   const [locked, setLocked] = useState(false);
+  const [versionInfo, setVersionInfo] = useState<{ version: number; willCreateVersion: boolean } | null>(null);
   const [preview, setPreview] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -37,8 +38,10 @@ export function FormBuilder() {
     if (!formId) return;
     feedbackApi.getForm(Number(formId)).then(({ form }) => {
       setLocked(form.structureLocked);
+      setVersionInfo({ version: form.version || 1, willCreateVersion: Boolean(form.willCreateVersion) });
       setModel({
         title: form.title, formType: form.formType || 'general',
+        deliveryScope: form.deliveryScope || (form.curriculumScope?.moduleCatalogueId ? 'module' : form.formType === 'post_lecture' ? 'all_modules' : 'manual'),
         programmeId: form.curriculumScope?.programmeId || '', cohortId: form.curriculumScope?.cohortId || '',
         groupId: form.curriculumScope?.groupId || '', moduleCatalogueId: form.curriculumScope?.moduleCatalogueId || '',
         description: form.description, instructions: form.instructions, startDate: form.startDate, dueDate: form.dueDate,
@@ -60,7 +63,11 @@ export function FormBuilder() {
     }
   }, []);
 
-  useEffect(() => { void loadCurriculumOptions(); }, [loadCurriculumOptions]);
+  useEffect(() => {
+    if (model.formType === 'post_lecture' && model.deliveryScope === 'module' && curriculumOptions.modules.length === 0) {
+      void loadCurriculumOptions();
+    }
+  }, [curriculumOptions.modules.length, loadCurriculumOptions, model.deliveryScope, model.formType]);
 
   const cohorts = useMemo(() => curriculumOptions.cohorts.filter(item => sameId(item.programmeId, model.programmeId)), [curriculumOptions.cohorts, model.programmeId]);
   const groups = useMemo(() => curriculumOptions.groups.filter(item => sameId(item.cohortId, model.cohortId)), [curriculumOptions.groups, model.cohortId]);
@@ -78,7 +85,7 @@ export function FormBuilder() {
       const result = formId
         ? await feedbackApi.updateForm(Number(formId), locked ? { ...model, sections: undefined } : model)
         : await feedbackApi.createForm(model);
-      await Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Draft saved', timer: 1600, showConfirmButton: false });
+      await Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: result.form.version > 1 ? `Version ${result.form.version} saved` : 'Draft saved', timer: 1600, showConfirmButton: false });
       navigate(`/engagement/reports/feedback/forms/${result.form.id}/edit`, { replace: true });
     } catch (error) {
       await Swal.fire({ icon: 'error', title: 'Could not save form', text: error instanceof Error ? error.message : 'Unexpected error.' });
@@ -91,18 +98,22 @@ export function FormBuilder() {
       <div className="flex gap-2"><button type="button" onClick={() => setPreview(!preview)} className="rounded-lg border border-primary-200 bg-primary-50 px-4 py-2 text-xs font-semibold text-primary-700">{preview ? 'Edit form' : 'Preview'}</button><button type="button" disabled={saving} onClick={() => void save()} className="rounded-lg bg-[#541EA0] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">{saving ? 'Saving…' : 'Save draft'}</button></div>
     </div>
     {locked && <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">Questions and sections are locked because a learner has started this form. Form details and dates can still be updated.</div>}
+    {versionInfo?.willCreateVersion && <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-800">You are editing version {versionInfo.version}. Saving creates a new version for future lectures; previous lecture responses stay unchanged.</div>}
     {preview ? <div className="mx-auto max-w-4xl rounded-2xl bg-background-100 p-5"><FeedbackFormHeader title={model.title || 'Untitled feedback form'} description={model.description} instructions={model.instructions} /><FormRenderer sections={model.sections} answers={{}} readOnly /></div> : <>
       <div className="grid gap-4 rounded-xl border border-foreground-200/60 bg-background-50 p-5 md:grid-cols-2">
-        <label className="text-xs font-semibold text-foreground-700 md:col-span-2">Form Type<select disabled={locked} className={`${field} mt-1`} value={model.formType} onChange={e => setModel(current => ({ ...current, formType: e.target.value as FeedbackFormInput['formType'], programmeId: '', cohortId: '', groupId: '', moduleCatalogueId: '' }))}><option value="post_lecture">Post-lecture feedback</option><option value="general">General feedback</option></select></label>
+        <label className="text-xs font-semibold text-foreground-700 md:col-span-2">Form Type<select disabled={locked} className={`${field} mt-1`} value={model.formType} onChange={e => { const formType = e.target.value as FeedbackFormInput['formType']; setModel(current => ({ ...current, formType, deliveryScope: formType === 'post_lecture' ? 'all_modules' : 'manual', programmeId: '', cohortId: '', groupId: '', moduleCatalogueId: '' })); }}><option value="post_lecture">Post-lecture feedback</option><option value="general">General feedback</option></select></label>
         {model.formType === 'post_lecture' && <div className="rounded-xl border border-primary-100 bg-primary-50/40 p-4 md:col-span-2">
-          <div className="mb-3"><h2 className="text-sm font-semibold text-foreground-900">Lecture curriculum</h2><p className="mt-1 text-xs text-foreground-500">Choose the module now. Attendance-based delivery will be connected in a later step.</p></div>
-          {curriculumError && <div role="alert" className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700"><span>{curriculumError}</span><button type="button" disabled={curriculumLoading} onClick={() => void loadCurriculumOptions()} className="shrink-0 rounded-md border border-red-300 bg-white px-3 py-1.5 font-semibold disabled:opacity-50">Retry</button></div>}
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="mb-3"><h2 className="text-sm font-semibold text-foreground-900">Lecture delivery</h2><p className="mt-1 text-xs text-foreground-500">Present learners receive this form automatically after finalized attendance. A module-specific form overrides the all-modules form.</p></div>
+          <label className="mb-3 block text-xs font-semibold text-foreground-700">Delivery scope<select className={`${field} mt-1`} value={model.deliveryScope} onChange={e => setModel(current => ({ ...current, deliveryScope: e.target.value as FeedbackFormInput['deliveryScope'], programmeId: '', cohortId: '', groupId: '', moduleCatalogueId: '' }))}><option value="all_modules">All modules</option><option value="module">One module only</option></select></label>
+          {model.deliveryScope === 'module' && <>
+            {curriculumError && <div role="alert" className="mb-3 flex items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700"><span>{curriculumError}</span><button type="button" disabled={curriculumLoading} onClick={() => void loadCurriculumOptions()} className="shrink-0 rounded-md border border-red-300 bg-white px-3 py-1.5 font-semibold disabled:opacity-50">Retry</button></div>}
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <ScopeSelect label="Programme" value={model.programmeId} disabled={locked || curriculumLoading} options={curriculumOptions.programmes} placeholder={curriculumLoading ? 'Loading programmes...' : 'Choose programme'} onChange={programmeId => setModel(current => ({ ...current, programmeId, cohortId: '', groupId: '', moduleCatalogueId: '' }))} />
             <ScopeSelect label="Cohort" value={model.cohortId} disabled={locked || !model.programmeId} options={cohorts} placeholder="Choose cohort" onChange={cohortId => setModel(current => ({ ...current, cohortId, groupId: '', moduleCatalogueId: '' }))} />
             <ScopeSelect label="Group" value={model.groupId} disabled={locked || !model.cohortId} options={groups} placeholder="Choose group" onChange={groupId => setModel(current => ({ ...current, groupId, moduleCatalogueId: '' }))} />
             <ScopeSelect label="Module" value={model.moduleCatalogueId} disabled={locked || !model.groupId} options={modules} placeholder="Choose module" onChange={moduleCatalogueId => setModel(current => ({ ...current, moduleCatalogueId }))} />
-          </div>
+            </div>
+          </>}
         </div>}
         <label className="text-xs font-semibold text-foreground-700 md:col-span-2">Form Name<input className={`${field} mt-1`} value={model.title} onChange={e => setModel({ ...model, title: e.target.value })} /></label>
         <label className="text-xs font-semibold text-foreground-700">Description<textarea className={`${field} mt-1`} rows={3} value={model.description} onChange={e => setModel({ ...model, description: e.target.value })} /></label>

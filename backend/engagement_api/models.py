@@ -505,9 +505,18 @@ class FlashCardView(models.Model):
 class FeedbackForm(models.Model):
     STATUS_CHOICES = [('draft', 'Draft'), ('published', 'Published'), ('closed', 'Closed')]
     TYPE_CHOICES = [('general', 'General'), ('post_lecture', 'Post-lecture')]
+    DELIVERY_SCOPE_CHOICES = [('manual', 'Manual'), ('all_modules', 'All modules'), ('module', 'One module')]
 
     title = models.CharField(max_length=255)
     form_type = models.CharField(max_length=40, choices=TYPE_CHOICES, default='general')
+    delivery_scope = models.CharField(max_length=20, choices=DELIVERY_SCOPE_CHOICES, default='manual')
+    template_key = models.UUIDField(default=uuid.uuid4)
+    version = models.PositiveIntegerField(default=1)
+    is_current = models.BooleanField(default=True)
+    previous_version = models.ForeignKey(
+        'self', on_delete=models.PROTECT, related_name='next_versions',
+        db_column='previous_version_id', null=True, blank=True,
+    )
     description = models.TextField(blank=True, default='')
     instructions = models.TextField(blank=True, default='')
     programme_id = models.CharField(max_length=255, blank=True, default='')
@@ -576,10 +585,61 @@ class FeedbackAssignment(models.Model):
         db_table = 'Feedback"."feedback_assignments'
 
 
+class FeedbackDelivery(models.Model):
+    """One published post-lecture template delivered for one lecture occurrence."""
+
+    STATUS_CHOICES = [('open', 'Open'), ('closed', 'Closed'), ('cancelled', 'Cancelled')]
+
+    form = models.ForeignKey(FeedbackForm, on_delete=models.PROTECT, related_name='deliveries', db_column='form_id')
+    occurrence_key = models.CharField(max_length=255)
+    attendance_source = models.CharField(max_length=80, default='attendance')
+    attendance_reference = models.CharField(max_length=255, blank=True, default='')
+    programme_id = models.CharField(max_length=255, blank=True, default='')
+    programme_name = models.CharField(max_length=255, blank=True, default='')
+    cohort_id = models.CharField(max_length=255, blank=True, default='')
+    cohort_name = models.CharField(max_length=255, blank=True, default='')
+    group_id = models.CharField(max_length=255, blank=True, default='')
+    group_name = models.CharField(max_length=255, blank=True, default='')
+    module_catalogue_id = models.CharField(max_length=255)
+    module_name = models.CharField(max_length=500, blank=True, default='')
+    session_title = models.CharField(max_length=500, blank=True, default='')
+    starts_at = models.DateTimeField(null=True, blank=True)
+    ends_at = models.DateTimeField(null=True, blank=True)
+    available_at = models.DateTimeField()
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='open')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_deliveries'
+
+
+class FeedbackDeliveryRecipient(models.Model):
+    """A learner made eligible by finalized attendance for one delivery."""
+
+    delivery = models.ForeignKey(FeedbackDelivery, on_delete=models.CASCADE, related_name='recipients', db_column='delivery_id')
+    learner_id = models.CharField(max_length=100)
+    learner_name = models.CharField(max_length=255)
+    programme = models.CharField(max_length=255, blank=True, default='')
+    attendance_reference = models.CharField(max_length=255, blank=True, default='')
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    due_date = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_delivery_recipients'
+
+
 class FeedbackResponse(models.Model):
     STATUS_CHOICES = [('in_progress', 'In progress'), ('completed', 'Completed')]
 
     form = models.ForeignKey(FeedbackForm, on_delete=models.PROTECT, related_name='responses', db_column='form_id')
+    delivery = models.ForeignKey(
+        FeedbackDelivery, on_delete=models.PROTECT, related_name='responses',
+        db_column='delivery_id', null=True, blank=True,
+    )
     learner_id = models.CharField(max_length=100)
     learner_name = models.CharField(max_length=255)
     programme = models.CharField(max_length=255, blank=True, default='')

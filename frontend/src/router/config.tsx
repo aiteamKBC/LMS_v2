@@ -552,6 +552,10 @@ const routes: RouteObject[] = [
     element: <LearnerFeedbackFormPage />,
   },
   {
+    path: "/learner/feedback/delivery/:deliveryId",
+    element: <LearnerFeedbackFormPage />,
+  },
+  {
     path: "/learner/catchup",
     element: <CatchUpPage />,
   },

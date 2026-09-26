@@ -54,9 +54,9 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
   // On a hard refresh the in-memory learner pin is empty until /login_api/me/
   // settles. Use that authoritative account identity directly for learner
   // self-view; staff/admin accounts still require an explicit URL selection.
-  const accountLearner = auth.account?.role === 'learner' && auth.account.subjectId != null
+  const accountLearner = useMemo(() => auth.account?.role === 'learner' && auth.account.subjectId != null
     ? { kind: auth.account.learnerType === 'commercial' ? 'commercial' as const : 'apprenticeship' as const, id: String(auth.account.subjectId) }
-    : null;
+    : null, [auth.account]);
   const { kind, id } = accountLearner || resolved;
   const reviewAccount = auth.account && auth.account.role !== 'learner';
   useEffect(() => {
@@ -64,9 +64,16 @@ export default function MyLearningPage({ view = 'catalogue' }: { view?: 'catalog
     const params = new URLSearchParams(location.search);
     navigate({ pathname: `/learner/my-learning/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`, search: params.toString() }, { replace: true });
   }, [accountLearner, id, isInitialized, kind, location.search, navigate, reviewAccount, urlId]);
-  const learnerNavItems = useMemo(() => learnerNav.items.map(item => item.id === 'learner-my-learning' && kind && id
-    ? { ...item, href: `/learner/my-learning/${encodeURIComponent(kind)}/${encodeURIComponent(id)}` }
-    : item), [id, kind]);
+  const learnerNavItems = useMemo(() => learnerNav.items.map(item => {
+    if (!kind || !id) return item;
+    if (item.id === 'learner-my-learning') {
+      return { ...item, href: `/learner/my-learning/${encodeURIComponent(kind)}/${encodeURIComponent(id)}` };
+    }
+    if (item.id === 'learner-feedback' && reviewAccount) {
+      return { ...item, href: `/learner/feedback?learnerId=${encodeURIComponent(id)}&kind=${encodeURIComponent(kind)}` };
+    }
+    return item;
+  }), [id, kind, reviewAccount]);
   const { isRealMode, real, loading, loadError, refresh } = useLearnerDetailParam(kind, id);
   const { canProgress, showReadOnlyNotice } = useLearnerWorkspaceAccess(id);
 

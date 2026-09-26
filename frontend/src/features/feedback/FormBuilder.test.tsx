@@ -1,63 +1,30 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
 import { feedbackApi } from '@/api/feedback';
 import { FormBuilder } from './FormBuilder';
 
-vi.mock('@/api/feedback', () => ({
-  feedbackApi: {
-    curriculumOptions: vi.fn(),
-    getForm: vi.fn(),
-    createForm: vi.fn(),
-    updateForm: vi.fn(),
-  },
-}));
+vi.mock('sweetalert2', () => ({ default: { fire: vi.fn() } }));
 
-describe('FormBuilder curriculum scope', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    vi.mocked(feedbackApi.curriculumOptions).mockResolvedValue({
-      programmes: [{ id: 'PROG-1', name: 'Data Analyst' }, { id: 'PROG-2', name: 'Marketing' }],
-      cohorts: [{ id: 'COHORT-1', name: 'September', programmeId: 'PROG-1' }],
-      groups: [{ id: 'GROUP-1', name: 'Group A', programmeId: 'PROG-1', cohortId: 'COHORT-1' }],
-      modules: [{ id: 'MOD-1', name: 'Data Foundations', programmeId: 'PROG-1', cohortId: 'COHORT-1', groupId: 'GROUP-1' }],
+afterEach(() => vi.restoreAllMocks());
+
+describe('post-lecture feedback delivery scope', () => {
+  it('defaults to the fixed all-modules form and loads curriculum only for a module override', async () => {
+    const curriculum = vi.spyOn(feedbackApi, 'curriculumOptions').mockResolvedValue({
+      programmes: [{ id: 'PROG-1', name: 'Data' }],
+      cohorts: [], groups: [], modules: [{ id: 'MOD-1', name: 'Foundations', programmeId: 'PROG-1', cohortId: 'C-1', groupId: 'G-1' }],
     });
-  });
-
-  it('reveals each curriculum level only after its parent is selected', async () => {
-    const user = userEvent.setup();
     render(<MemoryRouter><FormBuilder /></MemoryRouter>);
 
-    const programme = await screen.findByRole('combobox', { name: 'Programme' });
-    const cohort = screen.getByRole('combobox', { name: 'Cohort' });
-    const group = screen.getByRole('combobox', { name: 'Group' });
-    const module = screen.getByRole('combobox', { name: 'Module' });
-    expect(cohort).toBeDisabled();
-    expect(group).toBeDisabled();
-    expect(module).toBeDisabled();
+    expect(screen.getByRole('combobox', { name: /delivery scope/i })).toHaveValue('all_modules');
+    expect(screen.queryByRole('combobox', { name: 'Programme' })).not.toBeInTheDocument();
+    expect(curriculum).not.toHaveBeenCalled();
 
-    await user.selectOptions(programme, 'PROG-1');
-    expect(cohort).toBeEnabled();
-    await user.selectOptions(cohort, 'COHORT-1');
-    expect(group).toBeEnabled();
-    await user.selectOptions(group, 'GROUP-1');
-    expect(module).toBeEnabled();
-    expect(screen.getByRole('option', { name: 'Data Foundations' })).toBeInTheDocument();
-  });
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: /delivery scope/i }), 'module');
 
-  it('shows a retry action when curriculum options fail to load', async () => {
-    const user = userEvent.setup();
-    vi.mocked(feedbackApi.curriculumOptions)
-      .mockRejectedValueOnce(new Error('Curriculum options are temporarily unavailable.'))
-      .mockResolvedValueOnce({ programmes: [], cohorts: [], groups: [], modules: [] });
-
-    render(<MemoryRouter><FormBuilder /></MemoryRouter>);
-
-    expect(await screen.findByRole('alert')).toHaveTextContent('Curriculum options are temporarily unavailable.');
-    await user.click(screen.getByRole('button', { name: 'Retry' }));
-
-    expect(feedbackApi.curriculumOptions).toHaveBeenCalledTimes(2);
-    expect(await screen.findByRole('combobox', { name: 'Programme' })).toBeEnabled();
+    expect(await screen.findByRole('combobox', { name: 'Programme' })).toBeInTheDocument();
+    await waitFor(() => expect(curriculum).toHaveBeenCalledTimes(1));
   });
 });

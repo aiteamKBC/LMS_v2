@@ -2,8 +2,8 @@
 
 The route happens to be mounted by engagement_api, while form validation,
 assignment and response ownership are kept independent from any frontend page.
-Structural edits are locked as soon as a response exists so historical answers
-always retain the question wording and configuration they were submitted for.
+General-form structural edits are locked after use. Post-lecture templates use
+immutable versions so future lectures can use edits without changing history.
 """
 from __future__ import annotations
 
@@ -31,10 +31,13 @@ from learner_api.profile_photo import normalize_photo
 
 from .helpers import json_body, json_error
 from .models import (
-    FeedbackAnswer, FeedbackAssignment, FeedbackForm, FeedbackQuestion,
-    FeedbackResponse, FeedbackSection, FeedbackUpload,
+    FeedbackAnswer, FeedbackAssignment, FeedbackDelivery, FeedbackDeliveryRecipient,
+    FeedbackForm, FeedbackQuestion, FeedbackResponse, FeedbackSection, FeedbackUpload,
 )
-from .permissions import actor_name, require_learner_identity, require_self_or_staff, require_staff
+from .permissions import (
+    actor_name, learner_read_scope, require_learner_identity,
+    require_self_or_staff, require_staff,
+)
 
 QUESTION_TYPES = {
     'short_text', 'long_text', 'yes_no', 'single_choice', 'multiple_choice',
@@ -91,17 +94,32 @@ def _section_dict(section):
 
 
 def _assigned_count(form):
-    assignments = list(form.assignments.all())
-    if any(a.target_type == 'all_learners' for a in assignments):
-        return EnrolmentUser.all_learners.count()
-    return len({a.target_id for a in assignments if a.target_type == 'learner'})
+    family_ids = [form.id]
+    if form.form_type == 'post_lecture':
+        family_ids = list(FeedbackForm.objects.filter(template_key=form.template_key).values_list('id', flat=True))
+    assignments = list(FeedbackAssignment.objects.filter(form_id__in=family_ids))
+    manual_count = (
+        EnrolmentUser.all_learners.count()
+        if any(a.target_type == 'all_learners' for a in assignments)
+        else len({a.target_id for a in assignments if a.target_type == 'learner'})
+    )
+    delivery_count = FeedbackDeliveryRecipient.objects.filter(
+        delivery__form_id__in=family_ids, revoked_at__isnull=True,
+    ).count()
+    return manual_count + delivery_count
 
 
 def form_dict(form, *, include_structure=False):
-    responses = list(form.responses.all())
+    response_query = FeedbackResponse.objects.filter(form=form)
+    if form.form_type == 'post_lecture':
+        response_query = FeedbackResponse.objects.filter(form__template_key=form.template_key)
+    responses = list(response_query)
     completed = sum(r.status == 'completed' for r in responses)
     data = {
         'id': form.id, 'title': form.title, 'formType': form.form_type,
+        'deliveryScope': form.delivery_scope,
+        'templateKey': str(form.template_key), 'version': form.version,
+        'isCurrent': form.is_current, 'previousVersionId': form.previous_version_id,
         'description': form.description,
         'instructions': form.instructions, 'status': form.status,
         'curriculumScope': {
@@ -117,17 +135,38 @@ def form_dict(form, *, include_structure=False):
         'createdBy': form.created_by, 'createdAt': _iso(form.created_at),
         'updatedAt': _iso(form.updated_at), 'publishedAt': _iso(form.published_at),
         'assignedCount': _assigned_count(form), 'responseCount': completed,
-        'startedCount': len(responses), 'structureLocked': bool(responses),
+        'startedCount': len(responses),
+        'structureLocked': form.form_type != 'post_lecture' and bool(responses),
+        'willCreateVersion': form.form_type == 'post_lecture' and _form_has_history(form),
     }
     if include_structure:
         data['sections'] = [_section_dict(s) for s in form.sections.all()]
     return data
 
 
-def _forms_queryset():
-    return FeedbackForm.objects.prefetch_related(
+def _forms_queryset(*, current_only=False):
+    queryset = FeedbackForm.objects.prefetch_related(
         'assignments', 'responses', 'sections__questions',
-    ).order_by('-updated_at')
+    )
+    if current_only:
+        queryset = queryset.filter(is_current=True)
+    return queryset.order_by('-updated_at')
+
+
+def _form_has_history(form):
+    return form.responses.exists() or form.deliveries.exists()
+
+
+def _post_lecture_publish_conflict(form):
+    if form.form_type != 'post_lecture':
+        return False
+    conflict = FeedbackForm.objects.filter(
+        form_type='post_lecture', delivery_scope=form.delivery_scope,
+        is_current=True, status='published',
+    ).exclude(pk=form.pk)
+    if form.delivery_scope == 'module':
+        conflict = conflict.filter(module_catalogue_id=form.module_catalogue_id)
+    return conflict.exists()
 
 
 def _clean(value):
@@ -141,6 +180,7 @@ def _same_identifier(left, right):
 def _curriculum_scope_changed(form, payload):
     fields = {
         'formType': form.form_type,
+        'deliveryScope': form.delivery_scope,
         'programmeId': form.programme_id,
         'cohortId': form.cohort_id,
         'groupId': form.group_id,
@@ -228,6 +268,21 @@ def _apply_curriculum_scope(form, payload):
         raise ValueError('Unsupported feedback form type.')
     form.form_type = requested_type
     if requested_type == 'general':
+        form.delivery_scope = 'manual'
+        for field in (
+            'programme_id', 'programme_name', 'cohort_id', 'cohort_name',
+            'group_id', 'group_name', 'module_catalogue_id', 'module_name',
+        ):
+            setattr(form, field, '')
+        return
+
+    requested_scope = _clean(payload.get('deliveryScope', form.delivery_scope))
+    if requested_scope == 'manual':
+        requested_scope = 'module' if _clean(payload.get('moduleCatalogueId', form.module_catalogue_id)) else 'all_modules'
+    if requested_scope not in {'all_modules', 'module'}:
+        raise ValueError('Choose whether post-lecture feedback applies to all modules or one module.')
+    form.delivery_scope = requested_scope
+    if requested_scope == 'all_modules':
         for field in (
             'programme_id', 'programme_name', 'cohort_id', 'cohort_name',
             'group_id', 'group_name', 'module_catalogue_id', 'module_name',
@@ -355,7 +410,7 @@ def _apply_metadata(form, payload):
 @require_staff
 def forms_collection(request):
     if request.method == 'GET':
-        forms = list(_forms_queryset())
+        forms = list(_forms_queryset(current_only=True))
         return JsonResponse({
             'forms': [form_dict(f) for f in forms],
             'summary': {
@@ -393,8 +448,8 @@ def form_detail(request, pk):
     if request.method == 'GET':
         return JsonResponse({'form': form_dict(form, include_structure=True)})
     if request.method == 'DELETE':
-        if form.responses.exists():
-            return json_error('Forms with responses cannot be deleted. Close the form instead.', status=409)
+        if _form_has_history(form):
+            return json_error('Forms used by a lecture or response cannot be deleted. Close the form instead.', status=409)
         form.delete()
         return JsonResponse({'ok': True})
     if request.method != 'PATCH':
@@ -402,17 +457,60 @@ def form_detail(request, pk):
     payload = json_body(request)
     if payload is None:
         return json_error('Invalid JSON body.')
-    if 'sections' in payload and form.responses.exists():
+    if not form.is_current:
+        return json_error('Historical form versions are read-only. Edit the current version instead.', status=409)
+    if form.form_type == 'post_lecture' and _form_has_history(form) and payload.get('formType', 'post_lecture') != 'post_lecture':
+        return json_error('A used post-lecture template cannot be changed into a general form.', status=409)
+    if form.form_type != 'post_lecture' and 'sections' in payload and form.responses.exists():
         return json_error('Form structure is locked because a learner has started responding.', status=409)
-    if _curriculum_scope_changed(form, payload) and form.responses.exists():
+    if form.form_type != 'post_lecture' and _curriculum_scope_changed(form, payload) and form.responses.exists():
         return json_error('The form type and curriculum scope are locked because a learner has started responding.', status=409)
     try:
         with transaction.atomic():
-            _apply_metadata(form, payload)
-            form.save()
-            if 'sections' in payload:
-                _replace_structure(form, payload['sections'])
-        form = _forms_queryset().get(pk=pk)
+            if form.form_type == 'post_lecture' and _form_has_history(form):
+                previous = form
+                previous.is_current = False
+                previous.save(update_fields=['is_current', 'updated_at'])
+                form = FeedbackForm(
+                    title=previous.title, form_type=previous.form_type,
+                    delivery_scope=previous.delivery_scope, template_key=previous.template_key,
+                    version=previous.version + 1, is_current=True, previous_version=previous,
+                    description=previous.description, instructions=previous.instructions,
+                    programme_id=previous.programme_id, programme_name=previous.programme_name,
+                    cohort_id=previous.cohort_id, cohort_name=previous.cohort_name,
+                    group_id=previous.group_id, group_name=previous.group_name,
+                    module_catalogue_id=previous.module_catalogue_id, module_name=previous.module_name,
+                    status=previous.status, start_date=previous.start_date, due_date=previous.due_date,
+                    anonymous_responses=previous.anonymous_responses,
+                    allow_save_continue=previous.allow_save_continue,
+                    allow_edit_after_submission=previous.allow_edit_after_submission,
+                    created_by=actor_name(request) or previous.created_by,
+                    published_at=previous.published_at,
+                )
+                _apply_metadata(form, payload)
+                form.save()
+                if form.status == 'published' and _post_lecture_publish_conflict(form):
+                    raise ValueError('Another current post-lecture form is already published for this delivery scope.')
+                sections = payload.get('sections')
+                if sections is None:
+                    sections = [
+                        {'title': section.title, 'description': section.description, 'questions': [
+                            {'type': question.question_type, 'text': question.question_text,
+                             'required': question.required, 'helpText': question.help_text,
+                             'config': deepcopy(question.config or {})}
+                            for question in section.questions.all()
+                        ]}
+                        for section in previous.sections.all()
+                    ]
+                _replace_structure(form, sections)
+            else:
+                _apply_metadata(form, payload)
+                form.save()
+                if form.status == 'published' and _post_lecture_publish_conflict(form):
+                    raise ValueError('Another current post-lecture form is already published for this delivery scope.')
+                if 'sections' in payload:
+                    _replace_structure(form, payload['sections'])
+        form = _forms_queryset().get(pk=form.pk)
         return JsonResponse({'form': form_dict(form, include_structure=True)})
     except ValueError as exc:
         return json_error(str(exc))
@@ -429,12 +527,18 @@ def form_status(request, pk):
     except FeedbackForm.DoesNotExist:
         return json_error('Feedback form not found.', status=404)
     payload = json_body(request) or {}
+    if not form.is_current:
+        return json_error('Historical form versions are read-only. Change the current version instead.', status=409)
     status = payload.get('status')
     if status not in {'draft', 'published', 'closed'}:
         return json_error('Invalid form status.')
     if status == 'published':
         if not form.sections.exists() or not FeedbackQuestion.objects.filter(section__form=form).exists():
             return json_error('Add at least one question before publishing.')
+        if form.form_type == 'post_lecture':
+            if _post_lecture_publish_conflict(form):
+                target = 'all modules' if form.delivery_scope == 'all_modules' else form.module_name or form.module_catalogue_id
+                return json_error(f'Another current post-lecture form is already published for {target}.', status=409)
         form.published_at = form.published_at or timezone.now()
     elif status == 'draft' and form.responses.exists():
         return json_error('A form with responses cannot be returned to draft. Close it instead.', status=409)
@@ -453,7 +557,7 @@ def form_duplicate(request, pk):
         return json_error('Feedback form not found.', status=404)
     payload = {
         'title': f'{source.title} (Copy)', 'description': source.description,
-        'formType': source.form_type,
+        'formType': source.form_type, 'deliveryScope': source.delivery_scope,
         'programmeId': source.programme_id, 'cohortId': source.cohort_id,
         'groupId': source.group_id, 'moduleCatalogueId': source.module_catalogue_id,
         'instructions': source.instructions, 'anonymousResponses': source.anonymous_responses,
@@ -505,6 +609,8 @@ def form_assignments(request, pk):
         return JsonResponse({'assignments': [assignment_dict(a) for a in form.assignments.all()]})
     if request.method != 'POST':
         return json_error('Method not allowed.', status=405)
+    if form.form_type == 'post_lecture':
+        return json_error('Post-lecture forms are assigned automatically from finalized attendance.', status=409)
     if form.status != 'published':
         return json_error('Only published forms can be assigned.', status=409)
     payload = json_body(request) or {}
@@ -549,6 +655,8 @@ def _response_dict(response, *, include_answers=False):
         'learnerId': None if anonymous else response.learner_id,
         'learnerName': 'Anonymous learner' if anonymous else response.learner_name,
         'programme': '' if anonymous else response.programme,
+        'deliveryId': response.delivery_id,
+        'sessionTitle': response.delivery.session_title if response.delivery_id else '',
         'status': response.status, 'startedAt': _iso(response.started_at),
         'updatedAt': _iso(response.updated_at), 'submittedAt': _iso(response.submitted_at),
     }
@@ -565,7 +673,7 @@ def _response_dict(response, *, include_answers=False):
 def responses_collection(request):
     if request.method != 'GET':
         return json_error('Method not allowed.', status=405)
-    responses = FeedbackResponse.objects.select_related('form').order_by('-updated_at')
+    responses = FeedbackResponse.objects.select_related('form', 'delivery').order_by('-updated_at')
     if request.GET.get('formId'):
         responses = responses.filter(form_id=request.GET['formId'])
     if request.GET.get('status'):
@@ -593,18 +701,24 @@ def analytics(request):
     if request.method != 'GET':
         return json_error('Method not allowed.', status=405)
     form_id = request.GET.get('formId')
-    forms = _forms_queryset()
+    forms = _forms_queryset(current_only=True)
+    family_ids = None
     if form_id:
         forms = forms.filter(pk=form_id)
+        selected = forms.first()
+        if selected and selected.form_type == 'post_lecture':
+            family_ids = FeedbackForm.objects.filter(template_key=selected.template_key).values_list('id', flat=True)
+        else:
+            family_ids = [form_id]
     assigned = sum(_assigned_count(f) for f in forms)
     responses = FeedbackResponse.objects.all()
     if form_id:
-        responses = responses.filter(form_id=form_id)
+        responses = responses.filter(form_id__in=family_ids)
     in_progress = responses.filter(status='in_progress').count()
     completed = responses.filter(status='completed').count()
     rating_questions = FeedbackQuestion.objects.filter(question_type='rating')
     if form_id:
-        rating_questions = rating_questions.filter(section__form_id=form_id)
+        rating_questions = rating_questions.filter(section__form_id__in=family_ids)
     ratings = []
     for question in rating_questions:
         values = [a.answer for a in question.answers.filter(response__status='completed')]
@@ -626,47 +740,213 @@ def _assignment_for(form, learner_id):
 
 
 def learner_forms(request):
-    learner_id, _learner_name, error = require_learner_identity(request)
+    learner_id, error = learner_read_scope(request)
     if error:
         return error
     if request.method != 'GET':
         return json_error('Method not allowed.', status=405)
+    if not learner_id:
+        return json_error('Choose a learner to preview feedback.', status=400)
+    learner_id = str(learner_id)
     now = timezone.now()
-    forms = _forms_queryset().filter(status='published').filter(
+    forms = _forms_queryset().filter(status='published', form_type='general').filter(
         Q(assignments__target_type='all_learners') |
         Q(assignments__target_type='learner', assignments__target_id=learner_id),
     ).distinct()
     forms = forms.filter(Q(start_date__isnull=True) | Q(start_date__lte=now))
-    responses = {r.form_id: r for r in FeedbackResponse.objects.filter(learner_id=learner_id)}
+    responses = {r.form_id: r for r in FeedbackResponse.objects.filter(learner_id=learner_id, delivery__isnull=True)}
     items = []
     for form in forms:
         assignment = _assignment_for(form, learner_id)
         response = responses.get(form.id)
         items.append({
-            'id': form.id, 'title': form.title, 'description': form.description,
+            'id': form.id, 'deliveryId': None, 'title': form.title, 'description': form.description,
+            'sessionTitle': '', 'sessionStartsAt': None,
             'assignedAt': _iso(assignment.assigned_at if assignment else None),
             'dueDate': _iso((assignment.due_date if assignment else None) or form.due_date),
+            'status': 'completed' if response and response.status == 'completed' else ('in_progress' if response else 'not_started'),
+            'responseId': response.id if response else None,
+        })
+    recipients = list(FeedbackDeliveryRecipient.objects.select_related('delivery__form').filter(
+        learner_id=learner_id, revoked_at__isnull=True,
+        delivery__status='open', delivery__available_at__lte=now,
+        delivery__form__status='published',
+    ).filter(
+        Q(delivery__form__start_date__isnull=True) | Q(delivery__form__start_date__lte=now),
+    ).order_by('-delivery__available_at', '-assigned_at'))
+    delivery_responses = {
+        r.delivery_id: r for r in FeedbackResponse.objects.filter(
+            learner_id=learner_id, delivery_id__in=[item.delivery_id for item in recipients],
+        )
+    }
+    for recipient in recipients:
+        delivery, form = recipient.delivery, recipient.delivery.form
+        response = delivery_responses.get(delivery.id)
+        items.append({
+            'id': form.id, 'deliveryId': delivery.id,
+            'title': form.title, 'description': form.description,
+            'sessionTitle': delivery.session_title, 'sessionStartsAt': _iso(delivery.starts_at),
+            'assignedAt': _iso(recipient.assigned_at),
+            'dueDate': _iso(recipient.due_date or form.due_date),
             'status': 'completed' if response and response.status == 'completed' else ('in_progress' if response else 'not_started'),
             'responseId': response.id if response else None,
         })
     return JsonResponse({'forms': items})
 
 
-def learner_form_detail(request, pk):
-    learner_id, learner_name, error = require_learner_identity(request)
-    if error:
-        return error
+def _form_recipient_rows(form):
+    """Return staff-visible assignment rows across every version of a template."""
+    family_ids = [form.id]
+    if form.form_type == 'post_lecture':
+        family_ids = list(FeedbackForm.objects.filter(
+            template_key=form.template_key,
+        ).values_list('id', flat=True))
+
+    delivery_recipients = list(FeedbackDeliveryRecipient.objects.select_related(
+        'delivery__form',
+    ).filter(
+        delivery__form_id__in=family_ids, revoked_at__isnull=True,
+    ).order_by('-assigned_at', '-id'))
+    manual_assignments = list(FeedbackAssignment.objects.filter(
+        form_id__in=family_ids,
+    ).order_by('-assigned_at', '-id'))
+
+    learner_ids = {str(item.learner_id) for item in delivery_recipients}
+    learner_ids.update(str(item.target_id) for item in manual_assignments if item.target_id)
+    all_assignment = next((item for item in manual_assignments if item.target_type == 'all_learners'), None)
+    learners_query = EnrolmentUser.all_learners.all()
+    if all_assignment is None:
+        learners_query = learners_query.filter(id__in=learner_ids)
+    learners = {str(item.id): item for item in learners_query}
+
+    responses = list(FeedbackResponse.objects.filter(form_id__in=family_ids))
+    delivery_status = {
+        (item.delivery_id, str(item.learner_id)): item.status
+        for item in responses if item.delivery_id is not None
+    }
+    manual_status = {
+        str(item.learner_id): item.status
+        for item in responses if item.delivery_id is None
+    }
+    rows = []
+    for recipient in delivery_recipients:
+        learner_id = str(recipient.learner_id)
+        learner = learners.get(learner_id)
+        delivery = recipient.delivery
+        rows.append({
+            'key': f'delivery-{delivery.id}-{learner_id}',
+            'learnerId': learner_id,
+            'learnerName': recipient.learner_name or getattr(learner, 'username', '') or getattr(learner, 'email', '') or f'Learner {learner_id}',
+            'email': getattr(learner, 'email', '') or '',
+            'programme': recipient.programme or getattr(learner, 'programme', '') or '',
+            'source': 'attendance',
+            'sessionTitle': delivery.session_title,
+            'moduleName': delivery.module_name,
+            'assignedAt': _iso(recipient.assigned_at),
+            'dueDate': _iso(recipient.due_date),
+            'responseStatus': delivery_status.get((delivery.id, learner_id), 'not_started'),
+            'formVersion': delivery.form.version,
+        })
+
+    manual_by_learner = {}
+    for assignment in manual_assignments:
+        if assignment.target_type == 'all_learners':
+            for learner_id, learner in learners.items():
+                manual_by_learner.setdefault(learner_id, (learner, assignment))
+        elif assignment.target_id:
+            learner_id = str(assignment.target_id)
+            learner = learners.get(learner_id)
+            if learner:
+                manual_by_learner.setdefault(learner_id, (learner, assignment))
+    for learner_id, (learner, assignment) in manual_by_learner.items():
+        rows.append({
+            'key': f'manual-{form.id}-{learner_id}',
+            'learnerId': learner_id,
+            'learnerName': learner.username or learner.email or f'Learner {learner_id}',
+            'email': learner.email or '',
+            'programme': learner.programme or '',
+            'source': 'manual',
+            'sessionTitle': '', 'moduleName': '',
+            'assignedAt': _iso(assignment.assigned_at),
+            'dueDate': _iso(assignment.due_date or form.due_date),
+            'responseStatus': manual_status.get(learner_id, 'not_started'),
+            'formVersion': form.version,
+        })
+    return rows
+
+
+@require_staff
+def form_recipients(request, pk):
+    if request.method != 'GET':
+        return json_error('Method not allowed.', status=405)
     try:
-        form = _forms_queryset().get(pk=pk, status='published')
+        form = FeedbackForm.objects.get(pk=pk)
     except FeedbackForm.DoesNotExist:
         return json_error('Feedback form not found.', status=404)
-    if form.start_date and form.start_date > timezone.now():
+    rows = _form_recipient_rows(form)
+    search = _clean(request.GET.get('search')).casefold()
+    if search:
+        fields = ('learnerName', 'email', 'programme', 'sessionTitle', 'moduleName')
+        rows = [row for row in rows if any(search in str(row[field]).casefold() for field in fields)]
+    try:
+        page = max(int(request.GET.get('page', 1)), 1)
+        page_size = min(max(int(request.GET.get('pageSize', 50)), 1), 100)
+    except (TypeError, ValueError):
+        return json_error('Page values must be integers.')
+    total = len(rows)
+    start = (page - 1) * page_size
+    return JsonResponse({
+        'recipients': rows[start:start + page_size],
+        'total': total, 'page': page, 'pageSize': page_size,
+    })
+
+
+def _learner_feedback_context(learner_id, *, form_id=None, delivery_id=None):
+    now = timezone.now()
+    if delivery_id is not None:
+        try:
+            recipient = FeedbackDeliveryRecipient.objects.select_related('delivery__form').get(
+                delivery_id=delivery_id, learner_id=learner_id, revoked_at__isnull=True,
+                delivery__status='open', delivery__available_at__lte=now,
+                delivery__form__status='published',
+            )
+        except FeedbackDeliveryRecipient.DoesNotExist:
+            return None, None, None
+        form, delivery = recipient.delivery.form, recipient.delivery
+        if form.start_date and form.start_date > now:
+            return None, None, None
+        return form, delivery, recipient
+    try:
+        form = _forms_queryset().get(pk=form_id, status='published')
+    except FeedbackForm.DoesNotExist:
+        return None, None, None
+    if (form.start_date and form.start_date > now) or not _assignment_for(form, learner_id):
+        return None, None, None
+    return form, None, None
+
+
+def learner_form_detail(request, pk=None, delivery_id=None):
+    learner_id, error = learner_read_scope(request)
+    if error:
+        return error
+    if request.method != 'GET':
+        return json_error('Method not allowed.', status=405)
+    if not learner_id:
+        return json_error('Choose a learner to preview feedback.', status=400)
+    learner_id = str(learner_id)
+    form, delivery, _recipient = _learner_feedback_context(learner_id, form_id=pk, delivery_id=delivery_id)
+    if form is None:
         return json_error('Feedback form not found.', status=404)
-    if not _assignment_for(form, learner_id):
-        return json_error('Feedback form not found.', status=404)
-    response = FeedbackResponse.objects.filter(form=form, learner_id=learner_id).prefetch_related('answers').first()
+    response = FeedbackResponse.objects.filter(
+        form=form, delivery=delivery, learner_id=learner_id,
+    ).prefetch_related('answers').first()
     answers = {str(a.question_id): a.answer for a in response.answers.all()} if response else {}
     data = form_dict(form, include_structure=True)
+    data['delivery'] = None if delivery is None else {
+        'id': delivery.id, 'occurrenceKey': delivery.occurrence_key,
+        'sessionTitle': delivery.session_title, 'startsAt': _iso(delivery.starts_at),
+        'endsAt': _iso(delivery.ends_at),
+    }
     data['response'] = {
         'id': response.id if response else None,
         'status': response.status if response else 'not_started',
@@ -718,19 +998,14 @@ def _answer_empty(question, value):
     return False
 
 
-def learner_response_save(request, pk):
+def learner_response_save(request, pk=None, delivery_id=None):
     learner_id, learner_name, error = require_learner_identity(request)
     if error:
         return error
     if request.method != 'POST':
         return json_error('Method not allowed.', status=405)
-    try:
-        form = _forms_queryset().get(pk=pk, status='published')
-    except FeedbackForm.DoesNotExist:
-        return json_error('Feedback form not found.', status=404)
-    if form.start_date and form.start_date > timezone.now():
-        return json_error('Feedback form not found.', status=404)
-    if not _assignment_for(form, learner_id):
+    form, delivery, _recipient = _learner_feedback_context(learner_id, form_id=pk, delivery_id=delivery_id)
+    if form is None:
         return json_error('Feedback form not found.', status=404)
     payload = json_body(request) or {}
     answers = payload.get('answers')
@@ -745,7 +1020,9 @@ def learner_response_save(request, pk):
     for question_id, value in answers.items():
         if not _valid_answer(questions[str(question_id)], value):
             return json_error(f'Invalid answer for question {question_id}.')
-    existing_response = FeedbackResponse.objects.filter(form=form, learner_id=learner_id).prefetch_related('answers').first()
+    existing_response = FeedbackResponse.objects.filter(
+        form=form, delivery=delivery, learner_id=learner_id,
+    ).prefetch_related('answers').first()
     if existing_response and existing_response.status == 'completed' and not form.allow_edit_after_submission:
         return json_error('This response has already been submitted.', status=409)
     effective_answers = {str(a.question_id): a.answer for a in existing_response.answers.all()} if existing_response else {}
@@ -766,7 +1043,7 @@ def learner_response_save(request, pk):
         return json_error('Learner account not found.', status=404)
     with transaction.atomic():
         response, _ = FeedbackResponse.objects.select_for_update().get_or_create(
-            form=form, learner_id=learner_id,
+            form=form, delivery=delivery, learner_id=learner_id,
             defaults={'learner_name': learner_name or learner.username or '', 'programme': learner.programme or ''},
         )
         if response.status == 'completed' and not form.allow_edit_after_submission:
@@ -787,20 +1064,20 @@ def learner_response_save(request, pk):
     }})
 
 
-def learner_photo_upload(request, pk, question_id):
+def learner_photo_upload(request, pk=None, question_id=None, delivery_id=None):
     """Store one normalised, private image answer for the signed-in learner."""
     learner_id, learner_name, error = require_learner_identity(request)
     if error:
         return error
     if request.method != 'POST':
         return json_error('Method not allowed.', status=405)
-    try:
-        form = _forms_queryset().get(pk=pk, status='published')
-        question = FeedbackQuestion.objects.get(pk=question_id, section__form=form, question_type='photo_upload')
-    except (FeedbackForm.DoesNotExist, FeedbackQuestion.DoesNotExist):
-        return json_error('Feedback form or photo question not found.', status=404)
-    if not _assignment_for(form, learner_id) or (form.start_date and form.start_date > timezone.now()):
+    form, delivery, _recipient = _learner_feedback_context(learner_id, form_id=pk, delivery_id=delivery_id)
+    if form is None:
         return json_error('Feedback form not found.', status=404)
+    try:
+        question = FeedbackQuestion.objects.get(pk=question_id, section__form=form, question_type='photo_upload')
+    except FeedbackQuestion.DoesNotExist:
+        return json_error('Feedback form or photo question not found.', status=404)
     if not evidence_storage.azure_configured():
         return json_error('Photo storage is not configured.', status=503)
     upload = request.FILES.get('photo')
@@ -814,7 +1091,7 @@ def learner_photo_upload(request, pk, question_id):
     except EnrolmentUser.DoesNotExist:
         return json_error('Learner account not found.', status=404)
     response, _ = FeedbackResponse.objects.get_or_create(
-        form=form, learner_id=learner_id,
+        form=form, delivery=delivery, learner_id=learner_id,
         defaults={'learner_name': learner_name or learner.username or '', 'programme': learner.programme or ''},
     )
     if response.status == 'completed' and not form.allow_edit_after_submission:
