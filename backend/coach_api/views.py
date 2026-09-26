@@ -1779,6 +1779,75 @@ def fetch_caseload_dashboard_profiles(owner_email: str) -> list[LearnerProfile]:
     return rows
 
 
+def fetch_case_file_shell(owner_email: str, learner_id: int):
+    """Load one coach-owned learner and its stable enrolment source only."""
+    requested_owner = normalize_email(owner_email)
+    profile = (
+        LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
+        .filter(id=learner_id, coach_email_key=requested_owner)
+        .only(
+            "id", "full_name", "email", "enrolment_id", "aptem_id", "learner_type",
+            "programme", "programme_status", "cohort", "group_name", "lifecycle_status",
+            "coach_name", "coach_email", "coach_rag", "start_date", "end_date",
+            "gateway_review_date",
+        )
+        .first()
+    )
+    if profile is None:
+        return None, None
+    source = None
+    if profile.enrolment_id:
+        source = (
+            EnrolmentUser.all_learners.filter(pk=profile.enrolment_id)
+            .only(
+                "id", "aptem_id", "learner_type", "username", "email", "programme",
+                "programme_status", "cohort", "group", "employer", "coach_name",
+                "coach_email", "start_date", "end_date",
+            )
+            .first()
+        )
+    return profile, source
+
+
+def serialize_case_file_shell(profile, source) -> dict:
+    def optional_date(value):
+        return format_date(value) if value else None
+
+    source_aptem = getattr(source, "aptem_id", None)
+    profile_aptem = getattr(profile, "aptem_id", None)
+    source_aptem_id = int(str(source_aptem).strip()) if student_activity_available(source_aptem) else None
+    profile_aptem_id = int(str(profile_aptem).strip()) if student_activity_available(profile_aptem) else None
+    identity_conflict = bool(source_aptem_id and profile_aptem_id and source_aptem_id != profile_aptem_id)
+    aptem_id = None if identity_conflict else source_aptem_id or profile_aptem_id
+    raw_kind = clean_text(getattr(source, "learner_type", None) or getattr(profile, "learner_type", None)).casefold()
+    kind = "commercial" if raw_kind == "commercial" else "apprenticeship"
+    return {
+        "identity": {
+            "learnerId": str(profile.id),
+            "enrolmentId": str(profile.enrolment_id) if profile.enrolment_id else None,
+            "aptemId": str(aptem_id) if aptem_id else None,
+            "kind": kind,
+            "source": "conflict" if identity_conflict else ("aptem" if aptem_id else "native"),
+            "identityConflict": identity_conflict,
+        },
+        "profile": {
+            "name": clean_text(getattr(profile, "full_name", None) or getattr(source, "username", None)) or None,
+            "email": clean_text(getattr(profile, "email", None) or getattr(source, "email", None)) or None,
+            "programme": clean_text(getattr(profile, "programme", None) or getattr(source, "programme", None)) or None,
+            "cohort": clean_text(getattr(profile, "cohort", None) or getattr(source, "cohort", None)) or None,
+            "group": clean_text(getattr(profile, "group_name", None) or getattr(source, "group", None)) or None,
+            "employer": clean_text(getattr(source, "employer", None)) or None,
+            "coachName": clean_text(getattr(profile, "coach_name", None) or getattr(source, "coach_name", None)) or None,
+            "coachEmail": clean_text(getattr(profile, "coach_email", None) or getattr(source, "coach_email", None)) or None,
+            "status": clean_text(getattr(profile, "programme_status", None) or getattr(source, "programme_status", None)) or None,
+            "startDate": optional_date(getattr(profile, "start_date", None) or getattr(source, "start_date", None)),
+            "plannedEndDate": optional_date(getattr(profile, "end_date", None) or getattr(source, "end_date", None)),
+            "gatewayReviewDate": optional_date(getattr(profile, "gateway_review_date", None)),
+            "coachRag": format_coach_rag_value(getattr(profile, "coach_rag", None)) or None,
+        },
+    }
+
+
 def fetch_attendance_caseload_rows(owner_email: str) -> list[LearnerProfile]:
     requested_owner = normalize_email(owner_email)
     queryset = (
@@ -5496,11 +5565,13 @@ def build_catchup_scheduler_events(
 
     return scheduler_events
 
-def fetch_standalone_event_records(owner_email: str) -> list[CoachCalendarEvent]:
+def fetch_standalone_event_records(owner_email: str, learner_id: int | None = None) -> list[CoachCalendarEvent]:
+    queryset = CoachCalendarEvent.objects.filter(owner_email__iexact=owner_email)
+    if learner_id is not None:
+        queryset = queryset.filter(learner_id=learner_id)
     return normalize_calendar_records(
         list(
-            CoachCalendarEvent.objects.filter(owner_email__iexact=owner_email)
-            .filter(
+            queryset.filter(
                 ~Q(event_type__in=["mcr", "progress-review"])
                 | Q(event_type__in=["mcr", "progress-review"], idempotency_key__startswith="learner-book:")
                 | ~Q(review_template_id="")
@@ -11578,6 +11649,134 @@ def coach_dashboard(request):
     _coach_perf("dashboard", "total", endpoint_started, learner_count=len(learners))
     cache.set(dashboard_cache_key, response_payload, 30)
     return JsonResponse(response_payload)
+
+
+@coach_access_required
+@require_GET
+def coach_learner_case_file(request, learner_id):
+    owner_email = authenticated_coach_email(request)
+    try:
+        profile, source = fetch_case_file_shell(owner_email, learner_id)
+    except DatabaseError:
+        logger.exception("coach_case_file_shell_failed learner_id=%s", learner_id)
+        return coach_error(
+            request,
+            code="database_unavailable",
+            message="Unable to load learner case file details.",
+            status=503,
+        )
+    if profile is None:
+        return JsonResponse({"detail": "Learner not found."}, status=404)
+    return JsonResponse(serialize_case_file_shell(profile, source))
+
+
+def _case_file_learner_not_found():
+    # Keep ownership failures indistinguishable from an unknown id.
+    return JsonResponse({"detail": "Learner not found."}, status=404)
+
+
+def _case_file_owner_name(owner_email, profile):
+    return coach_staff_display_name(owner_email) or clean_text(getattr(profile, "coach_name", None)) or "Coach"
+
+
+def _case_file_review_events(owner_email, profile):
+    """Resolve the canonical OLD/NEW stream for exactly one authorized learner."""
+    owner_name = _case_file_owner_name(owner_email, profile)
+    resolved = resolve_coach_review_events(owner_email, owner_name, [profile])
+    events = resolved["events"]
+    curriculum_events = [event for event in events if event.get("reviewSource") == "curriculum"]
+    aptem_events = [event for event in events if event.get("reviewSource") == "aptem"]
+    generated_keys = {event["eventKey"] for event in events}
+    standalone_records = [
+        record for record in fetch_standalone_event_records(owner_email, learner_id=int(profile.id))
+        if record.event_key not in generated_keys
+        and not (
+            int(profile.id) in resolved["aptemProfileIds"]
+            and clean_text(record.event_type).lower() in {"mcr", "progress-review"}
+        )
+    ]
+    legacy_keys = [
+        build_timetable_event_key(
+            int(event["learnerId"]), event["source"], event["sequence"], parse_schedule_date(event["targetDate"]),
+        )
+        for event in curriculum_events
+    ]
+    legacy_records = fetch_calendar_event_records(owner_email, legacy_keys) if legacy_keys else {}
+    stored_records = {record.event_key: record for record in standalone_records}
+    stored_records.update(legacy_records)
+    curriculum_records = curriculum_review_instances.reconcile_review_event_keys(curriculum_events, list(stored_records.values()))
+    curriculum_keys = [event["eventKey"] for event in curriculum_events]
+    if curriculum_keys:
+        curriculum_records.update(fetch_calendar_event_records(owner_email, curriculum_keys))
+    aptem_keys = [event["eventKey"] for event in aptem_events]
+    aptem_records = fetch_calendar_event_records(owner_email, aptem_keys) if aptem_keys else {}
+    shaped = [overlay_calendar_record(event, curriculum_records.get(event["eventKey"])) for event in curriculum_events]
+    shaped.extend(overlay_calendar_record(event, aptem_records.get(event["eventKey"])) for event in aptem_events)
+    review_type_fields = review_type_fields_by_template(getattr(record, "review_template_id", "") for record in standalone_records)
+    shaped.extend(
+        event for event in (
+            build_catchup_calendar_event(record, owner_name=owner_name, learner=profile, review_type_fields=review_type_fields)
+            for record in standalone_records
+        )
+        if clean_text(event.get("source")).lower() in {"mcr", "progress-review", GENERIC_REVIEW_EVENT_TYPE}
+    )
+    return sorted(shaped, key=lambda event: (event.get("date") or "", event.get("startHour") or 0)), resolved["reviewGenerationIssues"]
+
+
+def _case_file_next_session(owner_email, profile):
+    owner_name = _case_file_owner_name(owner_email, profile)
+    learner_scope = {
+        "programme": getattr(profile, "programme", None),
+        "cohort": getattr(profile, "cohort", None),
+        "group": getattr(profile, "group_name", None),
+        "programme_id": getattr(profile, "programme_id", None),
+        "cohort_id": getattr(profile, "cohort_id", None),
+        "group_id": getattr(profile, "group_id", None),
+    }
+    events = collect_live_session_events(
+        owner_email,
+        owner_name,
+        start_date=timezone.localdate(),
+        require_coach_access=False,
+        learner_scope=learner_scope,
+    )
+    valid = [
+        {**event, "learnerId": str(profile.id), "enrolmentId": str(profile.enrolment_id) if profile.enrolment_id else None}
+        for event in events
+        if event.get("status") not in {CoachCalendarEvent.STATUS_CANCELLED, CoachCalendarEvent.STATUS_COMPLETED}
+    ]
+    valid.sort(key=lambda event: (event.get("date") or "", event.get("startHour") or 0))
+    return valid[0] if valid else None
+
+
+@coach_access_required
+@require_GET
+def coach_learner_case_file_next_session(request, learner_id):
+    owner_email = authenticated_coach_email(request)
+    try:
+        profile, _source = fetch_case_file_shell(owner_email, learner_id)
+        if profile is None:
+            return _case_file_learner_not_found()
+        event = _case_file_next_session(owner_email, profile)
+    except Exception:
+        logger.exception("coach_case_file_next_session_failed learner_id=%s", learner_id)
+        return coach_error(request, code="database_unavailable", message="Unable to load the learner's next session.", status=503)
+    return JsonResponse({"available": True, "event": event, "learnersProcessed": 1})
+
+
+@coach_access_required
+@require_GET
+def coach_learner_case_file_reviews(request, learner_id):
+    owner_email = authenticated_coach_email(request)
+    try:
+        profile, _source = fetch_case_file_shell(owner_email, learner_id)
+        if profile is None:
+            return _case_file_learner_not_found()
+        events, issues = _case_file_review_events(owner_email, profile)
+    except Exception:
+        logger.exception("coach_case_file_reviews_failed learner_id=%s", learner_id)
+        return coach_error(request, code="database_unavailable", message="Unable to load learner reviews.", status=503)
+    return JsonResponse({"events": events, "reviewGenerationIssues": issues, "learnersProcessed": 1})
 
 @coach_access_required
 @require_GET

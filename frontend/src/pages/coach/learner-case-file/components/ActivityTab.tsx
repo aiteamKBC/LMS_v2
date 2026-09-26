@@ -1,7 +1,8 @@
 import { EmptyState } from '@/components/ui/EmptyState';
 import { MetricCard } from '@/components/ui/MetricCard';
 import { Panel } from '@/components/ui/Panel';
-import { flattenJourney, type CaseFileTabProps } from '../data';
+import { flattenJourney } from '../data';
+import type { CaseFileTabProps } from '../types';
 
 const toneMap = {
   primary: 'bg-primary-100 text-primary-600 ring-primary-200',
