@@ -34,8 +34,10 @@ import styles from './attendance.module.css';
 const learnerNav = roleNavMap.learner;
 
 export function lectureCounts(lectures: AttendanceLecture[]) {
-  const attended = lectures.filter(row => ['completed', 'late'].includes(row.status)).length;
-  const absent = lectures.filter(row => row.status === 'absent').length;
+  // A missed lecture made up by a completed catch-up or attended alternative counts as attended.
+  const madeUp = (row: AttendanceLecture) => row.status === 'absent' && row.effectiveAttendance === 1;
+  const attended = lectures.filter(row => ['completed', 'late'].includes(row.status) || madeUp(row)).length;
+  const absent = lectures.filter(row => row.status === 'absent' && !madeUp(row)).length;
   return { all: lectures.length, attended, absent,
     covered: lectures.filter(row => row.catchupStatus === 'completed').length,
     upcoming: lectures.filter(row => row.status === 'upcoming').length,
@@ -207,14 +209,18 @@ export default function AttendancePage() {
       <RecoveryPlansDialog />
     </AbsenceReportDialog>}
     {catchup && <AbsenceReportDialog title="Book Catchup Session" onClose={() => { setCatchup(null); read.refresh(); }}>
-      <p className={styles.catchupLectureTitle}>{catchup.title} · {catchup.date}</p>
-      <CatchupBooking key={catchup.id} lecture={{ ...catchup, status: 'absent', dateIso: catchup.date,
-        sessionType: 'live_session', coach: catchup.coach || '' }} selectedKey={catchupBooking?.eventKey || ''}
-        onSelect={selectCatchupBooking} onBusyChange={setBookingBusy} standalone />
-      {attendError && <p role="alert">{attendError}</p>}
-      {catchup.absenceReport ? <button type="button" className={styles.catchupDone} disabled={bookingBusy || !catchupBooking} onClick={() => void saveCatchup()}>Link catch-up to this absence</button>
-        : <p className="mt-3 text-sm">Submit an absence report to link your catch-up booking. Attendance changes after approval and coach-confirmed completion.</p>}
-      <button type="button" className={styles.catchupDone} disabled={bookingBusy} onClick={() => { setCatchup(null); read.refresh(); }}>Close</button>
+      {catchup.absenceReport ? <>
+        <p className={styles.catchupLectureTitle}>{catchup.title} · {catchup.date}</p>
+        <CatchupBooking key={catchup.id} lecture={{ ...catchup, status: 'absent', dateIso: catchup.date,
+          sessionType: 'live_session', coach: catchup.coach || '' }} selectedKey={catchupBooking?.eventKey || ''}
+          onSelect={selectCatchupBooking} onBusyChange={setBookingBusy} standalone />
+        {attendError && <p role="alert">{attendError}</p>}
+        <button type="button" className={styles.catchupDone} disabled={bookingBusy || !catchupBooking} onClick={() => void saveCatchup()}>Link catch-up to this absence</button>
+        <button type="button" className={styles.catchupDone} disabled={bookingBusy} onClick={() => { setCatchup(null); read.refresh(); }}>Close</button>
+      </> : <AbsenceReportForm key={catchup.id} initialRecoveryMethod="catch-up"
+        preselectMatch={{ id: catchup.id, dateIso: catchup.date, title: catchup.title }}
+        onSubmitted={() => { setCatchup(null); read.refresh(); }}
+        onCancel={() => { setCatchup(null); read.refresh(); }} showGuidance={false} showHistory={false} compact />}
     </AbsenceReportDialog>}
   </WorkspaceShell>;
 }

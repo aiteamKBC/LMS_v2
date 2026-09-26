@@ -229,3 +229,138 @@ class LiveLecturePayloadTests(SimpleTestCase):
         self.assertIsNone(result['startsAt'])
         self.assertIsNone(result['endsAt'])
         self.assertEqual(result['joinUrl'], '')
+
+
+class LinkedCatchupLedgerTests(SimpleTestCase):
+    def test_catchup_linked_after_report_is_recorded_on_the_matching_absence(self):
+        from unittest.mock import MagicMock
+        from .absence_reports import _kbc_attendance_report_id
+        from .session_recovery import _record_linked_catchup
+        absences, attendance = MagicMock(), MagicMock()
+        absences.filter.return_value.values.return_value = [
+            {'id': 1, 'occurrence_id': 'occ-missed', 'learner_profile_id': 7},
+            {'id': 2, 'occurrence_id': 'occ-other', 'learner_profile_id': 7},
+        ]
+        with patch('curriculum_api.models.LiveSessionAbsence.objects') as absence_manager, \
+             patch('curriculum_api.models.LiveSessionLearnerAttendance.objects') as attendance_manager:
+            absence_manager.using.return_value = absences
+            attendance_manager.using.return_value = attendance
+            linked = _record_linked_catchup(12, _kbc_attendance_report_id('12:teams:occ-missed'), 'catchup-1')
+
+        self.assertEqual(linked, 1)
+        absences.filter.assert_any_call(source_learner_id=12)
+        absences.filter.assert_any_call(pk=1)
+        self.assertNotIn(((), {'pk': 2}), absences.filter.call_args_list)
+        update = absences.filter.return_value.update.call_args.kwargs
+        self.assertEqual((update['recovery_method'], update['recovery_reference'], update['recovery_status']),
+                         ('catch-up', 'catchup-1', 'catchup_booked'))
+        attendance.filter.assert_called_once_with(occurrence_id='occ-missed', learner_profile_id=7,
+                                                  attendance_status='absent')
+
+    def test_link_catchup_updates_the_absence_ledger(self):
+        from . import session_recovery
+        self.assertIn('_record_linked_catchup(learner_id, report.attendance_id, event_key)',
+                      inspect.getsource(session_recovery.link_catchup))
+
+    def test_linking_a_catchup_approves_the_report_without_coach_approval(self):
+        from unittest.mock import MagicMock
+        from .session_recovery import link_catchup
+        report = SimpleNamespace(pk=5, attendance_id=99, status='pending', catchup_event_key=None,
+                                 recovery_method='', session_date=date(2026, 9, 1), save=MagicMock())
+        request = RequestFactory().post('/', data=json.dumps({'reportId': 5, 'eventKey': 'catchup-1'}),
+                                        content_type='application/json')
+        with patch('coach_api.models.CoachAbsenceReport.objects') as reports, \
+             patch('coach_api.models.CoachCalendarEvent.objects'), \
+             patch('learner_api.models.LearnerProfile.objects'), \
+             patch('learner_api.absence_reports._source_learner', return_value=SimpleNamespace(id=12)), \
+             patch('learner_api.absence_reports._catchup_booking'), \
+             patch('learner_api.session_recovery._record_linked_catchup') as record, \
+             patch('learner_api.session_recovery.transaction.atomic', return_value=nullcontext()):
+            reports.select_for_update.return_value.filter.return_value.first.return_value = report
+            response = inspect.unwrap(link_catchup)(request, kind='apprenticeship', learner_id=12)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual((report.status, report.recovery_method, report.catchup_event_key),
+                         ('approved', 'catch-up', 'catchup-1'))
+        self.assertIn('status', report.save.call_args.kwargs['update_fields'])
+        record.assert_called_once_with(12, 99, 'catchup-1')
+
+
+class CatchupOutcomeTests(SimpleTestCase):
+    def test_only_catchups_whose_time_has_passed_are_completed(self):
+        from unittest.mock import MagicMock
+        from .catchup_outcomes import complete_elapsed_catchups
+        ended = SimpleNamespace(pk=1, event_key='catch-up:1', scheduled_date=date(2026, 9, 25),
+                                scheduled_time=time(17, 0), duration_minutes=60, status='in-progress')
+        upcoming = SimpleNamespace(pk=2, event_key='catch-up:2', scheduled_date=date(2026, 9, 25),
+                                   scheduled_time=time(18, 30), duration_minutes=30, status='scheduled')
+        with patch('coach_api.models.CoachCalendarEvent.objects') as events:
+            events.filter.return_value.filter.return_value.only.return_value = [ended, upcoming]
+            events.filter.return_value.update.return_value = 1
+            completed = complete_elapsed_catchups(
+                learner_email='learner@example.test',
+                now=timezone.make_aware(datetime(2026, 9, 25, 18, 5)),
+            )
+        self.assertEqual(completed, ['catch-up:1'])
+        self.assertEqual(events.filter.call_args_list[0].kwargs['event_type__iexact'], 'catch-up')
+        events.filter.assert_any_call(pk=1, status='in-progress')
+        self.assertNotIn(((), {'pk': 2, 'status': 'scheduled'}), events.filter.call_args_list)
+
+    def test_completed_catchup_the_learner_missed_does_not_recover_the_lecture(self):
+        from .session_recovery import refresh_catchup_attendance
+        with patch('coach_api.models.CoachCalendarEvent.objects') as events, \
+             patch('coach_api.models.CoachAbsenceReport.objects') as reports, \
+             patch('learner_api.catchup_outcomes.learner_attended_catchup', return_value=False):
+            events.filter.return_value.first.return_value = SimpleNamespace(learner_email='learner@example.test')
+            refresh_catchup_attendance('catch-up:1')
+        reports.filter.assert_not_called()
+
+    def test_attended_completed_catchup_is_credited(self):
+        from .catchup_outcomes import credit_attended_catchups
+        with patch('curriculum_api.models.LiveSessionAbsence.objects') as absences, \
+             patch('coach_api.models.CoachCalendarEvent.objects') as events, \
+             patch('learner_api.catchup_outcomes.learner_attended_catchup', side_effect=lambda key: key == 'catch-up:1'), \
+             patch('learner_api.session_recovery.refresh_catchup_attendance') as refresh:
+            absences.filter.return_value.filter.return_value.values_list.return_value = ['catch-up:1', 'catch-up:2']
+            events.filter.return_value.values_list.return_value = ['catch-up:1', 'catch-up:2']
+            credited = credit_attended_catchups(learner_email='learner@example.test')
+        self.assertEqual(credited, ['catch-up:1'])
+        refresh.assert_called_once_with('catch-up:1')
+
+    def test_ended_catchup_the_learner_missed_is_shown_as_missed(self):
+        from .attendance_lectures import _mark_missed_catchups
+        missed = {'source': 'microsoft-teams', 'status': 'absent', 'catchupStatus': 'pending', 'reportId': '1'}
+        attended = {**missed, 'reportId': '2'}
+        upcoming = {**missed, 'reportId': '3'}
+        reported = {'1': {'recovery_method': 'catch-up', 'catchup_event_key': 'catch-up:1'},
+                    '2': {'recovery_method': 'catch-up', 'catchup_event_key': 'catch-up:2'},
+                    '3': {'recovery_method': 'catch-up', 'catchup_event_key': 'catch-up:3'}}
+        with patch('coach_api.models.CoachCalendarEvent.objects') as events, \
+             patch('learner_api.catchup_outcomes.learner_attended_catchup', side_effect=lambda key: key == 'catch-up:2'):
+            # catch-up:3 has not finished yet, so it is not returned as completed.
+            events.filter.return_value.values_list.return_value = ['catch-up:1', 'catch-up:2']
+            _mark_missed_catchups([missed, attended, upcoming], reported)
+        self.assertEqual([missed['catchupStatus'], attended['catchupStatus'], upcoming['catchupStatus']],
+                         ['missed', 'pending', 'pending'])
+
+    def test_a_missed_catchup_can_be_replaced_but_an_attended_one_cannot(self):
+        from unittest.mock import MagicMock
+        from .session_recovery import link_catchup
+        for attended, expected in ((False, 200), (True, 409)):
+            with self.subTest(attended=attended):
+                report = SimpleNamespace(pk=5, attendance_id=99, status='approved', catchup_event_key='catch-up:old',
+                                         recovery_method='catch-up', session_date=date(2026, 9, 1), save=MagicMock())
+                request = RequestFactory().post('/', data=json.dumps({'reportId': 5, 'eventKey': 'catch-up:new'}),
+                                                content_type='application/json')
+                with patch('coach_api.models.CoachAbsenceReport.objects') as reports, \
+                     patch('coach_api.models.CoachCalendarEvent.objects') as events, \
+                     patch('learner_api.models.LearnerProfile.objects'), \
+                     patch('learner_api.absence_reports._source_learner', return_value=SimpleNamespace(id=12)), \
+                     patch('learner_api.absence_reports._catchup_booking'), \
+                     patch('learner_api.catchup_outcomes.learner_attended_catchup', return_value=attended), \
+                     patch('learner_api.session_recovery._record_linked_catchup'), \
+                     patch('learner_api.session_recovery.transaction.atomic', return_value=nullcontext()):
+                    reports.select_for_update.return_value.filter.return_value.first.return_value = report
+                    events.filter.return_value.exists.return_value = True
+                    response = inspect.unwrap(link_catchup)(request, kind='apprenticeship', learner_id=12)
+                self.assertEqual(response.status_code, expected)

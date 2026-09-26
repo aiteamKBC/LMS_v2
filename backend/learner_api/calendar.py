@@ -1362,7 +1362,8 @@ def learner_calendar_book(request, kind, pk):
         return _error("scheduledDate is required.", 400)
     if not scheduled_time:
         return _error("scheduledTime is required.", 400)
-    date_restriction = booking_date_restriction(scheduled_date)
+    # TEMPORARY for testing: catch-ups may be booked at weekends.
+    date_restriction = booking_date_restriction(scheduled_date, allow_weekend=session_type == "catch-up")
     if date_restriction is not None:
         return _error(date_restriction.message, 400)
 

@@ -15,7 +15,7 @@ export interface AttendanceLecture {
   tutor?: string; coach?: string; attendanceConfirmed?: boolean; creditedMinutes?: number | null;
   contentSummary: string; ksbs: string[]; activities: LectureActivity[];
   ksbScope?: 'lecture' | 'activities' | 'module' | null;
-  status: LectureStatus; catchupStatus: 'completed' | 'pending' | null;
+  status: LectureStatus; catchupStatus: 'completed' | 'pending' | 'missed' | null;
   rawAttendanceStatus?: string;
   effectiveAttendanceStatus?: string;
   effectiveAttendance?: 0 | 1 | null;

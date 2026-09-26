@@ -31,8 +31,8 @@ export default function CatchupBooking({ lecture, selectedKey, onSelect, onBooke
   const selectedHoliday = rules?.bankHolidays.find(day => day.date === date);
   const dateRestriction = !selectedDay || !Number.isFinite(selectedDay.getTime()) ? ''
     : date < earliestDate ? 'Choose a date on or after the lecture date.'
-      : [0, 6].includes(selectedDay.getDay()) ? 'Catch-up sessions cannot be booked on Saturdays or Sundays.'
-        : selectedHoliday ? `Catch-up sessions cannot be booked on ${selectedHoliday.title}.`
+      // TEMPORARY for testing: catch-ups may be booked at weekends.
+      : selectedHoliday ? `Catch-up sessions cannot be booked on ${selectedHoliday.title}.`
           : rules && !rules.coveredYears.includes(selectedDay.getFullYear()) ? 'Booking is not available for this year.' : '';
   const available = events.filter(event => event.source === 'catch-up'
     && ['scheduled', 'not-scheduled', 'in-progress'].includes(event.status)

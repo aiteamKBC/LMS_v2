@@ -307,10 +307,12 @@ class LiveSessionLearnerAttendance(models.Model):
     RECOVERY_NONE = 'none'
     RECOVERY_REQUESTED = 'requested'
     RECOVERY_CATCHUP_BOOKED = 'catchup_booked'
+    RECOVERY_COMPLETED = 'completed'
     RECOVERY_CHOICES = [
         (RECOVERY_NONE, 'Not requested'),
         (RECOVERY_REQUESTED, 'Recovery requested'),
         (RECOVERY_CATCHUP_BOOKED, 'Catch-up booked'),
+        (RECOVERY_COMPLETED, 'Catch-up completed'),
     ]
 
     occurrence_id = models.CharField(max_length=128, db_index=True)
@@ -396,10 +398,12 @@ class LiveSessionAbsence(models.Model):
     RECOVERY_NONE = 'none'
     RECOVERY_REQUESTED = 'requested'
     RECOVERY_CATCHUP_BOOKED = 'catchup_booked'
+    RECOVERY_COMPLETED = 'completed'
     RECOVERY_CHOICES = [
         (RECOVERY_NONE, 'No recovery requested'),
         (RECOVERY_REQUESTED, 'Recovery requested'),
         (RECOVERY_CATCHUP_BOOKED, 'Catch-up booked'),
+        (RECOVERY_COMPLETED, 'Catch-up completed'),
     ]
 
     occurrence_id = models.CharField(max_length=128, db_index=True)

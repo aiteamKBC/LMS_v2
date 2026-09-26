@@ -168,7 +168,7 @@ function LectureRow({ now, row, onOpen, onReport, onCatchup }: { now: number; ro
     <div className={styles.lectureKsbs} data-label="KSBs"><KsbChips row={row} /></div>
     <div className={styles.lectureStatus} data-label="Status"><StatusBadge {...STATUS[row.status]} />
       {row.excused && row.status === 'absent' && <StatusBadge tone="caution" label="Excused - catch-up required" />}
-      {row.catchupStatus && <StatusBadge tone={row.catchupStatus === 'completed' ? 'positive' : 'caution'} label={row.catchupStatus === 'completed' ? 'Catch-up completed' : 'Catch-up pending'} />}
+      {row.catchupStatus && <StatusBadge tone={row.catchupStatus === 'completed' ? 'positive' : row.catchupStatus === 'missed' ? 'critical' : 'caution'} label={row.catchupStatus === 'completed' ? 'Catch-up completed' : row.catchupStatus === 'missed' ? 'Catch-up missed' : 'Catch-up pending'} />}
       {row.absenceReport && <StatusBadge tone="neutral" label={`Absence ${row.absenceReport.status}`} />}
     </div>
     <div className={styles.lectureAttendanceAction} data-label="Attendance action">

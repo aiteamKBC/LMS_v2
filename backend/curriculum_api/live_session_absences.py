@@ -54,3 +54,34 @@ def record_reported_absence(
         updated_at=timezone.now(),
     )
     return saved
+
+
+def complete_reported_catchup(*, database: str, event_key: str, source_learner_ids):
+    """Mark approved linked catch-ups complete without rewriting Teams presence."""
+
+    learner_ids = [int(value) for value in source_learner_ids if value is not None]
+    if not event_key or not learner_ids:
+        return 0
+    queryset = LiveSessionAbsence.objects.using(database).filter(
+        recovery_method='catch-up',
+        recovery_reference=event_key,
+        source_learner_id__in=learner_ids,
+    )
+    absences = list(queryset.values('occurrence_id', 'learner_profile_id'))
+    if not absences:
+        return 0
+    now = timezone.now()
+    queryset.update(
+        recovery_status=LiveSessionAbsence.RECOVERY_COMPLETED,
+        updated_at=now,
+    )
+    for absence in absences:
+        LiveSessionLearnerAttendance.objects.using(database).filter(
+            occurrence_id=absence['occurrence_id'],
+            learner_profile_id=absence['learner_profile_id'],
+            attendance_status=LiveSessionLearnerAttendance.STATUS_ABSENT,
+        ).update(
+            recovery_status=LiveSessionLearnerAttendance.RECOVERY_COMPLETED,
+            updated_at=now,
+        )
+    return len(absences)

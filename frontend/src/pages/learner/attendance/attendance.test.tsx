@@ -185,6 +185,38 @@ describe('Attendance lecture workspace', () => {
     expect(within(dialog).queryByLabelText('Main reason')).not.toBeInTheDocument();
   });
 
+  it('shows a missed catch-up and still lets the learner book another one', async () => {
+    payload.lectures = [lecture({ id: 'missed', title: 'Missed lecture', status: 'absent', catchupStatus: 'missed',
+      canReportAbsence: false, absenceReport: { id: 1, status: 'approved' } })];
+    mount();
+    const row = await screen.findByRole('article', { name: 'Missed lecture' });
+    expect(within(row).getByText('Catch-up missed')).toBeInTheDocument();
+    expect(within(row).queryByText('Catch-up pending')).not.toBeInTheDocument();
+    expect(within(row).getByRole('button', { name: 'Book Catchup Session' })).toBeEnabled();
+  });
+
+  it('starts a linked absence report when booking recovery for an unreported missed lecture', async () => {
+    payload.lectures = [lecture({ id: 'missed', sessionId: 'teams:missed', title: 'Missed lecture',
+      date: '2026-09-01', status: 'absent', catchupStatus: null, canReportAbsence: true, absenceReport: null })];
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => {
+      if (!init?.method && String(input).includes('/absence-reports/')) return new Response(JSON.stringify({
+        results: [], missedSessions: [{ id: 'missed', sessionId: 'teams:missed', reportId: '8000000000000000012',
+          title: 'Missed lecture', dateIso: '2026-09-01', startTime: '10:00', endTime: '11:00',
+          module: 'Business', sessionType: 'live_session', coach: 'Coach', status: 'absent' }],
+      }));
+      return originalFetch(input, init);
+    });
+
+    mount();
+    const row = await screen.findByRole('article', { name: 'Missed lecture' });
+    fireEvent.click(within(row).getByRole('button', { name: 'Book Catchup Session' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Book Catchup Session' });
+    await waitFor(() => expect(within(dialog).getByLabelText('Lecture *')).toHaveValue('missed'));
+    expect(within(dialog).getByLabelText('Main reason')).toBeInTheDocument();
+    expect(within(dialog).getByRole('radio', { name: /Coach catch-up/ })).toBeChecked();
+  });
+
   it('keeps Attend retryable when saving fails and does not display credited hours', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-14T08:00:00Z'));
     payload.lectures = [lecture({ title: 'Today lecture', date: '2026-09-14', status: 'upcoming' })];
@@ -213,6 +245,12 @@ describe('Attendance lecture workspace', () => {
     const lectures = [lecture({ id: 'first' }), lecture({ id: 'second' }),
       lecture({ id: 'missed', status: 'absent' })];
     expect(lectureCounts(lectures)).toEqual({ all: 3, attended: 2, absent: 1, covered: 0, upcoming: 0, rate: 67 });
+  });
+
+  it('counts a lecture made up by catch-up or alternative session as attended', () => {
+    const lectures = [lecture({ id: 'first' }), lecture({ id: 'missed', status: 'absent' }),
+      lecture({ id: 'made-up', status: 'absent', catchupStatus: 'completed', effectiveAttendance: 1 })];
+    expect(lectureCounts(lectures)).toEqual({ all: 3, attended: 2, absent: 1, covered: 1, upcoming: 0, rate: 67 });
   });
 
   it('opens the same attendance source in Monthly Logs and searches KSBs', async () => {

@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS curriculum.live_session_learner_attendance (
     CONSTRAINT curriculum_live_learner_attendance_status_valid
         CHECK (attendance_status IN ('present', 'absent')),
     CONSTRAINT curriculum_live_learner_recovery_status_valid
-        CHECK (recovery_status IN ('none', 'requested', 'catchup_booked')),
+        CHECK (recovery_status IN ('none', 'requested', 'catchup_booked', 'completed')),
     CONSTRAINT curriculum_live_learner_attendance_seconds_valid
         CHECK (attended_seconds >= 0),
     CONSTRAINT curriculum_live_learner_attendance_uniq
@@ -39,7 +39,7 @@ ALTER TABLE curriculum.live_session_learner_attendance
 
 ALTER TABLE curriculum.live_session_learner_attendance
     ADD CONSTRAINT curriculum_live_learner_recovery_status_valid
-    CHECK (recovery_status IN ('none', 'requested', 'catchup_booked'));
+    CHECK (recovery_status IN ('none', 'requested', 'catchup_booked', 'completed'));
 
 UPDATE curriculum.live_session_learner_attendance AS attendance
 SET recovery_status = recovery.recovery_status,

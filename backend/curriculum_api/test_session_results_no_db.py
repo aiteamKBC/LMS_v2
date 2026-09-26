@@ -887,6 +887,52 @@ class EndpointTests(unittest.TestCase):
         self.assertEqual(person['recoveryType'], 'none')
         self.assertEqual(person['finalOutcome'], 'absent')
 
+    def test_completed_catchup_is_made_up_without_rewriting_original_absence(self):
+        self.ns['read'].return_value = [{
+            'occurrence_id': 'O', 'learner_email': 'a@example.invalid',
+            'recovery_status': 'completed',
+            'recovery_method': 'catch-up', 'recovery_reference': 'catch-up:7:1',
+        }]
+        rows = [{'id': 'O', 'attendance': session_roster(['a@example.invalid'], [], complete=True)}]
+
+        self.ns['apply_recovery'](rows)
+
+        person = rows[0]['attendance'][0]
+        self.assertEqual(person['status'], 'absent')
+        self.assertEqual(person['attendance'], 0)
+        self.assertEqual(person['rawStatus'], 'absent')
+        self.assertEqual(person['recoveryStatus'], 'completed')
+        self.assertTrue(person['catchupCompleted'])
+        self.assertTrue(person['excused'])
+        self.assertEqual(person['effectiveStatus'], 'made_up')
+        self.assertEqual(person['effectiveAttendance'], 1)
+        self.assertEqual(person['finalOutcome'], 'made_up')
+
+    def _alternative_recovery(self, register):
+        self.ns['read'].side_effect = [[{
+            'occurrence_id': 'O', 'learner_email': 'a@example.invalid',
+            'recovery_status': 'requested',
+            'recovery_method': 'alternative', 'recovery_reference': 'alternative:ALT',
+        }], register]
+        rows = [{'id': 'O', 'attendance': session_roster(['a@example.invalid'], [], complete=True)}]
+        self.ns['apply_recovery'](rows)
+        return rows[0]['attendance'][0]
+
+    def test_attended_alternative_session_is_made_up_without_rewriting_original_absence(self):
+        person = self._alternative_recovery([{'occurrence_id': 'ALT', 'learner_email': 'a@example.invalid'}])
+        query, params = self.ns['read'].call_args.args
+        self.assertIn("attendance_status='present'", query)
+        self.assertEqual(params, [['ALT'], ['a@example.invalid']])
+        self.assertEqual((person['rawStatus'], person['attendance']), ('absent', 0))
+        self.assertEqual((person['recoveryStatus'], person['recoveryType']), ('completed', 'alternative'))
+        self.assertEqual((person['effectiveStatus'], person['effectiveAttendance'], person['finalOutcome']),
+                         ('made_up', 1, 'made_up'))
+
+    def test_unattended_alternative_session_stays_absent(self):
+        person = self._alternative_recovery([])
+        self.assertEqual((person['recoveryStatus'], person['finalOutcome'], person['effectiveAttendance']),
+                         ('requested', 'absent', 0))
+
     def test_recovery_report_never_changes_present_attendance(self):
         self.ns['read'].return_value = [{
             'occurrence_id': 'O', 'learner_email': 'a@example.invalid',

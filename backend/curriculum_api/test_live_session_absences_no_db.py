@@ -25,11 +25,12 @@ class LiveSessionAbsenceLedgerTests(unittest.TestCase):
         self.absence_model = types.SimpleNamespace(
             RECOVERY_NONE='none', RECOVERY_REQUESTED='requested',
             RECOVERY_CATCHUP_BOOKED='catchup_booked',
+            RECOVERY_COMPLETED='completed',
             objects=self.absence_query,
         )
         self.register_query = Mock()
         self.register_model = types.SimpleNamespace(
-            STATUS_ABSENT='absent', objects=self.register_query,
+            STATUS_ABSENT='absent', RECOVERY_COMPLETED='completed', objects=self.register_query,
         )
         self.occurrence_model = types.SimpleNamespace(objects=self.occurrence_query)
         self.instant = datetime(2026, 9, 23, 9, tzinfo=dt_timezone.utc)
@@ -39,7 +40,7 @@ class LiveSessionAbsenceLedgerTests(unittest.TestCase):
             'LiveSessionOccurrence': self.occurrence_model,
             'timezone': types.SimpleNamespace(now=lambda: self.instant),
         }
-        load_functions({'recovery_status_for', 'record_reported_absence'}, self.ns)
+        load_functions({'recovery_status_for', 'record_reported_absence', 'complete_reported_catchup'}, self.ns)
 
     def test_recovery_status_is_simple_and_does_not_approve_attendance(self):
         status = self.ns['recovery_status_for']
@@ -81,6 +82,32 @@ class LiveSessionAbsenceLedgerTests(unittest.TestCase):
         self.assertNotIn('delete from curriculum.live_session_attendance', sql)
         self.assertNotIn('truncate', sql)
         self.assertNotIn('update curriculum.live_session_attendance', sql)
+        self.assertIn("'catchup_booked', 'completed'", sql)
+
+    def test_completed_catchup_updates_recovery_without_changing_absence(self):
+        queryset = self.absence_query.using.return_value.filter.return_value
+        queryset.values.return_value = [
+            {'occurrence_id': 'OCC-8', 'learner_profile_id': 42},
+        ]
+
+        count = self.ns['complete_reported_catchup'](
+            database='default', event_key='catch-up:42:1', source_learner_ids=[12],
+        )
+
+        self.assertEqual(count, 1)
+        self.absence_query.using.return_value.filter.assert_called_once_with(
+            recovery_method='catch-up', recovery_reference='catch-up:42:1',
+            source_learner_id__in=[12],
+        )
+        queryset.update.assert_called_once_with(
+            recovery_status='completed', updated_at=self.instant,
+        )
+        self.register_query.using.return_value.filter.assert_called_once_with(
+            occurrence_id='OCC-8', learner_profile_id=42, attendance_status='absent',
+        )
+        self.register_query.using.return_value.filter.return_value.update.assert_called_once_with(
+            recovery_status='completed', updated_at=self.instant,
+        )
 
 
 if __name__ == '__main__':

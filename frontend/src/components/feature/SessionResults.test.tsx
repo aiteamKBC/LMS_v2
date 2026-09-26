@@ -125,12 +125,15 @@ describe('Saved session results', () => {
         name: 'Booked Learner', recoveryStatus: 'catchup_booked', recoveryType: 'catch-up' },
       { ...session.attendance[0], status: 'absent', attendance: 0, rawStatus: 'absent', rawAttendance: 0,
         name: 'No Recovery Learner', email: 'second@example.invalid', recoveryStatus: 'none' },
+      { ...session.attendance[0], status: 'absent', attendance: 0, rawStatus: 'absent', rawAttendance: 0,
+        name: 'Recovered Learner', email: 'third@example.invalid', recoveryStatus: 'completed', catchupCompleted: true },
     ] }] }));
     render(<MemoryRouter><SessionResults seriesId="S1" sessionNumber={1} /></MemoryRouter>);
     fireEvent.click(await screen.findByRole('tab', { name: 'attendance' }));
     expect(screen.getByRole('columnheader', { name: 'Attendance' })).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Recovery' })).toBeInTheDocument();
     expect(screen.getByText('Catch-up booked')).toBeInTheDocument();
+    expect(screen.getByText('Catch-up completed')).toBeInTheDocument();
     expect(screen.getByText('Not requested')).toBeInTheDocument();
   });
 

@@ -218,9 +218,14 @@ def _summarize_attendance(rows, *, now=None):
     if not counted_rows:
         return None
 
+    # A missed session recovered by a completed catch-up or an attended
+    # alternative session counts as attended; the raw Teams status is kept.
+    def missed(row):
+        return status(row) == 'absent' and row.get('effective_attendance') != 1
+
     sessions = len(counted_rows)
-    present = sum(status(row) in {'present', 'late'} for row in counted_rows)
-    absent = sum(status(row) == 'absent' for row in counted_rows)
+    absent = sum(missed(row) for row in counted_rows)
+    present = sessions - absent
     late = sum(
         status(row) == 'late' or (row['minutes_late'] or 0) > 0
         for row in counted_rows
@@ -231,7 +236,7 @@ def _summarize_attendance(rows, *, now=None):
     latest_first = sorted(counted_rows, key=lambda row: row['session_date'], reverse=True)
     consecutive_missed = 0
     for row in latest_first:
-        if status(row) != 'absent':
+        if not missed(row):
             break
         consecutive_missed += 1
 
@@ -341,6 +346,10 @@ def learner_attendance(request, kind, learner_id):
         # the KBC database table and Aptem ID, never an email or Teams merge.
         rows = kbc_attendance_rows(source) if request.GET.get('source') == 'kbc' else None
         if rows is None:
+            if getattr(source, 'email', ''):
+                # Catch-ups only: settle this learner's elapsed catch-ups first.
+                from .catchup_outcomes import sync_catchup_outcomes
+                sync_catchup_outcomes(learner_email=getattr(source, 'email', ''))
             from .attendance_lectures import lecture_register
             rows = lecture_register(source)
     except Exception:

@@ -110,6 +110,7 @@ describe('absence recovery choice', () => {
     await openForm();
     fireEvent.click(screen.getByRole('checkbox'));
     expect(submit()).toBeDisabled();
+    expect(screen.getByText(/Does not make up the absence/)).toBeVisible();
     fireEvent.click(screen.getByRole('radio', { name: /Watch the recording/ }));
     expect(screen.getByText(/attendance remains absent/i)).toBeVisible();
     expect(submit()).toBeDisabled();

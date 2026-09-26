@@ -11,7 +11,7 @@ export interface SessionPerson {
   rawAttendance?: 0 | 1 | null;
   excuseStatus?: 'none' | 'pending' | 'approved' | 'declined';
   absenceReported?: boolean;
-  recoveryStatus?: 'none' | 'requested' | 'catchup_booked';
+  recoveryStatus?: 'none' | 'requested' | 'catchup_booked' | 'completed';
   recoveryType?: 'none' | 'recorded' | 'alternative' | 'catch-up';
   recoveryReference?: string;
   effectiveStatus?: 'present' | 'absent' | 'pending' | 'review' | 'absent_excused' | 'made_up';

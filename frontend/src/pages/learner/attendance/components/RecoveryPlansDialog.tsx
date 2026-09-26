@@ -10,7 +10,7 @@ import styles from '../attendance.module.css';
 const METHODS = {
   alternative: { label: 'Another group session', icon: 'ri-team-line' },
   'catch-up': { label: 'Coach catch-up', icon: 'ri-calendar-event-line' },
-  recorded: { label: 'Watch the recording', icon: 'ri-video-line' },
+  recorded: { label: 'Watch the recording (absence not made up)', icon: 'ri-video-line' },
 } as const;
 
 function displayDate(value: string) {

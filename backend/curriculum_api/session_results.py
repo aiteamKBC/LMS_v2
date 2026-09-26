@@ -272,6 +272,25 @@ def apply_recovery(results):
         (str(report.get('occurrence_id') or ''), str(report.get('learner_email') or '').strip().casefold()): report
         for report in reports
     }
+    # An approved alternative session (learner_api.alternative_recovery key
+    # "alternative:<occurrence>") makes up the absence once the saved register
+    # shows the learner present there, i.e. more than three minutes in Teams.
+    alternative_targets = {
+        key: str(report.get('recovery_reference') or '')[len('alternative:'):]
+        for key, report in reports.items()
+        if report.get('recovery_method') == 'alternative'
+        and str(report.get('recovery_reference') or '').startswith('alternative:')
+    }
+    attended_alternatives = {
+        (str(row.get('occurrence_id') or ''), str(row.get('learner_email') or '').strip().casefold())
+        for row in read('''SELECT occurrence_id,lower(btrim(learner_email)) AS learner_email
+            FROM curriculum.live_session_learner_attendance
+            WHERE occurrence_id=ANY(%s) AND lower(btrim(learner_email))=ANY(%s)
+              AND attendance_status='present' ''', [
+                sorted(set(alternative_targets.values())),
+                sorted({email for _occurrence, email in alternative_targets}),
+            ])
+    } if alternative_targets else set()
     for item in results:
         for person in item['attendance']:
             raw_status = person.get('rawStatus', person.get('status'))
@@ -284,7 +303,8 @@ def apply_recovery(results):
                           finalOutcome=raw_status)
             if raw_status != 'absent':
                 continue
-            report = reports.get((str(item.get('id') or ''), person['email'].strip().casefold()))
+            key = (str(item.get('id') or ''), person['email'].strip().casefold())
+            report = reports.get(key)
             if report:
                 person.update(
                     absenceReported=True,
@@ -292,6 +312,18 @@ def apply_recovery(results):
                     recoveryType=report.get('recovery_method') or 'none',
                     recoveryReference=report.get('recovery_reference') or '',
                 )
+                alternative_attended = (alternative_targets.get(key), key[1]) in attended_alternatives
+                if alternative_attended:
+                    person['recoveryStatus'] = 'completed'
+                if report.get('recovery_status') == 'completed' or alternative_attended:
+                    person.update(
+                        excuseStatus='approved',
+                        excused=True,
+                        catchupCompleted=True,
+                        effectiveStatus='made_up',
+                        effectiveAttendance=1,
+                        finalOutcome='made_up',
+                    )
 
 
 def unavailable():

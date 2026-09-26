@@ -780,7 +780,7 @@ function LearnerCalendarBody() {
     [bookingCalendar],
   );
   const bookingToday = bookingCalendar?.today || todayISO();
-  const bookingDateRestriction = useCallback((isoDate: string): string | null => {
+  const bookingDateRestriction = useCallback((isoDate: string, allowWeekend = false): string | null => {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate)) return 'Choose a valid booking date.';
     const [year, month, day] = isoDate.split('-').map(Number);
     const localDate = new Date(year, month - 1, day, 12, 0, 0);
@@ -793,7 +793,7 @@ function LearnerCalendarBody() {
     if (isoDate < bookingToday) {
       return 'Sessions cannot be booked on a date that has already passed.';
     }
-    if (localDate.getDay() === 0 || localDate.getDay() === 6) {
+    if (!allowWeekend && (localDate.getDay() === 0 || localDate.getDay() === 6)) {
       return 'Sessions cannot be booked on Saturdays or Sundays.';
     }
     const bankHoliday = bankHolidayByDate.get(isoDate);
@@ -804,7 +804,8 @@ function LearnerCalendarBody() {
     return null;
   }, [bankHolidayByDate, bookingCalendar, bookingToday]);
   const selectedDateRestriction = bookingDateRestriction(selectedIso);
-  const bookDateRestriction = bookingDateRestriction(bookDate);
+  // TEMPORARY for testing: catch-ups may be booked at weekends.
+  const bookDateRestriction = bookingDateRestriction(bookDate, bookType === 'catch-up');
   const openBookSession = useCallback((date?: string, sourceEvent?: CalendarEvent | null) => {
     setRescheduleEvent(null);
     setBookingSourceEvent(sourceEvent || null);
@@ -1016,6 +1017,8 @@ function LearnerCalendarBody() {
 
   const sameWeekSession = useMemo(() => {
     if (rescheduleEvent?.reviewTemplateId || bookingSourceEvent?.reviewTemplateId) return null;
+    // Catch-ups recover missed lectures and are not limited to one per week.
+    if (bookType === 'catch-up') return null;
     const requestedWeek = calendarWeekKey(bookDate);
     if (!requestedWeek) return null;
     return myEvents.find((event) => (
@@ -1066,7 +1069,7 @@ function LearnerCalendarBody() {
 
   const handleBookSession = async () => {
     if (bookSubmitting) return;
-    const restrictedDate = bookingDateRestriction(bookDate);
+    const restrictedDate = bookDateRestriction;
     if (restrictedDate) {
       setBookError(restrictedDate);
       return;

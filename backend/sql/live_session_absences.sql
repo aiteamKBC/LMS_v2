@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS curriculum.live_session_absences (
     created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT curriculum_live_absence_recovery_status_valid CHECK (
-        recovery_status IN ('none', 'requested', 'catchup_booked')
+        recovery_status IN ('none', 'requested', 'catchup_booked', 'completed')
     ),
     CONSTRAINT curriculum_live_absence_recovery_valid CHECK (
            (recovery_status = 'none' AND recovery_method = '' AND recovery_reference = '')
@@ -26,10 +26,38 @@ CREATE TABLE IF NOT EXISTS curriculum.live_session_absences (
         OR (recovery_status = 'catchup_booked'
             AND recovery_method = 'catch-up'
             AND recovery_reference <> '')
+        OR (recovery_status = 'completed'
+            AND recovery_method = 'catch-up'
+            AND recovery_reference <> '')
     ),
     CONSTRAINT curriculum_live_absence_learner_occurrence_uniq
         UNIQUE (occurrence_id, learner_profile_id)
 );
+
+ALTER TABLE curriculum.live_session_absences
+    DROP CONSTRAINT IF EXISTS curriculum_live_absence_recovery_valid,
+    DROP CONSTRAINT IF EXISTS curriculum_live_absence_recovery_status_valid;
+
+ALTER TABLE curriculum.live_session_absences
+    ADD CONSTRAINT curriculum_live_absence_recovery_status_valid CHECK (
+        recovery_status IN ('none', 'requested', 'catchup_booked', 'completed')
+    ),
+    ADD CONSTRAINT curriculum_live_absence_recovery_valid CHECK (
+           (recovery_status = 'none' AND recovery_method = '' AND recovery_reference = '')
+        OR (recovery_status = 'requested' AND recovery_method IN ('recorded', 'alternative'))
+        OR (recovery_status IN ('catchup_booked', 'completed')
+            AND recovery_method = 'catch-up'
+            AND recovery_reference <> '')
+    );
+
+UPDATE curriculum.live_session_absences AS absence
+SET recovery_status = 'completed',
+    updated_at = CURRENT_TIMESTAMP
+FROM "Coach".coach_calendar_event AS event
+WHERE absence.recovery_method = 'catch-up'
+  AND absence.recovery_reference = event.event_key
+  AND event.status = 'completed'
+  AND absence.recovery_status <> 'completed';
 
 CREATE INDEX IF NOT EXISTS curriculum_live_absence_occurrence_idx
     ON curriculum.live_session_absences (occurrence_id);

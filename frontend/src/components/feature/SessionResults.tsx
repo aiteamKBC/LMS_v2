@@ -27,6 +27,7 @@ const finalOutcomeOf = (person: SessionPerson): FinalOutcome => person.finalOutc
   || (person.status === 'recovered' ? 'made_up' : person.status === 'excused' ? 'absent_excused' : person.status);
 const recoveryLabel = (person: SessionPerson) => {
   if (rawStatusOf(person) !== 'absent') return '—';
+  if (person.recoveryStatus === 'completed' || person.catchupCompleted) return 'Catch-up completed';
   if (person.recoveryStatus === 'catchup_booked') return 'Catch-up booked';
   if (person.recoveryStatus === 'requested') return 'Recovery requested';
   return 'Not requested';

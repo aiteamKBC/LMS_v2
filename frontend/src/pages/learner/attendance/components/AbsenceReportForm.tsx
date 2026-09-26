@@ -41,6 +41,8 @@ interface EvidencePreview {
 
 export interface AbsenceReportFormProps {
   scope?: 'meetings';
+  /** Opens a lecture report on the recovery choice that launched the form. */
+  initialRecoveryMethod?: 'catch-up';
   /** Preselect the missed session that matches this date + title, once loaded. */
   preselectMatch?: { id?: string; dateIso: string; title: string } | null;
   /** Called once a report has been saved, in addition to the inline confirmation. */
@@ -55,6 +57,7 @@ export interface AbsenceReportFormProps {
 }
 
 export default function AbsenceReportForm({
+  initialRecoveryMethod,
   preselectMatch = null,
   onSubmitted,
   onCancel,
@@ -84,7 +87,7 @@ export default function AbsenceReportForm({
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState('');
   const [didPreselect, setDidPreselect] = useState(false);
-  const [recoveryMethod, setRecoveryMethod] = useState<'' | 'recorded' | 'catch-up' | 'alternative'>('');
+  const [recoveryMethod, setRecoveryMethod] = useState<'' | 'recorded' | 'catch-up' | 'alternative'>(initialRecoveryMethod || '');
   const [targetOccurrenceId, setTargetOccurrenceId] = useState('');
   const [recordingDate, setRecordingDate] = useState('');
   const [recordingTime, setRecordingTime] = useState('');
@@ -417,7 +420,7 @@ export default function AbsenceReportForm({
                 <label>
                   <input aria-label="Watch the recording" type="radio" name="recovery-method" value="recorded" required checked={recoveryMethod === 'recorded'} onChange={selectRecordedRecovery} />
                   <AppIcon className="ri-video-line" />
-                  <span><strong>Watch the recording</strong><small>Choose when you plan to watch it.</small></span>
+                  <span><strong>Watch the recording</strong><small>Does not make up the absence. Choose when you plan to watch it.</small></span>
                 </label>
               </div>
             </fieldset>}
@@ -429,7 +432,7 @@ export default function AbsenceReportForm({
                   {(selectedSession.alternativeSessions || []).map(option => <option key={option.id} value={option.id}>{displayDate(option.dateIso)} · {option.startTime}{option.endTime ? `–${option.endTime}` : ''} · {option.group || option.cohort}</option>)}
                 </select>
                 <p className={styles.recoveryHint}>You stay in your current group; access applies only to this session.</p>
-              </> : <div className={styles.recoveryUnavailable} role="status"><AppIcon className="ri-information-line" /><span><strong>No equivalent session is available.</strong> Choose a coach catch-up or the recording.</span></div>}
+              </> : <div className={styles.recoveryUnavailable} role="status"><AppIcon className="ri-information-line" /><span><strong>No equivalent session is available.</strong> Choose a coach catch-up to make up this absence.</span></div>}
             </div>}
             {recoveryMethod === 'recorded' && selectedSession && <div className={styles.recoveryDetails}>
               <div className={styles.recoveryUnavailable}><AppIcon className="ri-information-line" /><span>Watching the recording supports your learning, but attendance remains absent.</span></div>
