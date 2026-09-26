@@ -25,6 +25,7 @@ export interface ComponentProgressSubmission {
   ksbs?: string[];
   feedback?: string;
   reportedTime?: string;
+  skipReflection?: boolean;
 }
 
 export interface ComponentProgressRecord {
@@ -35,6 +36,7 @@ export interface ComponentProgressRecord {
   ksbs: string[];
   feedback: string;
   reportedTime: string;
+  reflectionSkipped?: boolean;
   startedAt: string | null;
   submittedAt: string;
   timeTaken: string | null;

@@ -7,6 +7,8 @@ import { submitComponentProgress, type ComponentProgressResponse } from '@/api/c
 import { startTimeTracking } from '@/api/timeTracking';
 import ComponentViewPage from './page';
 
+(globalThis as Record<string, unknown>).AppIcon = ({ className }: { className?: string }) => <i className={className} />;
+
 const session = vi.hoisted(() => ({
   account: { role: 'learner' as 'learner' | 'admin' | 'staff', subjectType: 'learner', subjectId: 1 },
   isInitialized: true,
@@ -84,6 +86,91 @@ it('does not request a working-hours declaration when submitting during working 
   fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
   await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', 'apprenticeship', '1', expect.objectContaining({ insideWorkingHoursConfirmed: false })));
+});
+
+it('lets the learner open the existing reflection form when reflection is configured', async () => {
+  session.outsideWorkingHours = false;
+  const reflected = { ...first, reflectionRequired: true };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reflected] } as unknown as LearnerDetail);
+  mount();
+  fireEvent.change(await screen.findByLabelText('Minutes spent'), { target: { value: '20' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+
+  const choiceDialog = await screen.findByRole('dialog', { name: 'Do you want to complete a reflection?' });
+  expect(choiceDialog).toBeVisible();
+  expect(choiceDialog.parentElement).toHaveClass('fixed', 'inset-0', 'z-[100]');
+  expect(choiceDialog.previousElementSibling).toHaveClass('absolute', 'inset-0', 'bg-black/40', 'backdrop-blur-[3px]');
+  fireEvent.click(screen.getByRole('button', { name: 'Yes, add reflection' }));
+  expect(await screen.findByText('My Learning Evidence and Reflection')).toBeVisible();
+  expect(screen.queryByText('Before we finish…')).not.toBeInTheDocument();
+  expect(screen.getByTestId('location')).toHaveTextContent('/C1');
+  fireEvent.click(screen.getByRole('button', { name: 'Close reflection' }));
+  expect(screen.queryByText('My Learning Evidence and Reflection')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Finish' })).toBeVisible();
+  expect(screen.getByTestId('location')).toHaveTextContent('/C1');
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+});
+
+it('lets the learner finish configured reflection content without a reflection', async () => {
+  session.outsideWorkingHours = false;
+  const reflected = { ...first, reflectionRequired: true };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reflected, second] } as unknown as LearnerDetail);
+  mount();
+  fireEvent.change(await screen.findByLabelText('Minutes spent'), { target: { value: '20' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'No, finish without reflection' }));
+
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith(
+    'C1', 'apprenticeship', '1', expect.objectContaining({ feedback: '', ksbs: [], skipReflection: true }),
+  ));
+  await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Completed'));
+  expect(screen.getByTestId('location')).toHaveTextContent('/C1');
+  expect(screen.queryByRole('button', { name: 'Confirm' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: /Next activity:/ }));
+  expect(screen.getByTestId('location')).toHaveTextContent('/C2');
+});
+
+it('keeps reflection optional for tutor-validated activities', async () => {
+  session.outsideWorkingHours = false;
+  const validated = { ...first, reflectionRequired: true, tutorValidationRequired: true };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [validated] } as unknown as LearnerDetail);
+  mount();
+  fireEvent.change(await screen.findByLabelText('Minutes spent'), { target: { value: '20' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+
+  expect(await screen.findByRole('dialog', { name: 'Do you want to complete a reflection?' })).toBeVisible();
+  expect(screen.queryByText('My Learning Evidence and Reflection')).not.toBeInTheDocument();
+});
+
+it('cancels the reflection choice without completing or navigating', async () => {
+  session.outsideWorkingHours = false;
+  const reflected = { ...first, reflectionRequired: true };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reflected] } as unknown as LearnerDetail);
+  mount();
+  fireEvent.change(await screen.findByLabelText('Minutes spent'), { target: { value: '20' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Cancel' }));
+
+  expect(screen.queryByRole('dialog', { name: 'Do you want to complete a reflection?' })).not.toBeInTheDocument();
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+  expect(screen.getByTestId('location')).toHaveTextContent('/C1');
+});
+
+it('guards a double No click from creating duplicate completion requests', async () => {
+  session.outsideWorkingHours = false;
+  const reflected = { ...first, reflectionRequired: true };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reflected] } as unknown as LearnerDetail);
+  let resolveCompletion: ((value: Awaited<ReturnType<typeof submitComponentProgress>>) => void) | undefined;
+  vi.mocked(submitComponentProgress).mockImplementationOnce(() => new Promise((resolve) => { resolveCompletion = resolve; }));
+  mount();
+  fireEvent.change(await screen.findByLabelText('Minutes spent'), { target: { value: '20' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  const noButton = await screen.findByRole('button', { name: 'No, finish without reflection' });
+  fireEvent.click(noButton);
+  fireEvent.click(noButton);
+
+  expect(submitComponentProgress).toHaveBeenCalledTimes(1);
+  resolveCompletion?.({ record: { componentId: 'C1', timeTaken: '00:20' } } as Awaited<ReturnType<typeof submitComponentProgress>>);
 });
 
 async function openReadingConfirmation() {

@@ -22,6 +22,7 @@ import { placeActivity } from '@/pages/learner/video-watch/weekPreview';
 import { ActivitySidebar } from '@/pages/learner/video-watch/ActivitySidebar';
 import { componentRoute } from '@/pages/learner/video-watch/componentRoute';
 import { ReflectionWindow, formatClock } from '@/components/feature/ReflectionWindow';
+import { ReflectionChoicePopup } from '@/components/feature/ReflectionChoicePopup';
 import { rememberLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { ReadOnlyLearnerNotice } from '@/components/feature/ReadOnlyLearnerNotice';
@@ -149,6 +150,7 @@ export default function QuizTakePage() {
   const [programmeName, setProgrammeName] = useState('Programme not set');
   const [reflectionRequired, setReflectionRequired] = useState(true);
   const [reflectionQuestion, setReflectionQuestion] = useState<string | null>(null);
+  const [reflectionChoiceOpen, setReflectionChoiceOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [detailLoading, setDetailLoading] = useState(true);
@@ -163,6 +165,7 @@ export default function QuizTakePage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [result, setResult] = useState<QuizAttemptResult | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const completionInFlightRef = useRef(false);
   const trackingSessionRef = useRef<TimeTrackingSession | null>(null);
   const trackingPromiseRef = useRef<Promise<TimeTrackingSession> | null>(null);
 
@@ -172,6 +175,7 @@ export default function QuizTakePage() {
     setLoading(true);
     setLoadError(null);
     setPhase('intro');
+    setReflectionChoiceOpen(false);
     setAnswers({});
     setResult(null);
     fetchQuiz(Number(quizId), id)
@@ -211,12 +215,12 @@ export default function QuizTakePage() {
   }, [kind, id, quizId, loadAttempt]);
 
   useEffect(() => {
-    if (phase !== 'quiz' || !componentAccess.open) return;
+    if (phase !== 'quiz' || reflectionChoiceOpen || !componentAccess.open) return;
     timerRef.current = setInterval(() => {
       if (document.visibilityState === 'visible') setElapsedSeconds((s) => s + 1);
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [phase, componentAccess.open]);
+  }, [phase, reflectionChoiceOpen, componentAccess.open]);
 
   useEffect(() => {
     if (phase !== 'quiz') return;
@@ -251,6 +255,7 @@ export default function QuizTakePage() {
   const startQuiz = () => {
     if (!quiz || !kind || !id || !canUseComponent || detailLoading || detailError) return;
     setSubmitError(null);
+    setReflectionChoiceOpen(false);
     trackingSessionRef.current = null;
     const pending = startTimeTracking(
       'quiz', quiz.id, kind as LearnerKind, id, 'active_quiz',
@@ -279,15 +284,16 @@ export default function QuizTakePage() {
   const goNext = () => setCurrent((c) => Math.min(c + 1, (quiz?.questions.length || 1) - 1));
   const goPrev = () => setCurrent((c) => Math.max(c - 1, 0));
 
-  // Finishing the quiz stops the timer and opens the reflection window;
-  // the attempt is only persisted once the learner completes that window.
+  // A configured reflection is optional. The attempt is persisted only after
+  // the learner chooses a path and completes it.
   const handleFinishQuiz = () => {
     if (timerRef.current) clearInterval(timerRef.current);
+    setSubmitError(null);
     if (!reflectionRequired) {
       void finalizeSubmit({ ksbs: [], feedback: '', reportedTime: '' });
       return;
     }
-    setPhase('reflect');
+    setReflectionChoiceOpen(true);
   };
 
   // The quiz's time limit as hours, for presetting "Actual time spent (minutes)".
@@ -298,8 +304,12 @@ export default function QuizTakePage() {
     ? (quiz.duration * (quiz.timeUnit === 'seconds' ? 1 : 60)) / 3600
     : undefined;
 
-  const finalizeSubmit = async (reflection: { ksbs: string[]; feedback: string; reportedTime: string }) => {
-    if (!quiz || !kind || !id || submitting || !canUseComponent) return;
+  const finalizeSubmit = async (
+    reflection: { ksbs: string[]; feedback: string; reportedTime: string },
+    options: { skipReflection?: boolean } = {},
+  ) => {
+    if (!quiz || !kind || !id || completionInFlightRef.current || !canUseComponent) return;
+    completionInFlightRef.current = true;
     setSubmitting(true);
     setSubmitError(null);
     try {
@@ -315,12 +325,15 @@ export default function QuizTakePage() {
         ksbs: reflection.ksbs,
         feedback: reflection.feedback,
         reportedTime: reflection.reportedTime,
+        skipReflection: options.skipReflection === true,
       });
+      setReflectionChoiceOpen(false);
       setResult(res);
       setPhase('results');
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : 'Could not submit quiz');
     } finally {
+      completionInFlightRef.current = false;
       setSubmitting(false);
     }
   };
@@ -336,7 +349,7 @@ export default function QuizTakePage() {
       userName="Learner"
       userRole="Learner"
     >
-      <div className={`p-3 md:p-6 ${showSidebar ? 'max-w-7xl' : 'max-w-5xl'} mx-auto`}>
+      <div className={`p-3 md:p-6 ${phase === 'reflect' ? 'max-w-none' : showSidebar ? 'max-w-7xl' : 'max-w-5xl'} mx-auto`}>
         <div className={showSidebar ? 'grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px] lg:gap-6 items-start' : ''}>
         <div className="min-w-0">
         {loading || detailLoading ? (
@@ -378,20 +391,20 @@ export default function QuizTakePage() {
             actualTimeUnit="minutes"
             learnerKsbs={learnerKsbs}
             elapsedSeconds={elapsedSeconds}
-              submitting={submitting}
-              submitError={submitError}
-              onSubmit={finalizeSubmit}
-              activityTitle={quiz.title}
-              weekLabel={weekTitle || ''}
-              moduleLabel={moduleTitle || ''}
-              learnerName={learnerName}
-              programmeName={programmeName}
-              learnerKind={kind as LearnerKind}
-              learnerId={id}
-              evidenceSectionRef={`quiz-${quiz.id}`}
-              reflectionQuestion={reflectionQuestion}
-              onClose={() => navigate(-1)}
-            />
+            submitting={submitting}
+            submitError={submitError}
+            onSubmit={finalizeSubmit}
+            activityTitle={quiz.title}
+            weekLabel={weekTitle || ''}
+            moduleLabel={moduleTitle || ''}
+            learnerName={learnerName}
+            programmeName={programmeName}
+            learnerKind={kind as LearnerKind}
+            learnerId={id}
+            evidenceSectionRef={`quiz-${quiz.id}`}
+            reflectionQuestion={reflectionQuestion}
+            onClose={() => setPhase('quiz')}
+          />
         ) : (
           result && (
             <ResultsScreen
@@ -420,6 +433,19 @@ export default function QuizTakePage() {
               kind, id, component, placement.moduleTitle, week,
             )}
             accessOpen={componentAccess.open}
+          />
+        )}
+        {reflectionChoiceOpen && (
+          <ReflectionChoicePopup
+            noun="quiz"
+            submitting={submitting}
+            error={submitError}
+            onCancel={() => setReflectionChoiceOpen(false)}
+            onAddReflection={() => { setReflectionChoiceOpen(false); setPhase('reflect'); }}
+            onFinishWithoutReflection={() => void finalizeSubmit(
+              { ksbs: [], feedback: '', reportedTime: '' },
+              { skipReflection: true },
+            )}
           />
         )}
         </div>
