@@ -14,18 +14,24 @@ ALTER TABLE "Coach".coach_absence_report
   ADD COLUMN IF NOT EXISTS recovery_method varchar(16) NOT NULL DEFAULT '',
   ADD COLUMN IF NOT EXISTS catchup_event_key varchar(255);
 
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'coach_absence_recovery_valid'
-                 AND conrelid = '"Coach".coach_absence_report'::regclass) THEN
-    ALTER TABLE "Coach".coach_absence_report ADD CONSTRAINT coach_absence_recovery_valid
-      CHECK ((recovery_method IN ('', 'recorded') AND catchup_event_key IS NULL)
-          OR (recovery_method = 'catch-up' AND catchup_event_key IS NOT NULL AND catchup_event_key <> ''));
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'coach_absence_catchup_event_fk'
-                 AND conrelid = '"Coach".coach_absence_report'::regclass) THEN
-    ALTER TABLE "Coach".coach_absence_report ADD CONSTRAINT coach_absence_catchup_event_fk
-      FOREIGN KEY (catchup_event_key) REFERENCES "Coach".coach_calendar_event(event_key) ON DELETE RESTRICT;
-  END IF;
-END $$;
+-- Alternative attendance stores an occurrence identity in the same bounded
+-- reference column (alternative:OCC-...). It is deliberately not a coach
+-- calendar event, so the old unconditional FK rejected every valid alternative
+-- report. Catch-up ownership and availability are checked and locked by the
+-- application before the report is inserted.
+ALTER TABLE "Coach".coach_absence_report
+  DROP CONSTRAINT IF EXISTS coach_absence_catchup_event_fk,
+  DROP CONSTRAINT IF EXISTS coach_absence_recovery_valid;
+
+ALTER TABLE "Coach".coach_absence_report
+  ADD CONSTRAINT coach_absence_recovery_valid CHECK (
+       (recovery_method IN ('', 'recorded') AND catchup_event_key IS NULL)
+    OR (recovery_method = 'catch-up'
+        AND catchup_event_key IS NOT NULL
+        AND catchup_event_key <> ''
+        AND catchup_event_key NOT LIKE 'alternative:%')
+    OR (recovery_method = 'alternative'
+        AND catchup_event_key LIKE 'alternative:%'
+        AND length(catchup_event_key) > length('alternative:'))
+  );
 COMMIT;

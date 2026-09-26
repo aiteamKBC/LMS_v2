@@ -2492,11 +2492,13 @@ def caseload_canonical_attendance(rows) -> dict[int, dict]:
     ]
     if not work:
         return {}
+    from learner_api.attendance_lectures import _merge_register_duplicates
 
     def load(item):
         profile_id, source = item
         try:
-            return profile_id, _summarize_attendance(combined_attendance_rows(source))
+            # A lecture in both the KBC register and Teams counts once, as on learner pages.
+            return profile_id, _summarize_attendance(_merge_register_duplicates(combined_attendance_rows(source)))
         except Exception as exc:
             logger.warning("Could not read canonical coach attendance for learner %s: %s", profile_id, exc)
             return profile_id, None
@@ -8366,6 +8368,9 @@ def build_live_session_calendar_event(
     return {
         "eventKey": f'live-session-{row.get("id")}-{session["sessionNumber"]}',
         "id": f'live-session-{row.get("id")}-{session["sessionNumber"]}',
+        # The Teams occurrence this slot is tracked by, when one exists; read by
+        # live_session_outcomes to show whether the session was attended.
+        "occurrenceId": clean_text(tracked_occurrence.get("id")) or None,
         "ownerEmail": owner_email,
         "ownerName": owner_name,
         "learnerId": "",
@@ -11273,6 +11278,9 @@ def coach_timetable(request):
         return validation_error_response(exc)
     include_live_sessions = clean_text(request.GET.get("include_live_sessions", "1")).casefold() not in {"0", "false", "no", "off"}
     include_scheduler_queues = clean_text(request.GET.get("include_scheduler_queues", "1")).casefold() not in {"0", "false", "no", "off"}
+    # Catch-ups only: close this coach's elapsed catch-ups before listing them.
+    from learner_api.catchup_outcomes import sync_catchup_outcomes
+    sync_catchup_outcomes(owner_email=owner_email)
 
     try:
         timetable_payload = collect_generated_timetable(
@@ -11282,6 +11290,12 @@ def coach_timetable(request):
             include_live_sessions=include_live_sessions,
             include_scheduler_queues=include_scheduler_queues,
         )
+        # Elapsed meetings show Ended, or Completed when the learner attended.
+        from .meeting_outcomes import annotate_meeting_outcomes
+        annotate_meeting_outcomes(timetable_payload["events"])
+        # Live sessions keep their own rule: Completed when any learner attended.
+        from .live_session_outcomes import annotate_live_session_outcomes
+        annotate_live_session_outcomes(timetable_payload["events"])
     except Exception:
         logger.exception("coach_timetable_load_failed coach_account_id=%s", owner_email)
         return coach_error(
@@ -12267,6 +12281,10 @@ def serialize_absence_report(
             settings.AZURE_REJECTED_CONTAINER,
         },
     )
+    alternative_session = None
+    if report.recovery_method == 'alternative':
+        from learner_api.alternative_recovery import alternative_target_details
+        alternative_session = alternative_target_details(report.catchup_event_key)
     return {
         "id": str(report.id),
         "learnerId": str(report.learner_id),
@@ -12291,6 +12309,7 @@ def serialize_absence_report(
         "evidenceText": report.evidence_text or None,
         "recoveryMethod": report.recovery_method,
         "catchupEventKey": report.catchup_event_key,
+        "alternativeSession": alternative_session,
         "evidenceImageUrl": evidence_url or None,
         "previousAbsences": previous_absences_override if previous_absences_override is not None else report.previous_absences,
         "attendanceRate": attendance_rate,

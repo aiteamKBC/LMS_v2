@@ -16,8 +16,12 @@ export interface AbsenceReport {
   evidenceType?: string;
   evidenceKind?: 'image' | 'file' | 'text' | 'none';
   evidenceText?: string;
-  recoveryMethod?: 'recorded' | 'catch-up' | '';
+  recoveryMethod?: 'recorded' | 'catch-up' | 'alternative' | '';
   catchupEventKey?: string | null;
+  alternativeSession?: {
+    id: string; title: string; dateIso: string; startTime: string; endTime: string;
+    groupId: string; group: string; cohortId: string; cohort: string; status?: string;
+  } | null;
   evidenceImageUrl?: string;
   previousAbsences: number;
   attendanceRate: number;

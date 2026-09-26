@@ -64,6 +64,7 @@ export const learnerNavItems: SidebarNavItem[] = [
 // ============================================================================
 export const coachNavItems: SidebarNavItem[] = [
   { id: 'coach-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/coach' },
+  { id: 'coach-notifications', label: 'Notifications', icon: 'ri-notification-3-line', href: '/notifications' },
   {
     id: 'coach-meetings',
     label: 'Meetings',
@@ -95,6 +96,7 @@ export const coachNavItems: SidebarNavItem[] = [
     href: '/coach/monthly-logs',
     matchPaths: ['/coach/monthly-cycle'],
   },
+  { id: 'coach-absence-reports', label: 'Absence Reports', icon: 'ri-error-warning-line', href: '/coach/absence-reports' },
 ];
 
 // ============================================================================
@@ -182,6 +184,7 @@ export const employerNavItems: SidebarNavItem[] = [
     label: 'Communication',
     icon: 'ri-mail-line',
     children: [
+      { id: 'employer-notifications', label: 'Notifications', icon: 'ri-notification-3-line', href: '/notifications' },
       { id: 'employer-messages', label: 'Messages', icon: 'ri-mail-line', href: '/messages', statusDot: 'blue' },
       { id: 'employer-support', label: 'Support Requests', icon: 'ri-question-line', href: '/employer/support' },
     ],
