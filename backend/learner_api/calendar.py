@@ -773,6 +773,37 @@ def _resolve_assignment_month_progress_review_occurrence(learner, mirror):
     return _resolve_direct_cycle_event_key(learner, mirror, "progress-review")
 
 
+def _record_owner_ids(record, *, created_user_id, profile_id):
+    """The learner ids this learner may be stored under on ``record``.
+
+    Created_users.id and the Learner profile id are independent sequences, so
+    a number only means something in the id space its row was written in:
+
+    * Review rows -- linked to a Review Instance, or a coach-generated
+      programme-cycle slot -- carry the profile id, the same id as
+      curriculum.review_instances.learner_id. Only that id is compared.
+    * Onboarding reviews are always written with Created_users.id
+      (calendar_learner_id in learner_calendar_book), so only that id is
+      compared.
+    * Rows written by the learner's own booking flow (``learner-book:`` keys)
+      and first-session rows have no single id space: bookings stored
+      Created_users.id before 2026-09-08 and the profile id since, and
+      first_session.py still stores Created_users.id. They keep both ids until
+      the stored rows are checked.
+    """
+    event_type = _s(record.event_type)
+    booked_by_learner = _s(getattr(record, "idempotency_key", "")).startswith("learner-book:")
+    if _s(getattr(record, "review_instance_id", "")) or (
+        event_type in ("mcr", "progress-review", "review") and not booked_by_learner
+    ):
+        ids = {profile_id}
+    elif event_type in ONBOARDING_REVIEW_TYPES:
+        ids = {created_user_id}
+    else:
+        ids = {created_user_id, profile_id}
+    return {str(value) for value in ids if value is not None}
+
+
 def _learner_calendar_record(kind, pk, event_key):
     """Resolve an event only when it belongs to the requested learner."""
     model = SOURCE_MODELS.get(kind)
@@ -789,10 +820,8 @@ def _learner_calendar_record(kind, pk, event_key):
     record = CoachCalendarEvent.objects.filter(event_key=event_key).first()
     if not record:
         return None
-    learner_ids = {str(pk)}
-    if mirror:
-        learner_ids.add(str(mirror.id))
-    return record if (str(record.learner_id or "") in learner_ids or _s(record.learner_email).strip().casefold() in emails) else None
+    owner_ids = _record_owner_ids(record, created_user_id=pk, profile_id=mirror.id if mirror else None)
+    return record if (str(record.learner_id or "") in owner_ids or _s(record.learner_email).strip().casefold() in emails) else None
 
 
 def _follow_first_session_start_date(kind, pk, record, scheduled_date):
@@ -879,19 +908,17 @@ def learner_calendar_event_review(request, kind, pk, event_key):
         # occurrence creates the durable instance, but the learner calendar
         # still reaches this endpoint through the generated event key. Resolve
         # that same instance by its stable identity instead of returning a
-        # blank template preview.
-        candidate_ids = [str(pk)]
+        # blank template preview. review_instances.learner_id is the learner's
+        # profile id (see _record_owner_ids), so only that id is looked up --
+        # Created_users.id is a different sequence and may equal someone
+        # else's profile id.
         model = SOURCE_MODELS.get(kind)
         learner = model.all_learners.filter(pk=pk).first() if model else None
-        if learner is not None:
-            mirror = learner_profile_for_source(learner, pk, active_only=True)
-            if mirror is not None and str(mirror.pk) not in candidate_ids:
-                candidate_ids.append(str(mirror.pk))
-        for candidate_id in candidate_ids:
-            existing = review_instances.find_review_instance(template_id, candidate_id, occurrence_number)
+        mirror = learner_profile_for_source(learner, pk, active_only=True) if learner is not None else None
+        if mirror is not None:
+            existing = review_instances.find_review_instance(template_id, str(mirror.pk), occurrence_number)
             if existing:
                 instance_id = _s(existing.get('id'))
-                break
         if instance_id:
             instance = review_instances.get_review_instance(instance_id)
             if not instance:

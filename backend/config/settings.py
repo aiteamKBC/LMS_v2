@@ -339,6 +339,7 @@ INSTALLED_APPS = [
     'engagement_api',
     'enrolment_api',
     'progress_reviews_api',
+    'knowledge_base',
     'chat',
     # Platform authentication (auth schema on the Neon enrolment database).
     # Its tables are unmanaged and created by `manage.py apply_login_tables`.

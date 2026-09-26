@@ -4,7 +4,6 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { openReviewInstanceForEvent } from '@/api/reviewInstances';
-import { monthlyCoachingAgenda } from '@/pages/workspace/coach/monthlyCoachingAgenda';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { FilterSelect, SearchInput } from '@/components/ui/FilterToolbar';
 import { PageContainer } from '@/components/ui/PageContainer';
@@ -17,7 +16,8 @@ import { cn } from '@/lib/cn';
 import { statusTone, type StatusTone } from '@/lib/statusTone';
 import { roleNavMap } from '@/mocks/navigation';
 import { LearnerAvatar } from '../shared/LearnerIdentity';
-import { saveProgressReviewPptx } from '../progress-reviews/lib/progressReviewPptx';
+import ProgressReviewPptxModal from '../progress-reviews/components/ProgressReviewPptxModal';
+import { slidesTargetFromEvent } from '../progress-reviews/components/slidesTarget';
 import { reviewInstancePath, reviewInstanceRouteState } from '../shared/reviewInstanceNavigation';
 import {
   type CoachCalendarEvent,
@@ -147,7 +147,7 @@ export default function CoachMonthlyCoaching() {
   const [scheduleDuration, setScheduleDuration] = useState(60);
   const [scheduleBusy, setScheduleBusy] = useState(false);
   const [scheduleError, setScheduleError] = useState<string | null>(null);
-  const [slidesBusyEventKey, setSlidesBusyEventKey] = useState('');
+  const [slidesEvent, setSlidesEvent] = useState<CoachCalendarEvent | null>(null);
   const [slidesError, setSlidesError] = useState<string | null>(null);
   const [events, setEvents] = useState<CoachCalendarEvent[]>([]);
   const [ownerName, setOwnerName] = useState('Coach');
@@ -328,18 +328,15 @@ export default function CoachMonthlyCoaching() {
     if (url) window.open(url, '_blank', 'noopener,noreferrer');
   };
 
-  const createSlides = async (event: CoachCalendarEvent) => {
-    const eventKey = eventIdentity(event);
-    if (slidesBusyEventKey) return;
-    setSlidesBusyEventKey(eventKey);
-    setSlidesError(null);
-    try {
-      await saveProgressReviewPptx(monthlyCoachingAgenda(event), 'Monthly Coaching Agenda');
-    } catch (err) {
-      setSlidesError(err instanceof Error ? err.message : 'Unable to create the PowerPoint.');
-    } finally {
-      setSlidesBusyEventKey('');
+  // The learner creates and edits their MCM slides; the coach views them.
+  // enrolmentId, never learnerId: the slides API keys on the enrolment record.
+  const viewSlides = (event: CoachCalendarEvent) => {
+    if (!event.enrolmentId || !eventDisplayDate(event)) {
+      setSlidesError('This meeting is missing its learner id or date, so slides cannot be generated yet.');
+      return;
     }
+    setSlidesError(null);
+    setSlidesEvent(event);
   };
 
   const scheduleMeeting = (selectedEvent?: CoachCalendarEvent) => {
@@ -414,13 +411,16 @@ export default function CoachMonthlyCoaching() {
                 <td className="whitespace-nowrap px-4 py-3 align-middle text-[12px] text-foreground-700"><span className="inline-flex min-w-[150px] flex-col gap-1"><span className="flex items-center gap-1.5 whitespace-nowrap"><AppIcon className="ri-calendar-line shrink-0 text-primary-500" />{event.scheduledDate ? formatDateLabel(event.scheduledDate) : formatDateLabel(event.targetDate)}</span><span className="flex items-center gap-1.5 whitespace-nowrap text-foreground-500"><AppIcon className="ri-time-line shrink-0 text-primary-500" />{formatTimeRangeLabel(event)}</span></span></td>
                 <td className="px-4 py-3 text-center align-middle"><div className="flex flex-wrap justify-center gap-1.5"><StatusBadge tone={statusTone(event.status)} label={statusLabel(event.status)} size="sm" />{isAtRiskEvent(event) ? <StatusBadge tone="critical" label="Overdue" dot={false} size="sm" /> : null}{isDueSoonEvent(event) ? <StatusBadge tone="upcoming" label="Due Soon" dot={false} size="sm" /> : null}</div></td>
                 <td className="px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}>{actions.schedule ? <button type="button" onClick={() => scheduleMeeting(event)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-calendar-schedule-line" />{actions.schedule}</button> : null}</td>
-                <td className="min-w-[320px] px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}><div className="flex justify-end gap-1.5"><button type="button" onClick={() => openDetails(event)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-eye-line" />View</button>{actions.viewForm ? <button type="button" onClick={() => { void openForm(event); }} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-file-edit-line" />View Form</button> : null}{actions.presentation ? <button type="button" onClick={() => { void createSlides(event); }} disabled={Boolean(slidesBusyEventKey)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className={slidesBusyEventKey === eventIdentity(event) ? 'ri-loader-4-line animate-spin' : 'ri-file-ppt-line'} />{slidesBusyEventKey === eventIdentity(event) ? 'Generating...' : 'Create Slides'}</button> : null}{actions.join ? <button type="button" onClick={() => openMeeting(event)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-video-on-line" />Join</button> : null}</div></td>
+                <td className="min-w-[320px] px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}><div className="flex justify-end gap-1.5"><button type="button" onClick={() => openDetails(event)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-eye-line" />View</button>{actions.viewForm ? <button type="button" onClick={() => { void openForm(event); }} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-file-edit-line" />View Form</button> : null}{actions.presentation ? <button type="button" onClick={() => viewSlides(event)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-slideshow-2-line" />View Slides</button> : null}{actions.join ? <button type="button" onClick={() => openMeeting(event)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-video-on-line" />Join</button> : null}</div></td>
               </tr>;
             })}</tbody></table></div> : null}
             {!loading && sortedFiltered.length > 0 ? <div className="mt-4 flex flex-col gap-3 text-[12px] text-foreground-500 sm:flex-row sm:items-center sm:justify-between"><span>Showing {Math.min(sortedFiltered.length, paginatedEvents.length)} of {sortedFiltered.length} meetings</span>{pageCount > 1 ? <Pagination page={activePage} totalPages={pageCount} total={sortedFiltered.length} pageSize={MEETINGS_PER_PAGE} onPageChange={setCurrentPage} noun="meetings" /> : null}</div> : null}
           </div>
           {slidesError ? <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-semibold text-red-700">{slidesError}</p> : null}
         </Panel>
+        {slidesEvent ? (
+          <ProgressReviewPptxModal kind="mcm" access="viewer" open target={slidesTargetFromEvent(slidesEvent)} onClose={() => setSlidesEvent(null)} />
+        ) : null}
       </PageContainer>
       {scheduleModalOpen ? (
         <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm" onClick={() => { if (!scheduleBusy) setScheduleModalOpen(false); }}>

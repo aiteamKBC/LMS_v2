@@ -386,6 +386,12 @@ REVIEW_TYPE_EVENT_TYPES = {
     REVIEW_TYPE_CODE_PROGRESS_REVIEW: "progress-review",
 }
 
+# Only these event buckets are allowed to carry a Curriculum Review template.
+# Booked sessions such as catch-up and student-support are separate workflows;
+# a stale or malformed review_template_id on one of those rows must not turn it
+# into a Review when it is serialized for the timetable.
+CURRICULUM_REVIEW_EVENT_TYPES = frozenset({"mcr", "progress-review", GENERIC_REVIEW_EVENT_TYPE})
+
 
 def review_event_type_for_type_code(review_type_code: str | None) -> str:
     """Which calendar bucket a Review's occurrences appear under, decided by
@@ -5333,11 +5339,19 @@ def build_catchup_calendar_event(
     and pay for one lookup."""
     event_type = clean_text(record.event_type).lower() or CATCH_UP_EVENT_TYPE
     review_template_id = clean_text(getattr(record, "review_template_id", ""))
-    if review_type_fields is None:
+    is_curriculum_review = event_type in CURRICULUM_REVIEW_EVENT_TYPES and bool(review_template_id)
+    if review_type_fields is None and is_curriculum_review:
         review_type_fields = review_type_fields_by_template([review_template_id])
-    record_review_type = review_type_fields.get(review_template_id) or review_type_event_fields(None)
-    if review_template_id:
+    record_review_type = (
+        (review_type_fields or {}).get(review_template_id) or review_type_event_fields(None)
+        if is_curriculum_review else review_type_event_fields(None)
+    )
+    if is_curriculum_review:
         event_type = review_event_type_for_type_code(record_review_type.get('reviewTypeCode'))
+    else:
+        # Do not leak malformed linkage from a non-Curriculum booking into the
+        # client payload. The stored row remains untouched for reconciliation.
+        review_template_id = ""
     event_title = {
         **BOOKED_EVENT_TITLES,
         "live-session": "Live Session",
@@ -5345,7 +5359,7 @@ def build_catchup_calendar_event(
         "welfare": "Welfare Session",
         "review": "Review",
     }.get(event_type, event_type.replace("-", " ").title())
-    if review_template_id:
+    if is_curriculum_review:
         event_title = resolve_review_display_title(event_type, review_template_id)
     target_date = record.target_date or record.scheduled_date or date.today()
     display_date = record.scheduled_date or target_date
@@ -5396,7 +5410,7 @@ def build_catchup_calendar_event(
         "sequence": int(record.sequence or 1),
         "title": event_title,
         "reviewTemplateId": review_template_id or None,
-        "reviewInstanceId": clean_text(getattr(record, 'review_instance_id', '')) or None,
+        "reviewInstanceId": clean_text(getattr(record, 'review_instance_id', '')) if is_curriculum_review else None,
         "occurrenceNumber": getattr(record, 'occurrence_number', None) or record.sequence,
         # A booked Review keeps its template's classification, so it filters
         # with the unbooked occurrences around it rather than dropping into

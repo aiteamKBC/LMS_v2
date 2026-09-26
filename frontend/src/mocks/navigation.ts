@@ -31,7 +31,8 @@ export const learnerNavItems: SidebarNavItem[] = [
       { id: 'learner-monthly-submission', label: 'Monthly Submission', icon: 'ri-file-upload-line', href: '/learner/monthly-submission' },
       { id: 'learner-monthly-logs', label: 'Monthly Logs', icon: 'ri-file-list-3-line', href: '/learner/monthly-logs', matchPaths: ['/learner/monthly-cycle'] },
       { id: 'learner-monthly-coaching', label: 'Monthly Coaching Meeting', icon: 'ri-chat-smile-2-line', href: '/learner/monthly-coaching' },
-      { id: 'learner-progress-reviews', label: 'Reviews', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
+      { id: 'learner-progress-reviews', label: 'Progress Review', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
+      { id: 'learner-reviews', label: 'Reviews', icon: 'ri-file-list-3-line', href: '/learner/reviews' },
     ],
   },
 
@@ -232,6 +233,7 @@ export const curriculumNavItems: SidebarNavItem[] = [
       '/curriculum/standards',
       '/curriculum/ksb-frameworks',
       '/curriculum/quiz-xml',
+      '/curriculum/knowledge-base',
       '/curriculum/question-bank',
       '/curriculum/checkpoints',
     ],
