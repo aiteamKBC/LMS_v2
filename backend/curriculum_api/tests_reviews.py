@@ -243,6 +243,62 @@ class ReviewCreateTests(ReviewTemplateTestCase):
         self.assertEqual(review['visibleTo'], {'advisor': True, 'employer': True, 'participant': True, 'referrer': False})
 
 
+class ReviewReferrerSignatureGuardTests(ReviewTemplateTestCase):
+    """Referrer stays a structural role, but no Referrer signing flow exists,
+    so a template may not newly require a Referrer signature."""
+
+    def _legacy_referrer_review(self, programme_id):
+        review_id = self._post(programme_id, self._basic_payload()).json()['review']['id']
+        views.update_rows(reviews.REVIEW_TEMPLATES_TABLE, 'id = %s', [review_id], {'signature_referrer': True})
+        views.invalidate_curriculum_cache()
+        return review_id
+
+    def test_create_with_referrer_signature_is_rejected(self):
+        programme_id = self._programme()
+        payload = self._basic_payload(signatures={'advisor': True, 'employer': False, 'participant': True, 'referrer': True})
+        response = self._post(programme_id, payload)
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['fields']['signatures'], 'Referrer signatures are not currently supported.')
+        self.assertEqual(self._get_list(programme_id).json()['results'], [])
+
+    def test_create_with_referrer_signature_false_is_accepted(self):
+        programme_id = self._programme()
+        response = self._post(programme_id, self._basic_payload())
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertFalse(response.json()['review']['signatures']['referrer'])
+
+    def test_supported_signature_roles_are_unaffected(self):
+        programme_id = self._programme()
+        signatures = {'advisor': True, 'employer': True, 'participant': True, 'referrer': False}
+        review = self._post(programme_id, self._basic_payload(signatures=signatures)).json()['review']
+        self.assertEqual(review['signatures'], signatures)
+        response = self._patch(review['id'], {'signatures': {'advisor': False, 'employer': True, 'participant': False, 'referrer': False}})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['review']['signatures'], {'advisor': False, 'employer': True, 'participant': False, 'referrer': False})
+
+    def test_update_adding_referrer_signature_is_rejected_and_leaves_template_unchanged(self):
+        programme_id = self._programme()
+        review_id = self._post(programme_id, self._basic_payload()).json()['review']['id']
+        response = self._patch(review_id, {'name': 'Renamed', 'signatures': {'advisor': True, 'employer': False, 'participant': True, 'referrer': True}})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['fields']['signatures'], 'Referrer signatures are not currently supported.')
+        review = self._get_detail(review_id).json()['review']
+        self.assertEqual(review['name'], 'Progress Review')
+        self.assertFalse(review['signatures']['referrer'])
+
+    def test_legacy_referrer_signature_survives_unrelated_edit(self):
+        programme_id = self._programme()
+        review_id = self._legacy_referrer_review(programme_id)
+        # The Form Builder always resends the full signatures object.
+        response = self._patch(review_id, {'name': 'Renamed', 'signatures': {'advisor': True, 'employer': False, 'participant': True, 'referrer': True}})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()['review']['name'], 'Renamed')
+        self.assertTrue(response.json()['review']['signatures']['referrer'])
+        response = self._patch(review_id, {'name': 'Renamed again'})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()['review']['signatures']['referrer'])
+
+
 class ReviewReadTests(ReviewTemplateTestCase):
     def test_retrieve_programme_reviews(self):
         programme_id = self._programme()

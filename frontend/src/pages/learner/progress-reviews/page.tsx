@@ -298,8 +298,8 @@ function ProgressReviewsList() {
 
   return (
     <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items}
-      workspaceLabel={learnerNav.workspaceLabel} pageTitle="Reviews"
-      pageSubtitle="Your next review and previous records" userName={learner?.name || 'Learner'}
+      workspaceLabel={learnerNav.workspaceLabel} pageTitle="Progress Reviews"
+      pageSubtitle="Your next progress review and previous records" userName={learner?.name || 'Learner'}
       userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}>
       <main className="page-container min-w-0 w-full space-y-4 p-3 md:p-6">
         {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-base text-red-700">{error}<button type="button" onClick={refresh} className="ml-3 min-h-12 font-bold underline">Try again</button></div>}
@@ -438,8 +438,8 @@ export default function ProgressReviewsPage() {
       roleLabel={learnerNav.label}
       navItems={learnerNav.items}
       workspaceLabel={learnerNav.workspaceLabel}
-      pageTitle="Reviews"
-      pageSubtitle="Formal reviews with your coach and line manager"
+      pageTitle="Progress Reviews"
+      pageSubtitle="Formal progress reviews with your coach and line manager"
       userName={learner?.name || 'Learner'}
       userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}
     >

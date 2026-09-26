@@ -176,6 +176,8 @@ const MonthlyCoachingPage = lazyRoute(() => import("../pages/learner/monthly-coa
 const MonthlyCoachingListPage = lazyRoute(() => import("../pages/learner/monthly-coaching/page").then(m => ({ default: m.MonthlyCoachingListPage })));
 const ProgressReviewsPage = lazyRoute(() => import("../pages/learner/progress-reviews/page"));
 const ProgressReviewsListPage = lazyRoute(() => import("../pages/learner/progress-reviews/page").then(m => ({ default: m.ProgressReviewsListPage })));
+const CurriculumReviewsPage = lazyRoute(() => import("../pages/learner/reviews/curriculumReviews").then(m => ({ default: m.CurriculumReviewPage })));
+const CurriculumReviewsListPage = lazyRoute(() => import("../pages/learner/reviews/curriculumReviews").then(m => ({ default: m.CurriculumReviewsListPage })));
 const ManualQuizPage = lazyRoute(() => import("../pages/curriculum/quiz-xml/manual/page"));
 const MessagesPage = lazyRoute(() => import("../pages/learner/messages/page"));
 const MisAttendanceModesPage = lazyRoute(() => import("../pages/mis/attendance-modes/page"));
@@ -664,7 +666,7 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/reviews",
-    element: <ProgressReviewsListPage />,
+    element: <CurriculumReviewsListPage />,
   },
   {
     path: "/learner/progress-reviews/:kind/:id",
@@ -672,11 +674,15 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/reviews/:kind/:id",
-    element: <ProgressReviewsListPage />,
+    element: <CurriculumReviewsListPage />,
   },
   {
     path: "/learner/progress-reviews/:reviewId",
     element: <ProgressReviewsPage />,
+  },
+  {
+    path: "/learner/reviews/:reviewId",
+    element: <CurriculumReviewsPage />,
   },
   {
     path: "/learner/rewards/badge/:badgeId",
