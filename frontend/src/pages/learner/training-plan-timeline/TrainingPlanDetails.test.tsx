@@ -382,7 +382,7 @@ describe('Dashboard training plan controls', () => {
     expect(scroll).not.toHaveAttribute('data-panning', 'true');
   });
 
-  it('keeps pending hours separate from completed hours and uses the programme total for overall progress', () => {
+  it('keeps pending hours separate from completed hours and uses target-to-date for overall progress', () => {
     const data = fixture();
     data.monthlyOtjh = {
       '2026-09': { planned: 18, submitted: 2, actual: 11.5, missingPlannedActivities: 0 },
@@ -397,17 +397,71 @@ describe('Dashboard training plan controls', () => {
     expect(chart.getByRole('tooltip')).toHaveTextContent('Completed:64% (11.5 hours)');
     const bars = september.querySelectorAll('i');
     expect(bars[0].style.bottom).toBe(bars[1].style.height);
-    expect(chart.getByRole('progressbar', { name: 'Overall off-the-job hours progress' })).toHaveAttribute('aria-valuenow', '29');
+    expect(chart.getByRole('progressbar', { name: 'Overall off-the-job hours progress' })).toHaveAttribute('aria-valuenow', '64');
     expect(chart.getByText('11.5h completed · 2h submitted')).toBeInTheDocument();
     expect(chart.queryByText('N/A')).not.toBeInTheDocument();
   });
 
-  it('uses the combined OTJH target from every module that defines one', () => {
+  it('calculates target-to-date variance when a Monthly Logs target is blank', () => {
+    const data = fixture();
+    data.monthlyLogOtjh = {
+      '2026-09': { target: null, submitted: 2, completed: 11.5 },
+      '2026-10': { target: 20, submitted: 0, completed: 0 },
+    };
+    data.monthlyOtjh = {};
+    data.actual = [];
+    renderBoard(data, summarySubjects);
+
+    const chart = within(screen.getByRole('region', { name: 'Off-the-job hours by month' }));
+    expect(chart.getByText('-36% (-6.5h)')).toBeVisible();
+    expect(chart.queryByText('N/A')).not.toBeInTheDocument();
+  });
+
+  it('uses target-to-date when a later programme month has no target yet', () => {
+    const data = fixture();
+    data.requiredOtjh = null;
+    data.months['2026-10'].planned = null;
+    data.monthlyLogOtjh = {
+      '2026-09': { target: 18, submitted: 2, completed: 11.5 },
+      '2026-10': { target: null, submitted: 0, completed: 0 },
+    };
+    data.monthlyOtjh = {};
+    data.actual = [];
+    renderBoard(data, summarySubjects);
+
+    const chart = within(screen.getByRole('region', { name: 'Off-the-job hours by month' }));
+    expect(chart.getByRole('progressbar', { name: 'Overall off-the-job hours progress' })).toHaveAttribute('aria-valuenow', '64');
+    expect(chart.getByText('-36% (-6.5h)')).toBeVisible();
+    expect(chart.queryByText('N/A')).not.toBeInTheDocument();
+  });
+
+  it('sums the available monthly targets through the current month', () => {
+    const data = fixture();
+    data.months = {
+      '2026-08': { label: '', topics: [], planned: 20, source: 'contract' },
+      '2026-09': { label: '', topics: [], planned: null, source: 'contract' },
+      '2026-10': { label: '', topics: [], planned: 20, source: 'contract' },
+    };
+    data.monthlyLogOtjh = {
+      '2026-08': { target: 20, submitted: 2, completed: 11.5 },
+      '2026-09': { target: null, submitted: 0, completed: 0 },
+      '2026-10': { target: 20, submitted: 0, completed: 0 },
+    };
+    data.monthlyOtjh = {};
+    data.actual = [];
+    renderBoard(data, summarySubjects, vi.fn(), '2026-08-01', '2026-10-31');
+
+    const chart = within(screen.getByRole('region', { name: 'Off-the-job hours by month' }));
+    expect(chart.getByText('-42% (-8.5h)')).toBeVisible();
+    expect(chart.queryByText('N/A')).not.toBeInTheDocument();
+  });
+
+  it('uses cumulative monthly targets even when module OTJH targets are zero', () => {
     const data = fixture();
     data.requiredOtjh = 999;
     data.modules = [
-      { ...data.modules[0], total_otjh: 30 },
-      { ...data.modules[1], total_otjh: 50 },
+      { ...data.modules[0], total_otjh: 0 },
+      { ...data.modules[1], total_otjh: 0 },
       { id: 'NO-OTJH', title: 'No OTJH', description: '', start_date: null, end_date: null, tutor_name: '', coach_name: '', total_otjh: null },
     ];
     data.monthlyOtjh = {
@@ -419,7 +473,7 @@ describe('Dashboard training plan controls', () => {
     renderBoard(data, summarySubjects);
 
     expect(within(screen.getByRole('region', { name: 'Off-the-job hours by month' }))
-      .getByRole('progressbar', { name: 'Overall off-the-job hours progress' })).toHaveAttribute('aria-valuenow', '50');
+      .getByRole('progressbar', { name: 'Overall off-the-job hours progress' })).toHaveAttribute('aria-valuenow', '100');
   });
 
   it('uses Audit OTJH through August 2026 and LMS calculations from September', () => {

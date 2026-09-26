@@ -79,6 +79,7 @@ export default function MonthlySubmissionPage() {
                 {group.topics.length > 0 && <p>{group.topics.join(' · ')}</p>}
                 <p>{group.assignments.length} assignment{group.assignments.length === 1 ? '' : 's'} · {group.submitted} submitted</p>
               </div>
+              <span className={styles.monthArt} aria-hidden="true"><img src="/assets/monthly-submission-calendar.png" alt="" /></span>
               <div className={styles.monthControls}><label className={styles.monthSelectLabel}>Choose month
                 <select value={group.month} onChange={event => select(event.target.value)}>
                   {groups.map(item => <option key={item.month} value={item.month}>

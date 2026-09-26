@@ -81,21 +81,22 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
   const activeIndex = Math.max(0, months.findIndex(row => row.key === activeMonth));
   const scale = scaleFor(months);
   const ticks = Array.from({ length: 5 }, (_, index) => scale.step * (4 - index));
-  const moduleTargets = modules.map(module => module.detail?.total_otjh)
-    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0);
-  // The chart is programme-wide: when module OTJH is authored, its overall
-  // target must include every such module (and ignore modules with no target).
-  const totalTarget = moduleTargets.length ? moduleTargets.reduce((sum, value) => sum + value, 0)
-    : data.requiredOtjh ?? (months.every(row => row.target != null) ? months.reduce((sum, row) => sum + row.target!, 0) : null);
+  const targetToDate = months.filter(row => row.key <= reportingMonth());
+  // Target-to-date is the running sum of each month's target.  A missing
+  // month must not invalidate the months that do have a target; zero remains
+  // a real target value and is included naturally by the nullish fallback.
+  const expectedTarget = targetToDate.length
+    ? targetToDate.reduce((sum, row) => sum + (row.target ?? 0), 0) : null;
   const totalSubmitted = months.every(row => row.submitted != null) ? months.reduce((sum, row) => sum + row.submitted!, 0) : null;
   const totalCompleted = months.every(row => row.completed != null) ? months.reduce((sum, row) => sum + row.completed!, 0) : null;
-  const targetToDate = months.filter(row => row.key <= reportingMonth());
-  const expectedTarget = targetToDate.length && targetToDate.every(row => row.target != null)
-    ? targetToDate.reduce((sum, row) => sum + row.target!, 0) : null;
-  const overallPercent = ratio(totalCompleted, totalTarget);
-  const expectedPercent = ratio(expectedTarget, totalTarget);
+  // Overall OTJH progress is paced against the cumulative target through the
+  // current month.  Module/programme totals can be absent or zero while the
+  // month-by-month training plan remains valid, so they are not a denominator.
+  const progressTarget = expectedTarget;
+  const overallPercent = ratio(totalCompleted, progressTarget);
+  const expectedPercent = ratio(expectedTarget, progressTarget);
   const overallVariance = expectedTarget == null || totalCompleted == null ? null : totalCompleted - expectedTarget;
-  const variancePercent = ratio(overallVariance, totalTarget);
+  const variancePercent = ratio(overallVariance, expectedTarget);
   const programmeReviews = [...new Map(data.reviews.filter(review => review.source !== 'student-support' && review.status !== 'cancelled')
     .map(review => [review.eventKey, review])).values()];
   const activityDone = modules.reduce((sum, module) => sum + module.done, 0);
@@ -228,7 +229,7 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
       {months.length > 0 && <div className={styles.overall}>
         <div><strong>Overall progress</strong><span>{totalCompleted == null ? 'Recorded hours unavailable' : `${hourNumber.format(totalCompleted)}h completed${totalSubmitted != null && totalSubmitted > 0 ? ` · ${hourNumber.format(totalSubmitted)}h submitted` : ''}`}</span></div>
         <div className={styles.overallTrack} role="progressbar" aria-label="Overall off-the-job hours progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={overallPercent == null ? undefined : Math.min(100, overallPercent)}>
-          {totalSubmitted != null && totalTarget != null && <i className={styles.submittedOverall} style={{ left: `${Math.min(100, overallPercent || 0)}%`, width: `${Math.min(100, ratio(totalSubmitted, totalTarget) || 0)}%` }} />}
+          {totalSubmitted != null && progressTarget != null && <i className={styles.submittedOverall} style={{ left: `${Math.min(100, overallPercent || 0)}%`, width: `${Math.min(100, ratio(totalSubmitted, progressTarget) || 0)}%` }} />}
           <i className={styles.completedOverall} style={{ width: `${Math.min(100, overallPercent || 0)}%` }} />
           {expectedPercent != null && <b style={{ left: `${Math.min(100, expectedPercent)}%` }} />}
         </div>
