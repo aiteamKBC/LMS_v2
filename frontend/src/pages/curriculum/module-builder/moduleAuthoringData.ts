@@ -1447,6 +1447,14 @@ const TEAMS_MEETING_SETTING_KEYS = [
   'sessionRescheduled',
 ] as const;
 
+function independentCopyDeliveryMetadata(
+  metadata: ModuleCatalogueItem['deliveryMetadata'],
+): NonNullable<ModuleCatalogueItem['deliveryMetadata']> {
+  return Object.fromEntries(Object.entries(metadata || {}).filter(([key]) => (
+    key !== 'liveSessionUrl' && !key.startsWith('teams')
+  )));
+}
+
 /**
  * A copied component's settings, with everything that belonged to the original's
  * own delivery removed.

@@ -27,6 +27,7 @@ import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/
 
 import CoachingHome from './CoachingHome';
 import CurrentMonthLogLink from './CurrentMonthLogLink';
+import ProgressReviewPptxModal from '@/pages/coach/progress-reviews/components/ProgressReviewPptxModal';
 import { useCoachingReviewDefinitions } from './useCoachingReviewDefinitions';
 
 const learnerNav = roleNavMap.learner;
@@ -314,7 +315,9 @@ export default function MonthlyCoachingPage() {
   // Keep the data-driven Aptem review details visible on first open while
   // preserving the existing learning-summary default for legacy meetings.
   const [openSections, setOpenSections] = useState<string[]>(['learning', 'imported-review']);
+  const [slidesOpen, setSlidesOpen] = useState(false);
   const selected = sessions.find((session) => session.id === sessionId) || null;
+  const selectedDate = dateOf(selected);
   const reviewInstance = useLearnerReviewInstance(
     myLearner.kind,
     myLearner.id,
@@ -392,6 +395,13 @@ export default function MonthlyCoachingPage() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <button type="button" onClick={() => navigate(backHref)} className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-600 hover:text-primary-800"><AppIcon className="ri-arrow-left-line" />Back to coaching meetings</button>
           <CurrentMonthLogLink learner={myLearner} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-background-300 bg-white px-4 py-3 text-sm font-semibold text-primary-700 hover:bg-primary-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-600" />
+          {/* The learner prepares and presents their MCM slides; a read-only
+              workspace viewer can open them but not create or edit them. */}
+          {selected && !selected.importedReview && selectedDate && (
+            <button type="button" onClick={() => setSlidesOpen(true)} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-background-300 bg-white px-4 py-3 text-sm font-semibold text-primary-700 hover:bg-primary-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-600">
+              <AppIcon className="ri-slideshow-2-line" />My slides
+            </button>
+          )}
         </div>
         {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}<button type="button" onClick={reviewInstance.refresh} className="ml-3 underline">Retry review</button></p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} onDownload={() => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} signatoryName={learner?.name || 'Learner'} onSign={canProgress ? signLearnerReview : undefined} onSaveAnswers={answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, selected.eventKey || selected.id, answers)} /> : selected.importedReview ? <ImportedMcmView selected={selected} learner={learner} openSections={openSections} toggle={toggle} onBack={() => navigate(backHref)} /> : (
           <>
@@ -436,6 +446,16 @@ export default function MonthlyCoachingPage() {
           </>
         )}
       </div>
+      {slidesOpen && selected && selectedDate && (
+        <ProgressReviewPptxModal
+          open kind="mcm" access={canProgress ? 'owner' : 'viewer'}
+          target={{
+            learnerId: myLearner.id, meetingDate: selectedDate, learnerName: learner?.name,
+            programme: learner?.programme, completed: selected.status === 'completed',
+          }}
+          onClose={() => setSlidesOpen(false)}
+        />
+      )}
     </WorkspaceShell>
   );
 }

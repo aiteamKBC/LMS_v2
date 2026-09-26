@@ -58,7 +58,8 @@ export default function MeetingBookingDialog({ session, title, learner, rules, a
   const edited = useRef({ date: false, time: false, duration: false, notes: false });
   const mounted = useRef(false);
   const monthly = session.source === 'mcr';
-  const meetingType = monthly ? 'monthly coaching' : 'progress review';
+  const curriculumReview = session.source === 'review';
+  const meetingType = monthly ? 'monthly coaching' : curriculumReview ? 'review' : 'progress review';
   const rescheduling = Boolean(target?.scheduledDate && target.status === 'scheduled');
   const isExisting = rescheduling || Boolean(session.scheduledDate && session.status === 'scheduled');
   const durationLocked = Boolean(session.importedReview?.id && monthly);
@@ -184,7 +185,7 @@ export default function MeetingBookingDialog({ session, title, learner, rules, a
       const response = update
         ? await rescheduleLearnerCalendarSession(learner.kind, learner.id, { ...input, eventKey, reviewId })
         : await bookLearnerCalendarSession(learner.kind, learner.id, {
-          ...input, sessionType: monthly ? 'mcr' : 'progress-review',
+          ...input, sessionType: monthly ? 'mcr' : curriculumReview ? 'review' : 'progress-review',
           eventKey: reviewId ? undefined : eventKey, reviewId,
           assignmentMonth: reviewId ? target.assignmentMonth || (session.targetDate || session.date || date).slice(0, 7) : undefined,
         });
@@ -198,14 +199,14 @@ export default function MeetingBookingDialog({ session, title, learner, rules, a
   }
 
   const plannedDate = session.targetDate || session.date;
-  const sessionLabel = `${monthly ? 'Monthly Coaching Meeting' : 'Progress Review'}${plannedDate ? ` · ${new Date(`${plannedDate}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}`;
+  const sessionLabel = `${monthly ? 'Monthly Coaching Meeting' : curriculumReview ? (session.reviewTypeName || session.title || 'Review') : 'Progress Review'}${plannedDate ? ` · ${new Date(`${plannedDate}T12:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}`;
   const calendarHref = `/learner/calendar?kind=${encodeURIComponent(learner.kind)}&learner=${encodeURIComponent(learner.id)}&connect=calendar`;
   const canSubmit = !loading && !saving && !availabilityLoading && !loadError && !dateRestriction && !bookingConflict && Boolean(target && date && time);
   return createPortal(<dialog ref={dialog} aria-labelledby={titleId} aria-describedby={descriptionId} className={styles.dialog}
     onCancel={event => { event.preventDefault(); close(); }} onClick={event => { if (event.target === event.currentTarget) close(); }}>
     <form onSubmit={submit} aria-busy={loading || saving}>
       <header className={styles.header}>
-        <div><p className={styles.eyebrow}>{monthly ? 'Monthly coaching booking' : 'Progress review booking'}</p>
+        <div><p className={styles.eyebrow}>{monthly ? 'Monthly coaching booking' : curriculumReview ? 'Curriculum review booking' : 'Progress review booking'}</p>
           <h2 id={titleId}>{isExisting ? 'Reschedule' : 'Book'} {meetingType}</h2>
           <p id={descriptionId} className={styles.description}>Choose the day and time for {title}.</p></div>
         <button type="button" aria-label="Close booking dialog" className={styles.close} onClick={close} disabled={saving}><AppIcon className="ri-close-line" /></button>

@@ -41,6 +41,7 @@ from coach_api.views import (
     apply_evidenced_ksb_count,
     caseload_audit_hour_totals,
     caseload_aptem_ids,
+    caseload_canonical_attendance,
     caseload_evidenced_ksb_counts,
     caseload_kbc_attendance_rates,
     caseload_latest_learning_activities,
@@ -226,6 +227,27 @@ class DashboardAttendanceTests(SimpleTestCase):
         self.assertEqual(metrics, {7: {"sessions": 10, "present": 8, "absent": 2, "rate": 80}})
         kbc_rates.assert_called_once()
         self.assertEqual(list(kbc_rates.call_args.args[0]), [4321, 9876])
+
+    @patch("coach_api.views.close_old_connections")
+    @patch("coach_api.views.combined_attendance_rows")
+    def test_caseload_counts_a_lecture_in_kbc_and_teams_once(self, combined, _close):
+        day = date(2026, 9, 3)
+        row = {"learner_id": 7, "learner_name": "A Learner", "learner_email": "learner@example.com",
+               "session_date": day, "session_start_time": None, "minutes_late": 0,
+               "catchup_completed": False, "updated_at": None}
+        combined.return_value = [
+            {**row, "session_id": "kbc-1", "source": "kbc-attendance", "module_title": "Martech - Thur",
+             "attendance_status": "present"},
+            {**row, "session_id": "occ-1", "source": "microsoft-teams", "module_title": "Martech - Thur",
+             "attendance_status": "present"},
+            {**row, "session_id": "kbc-2", "source": "kbc-attendance", "module_title": "Social Media",
+             "attendance_status": "absent"},
+        ]
+        learner = SimpleNamespace(id=7, _caseload_source=SimpleNamespace(id=7))
+
+        summary = caseload_canonical_attendance([learner])[7]
+
+        self.assertEqual((summary["sessions"], summary["present"], summary["attendanceRate"]), (2, 1, 50))
 
 
 class AttendanceDetailRowsTests(SimpleTestCase):
