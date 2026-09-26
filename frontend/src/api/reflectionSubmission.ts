@@ -38,6 +38,8 @@ export interface LearningReflectionSubmissionInput {
   whatYouLearned?: string;
   businessImpact?: string;
   outsideWorkingHours?: boolean;
+  insideWorkingHoursConfirmed?: boolean;
+  insideWorkingHoursConfirmedAt?: string | null;
   outsideWorkingHoursConfirmed?: boolean;
   monthlyAssignment?: MonthlyAssignment;
   assignmentTimeSource?: 'timer' | 'input';

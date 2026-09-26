@@ -1,16 +1,21 @@
 import { SYSTEM_TIME_ZONE } from './format';
 
+export interface WorkingHoursHoliday { start: string; end: string }
+
 export interface ComponentAccessWindow {
   open: boolean;
   currentTimeLabel: string;
   closedReason: 'outside-hours' | 'weekend' | 'invalid' | null;
   outsideWorkingHours: boolean;
-  outsideReason: 'outside-hours' | 'weekend' | null;
+  outsideReason: 'outside-hours' | 'weekend' | 'holiday' | null;
+  holidayCalendarReady?: boolean;
+  holidayError?: string;
+  refreshHolidays?: () => void;
 }
 
 /** Learning content stays open 24/7, but UK out-of-hours work is identified so
  * the learner can explicitly confirm the manually reported time. */
-export function componentAccessWindow(at: Date | number = new Date()): ComponentAccessWindow {
+export function componentAccessWindow(at: Date | number = new Date(), holidays: WorkingHoursHoliday[] = []): ComponentAccessWindow {
   const date = at instanceof Date ? at : new Date(at);
   if (Number.isNaN(date.getTime())) return {
     open: false,
@@ -33,7 +38,12 @@ export function componentAccessWindow(at: Date | number = new Date()): Component
   const parts = Object.fromEntries(formatter.formatToParts(date).map(part => [part.type, part.value]));
   const hour = Number(parts.hour);
   const weekend = parts.weekday === 'Saturday' || parts.weekday === 'Sunday';
-  const outsideReason = weekend
+  const dayParts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {
+    timeZone: SYSTEM_TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date).map(part => [part.type, part.value]));
+  const day = `${dayParts.year}-${dayParts.month}-${dayParts.day}`;
+  const holiday = holidays.some(range => range.start <= day && day <= range.end);
+  const outsideReason = holiday ? 'holiday' : weekend
     ? 'weekend'
     : hour < 7 || hour >= 19
       ? 'outside-hours'
