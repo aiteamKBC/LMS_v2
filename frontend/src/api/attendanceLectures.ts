@@ -23,6 +23,7 @@ export interface AttendanceLecture {
   finalOutcome?: string;
   updatedAt: string | null; canReportAbsence: boolean; excused?: boolean;
   absenceReport: { id: number; status: string } | null;
+  recovery?: { method: string; date: string | null } | null;
   monthlyLog?: { month: string; sourceRef: string };
 }
 export interface AttendanceMode {

@@ -37,6 +37,9 @@ class AttendanceLectureTests(SimpleTestCase):
         confirmations = patch('learner_api.attendance_confirmation.read_confirmations', return_value={})
         confirmations.start()
         self.addCleanup(confirmations.stop)
+        catchups = patch('learner_api.attendance_lectures._completed_catchup_occurrences', return_value=set())
+        catchups.start()
+        self.addCleanup(catchups.stop)
 
     def test_monthly_log_link_uses_exact_source_key_and_saved_report_month(self):
         row = register_row()
@@ -420,6 +423,41 @@ class AttendanceLectureTests(SimpleTestCase):
         resolve_module.assert_called_once()
         self.assertEqual([lecture['activities'][0]['activityId'] for lecture in result], [1, 2])
         self.assertEqual([lecture['catchupStatus'] for lecture in result], ['completed', 'pending'])
+
+
+class UnreportedLectureCatchupTests(SimpleTestCase):
+    def test_missed_lecture_without_a_teams_report_is_made_up_by_its_completed_catchup(self):
+        from .attendance_lectures import _apply_completed_catchups
+        rows = [
+            {'source': 'microsoft-teams', 'session_id': 'OCC-1', 'attendance_status': 'absent'},
+            {'source': 'microsoft-teams', 'session_id': 'OCC-2', 'attendance_status': 'absent'},
+            {'source': 'microsoft-teams', 'session_id': 'OCC-3', 'attendance_status': 'absent', 'effective_attendance': 0},
+            {'source': 'microsoft-teams', 'session_id': 'OCC-4', 'attendance_status': 'present'},
+        ]
+        with patch('learner_api.attendance_lectures._completed_catchup_occurrences',
+                   return_value={'OCC-1', 'OCC-3'}) as ledger:
+            result = _apply_completed_catchups(rows, 12)
+        self.assertEqual([row.get('effective_attendance') for row in result], [1, None, 0, None])
+        self.assertTrue(result[0]['catchup_completed'])
+        self.assertEqual(result[0]['attendance_status'], 'absent')
+        self.assertEqual(ledger.call_args.args, (12, {'OCC-1', 'OCC-2'}))
+
+
+class AttendanceRecoveryDisplayTests(SimpleTestCase):
+    def test_each_reported_lecture_carries_its_recovery_method_and_catchup_date(self):
+        from .attendance_lectures import _attach_recovery
+        lectures = [{'reportId': '1'}, {'reportId': '2'}, {'reportId': '3'}]
+        reported = {
+            '1': {'recovery_method': 'catch-up', 'catchup_event_key': 'catch-up:6'},
+            '2': {'recovery_method': 'alternative', 'catchup_event_key': 'alternative:9'},
+        }
+        with patch('coach_api.models.CoachCalendarEvent.objects') as events:
+            events.filter.return_value.values_list.return_value = [('catch-up:6', date(2026, 9, 26))]
+            _attach_recovery(lectures, reported)
+        self.assertEqual(lectures[0]['recovery'], {'method': 'catch-up', 'date': '2026-09-26'})
+        self.assertEqual(lectures[1]['recovery'], {'method': 'alternative', 'date': None})
+        self.assertIsNone(lectures[2]['recovery'])
+        events.filter.assert_called_once_with(event_key__in=['catch-up:6'])
 
 
 class AttendanceAbsenceTests(SimpleTestCase):

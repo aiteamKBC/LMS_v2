@@ -8369,6 +8369,9 @@ def build_live_session_calendar_event(
     return {
         "eventKey": f'live-session-{row.get("id")}-{session["sessionNumber"]}',
         "id": f'live-session-{row.get("id")}-{session["sessionNumber"]}',
+        # The Teams occurrence this slot is tracked by, when one exists; read by
+        # live_session_outcomes to show whether the session was attended.
+        "occurrenceId": clean_text(tracked_occurrence.get("id")) or None,
         "ownerEmail": owner_email,
         "ownerName": owner_name,
         "learnerId": "",
@@ -11303,6 +11306,12 @@ def coach_timetable(request):
             include_live_sessions=include_live_sessions,
             include_scheduler_queues=include_scheduler_queues,
         )
+        # Elapsed meetings show Ended, or Completed when the learner attended.
+        from .meeting_outcomes import annotate_meeting_outcomes
+        annotate_meeting_outcomes(timetable_payload["events"])
+        # Live sessions keep their own rule: Completed when any learner attended.
+        from .live_session_outcomes import annotate_live_session_outcomes
+        annotate_live_session_outcomes(timetable_payload["events"])
     except Exception:
         logger.exception("coach_timetable_load_failed coach_account_id=%s", owner_email)
         return coach_error(

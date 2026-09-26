@@ -4,7 +4,7 @@ from html import unescape
 import logging
 import re
 
-from django.db import connections
+from django.db import DatabaseError, connections
 from django.conf import settings
 from django.http import JsonResponse
 from django.middleware.csrf import get_token
@@ -219,6 +219,7 @@ def lecture_register(source):
     ]
     if attended_alternatives:
         result = _apply_attended_alternatives(result, source.id, attended_alternatives)
+    result = _apply_completed_catchups(result, source.id)
     from .attendance_confirmation import apply_confirmations, read_confirmations
     return _merge_register_duplicates(apply_confirmations(result, read_confirmations(source.id)))
 
@@ -246,6 +247,44 @@ def _apply_attended_alternatives(rows, learner_id, attended_occurrences):
         {**row, **made_up}
         if row.get('source') == 'microsoft-teams' and row.get('attendance_status') == 'absent'
         and targets.get(str(report_id(row))) in attended_occurrences
+        else row
+        for row in rows
+    ]
+
+
+def _completed_catchup_occurrences(learner_id, occurrence_ids):
+    """Occurrences whose absence ledger records an attended (completed) catch-up."""
+    from curriculum_api.models import LiveSessionAbsence
+    return set(LiveSessionAbsence.objects.filter(
+        source_learner_id=learner_id, occurrence_id__in=list(occurrence_ids),
+        recovery_method='catch-up', recovery_status=LiveSessionAbsence.RECOVERY_COMPLETED,
+    ).values_list('occurrence_id', flat=True))
+
+
+def _apply_completed_catchups(rows, learner_id):
+    """Credit a missed Teams lecture that has no attendance report of its own.
+
+    Such a lecture only reads as absent because its time passed, so the recovery
+    that report rows receive never reaches it. The absence ledger still records
+    a catch-up the learner attended (recovery_status completed).
+    """
+    unreported = {
+        str(row.get('session_id')) for row in rows
+        if row.get('source') == 'microsoft-teams' and row.get('attendance_status') == 'absent'
+        and row.get('effective_attendance') is None
+    }
+    if not unreported:
+        return rows
+    try:
+        completed = _completed_catchup_occurrences(learner_id, unreported)
+    except DatabaseError:
+        # The register still loads; these lectures show as missed until the ledger is readable.
+        log.warning('Could not read completed catch-ups for learner %s.', learner_id, exc_info=True)
+        return rows
+    made_up = {'catchup_completed': True, 'excused': True, 'effective_attendance': 1,
+               'effective_attendance_status': 'made_up', 'final_outcome': 'made_up'}
+    return [
+        {**row, **made_up} if str(row.get('session_id')) in completed and str(row.get('session_id')) in unreported
         else row
         for row in rows
     ]
@@ -538,6 +577,27 @@ def lecture_totals(lectures):
             'attendanceRate': round(100 * attended / (attended + absent)) if attended + absent else None}
 
 
+def _attach_recovery(lectures, reported):
+    """Tell the learner how each reported absence is being made up, and when."""
+    catchup_keys = {
+        report['catchup_event_key'] for report in reported.values()
+        if report.get('recovery_method') == 'catch-up' and report.get('catchup_event_key')
+    }
+    dates = {}
+    if catchup_keys:
+        from coach_api.models import CoachCalendarEvent
+        dates = dict(CoachCalendarEvent.objects.filter(event_key__in=list(catchup_keys))
+                     .values_list('event_key', 'scheduled_date'))
+    for lecture in lectures:
+        report = reported.get(lecture['reportId'])
+        method = (report or {}).get('recovery_method') or ''
+        if not method:
+            lecture['recovery'] = None
+            continue
+        day = dates.get(report.get('catchup_event_key')) if method == 'catch-up' else None
+        lecture['recovery'] = {'method': method, 'date': day.isoformat() if day else None}
+
+
 def _mark_missed_catchups(lectures, reported):
     """Show a missed Teams lecture's catch-up as missed once it ended without the learner."""
     pending = {}
@@ -603,6 +663,7 @@ def read_workspace(source, kind):
             (lecture['status'] == 'pending' and lecture['date'] == timezone.localdate().isoformat())) and not report
         if lecture['status'] in {'completed', 'late'} and lecture['updatedAt']:
             recent.append({'id': lecture['id'], 'title': f"{lecture['title']} attended", 'at': lecture['updatedAt'], 'type': 'attendance'})
+    _attach_recovery(lectures, reported)
     _mark_missed_catchups(lectures, reported)
     for report in reports:
         recent.append({'id': f"report:{report['id']}", 'title': f"Absence report: {report['session_title']} ({report['status']})",

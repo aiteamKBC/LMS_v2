@@ -195,6 +195,41 @@ describe('Attendance lecture workspace', () => {
     expect(within(row).getByRole('button', { name: 'Book Catchup Session' })).toBeEnabled();
   });
 
+  it('shows one final outcome per lecture instead of stacked report badges', async () => {
+    payload.lectures = [
+      lecture({ id: 'made-up', title: 'Made up lecture', status: 'absent', catchupStatus: 'completed', effectiveAttendance: 1,
+        absenceReport: { id: 1, status: 'approved' }, recovery: { method: 'catch-up', date: '2026-09-26' } }),
+      lecture({ id: 'booked', title: 'Booked lecture', status: 'absent', catchupStatus: 'pending',
+        absenceReport: { id: 2, status: 'approved' }, recovery: { method: 'catch-up', date: '2026-09-28' } }),
+      lecture({ id: 'attended', title: 'Attended lecture', absenceReport: { id: 3, status: 'pending' },
+        recovery: { method: 'catch-up', date: '2026-09-17' } }),
+      lecture({ id: 'future', title: 'Future reported lecture', status: 'upcoming',
+        absenceReport: { id: 4, status: 'approved' }, recovery: { method: 'alternative', date: null } }),
+    ];
+    mount();
+    const madeUp = await screen.findByRole('article', { name: 'Made up lecture' });
+    expect(within(madeUp).getByText('Made up')).toBeInTheDocument();
+    expect(within(madeUp).getByText('Catch-up · 26 Sept')).toBeInTheDocument();
+    expect(within(madeUp).getByText('Made up via catch-up')).toBeInTheDocument();
+    expect(within(madeUp).queryByText('Missed')).not.toBeInTheDocument();
+    expect(within(madeUp).queryByText('Absence approved')).not.toBeInTheDocument();
+
+    const booked = screen.getByRole('article', { name: 'Booked lecture' });
+    expect(within(booked).getByText('Missed')).toBeInTheDocument();
+    expect(within(booked).getByText('Catch-up booked · 28 Sept')).toBeInTheDocument();
+    expect(within(booked).getByRole('button', { name: 'Change catch-up' })).toBeEnabled();
+
+    const attended = screen.getByRole('article', { name: 'Attended lecture' });
+    expect(within(attended).getByText('Attended')).toBeInTheDocument();
+    expect(within(attended).queryByText('Absence pending')).not.toBeInTheDocument();
+    expect(within(attended).queryByText(/Catch-up booked/)).not.toBeInTheDocument();
+    expect(within(attended).queryByText('Absence reported')).not.toBeInTheDocument();
+
+    const future = screen.getByRole('article', { name: 'Future reported lecture' });
+    expect(within(future).getByText('Absence reported')).toBeInTheDocument();
+    expect(within(future).getByText('Alternative session booked')).toBeInTheDocument();
+  });
+
   it('starts a linked absence report when booking recovery for an unreported missed lecture', async () => {
     payload.lectures = [lecture({ id: 'missed', sessionId: 'teams:missed', title: 'Missed lecture',
       date: '2026-09-01', status: 'absent', catchupStatus: null, canReportAbsence: true, absenceReport: null })];

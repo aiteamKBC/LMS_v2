@@ -1131,6 +1131,7 @@ def _serialize_live_session_event(event):
     return {
         "id": event.get("id"),
         "eventKey": event.get("eventKey") or event.get("id"),
+        "occurrenceId": event.get("occurrenceId"),
         "title": event.get("title") or "Live Session",
         "source": "live-session",
         "type": "live-session",
@@ -1251,6 +1252,14 @@ def learner_calendar(request, kind, pk):
             _s(event.get("source")),
             event.get("sequence") or 0,
         ))
+        # Elapsed meetings show Ended, or Completed when the learner attended.
+        from coach_api.meeting_outcomes import annotate_meeting_outcomes
+        annotate_meeting_outcomes(events)
+        # Live sessions keep their own rule: Completed when this learner attended.
+        from coach_api.live_session_outcomes import annotate_live_session_outcomes
+        annotate_live_session_outcomes(
+            events, learner_profile_id=getattr(mirror, "id", None), learner_email=email,
+        )
     except DatabaseError as exc:
         logger.exception("learner_calendar: event lookup failed")
         return _error(f"Database error: {exc}", 502)
