@@ -229,7 +229,7 @@ export function WorkspaceShell({
     'learner-overview': 'dashboard', 'learner-my-learning': 'my-learning',
     'learner-group-monthly': 'my-progress',
     'learner-monthly-submission': 'monthly-submission', 'learner-monthly-logs': 'monthly-logs',
-    'learner-monthly-coaching': 'monthly-coaching', 'learner-progress-reviews': 'reviews',
+    'learner-monthly-coaching': 'monthly-coaching', 'learner-progress-reviews': 'progress-reviews', 'learner-reviews': 'reviews',
     'learner-attendance': 'attendance', 'learner-evidence': 'evidence', 'learner-calendar': 'calendar',
   };
   const stableNavItems = routeLearner

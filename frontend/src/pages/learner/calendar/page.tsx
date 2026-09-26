@@ -217,6 +217,7 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
     importedReview: ev.importedReview,
     durationMinutes: ev.durationMinutes || 60,
     bookingStatus: ev.status,
+    meetingOutcome: ev.meetingOutcome ?? null,
     bookingSessionType: BOOKABLE_COACH_SESSION_TYPES.has(ev.source as BookableSessionType)
       ? ev.source as CalendarEvent['bookingSessionType']
       : undefined,
@@ -417,9 +418,9 @@ function restoreNotifications() {
 }
 
 type ViewMode = 'monthly' | 'weekly' | 'daily';
-type LearnerStatusFilter = 'all' | 'needs-schedule' | 'scheduled' | 'pending' | 'in-progress' | 'completed';
+type LearnerStatusFilter = 'all' | 'needs-schedule' | 'scheduled' | 'pending' | 'in-progress' | 'ended' | 'completed';
 
-const LEARNER_STATUS_FILTERS: LearnerStatusFilter[] = ['all', 'needs-schedule', 'scheduled', 'pending', 'in-progress', 'completed'];
+const LEARNER_STATUS_FILTERS: LearnerStatusFilter[] = ['all', 'needs-schedule', 'scheduled', 'pending', 'in-progress', 'ended', 'completed'];
 
 const LEARNER_STATUS_META: Record<LearnerStatusFilter, { label: string; dot: string; badge: string }> = {
   all: { label: 'All', dot: 'bg-foreground-400', badge: 'bg-background-200 text-foreground-700 ring-background-300' },
@@ -427,6 +428,7 @@ const LEARNER_STATUS_META: Record<LearnerStatusFilter, { label: string; dot: str
   scheduled: { label: 'Scheduled', dot: 'bg-primary-500', badge: 'bg-primary-100 text-primary-800 ring-primary-200' },
   pending: { label: 'Pending', dot: 'bg-amber-500', badge: 'bg-amber-100 text-amber-800 ring-amber-200' },
   'in-progress': { label: 'In Progress', dot: 'bg-secondary-500', badge: 'bg-secondary-100 text-secondary-800 ring-secondary-200' },
+  ended: { label: 'Ended', dot: 'bg-rose-500', badge: 'bg-rose-100 text-rose-800 ring-rose-200' },
   completed: { label: 'Completed', dot: 'bg-emerald-500', badge: 'bg-emerald-100 text-emerald-800 ring-emerald-200' },
 };
 
@@ -436,6 +438,7 @@ const LEARNER_STATUS_COLOR_KEYS: Record<LearnerStatusFilter, CalendarStatusKey> 
   scheduled: 'scheduled',
   pending: 'pending-due-soon',
   'in-progress': 'in-progress',
+  ended: 'missed-overdue',
   completed: 'completed',
 };
 
@@ -496,6 +499,9 @@ function sessionTypeLabel(value?: CalendarEvent['bookingSessionType'] | Bookable
 }
 
 function learnerEventStatus(event: CalendarEvent): LearnerStatusFilter {
+  // An elapsed meeting shows Ended, or Completed once Teams shows the learner attended.
+  if (event.meetingOutcome === 'completed') return 'completed';
+  if (event.meetingOutcome === 'ended') return 'ended';
   if (event.timeToBeConfirmed || event.bookingStatus === 'not-scheduled') return 'needs-schedule';
   if (event.status === 'pending') return 'pending';
   if (event.bookingStatus === 'in-progress') return 'in-progress';
@@ -1583,7 +1589,10 @@ function LearnerCalendarBody() {
                   <span>Schedule {sessionTypeLabel(showEventDetails.bookingSessionType)}</span>
                 </button>
               )}
-              {showEventDetails.meetingLink && (
+              {showEventDetails.meetingLink && showEventDetails.meetingOutcome && (
+                <button type="button" disabled title="This meeting has ended." className="meeting-join-action inline-flex flex-1 items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold whitespace-nowrap text-center cursor-not-allowed opacity-60"><AppIcon className="ri-video-chat-line h-4 w-4 shrink-0"></AppIcon><span>Meeting ended</span></button>
+              )}
+              {showEventDetails.meetingLink && !showEventDetails.meetingOutcome && (
                 <a href={showEventDetails.meetingLink} target="_blank" rel="noreferrer" className="meeting-join-action inline-flex flex-1 items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-smooth cursor-pointer whitespace-nowrap text-center"><AppIcon className="ri-video-chat-line h-4 w-4 shrink-0"></AppIcon><span>Join Meeting</span></a>
               )}
               {showEventDetails.bookingStatus === 'scheduled' && showEventDetails.bookingSessionType && (

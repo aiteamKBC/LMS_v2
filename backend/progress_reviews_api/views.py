@@ -5,7 +5,15 @@
     GET  /progress_reviews_api/<int:learner_id>/pack?review_date=YYYY-MM-DD
     POST /progress_reviews_api/<int:learner_id>/generate
     GET  /progress_reviews_api/<str:review_id>/download
+    GET  /progress_reviews_api/<str:review_id>/preview   (the deck as a PDF, for the in-page viewer)
     POST /progress_reviews_api/bulk-generate
+    GET  /progress_reviews_api/<int:learner_id>/mcm/pack?meeting_date=YYYY-MM-DD
+    GET  /progress_reviews_api/<int:learner_id>/mcm/runs/latest?meeting_date=YYYY-MM-DD
+    POST /progress_reviews_api/<int:learner_id>/mcm/generate
+
+The mcm/* endpoints produce the Monthly Coaching Meeting deck through the same
+pipeline (see mcm.py for how it differs from a Progress Review); its runs are
+downloaded through the same /<review_id>/download endpoint.
 
 This is a coach/admin workspace tool: generate/bulk-generate/download are
 staff-only (login.permissions.staff_only), the same boundary the rest of the
@@ -19,13 +27,17 @@ import logging
 from datetime import date, datetime
 
 from django.conf import settings
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
-from login.permissions import auth_gate_enabled, authenticate_request, learner_self_or_staff, staff_only
+from login.permissions import (
+    auth_gate_enabled, authenticate_request, learner_self_only, learner_self_or_staff, staff_only,
+)
 
-from . import runs, storage
+from . import edits, mcm, pdf_preview, runs, storage
+from .period import ReviewPeriod
 from .period import iter_review_periods, resolve_review_period
+from .evidence_images import default_image_fetcher
 from .pptx_generator import generate_progress_review_pptx
 from .review_pack import LearnerLookupError, _parse_date, build_review_pack
 
@@ -127,30 +139,33 @@ def _programme_window(learner_id):
 # generation pipeline — shared by /generate and /bulk-generate
 # --------------------------------------------------------------------------- #
 
-def _generate_for_learner(learner_id: int, *, review_date=None, generated_by="system") -> dict:
-    start, end, kind, source = _programme_window(learner_id)
-    if source is None:
-        raise GenerationError(f"No learner found with id {learner_id}.", 404)
-    if start is None:
-        raise GenerationError("This learner has no programme start date recorded.", 422)
+def _deck_label(review_kind):
+    return mcm.REVIEW_LABEL if review_kind == mcm.REVIEW_KIND else "Progress Review"
 
-    period = resolve_review_period(
-        programme_start=start, programme_end=end, today=date.today(), review_date=review_date,
-        programme_id=_curriculum_programme_id(source),
-    )
-    run_id = runs.new_run_id()
 
+def _render_deck(pack, review_kind, run_id):
     try:
-        pack = build_review_pack(learner_id, period, review_id=run_id, generated_by=generated_by)
-    except LearnerLookupError as exc:
-        raise GenerationError(str(exc), 404) from exc
+        if review_kind == mcm.REVIEW_KIND:
+            return mcm.generate_mcm_pptx(pack)
+        return generate_progress_review_pptx(pack)
+    except Exception as exc:
+        logger.exception("Progress review PPTX generation failed for run %s", run_id)
+        runs.mark_run_failed(run_id, [str(exc)])
+        raise GenerationError("PPTX generation failed.", 500) from exc
 
-    if not pack["learner"]["active_status"]:
-        raise GenerationError(
-            "Progress Review PPTX generation is only available for active learners.", 409,
-        )
 
-    runs.create_run(run_id=run_id, learner_kind=kind, learner_id=learner_id, period=period, generated_by=generated_by)
+def _store_deck(
+    *, run_id, learner_kind, learner_id, period, pack, review_kind, generated_by,
+    pptx_bytes=None, parent_run_id=None, revision_source="generated",
+) -> dict:
+    """Record one deck version: the run, the pack it came from, the rendered
+    (or uploaded) PPTX in blob storage, and its file row. Shared by generate,
+    edit and re-upload so every version is stored and audited the same way."""
+    runs.create_run(
+        run_id=run_id, learner_kind=learner_kind, learner_id=learner_id, period=period,
+        generated_by=generated_by, review_kind=review_kind,
+        parent_run_id=parent_run_id, revision_source=revision_source,
+    )
     runs.insert_snapshot(run_id, pack)
     runs.save_warnings(run_id, pack["source_warnings"])
 
@@ -158,16 +173,14 @@ def _generate_for_learner(learner_id: int, *, review_date=None, generated_by="sy
         runs.mark_run_failed(run_id, ["PPTX storage is not configured (AZURE_STORAGE_ACCOUNT/AZURE_STORAGE_KEY missing)."])
         raise GenerationError("PPTX storage is not configured.", 503)
 
-    try:
-        pptx_bytes = generate_progress_review_pptx(pack)
-    except Exception as exc:
-        logger.exception("Progress review PPTX generation failed for run %s", run_id)
-        runs.mark_run_failed(run_id, [str(exc)])
-        raise GenerationError("PPTX generation failed.", 500) from exc
+    if pptx_bytes is None:
+        pptx_bytes = _render_deck(pack, review_kind, run_id)
 
     learner_slug = _slugify(pack["learner"]["full_name"])
-    filename = f"progress-review-{learner_slug}-{period.review_date.isoformat()}.pptx"
-    blob_name = f"{kind}/{learner_id}/{run_id}/{filename}"
+    prefix = "monthly-coaching-meeting" if review_kind == mcm.REVIEW_KIND else "progress-review"
+    suffix = "" if revision_source == "generated" else f"-{revision_source}"
+    filename = f"{prefix}-{learner_slug}-{period.review_date.isoformat()}{suffix}.pptx"
+    blob_name = f"{learner_kind}/{learner_id}/{run_id}/{filename}"
 
     try:
         storage.upload_pptx(io.BytesIO(pptx_bytes), blob_name)
@@ -194,9 +207,52 @@ def _generate_for_learner(learner_id: int, *, review_date=None, generated_by="sy
         "reviewPeriodStart": period.review_period_start.isoformat(),
         "reviewPeriodEnd": period.review_period_end.isoformat(),
         "generationStatus": "completed",
+        "revisionSource": revision_source,
         "sourceWarnings": pack["source_warnings"],
         "downloadUrl": f"/progress_reviews_api/{run_id}/download/",
     }
+
+
+def _generate_for_learner(
+    learner_id: int, *, review_date=None, generated_by="system", review_kind="progress_review", uploaded_pptx=None,
+) -> dict:
+    """Build the learner's pack and store a deck for it: rendered from the
+    template, or — with `uploaded_pptx` — the owner's own presentation, kept
+    alongside the same real-data pack so it can still be edited later."""
+    is_mcm = review_kind == mcm.REVIEW_KIND
+    start, end, kind, source = _programme_window(learner_id)
+    if source is None:
+        raise GenerationError(f"No learner found with id {learner_id}.", 404)
+    if start is None:
+        raise GenerationError("This learner has no programme start date recorded.", 422)
+
+    if is_mcm:
+        period = mcm.build_mcm_period(review_date or date.today(), programme_id=_curriculum_programme_id(source))
+    else:
+        period = resolve_review_period(
+            programme_start=start, programme_end=end, today=date.today(), review_date=review_date,
+            programme_id=_curriculum_programme_id(source),
+        )
+    run_id = runs.new_run_id()
+
+    try:
+        pack = build_review_pack(learner_id, period, review_id=run_id, generated_by=generated_by)
+    except LearnerLookupError as exc:
+        raise GenerationError(str(exc), 404) from exc
+
+    if is_mcm:
+        mcm.label_pack(pack)
+
+    if not pack["learner"]["active_status"]:
+        raise GenerationError(
+            f"{_deck_label(review_kind)} PPTX generation is only available for active learners.", 409,
+        )
+
+    return _store_deck(
+        run_id=run_id, learner_kind=kind, learner_id=learner_id, period=period, pack=pack,
+        review_kind=review_kind, generated_by=generated_by, pptx_bytes=uploaded_pptx,
+        revision_source="uploaded" if uploaded_pptx is not None else "generated",
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -293,6 +349,7 @@ def latest_run(request, learner_id):
         "reviewId": row["id"],
         "generationStatus": row["generation_status"],
         "generatedAt": row["generated_at"].isoformat() if row["generated_at"] else None,
+        "revisionSource": row.get("revision_source") or "generated",
     })
 
 
@@ -313,12 +370,18 @@ def generate(request, learner_id):
     return JsonResponse(result, status=201)
 
 
-def download(request, review_id):
-    if request.method != "GET":
-        return _error("Method not allowed.", 405)
+STAFF_ROLES = {"staff", "admin", "super-admin", "coach"}
+
+
+def _is_staff(account):
+    return account.role != "learner" and (getattr(account, "is_staff", False) or account.role in STAFF_ROLES)
+
+
+def _readable_run(request, review_id):
+    """(run, None) for a deck the caller may view, else (None, error)."""
     run = runs.get_run(review_id)
     if not run:
-        return _error("Review not found.", 404)
+        return None, _error("Review not found.", 404)
     account = authenticate_request(request)
     # This view can't use @staff_only() -- a learner is allowed through, just
     # restricted to their own deck below -- so it re-checks the same
@@ -326,22 +389,68 @@ def download(request, review_id):
     # rather than hard-requiring a session regardless of that toggle.
     if account is None:
         if auth_gate_enabled():
-            return _error("Authentication required.", 401)
+            return None, _error("Authentication required.", 401)
     else:
         # Staff may download any generated deck; learners may download only
         # their own review deck. The run stores the canonical learner id, so
         # the review id cannot be used to access another learner's PPTX.
         if account.role == "learner" and int(run["learner_id"]) != int(account.subject_id):
-            return _error("You do not have permission to perform this action.", 403)
-        if account.role != "learner" and not getattr(account, "is_staff", False) and account.role not in {"staff", "admin", "super-admin", "coach"}:
-            return _error("You do not have permission to perform this action.", 403)
+            return None, _error("You do not have permission to perform this action.", 403)
+        if account.role != "learner" and not _is_staff(account):
+            return None, _error("You do not have permission to perform this action.", 403)
+    return run, None
+
+
+def _authorised_pptx_file(request, review_id):
+    """(pptx_file, None) for a deck the caller may read, else (None, error)."""
+    run, error = _readable_run(request, review_id)
+    if error:
+        return None, error
     pptx_file = runs.get_pptx_file_for_run(review_id)
     if not pptx_file:
-        return _error("No PPTX file has been generated for this review yet.", 404)
+        return None, _error("No PPTX file has been generated for this review yet.", 404)
     if not storage.storage_configured():
-        return _error("PPTX storage is not configured.", 503)
+        return None, _error("PPTX storage is not configured.", 503)
+    return pptx_file, None
+
+
+def download(request, review_id):
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    pptx_file, error = _authorised_pptx_file(request, review_id)
+    if error:
+        return error
     url = storage.download_sas_for(pptx_file["container"], pptx_file["blob_name"], pptx_file["original_filename"])
     return JsonResponse({"url": url, "filename": pptx_file["original_filename"]})
+
+
+def preview(request, review_id):
+    """The deck as a PDF for the in-page viewer (see pdf_preview.py), served by
+    the app itself so no storage link is ever handed to an outside viewer."""
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    pptx_file, error = _authorised_pptx_file(request, review_id)
+    if error:
+        return error
+    pdf_blob = f"{pptx_file['blob_name']}.pdf"
+    container = pptx_file["container"]
+    if storage.blob_exists(container, pdf_blob):
+        data = storage.download_bytes(container, pdf_blob)
+    else:
+        try:
+            data = pdf_preview.convert_pptx_to_pdf(storage.download_bytes(container, pptx_file["blob_name"]))
+        except pdf_preview.PreviewUnavailable as exc:
+            logger.warning("Progress review PDF preview failed for run %s: %s", review_id, exc)
+            return _error(str(exc), 503)
+        try:
+            storage.upload_pdf(io.BytesIO(data), pdf_blob)
+        except Exception:
+            logger.warning("Could not cache the PDF preview for run %s.", review_id, exc_info=True)
+    filename = pptx_file["original_filename"].rsplit(".", 1)[0] + ".pdf"
+    response = HttpResponse(data, content_type="application/pdf")
+    response["Content-Disposition"] = f'inline; filename="{filename}"'
+    response["Cache-Control"] = "private, no-store"
+    return response
 
 
 @csrf_exempt
@@ -381,3 +490,310 @@ def bulk_generate(request):
             results.append({"learnerId": learner_id, "generationStatus": "failed", "error": "Unexpected error."})
 
     return JsonResponse({"results": results})
+
+
+# --------------------------------------------------------------------------- #
+# Monthly Coaching Meeting decks
+# --------------------------------------------------------------------------- #
+
+def _meeting_date(request):
+    return _parse_date_param(request.GET.get("meeting_date"))
+
+
+@learner_self_or_staff(kwarg="learner_id")
+def mcm_pack(request, learner_id):
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    meeting_date = _meeting_date(request)
+    if meeting_date is None:
+        return _error("meeting_date is required (YYYY-MM-DD).", 400)
+    start, _end, _kind, source = _programme_window(learner_id)
+    if source is None:
+        return _error(f"No learner found with id {learner_id}.", 404)
+    period = mcm.build_mcm_period(meeting_date, programme_id=_curriculum_programme_id(source))
+    try:
+        pack_data = build_review_pack(learner_id, period, generated_by=_current_email(request))
+    except LearnerLookupError:
+        return _error(f"No learner found with id {learner_id}.", 404)
+    return JsonResponse(mcm.label_pack(pack_data))
+
+
+@learner_self_or_staff(kwarg="learner_id")
+def mcm_latest_run(request, learner_id):
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    meeting_date = _meeting_date(request)
+    if meeting_date is None:
+        return _error("meeting_date is required (YYYY-MM-DD).", 400)
+    row = runs.get_latest_run_for_period(learner_id, meeting_date, review_kind=mcm.REVIEW_KIND)
+    if not row:
+        return JsonResponse({"exists": False})
+    return JsonResponse({
+        "exists": True,
+        "reviewId": row["id"],
+        "generationStatus": row["generation_status"],
+        "generatedAt": row["generated_at"].isoformat() if row["generated_at"] else None,
+        "revisionSource": row.get("revision_source") or "generated",
+    })
+
+
+@csrf_exempt
+@learner_self_only(kwarg="learner_id")
+def mcm_generate(request, learner_id):
+    if request.method != "POST":
+        return _error("Method not allowed.", 405)
+    payload = _json_body(request)
+    if payload is None:
+        return _error("Invalid JSON body.", 400)
+    meeting_date = _parse_date_param(payload.get("meeting_date"))
+    if meeting_date is None:
+        return _error("meeting_date is required (YYYY-MM-DD).", 400)
+    try:
+        result = _generate_for_learner(
+            learner_id, review_date=meeting_date, generated_by=_current_email(request), review_kind=mcm.REVIEW_KIND,
+        )
+    except GenerationError as exc:
+        return _error(exc.message, exc.status)
+    return JsonResponse(result, status=201)
+
+
+# --------------------------------------------------------------------------- #
+# editing a deck: corrected fields, replacement photos, or a re-uploaded PPTX
+# --------------------------------------------------------------------------- #
+
+MAX_EDIT_IMAGE_BYTES = 10 * 1024 * 1024
+MAX_UPLOADED_PPTX_BYTES = 50 * 1024 * 1024
+
+
+def _editable_run(request, review_id):
+    """(run, account_email, None) when the caller owns this deck, else an error.
+
+    Ownership follows who runs the meeting: the learner prepares and presents
+    their Monthly Coaching Meeting deck, and the coach owns the Progress
+    Review deck. Staff can still view an MCM deck, just not change it.
+    """
+    run = runs.get_run(review_id)
+    if not run:
+        return None, None, _error("Review not found.", 404)
+    if run["generation_status"] != "completed":
+        return None, None, _error("Only a completed deck can be edited.", 409)
+    account = authenticate_request(request)
+    if account is None:
+        if auth_gate_enabled():
+            return None, None, _error("Authentication required.", 401)
+        return run, "system", None
+    if run.get("review_kind") == mcm.REVIEW_KIND:
+        if account.role != "learner" or int(run["learner_id"]) != int(account.subject_id):
+            return None, None, _error("Only the learner can edit their Monthly Coaching Meeting slides.", 403)
+    elif not _is_staff(account):
+        return None, None, _error("Only a coach can edit Progress Review slides.", 403)
+    return run, (getattr(account, "email", "") or "").strip() or "system", None
+
+
+def _period_of(run) -> ReviewPeriod:
+    return ReviewPeriod(
+        review_number=run["review_number"],
+        review_date=run["review_date"],
+        review_period_start=run["review_period_start"],
+        review_period_end=run["review_period_end"],
+        action_period_start=run["action_period_start"],
+        action_period_end=run["action_period_end"],
+    )
+
+
+def _new_revision(run, pack, *, edited_by, revision_source, pptx_bytes=None):
+    run_id = runs.new_run_id()
+    pack["review"]["review_id"] = run_id
+    pack["review"]["revision"] = {
+        "source": revision_source, "parent_run_id": run["id"],
+        "by": edited_by, "at": datetime.now().isoformat(timespec="seconds"),
+    }
+    return _store_deck(
+        run_id=run_id, learner_kind=run["learner_kind"], learner_id=int(run["learner_id"]),
+        period=_period_of(run), pack=pack, review_kind=run.get("review_kind") or "progress_review",
+        generated_by=edited_by, pptx_bytes=pptx_bytes,
+        parent_run_id=run["id"], revision_source=revision_source,
+    )
+
+
+@csrf_exempt
+def edit(request, review_id):
+    """GET the deck's editable fields; POST {"edits": {...}} to render a
+    corrected version (a new run — the version it revises is kept)."""
+    if request.method not in ("GET", "POST"):
+        return _error("Method not allowed.", 405)
+    run, edited_by, error = _editable_run(request, review_id)
+    if error:
+        return error
+    snapshot = runs.get_snapshot(review_id)
+    if not snapshot:
+        return _error("This deck has no stored data to edit.", 404)
+    review_kind = run.get("review_kind") or "progress_review"
+
+    if request.method == "GET":
+        return JsonResponse({
+            **edits.editable_view(snapshot, review_kind=review_kind),
+            "revisionSource": run.get("revision_source") or "generated",
+        })
+
+    payload = _json_body(request)
+    if payload is None or not isinstance(payload.get("edits"), dict):
+        return _error("Send the corrected fields as {\"edits\": {...}}.", 400)
+    try:
+        pack = edits.apply_edits(snapshot, payload["edits"], review_kind=review_kind, learner_id=run["learner_id"])
+    except edits.EditError as exc:
+        return _error(str(exc), 400)
+    try:
+        result = _new_revision(run, pack, edited_by=edited_by, revision_source="edited")
+    except GenerationError as exc:
+        return _error(exc.message, exc.status)
+    return JsonResponse(result, status=201)
+
+
+@csrf_exempt
+def edit_image(request, review_id):
+    """POST an image for one of the deck's photo frames; returns the reference
+    to put in that evidence item's image_ref. GET ?ref= streams a photo the
+    editor shows (one of this deck's own, or one uploaded for this learner)."""
+    if request.method == "GET":
+        run, error = _readable_run(request, review_id)
+        if error:
+            return error
+        ref = request.GET.get("ref") or ""
+        snapshot = runs.get_snapshot(review_id) or {}
+        own = {
+            item.get("image_or_screenshot_link")
+            for key in ("evidence", "assignments", "workplace_activities")
+            for item in snapshot.get(key) or []
+        }
+        blob = edits.parse_blob_image_ref(ref)
+        if not blob or (ref not in own and not blob[1].startswith(edits.upload_prefix(run["learner_id"]))):
+            return _error("Image not found.", 404)
+        data = default_image_fetcher(ref)
+        if data is None:
+            return _error("Image not found.", 404)
+        response = HttpResponse(data, content_type=_image_content_type(data))
+        response["Cache-Control"] = "private, max-age=300"
+        return response
+
+    if request.method != "POST":
+        return _error("Method not allowed.", 405)
+    run, _edited_by, error = _editable_run(request, review_id)
+    if error:
+        return error
+    upload = request.FILES.get("image")
+    if upload is None:
+        return _error("Choose an image to upload.", 400)
+    if upload.size > MAX_EDIT_IMAGE_BYTES:
+        return _error("Images must be 10 MB or smaller.", 400)
+    jpeg = _normalised_jpeg(upload.read())
+    if jpeg is None:
+        return _error("Upload a JPEG, PNG or WebP image.", 400)
+    blob_name = f"{edits.upload_prefix(run['learner_id'])}{runs.new_run_id()}.jpg"
+    try:
+        storage.upload_image(io.BytesIO(jpeg), blob_name)
+    except Exception:
+        logger.exception("Could not store an edit image for run %s", review_id)
+        return _error("The image could not be stored.", 502)
+    return JsonResponse({"imageRef": edits.blob_image_ref(settings.AZURE_PROGRESS_REVIEW_CONTAINER, blob_name)}, status=201)
+
+
+@csrf_exempt
+def upload_revision(request, review_id):
+    """POST a .pptx the owner edited in PowerPoint; it becomes the deck's newest
+    version (a new run — the version it revises is kept)."""
+    if request.method != "POST":
+        return _error("Method not allowed.", 405)
+    run, edited_by, error = _editable_run(request, review_id)
+    if error:
+        return error
+    data, error = _uploaded_pptx(request)
+    if error:
+        return error
+    snapshot = runs.get_snapshot(review_id)
+    if not snapshot:
+        return _error("This deck has no stored data to revise.", 404)
+    try:
+        result = _new_revision(run, snapshot, edited_by=edited_by, revision_source="uploaded", pptx_bytes=data)
+    except GenerationError as exc:
+        return _error(exc.message, exc.status)
+    return JsonResponse(result, status=201)
+
+
+def _normalised_jpeg(data: bytes):
+    """The upload re-encoded as a JPEG (orientation applied, metadata such as
+    GPS location dropped), or None when it is not an image."""
+    from PIL import Image, ImageOps
+
+    try:
+        with Image.open(io.BytesIO(data)) as probe:
+            if probe.format not in {"JPEG", "PNG", "WEBP"}:
+                return None
+        image = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert("RGB")
+    except Exception:
+        return None
+    image.thumbnail((2400, 2400))
+    out = io.BytesIO()
+    image.save(out, format="JPEG", quality=88)
+    return out.getvalue()
+
+
+def _image_content_type(data: bytes) -> str:
+    return "image/png" if data[:8] == b"\x89PNG\r\n\x1a\n" else "image/jpeg"
+
+
+def _is_pptx(data: bytes) -> bool:
+    from pptx import Presentation
+
+    try:
+        return len(Presentation(io.BytesIO(data)).slides) > 0
+    except Exception:
+        return False
+
+
+def _uploaded_pptx(request):
+    """(bytes, None) for a valid uploaded .pptx in request.FILES["file"], else (None, error)."""
+    upload = request.FILES.get("file")
+    if upload is None:
+        return None, _error("Choose a .pptx file to upload.", 400)
+    if upload.size > MAX_UPLOADED_PPTX_BYTES:
+        return None, _error("The presentation must be 50 MB or smaller.", 400)
+    data = upload.read()
+    if not _is_pptx(data):
+        return None, _error("That file is not a PowerPoint (.pptx) presentation.", 400)
+    return data, None
+
+
+def _upload_own(request, learner_id, *, date_field, review_kind):
+    if request.method != "POST":
+        return _error("Method not allowed.", 405)
+    data, error = _uploaded_pptx(request)
+    if error:
+        return error
+    meeting_date = _parse_date_param(request.POST.get(date_field))
+    if meeting_date is None:
+        return _error(f"{date_field} is required (YYYY-MM-DD).", 400)
+    try:
+        result = _generate_for_learner(
+            learner_id, review_date=meeting_date, generated_by=_current_email(request),
+            review_kind=review_kind, uploaded_pptx=data,
+        )
+    except GenerationError as exc:
+        return _error(exc.message, exc.status)
+    return JsonResponse(result, status=201)
+
+
+@csrf_exempt
+@staff_only()
+def upload_own(request, learner_id):
+    """POST multipart {file, review_date}: the coach's own Progress Review deck
+    instead of a generated one."""
+    return _upload_own(request, learner_id, date_field="review_date", review_kind="progress_review")
+
+
+@csrf_exempt
+@learner_self_only(kwarg="learner_id")
+def mcm_upload_own(request, learner_id):
+    """POST multipart {file, meeting_date}: the learner's own MCM deck instead
+    of a generated one."""
+    return _upload_own(request, learner_id, date_field="meeting_date", review_kind=mcm.REVIEW_KIND)

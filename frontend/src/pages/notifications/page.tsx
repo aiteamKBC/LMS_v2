@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { useAuth } from '@/hooks/useAuth';
 import { roleNavMap } from '@/mocks/navigation';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
 import { roleNotifications, type RoleNotification } from '@/mocks/role-notifications';
+import { fetchAbsenceNotifications } from '@/api/absenceNotifications';
 
 const typeColors: Record<string, string> = {
   otjh: 'bg-primary-50 text-primary-700 border-primary-200/50',
@@ -114,7 +115,10 @@ const getRoleMeta = (role: string): { userName: string; userRole: string } => {
 
 export default function NotificationsPage() {
   const { auth } = useAuth();
-  const role = auth.roles[0]?.slug || 'learner';
+  const account = auth.account;
+  const role = account?.role === 'employer' || account?.role === 'learner' || account?.role === 'admin'
+    ? account.role
+    : account?.accessNavRole || account?.access || auth.roles[0]?.slug || 'learner';
   const nav = roleNavMap[role] || roleNavMap.learner;
   const meta = getRoleMeta(role);
   const roleKey = getRoleKey(role);
@@ -122,7 +126,39 @@ export default function NotificationsPage() {
   const initialNotifs = roleNotifications[roleKey] || roleNotifications.default;
   const [activeFilter, setActiveFilter] = useState<string>('all');
   const [items, setItems] = useState<RoleNotification[]>(initialNotifs);
-  const [selectedItems, setSelectedItems] = useState<Set<number>>(new Set());
+  const [selectedItems, setSelectedItems] = useState<Set<RoleNotification['id']>>(new Set());
+  const [notificationError, setNotificationError] = useState('');
+
+  useEffect(() => {
+    const defaults = roleNotifications[roleKey] || roleNotifications.default;
+    setItems(defaults);
+    setSelectedItems(new Set());
+    setNotificationError('');
+    if (!account) return;
+
+    let cancelled = false;
+    fetchAbsenceNotifications(account)
+      .then((notifications) => {
+        if (cancelled) return;
+        const absenceItems: RoleNotification[] = notifications.map(notification => ({
+          id: notification.id,
+          text: notification.text,
+          time: notification.createdAt
+            ? new Date(notification.createdAt).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' })
+            : 'Recently',
+          unread: true,
+          type: notification.type,
+          category: notification.category,
+          link: notification.link,
+        }));
+        const absenceIds = new Set(absenceItems.map(item => item.id));
+        setItems([...absenceItems, ...defaults.filter(item => !absenceIds.has(item.id))]);
+      })
+      .catch((cause: Error) => {
+        if (!cancelled) setNotificationError(cause.message || 'Could not load absence notifications.');
+      });
+    return () => { cancelled = true; };
+  }, [account, roleKey]);
 
   const unreadCount = items.filter(n => n.unread).length;
   const readCount = items.filter(n => !n.unread).length;
@@ -133,7 +169,7 @@ export default function NotificationsPage() {
     ? items.filter(n => n.unread)
     : items.filter(n => !n.unread);
 
-  const markAsRead = (id: number) => {
+  const markAsRead = (id: RoleNotification['id']) => {
     setItems(prev => prev.map(n => n.id === id ? { ...n, unread: false } : n));
   };
 
@@ -141,11 +177,11 @@ export default function NotificationsPage() {
     setItems(prev => prev.map(n => ({ ...n, unread: false })));
   };
 
-  const deleteNotification = (id: number) => {
+  const deleteNotification = (id: RoleNotification['id']) => {
     setItems(prev => prev.filter(n => n.id !== id));
   };
 
-  const toggleSelect = (id: number) => {
+  const toggleSelect = (id: RoleNotification['id']) => {
     setSelectedItems(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
@@ -272,6 +308,7 @@ export default function NotificationsPage() {
 
         {/* Notifications List */}
         <div className="px-6 py-4 max-w-4xl">
+          {notificationError && <p role="alert" className="mb-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">{notificationError}</p>}
           {filtered.length === 0 ? (
             <div className="text-center py-16 animate-in fade-in duration-500">
               <div className="w-14 h-14 rounded-full bg-background-100 flex items-center justify-center mx-auto mb-4">

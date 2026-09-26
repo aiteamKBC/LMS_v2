@@ -44,9 +44,9 @@ from pptx import Presentation
 
 from . import slide_cloner as sc
 from . import text_fit as fit
-from .evidence_images import ImageFetcher, default_image_fetcher
+from .evidence_images import ImageFetcher, default_image_fetcher, fit_to_frame, placeholder, transparent_image
 from .pptx_theme import THEME
-from .review_pack import NOT_AVAILABLE
+from .review_pack import NOT_AVAILABLE, evidence_pool_keys
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +180,8 @@ def _rag_label_and_tone(otj_status: str):
 
 def _breadcrumb(pack) -> str:
     learner = pack["learner"]
-    return f"{_s(learner.get('programme'))} | Progress Review | {_s(learner.get('full_name'))}"
+    label = pack["review"].get("review_label") or "Progress Review"
+    return f"{_s(learner.get('programme'))} | {label} | {_s(learner.get('full_name'))}"
 
 
 def _set_breadcrumb(slide, pack, *, index: int = 3) -> None:
@@ -417,9 +418,7 @@ def _populate_epa(slide, pack):
 
 
 def _evidence_blocks(pack, limit=3):
-    pool = pack["assignments"] + pack["workplace_activities"]
-    if not pool:
-        pool = pack["evidence"]
+    pool = [item for key in evidence_pool_keys(pack) for item in pack.get(key) or []]
     kept, _overflow = fit.cap_list(pool, limit)
     return kept
 
@@ -511,19 +510,22 @@ def _populate_evidence_detail(slide, pack, slot_offset: int, month_index: int, f
 
     photos = _photo_shapes(slide)
     for i, caption_idx in enumerate(caption_indices):
-        if i < len(items):
-            _set(slide, caption_idx, fit.clamp(items[i].get("evidence_title"), 45))
-            if i < len(photos):
-                shape, _blip = photos[i]
-                url = items[i].get("image_or_screenshot_link")
-                data = fetch_image(url) if url and url != NOT_AVAILABLE else None
-                if data:
-                    try:
-                        sc.replace_picture_fill(shape, data, slide.part)
-                    except Exception as exc:
-                        logger.warning("Progress review PPTX: could not embed evidence image: %s", exc)
-        else:
-            _set(slide, caption_idx, NOT_AVAILABLE)
+        item = items[i] if i < len(items) else None
+        _set(slide, caption_idx, fit.clamp(item.get("evidence_title"), 45) if item else NOT_AVAILABLE)
+        if i >= len(photos):
+            continue
+        shape, _blip = photos[i]
+        data = None
+        if item:
+            url = item.get("image_or_screenshot_link")
+            raw = fetch_image(url) if url and url != NOT_AVAILABLE else None
+            data = fit_to_frame(raw, shape.width, shape.height) if raw else None
+        if data is None:
+            data = placeholder(shape.width, shape.height, "No image uploaded" if item else "No evidence")
+        try:
+            sc.replace_picture_fill(shape, data, slide.part)
+        except Exception as exc:
+            logger.warning("Progress review PPTX: could not embed evidence image: %s", exc)
 
     bar = _shape_in_group(slide, layout["bar_group"], 1)
     if bar is not None:
@@ -687,13 +689,52 @@ def _populate_manager_questions(slide, pack):
         ))
 
 
+def _set_document_properties(prs, pack) -> None:
+    """The file's own title/author metadata, which PDF viewers show as the
+    document name. The template still carries its source deck's (another
+    learner's file name), so every field is reset for this learner."""
+    props = prs.core_properties
+    label = pack["review"].get("review_label") or "Progress Review"
+    props.title = f"{label} — {_s(pack['learner'].get('full_name'))}"
+    props.subject = f"{_s(pack['learner'].get('programme'))} | {label}"
+    props.author = "Kent Business College"
+    props.last_modified_by = _s(pack["review"].get("generated_by"))
+    props.keywords = props.comments = props.category = ""
+
+
+def _remove_source_employer_logos(prs) -> None:
+    """Drop the top-right employer logo (Spinnaker / Exceed Learning
+    Partnership) the template inherited from its source decks — it would
+    otherwise brand every learner's deck with another employer. The image is
+    made transparent rather than the shape deleted, so no shape index moves."""
+    width, height = prs.slide_width, prs.slide_height
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if shape.left is None or shape.top is None:
+                continue
+            if shape.left > width * 0.7 and shape.top < height * 0.1 and shape.width < width * 0.25:
+                for picture, _blip in sc._picture_fill_shapes_in([shape]):
+                    sc.replace_picture_fill(picture, transparent_image(), slide.part)
+
+
 # --------------------------------------------------------------------------- #
 # entry point
 # --------------------------------------------------------------------------- #
 
 def generate_progress_review_pptx(pack: dict, *, fetch_image: ImageFetcher = default_image_fetcher) -> bytes:
     """Clone the KBC template and populate all 19 slides from `pack`."""
+    prs = render_progress_review(pack, fetch_image=fetch_image)
+    _remove_source_employer_logos(prs)
+    buffer = io.BytesIO()
+    prs.save(buffer)
+    return buffer.getvalue()
+
+
+def render_progress_review(pack: dict, *, fetch_image: ImageFetcher = default_image_fetcher):
+    """The populated Presentation, before source-deck logos are removed —
+    callers that address shapes by index (mcm.py) must do so at this stage."""
     prs = Presentation(str(resolve_template_path()))
+    _set_document_properties(prs, pack)
     slides = list(prs.slides)
     if len(slides) != 19:
         raise RuntimeError(f"Progress Review template must have 19 slides, found {len(slides)}.")
@@ -741,6 +782,4 @@ def generate_progress_review_pptx(pack: dict, *, fetch_image: ImageFetcher = def
     if knowledge_overflow:
         logger.info("Progress review PPTX: %s Knowledge KSB row(s) did not fit the template table.", knowledge_overflow)
 
-    buffer = io.BytesIO()
-    prs.save(buffer)
-    return buffer.getvalue()
+    return prs
