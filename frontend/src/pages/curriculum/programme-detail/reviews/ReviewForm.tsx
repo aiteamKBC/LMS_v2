@@ -158,12 +158,13 @@ function emptyRoleFlags(): ReviewRoleFlags {
 
 // ------------------------------------------------------------- small pieces
 
-function CheckboxRow({ label, checked, onChange, hint }: { label: string; checked: boolean; onChange: (value: boolean) => void; hint?: string }) {
+function CheckboxRow({ label, checked, onChange, hint, disabled = false }: { label: string; checked: boolean; onChange: (value: boolean) => void; hint?: string; disabled?: boolean }) {
   return (
-    <label className="flex items-start gap-2.5 rounded-lg border border-background-200 bg-background-50 px-3 py-2.5 transition-smooth hover:bg-background-100">
+    <label className={`flex items-start gap-2.5 rounded-lg border border-background-200 bg-background-50 px-3 py-2.5 transition-smooth ${disabled ? 'cursor-not-allowed opacity-60' : 'hover:bg-background-100'}`}>
       <input
         type="checkbox"
         checked={checked}
+        disabled={disabled}
         onChange={event => onChange(event.target.checked)}
         className="mt-0.5 h-4 w-4 shrink-0 rounded border-background-300 text-primary-600 focus:ring-primary-300"
       />
@@ -175,7 +176,13 @@ function CheckboxRow({ label, checked, onChange, hint }: { label: string; checke
   );
 }
 
-function RoleFlagGrid({ label, hint, value, onChange }: { label: string; hint?: string; value: ReviewRoleFlags; onChange: (value: ReviewRoleFlags) => void }) {
+// Referrer stays a recognised role, but no Referrer signing flow exists yet, so
+// requiring its signature would leave Reviews stuck awaiting signature. The
+// stored value is still shown and sent back unchanged (the API rejects only a
+// new Referrer requirement), so saving a legacy template never rewrites it.
+const UNSUPPORTED_SIGNATURE_ROLES: Partial<Record<ReviewParticipantRole, string>> = { referrer: 'Coming soon' };
+
+function RoleFlagGrid({ label, hint, value, onChange, disabledRoles = {} }: { label: string; hint?: string; value: ReviewRoleFlags; onChange: (value: ReviewRoleFlags) => void; disabledRoles?: Partial<Record<ReviewParticipantRole, string>> }) {
   return (
     <FormField label={label} hint={hint} as="group">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -184,6 +191,8 @@ function RoleFlagGrid({ label, hint, value, onChange }: { label: string; hint?: 
             key={role}
             label={ROLE_LABEL[role]}
             checked={value[role]}
+            disabled={role in disabledRoles}
+            hint={disabledRoles[role]}
             onChange={checked => onChange({ ...value, [role]: checked })}
           />
         ))}
@@ -1248,7 +1257,7 @@ export function ReviewFormModal({ programmeId, review, defaultStartDate, onClose
 
           {section === 'Participants & Permissions' && (
             <div className="space-y-5">
-              <RoleFlagGrid label="Signatures required from" value={signatures} onChange={setSignatures} />
+              <RoleFlagGrid label="Signatures required from" value={signatures} onChange={setSignatures} disabledRoles={UNSUPPORTED_SIGNATURE_ROLES} />
               <RoleFlagGrid label="Visible to" value={visibleTo} onChange={setVisibleTo} />
               <CheckboxRow label="Record time spent" checked={recordTimeSpent} onChange={setRecordTimeSpent} />
               <div className="flex flex-wrap items-end gap-4">

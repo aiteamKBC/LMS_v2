@@ -646,12 +646,19 @@ if _kbc_attendance_database_url and not USE_SQLITE_FOR_TESTS:
 # branch. Nothing here can reach the production database. USE_SECURITY_TEST_BRANCH
 # is defined near the top of this file (the MIGRATION_MODULES block consults it).
 SECURITY_TEST_BRANCH_HOST = ""
+SECURITY_TEST_BRANCH_ID = ""
 if USE_SECURITY_TEST_BRANCH:
     _branch_url = os.environ.get("security_Database_url")  # case-sensitive key
     if not _branch_url:
         raise ImproperlyConfigured(
             "USE_SECURITY_TEST_BRANCH is set but 'security_Database_url' is absent "
             "from the environment."
+        )
+    SECURITY_TEST_BRANCH_ID = os.environ.get("SECURITY_TEST_BRANCH_ID", "").strip()
+    if not SECURITY_TEST_BRANCH_ID:
+        raise ImproperlyConfigured(
+            "USE_SECURITY_TEST_BRANCH is set but SECURITY_TEST_BRANCH_ID is absent. "
+            "The exact Neon branch must be declared before write tests can run."
         )
     # BARRIER 2 — hard, early host-inequality assertion, before any connection is
     # opened. Case-insensitive. Fails closed if either host is missing/unparseable

@@ -259,6 +259,11 @@
     border-radius: .75rem;
   }
 
+  .metricsInline {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: .75rem;
+  }
+
   .metricsInline .metricTop {
     column-gap: .5rem;
   }

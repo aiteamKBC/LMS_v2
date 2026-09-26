@@ -21,6 +21,8 @@ or make it the default by setting in config/settings.py:
 """
 from pathlib import Path
 
+import psycopg
+
 from django.core.management import call_command
 from django.db import connections
 from django.db.backends.signals import connection_created
@@ -81,6 +83,72 @@ SETUP_COMMANDS = (
 TEST_DATABASE_PREFIX = "test_"
 
 
+def _verify_security_test_branch(settings):
+    """Prove the exact Neon branch before Django can run setup or migrations.
+
+    A different Neon branch has a different host, but host inequality from
+    production only proves "not production". It does not prove that the branch
+    is the disposable one approved for this run. Query Neon's branch id through
+    a read-only direct connection and compare it with the explicit expected id.
+    """
+    config = settings.DATABASES.get("enrolment") or {}
+    host = (config.get("HOST") or "").lower()
+    allowed_host = (getattr(settings, "SECURITY_TEST_BRANCH_HOST", "") or "").lower()
+    expected_branch_id = (getattr(settings, "SECURITY_TEST_BRANCH_ID", "") or "").strip()
+    if not allowed_host or host != allowed_host:
+        raise RuntimeError(
+            "Branch-mode preflight: the 'enrolment' connection host does not match "
+            "SECURITY_TEST_BRANCH_HOST; refusing to run database setup."
+        )
+    if not expected_branch_id:
+        raise RuntimeError(
+            "Branch-mode preflight: SECURITY_TEST_BRANCH_ID is missing; refusing "
+            "to run database setup without an exact Neon branch identity."
+        )
+
+    options = config.get("OPTIONS") or {}
+    connect_kwargs = {
+        "dbname": config.get("NAME"),
+        "user": config.get("USER"),
+        "password": config.get("PASSWORD"),
+        "host": config.get("HOST"),
+        "port": config.get("PORT") or 5432,
+        "connect_timeout": options.get("connect_timeout", 10),
+        "options": "-c default_transaction_read_only=on",
+    }
+    for key in ("sslmode", "channel_binding"):
+        value = options.get(key)
+        if value:
+            connect_kwargs[key] = value
+
+    connection = psycopg.connect(**connect_kwargs)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "select current_database(), current_setting(%s), "
+                "current_setting(%s, true)",
+                ["transaction_read_only", "neon.branch_id"],
+            )
+            database_name, read_only, actual_branch_id = cursor.fetchone()
+    finally:
+        connection.rollback()
+        connection.close()
+
+    if read_only != "on":
+        raise RuntimeError(
+            "Branch-mode preflight was not read-only; refusing to run database setup."
+        )
+    if database_name != config.get("NAME"):
+        raise RuntimeError(
+            "Branch-mode preflight reached an unexpected database; refusing to run setup."
+        )
+    if actual_branch_id != expected_branch_id:
+        raise RuntimeError(
+            "Branch-mode preflight reached Neon branch "
+            f"{actual_branch_id!r}, expected {expected_branch_id!r}; refusing to run setup."
+        )
+
+
 class EnrolmentTestRunner(DiscoverRunner):
     def setup_test_environment(self, **kwargs):
         """Force the mail kill switch off for the whole run.
@@ -122,6 +190,12 @@ class EnrolmentTestRunner(DiscoverRunner):
                 "Branch mode requires --keepdb: without it Django would drop and "
                 "recreate the Neon test branch database."
             )
+
+        if branch_mode:
+            # Run before DiscoverRunner.setup_databases: that method may apply
+            # migrations even with --keepdb, so branch identity must already be
+            # proven before it is allowed to start.
+            _verify_security_test_branch(settings)
 
         old_config = super().setup_databases(**kwargs)
 

@@ -111,6 +111,8 @@ from curriculum_api.views import (
     AUTHORING_COMPONENTS_TABLE,
     AUTHORING_MODULES_TABLE,
     AUTHORING_WEEKS_TABLE,
+    active_component_rows,
+    active_week_rows,
     authoring_fetch_all,
     authoring_modules_as_training_rows,
     build_module_session_plan,
@@ -383,6 +385,12 @@ REVIEW_TYPE_EVENT_TYPES = {
     REVIEW_TYPE_CODE_MCM: "mcr",
     REVIEW_TYPE_CODE_PROGRESS_REVIEW: "progress-review",
 }
+
+# Only these event buckets are allowed to carry a Curriculum Review template.
+# Booked sessions such as catch-up and student-support are separate workflows;
+# a stale or malformed review_template_id on one of those rows must not turn it
+# into a Review when it is serialized for the timetable.
+CURRICULUM_REVIEW_EVENT_TYPES = frozenset({"mcr", "progress-review", GENERIC_REVIEW_EVENT_TYPE})
 
 
 def review_event_type_for_type_code(review_type_code: str | None) -> str:
@@ -2490,11 +2498,13 @@ def caseload_canonical_attendance(rows) -> dict[int, dict]:
     ]
     if not work:
         return {}
+    from learner_api.attendance_lectures import _merge_register_duplicates
 
     def load(item):
         profile_id, source = item
         try:
-            return profile_id, _summarize_attendance(combined_attendance_rows(source))
+            # A lecture in both the KBC register and Teams counts once, as on learner pages.
+            return profile_id, _summarize_attendance(_merge_register_duplicates(combined_attendance_rows(source)))
         except Exception as exc:
             logger.warning("Could not read canonical coach attendance for learner %s: %s", profile_id, exc)
             return profile_id, None
@@ -5176,7 +5186,7 @@ TEAMS_SYNC_NOT_CONFIGURED_MESSAGE = "Teams calendar sync is not configured. The 
 # recording, nothing transcribed -- so every event this app creates has these
 # applied to the Teams meeting behind it.
 COACH_MEETING_RECORDING = "record-transcribe"
-COACH_MEETING_LOBBY_BYPASS = "invited"
+COACH_MEETING_LOBBY_BYPASS = "everyone"
 TEAMS_SYNC_TEMPORARY_MESSAGE = (
     "Teams calendar sync could not be completed. "
     "The event was saved locally only; try again later or ask an admin to check Microsoft permissions."
@@ -5329,11 +5339,19 @@ def build_catchup_calendar_event(
     and pay for one lookup."""
     event_type = clean_text(record.event_type).lower() or CATCH_UP_EVENT_TYPE
     review_template_id = clean_text(getattr(record, "review_template_id", ""))
-    if review_type_fields is None:
+    is_curriculum_review = event_type in CURRICULUM_REVIEW_EVENT_TYPES and bool(review_template_id)
+    if review_type_fields is None and is_curriculum_review:
         review_type_fields = review_type_fields_by_template([review_template_id])
-    record_review_type = review_type_fields.get(review_template_id) or review_type_event_fields(None)
-    if review_template_id:
+    record_review_type = (
+        (review_type_fields or {}).get(review_template_id) or review_type_event_fields(None)
+        if is_curriculum_review else review_type_event_fields(None)
+    )
+    if is_curriculum_review:
         event_type = review_event_type_for_type_code(record_review_type.get('reviewTypeCode'))
+    else:
+        # Do not leak malformed linkage from a non-Curriculum booking into the
+        # client payload. The stored row remains untouched for reconciliation.
+        review_template_id = ""
     event_title = {
         **BOOKED_EVENT_TITLES,
         "live-session": "Live Session",
@@ -5341,7 +5359,7 @@ def build_catchup_calendar_event(
         "welfare": "Welfare Session",
         "review": "Review",
     }.get(event_type, event_type.replace("-", " ").title())
-    if review_template_id:
+    if is_curriculum_review:
         event_title = resolve_review_display_title(event_type, review_template_id)
     target_date = record.target_date or record.scheduled_date or date.today()
     display_date = record.scheduled_date or target_date
@@ -5392,7 +5410,7 @@ def build_catchup_calendar_event(
         "sequence": int(record.sequence or 1),
         "title": event_title,
         "reviewTemplateId": review_template_id or None,
-        "reviewInstanceId": clean_text(getattr(record, 'review_instance_id', '')) or None,
+        "reviewInstanceId": clean_text(getattr(record, 'review_instance_id', '')) if is_curriculum_review else None,
         "occurrenceNumber": getattr(record, 'occurrence_number', None) or record.sequence,
         # A booked Review keeps its template's classification, so it filters
         # with the unbooked occurrences around it rather than dropping into
@@ -8364,6 +8382,9 @@ def build_live_session_calendar_event(
     return {
         "eventKey": f'live-session-{row.get("id")}-{session["sessionNumber"]}',
         "id": f'live-session-{row.get("id")}-{session["sessionNumber"]}',
+        # The Teams occurrence this slot is tracked by, when one exists; read by
+        # live_session_outcomes to show whether the session was attended.
+        "occurrenceId": clean_text(tracked_occurrence.get("id")) or None,
         "ownerEmail": owner_email,
         "ownerName": owner_name,
         "learnerId": "",
@@ -8657,23 +8678,36 @@ def collect_live_session_events(
 
     program_configs_by_id = program_config_by_id(get_program_config_rows())
     weeks_by_module: dict[str, list[dict]] = {}
-    for week in authoring_fetch_all(AUTHORING_WEEKS_TABLE, ensure_tables=False):
+    # Module Builder retains archived/library copies for reuse and audit. They
+    # must not participate in the delivery calendar or they shift the mapping
+    # from authored weeks to Teams occurrences (for example, Oct 9 can vanish
+    # behind an archived copy of an earlier week).
+    for week in active_week_rows(
+        authoring_fetch_all(AUTHORING_WEEKS_TABLE, ensure_tables=False)
+    ):
         module_catalogue_id = clean_text(week.get("module_catalogue_id"))
         if module_catalogue_id:
             weeks_by_module.setdefault(module_catalogue_id, []).append(week)
     component_links_by_week: dict[str, str] = {}
+    live_component_week_ids_by_module: dict[str, set[str]] = {}
     # columns= is load-bearing, not an optimisation: curriculum.components is
     # ~18k rows / 39MB (mostly settings_json) on a remote database -- a plain
     # select * here alone accounts for the "Timetable is taking too long to
     # load" timeout coaches were hitting (~23s vs ~0.5s narrowed).
-    for component in authoring_fetch_all(
+    for component in active_component_rows(authoring_fetch_all(
         AUTHORING_COMPONENTS_TABLE,
         ensure_tables=False,
-        columns=["type", "week_id", "live_sessions_link"],
-    ):
+        columns=[
+            "type", "module_catalogue_id", "week_id", "live_sessions_link",
+            "deleted_at", "is_programme_deleted", "library_state",
+        ],
+    )):
         if clean_text(component.get("type")).lower() != "live_session":
             continue
         week_id = clean_text(component.get("week_id"))
+        module_id = clean_text(component.get("module_catalogue_id"))
+        if module_id and week_id:
+            live_component_week_ids_by_module.setdefault(module_id, set()).add(week_id)
         meeting_link = clean_text(component.get("live_sessions_link"))
         if week_id and meeting_link:
             component_links_by_week[week_id] = meeting_link
@@ -8782,23 +8816,36 @@ def collect_live_session_events(
         delivery_days = delivery_days_per_week(row)
         tracked_series = active_series_by_module.get(module_catalogue_id) or {}
         tracked_series_id = clean_text(tracked_series.get("id"))
+        live_week_ids = live_component_week_ids_by_module.get(module_catalogue_id) or set()
+        has_authored_live_components = bool(live_week_ids)
+        planned_live_sessions = []
         for session in plan["sessions"]:
+            week_index = (session["sessionNumber"] - 1) // delivery_days
+            week = ordered_weeks[week_index] if week_index < len(ordered_weeks) else None
+            week_id = clean_text(week.get("id")) if week else ""
+            # The authored live components are the authority for which weeks
+            # actually have a Teams lecture. A content-only holiday slot has no
+            # component and consumes no occurrence; an explicitly authored
+            # live session is still included even when its date is flagged as a
+            # holiday, preserving the LMS rule that holidays warn rather than
+            # silently cancelling authored delivery.
+            if has_authored_live_components and week_id not in live_week_ids:
+                continue
+            planned_live_sessions.append((session, week, week_id))
+
+        for occurrence_number, (session, week, week_id) in enumerate(planned_live_sessions, start=1):
+            session_for_event = {**session, "sessionNumber": occurrence_number}
             tracked_occurrence = occurrences_by_series_and_number.get(
-                (tracked_series_id, session["sessionNumber"])
+                (tracked_series_id, occurrence_number)
             )
             tracked_start = (tracked_occurrence or {}).get("scheduled_start")
             effective_date = tracked_start.date() if isinstance(tracked_start, datetime) else date.fromisoformat(session["date"])
             if not include_past and effective_date < today:
                 continue
-            # Sessions fold into weeks by the delivery days: for a Mon+Thu module
-            # sessions 1 and 2 are both taught inside week 1.
-            week_index = (session["sessionNumber"] - 1) // delivery_days
-            week = ordered_weeks[week_index] if week_index < len(ordered_weeks) else None
-            week_id = clean_text(week.get("id")) if week else ""
             events.append(
                 build_live_session_calendar_event(
                     row,
-                    session,
+                    session_for_event,
                     programme=programme,
                     cohort=cohort["name"],
                     group=group["name"],
@@ -9082,7 +9129,11 @@ def resolve_coach_review_events(
     start_date: date | None = None,
     end_date: date | None = None,
 ) -> dict:
-    """Resolve each learner to exactly one review source by effective Aptem id."""
+    """Resolve each learner to exactly one review source by effective Aptem id.
+
+    The one exception: an Aptem-linked learner with no imported Aptem MCM gets
+    Curriculum MCM occurrences (never Curriculum Progress Reviews).
+    """
     aptem_by_profile, identity_conflicts = resolve_effective_aptem_ids(learners)
     aptem_events, aptem_contributors = fetch_aptem_review_events(
         learners,
@@ -9096,6 +9147,25 @@ def resolve_coach_review_events(
     native_learners = [
         learner for learner in learners
         if int(learner.id) not in aptem_by_profile and int(learner.id) not in identity_conflicts
+    ]
+    # An Aptem-linked learner with no imported Aptem MCM still has monthly
+    # coaching due, so their MCMs come from Curriculum like a native learner's.
+    # Progress Reviews stay Aptem-only. Decided on the unbounded Aptem history,
+    # so a date-windowed timetable never disagrees with the booking lookup.
+    aptem_mcm_events = aptem_events
+    if aptem_by_profile and (start_date or end_date):
+        aptem_mcm_events, _contributors = fetch_aptem_review_events(
+            learners,
+            aptem_by_profile,
+            owner_email=owner_email,
+            owner_name=owner_name,
+        )
+    aptem_mcm_profiles = {
+        int(event["learnerId"]) for event in aptem_mcm_events if event.get("source") == "mcr"
+    }
+    mcm_fallback_learners = [
+        learner for learner in learners
+        if int(learner.id) in aptem_by_profile and int(learner.id) not in aptem_mcm_profiles
     ]
     events: list[dict] = list(aptem_events)
     issues: list[dict[str, str]] = [
@@ -9113,20 +9183,29 @@ def resolve_coach_review_events(
         "curriculumReviewRows": 0,
         "aptemLearners": len(aptem_by_profile),
         "curriculumLearners": len(native_learners),
+        "curriculumMcmFallbackLearners": len(mcm_fallback_learners),
     }
     review_template_cache: dict[str, list[dict]] = {}
 
-    for learner in native_learners:
+    for learner in [*native_learners, *mcm_fallback_learners]:
+        mcm_only = int(learner.id) in aptem_by_profile
         programme_id = resolve_curriculum_programme_id(getattr(learner, "programme_id", None) or getattr(learner, "programme", None))
         template_identifiers = curriculum_review_instances.programme_review_template_identifiers(
             programme_id, template_cache=review_template_cache,
         )
-        if not programme_id:
+        if mcm_only:
+            # Aptem stays this learner's primary source: a missing Curriculum
+            # schedule means no fallback, not a review generation issue.
+            if not programme_id or not template_identifiers:
+                continue
+        elif not programme_id:
             issues.append({"learnerId": str(learner.id), "code": "missing_curriculum_programme"})
         elif not template_identifiers:
             issues.append({"learnerId": str(learner.id), "code": "no_enabled_review_templates"})
 
         review_anchor, anchor_reason = resolve_review_anchor_date(learner.id, commercial_rows, enrolment_rows)
+        if review_anchor is None and mcm_only:
+            continue
         if review_anchor is None:
             log_review_anchor_skip(learner, anchor_reason, programme_id=programme_id, template_cache=review_template_cache)
             counts["reviewAnchorSkipped"] += 1
@@ -9144,14 +9223,16 @@ def resolve_coach_review_events(
             learner.id, commercial_rows, enrolment_rows, learner,
         )
         if not learner_start_date or not learner_end_date or learner_end_date <= learner_start_date:
-            issues.append({"learnerId": str(learner.id), "code": "review_schedule_unavailable"})
+            if not mcm_only:
+                issues.append({"learnerId": str(learner.id), "code": "review_schedule_unavailable"})
             continue
 
         source_row = resolve_caseload_source_row(
             learner, commercial_rows=commercial_rows, enrolment_rows=enrolment_rows,
         )
         employer_attendee = learner_employer_attendee(learner, source_row)
-        counts["learnersWithDates"] += 1
+        if not mcm_only:
+            counts["learnersWithDates"] += 1
         learner_status = clean_text(getattr(learner, "programme_status", None) or getattr(learner, "status", None))
         window_start = start_date or learner_start_date
         window_end = end_date or learner_end_date
@@ -9171,6 +9252,8 @@ def resolve_coach_review_events(
             },
         ):
             event_type = review_event_type_for_type_code(occurrence.get("reviewTypeCode"))
+            if mcm_only and event_type != "mcr":
+                continue
             event = build_generated_calendar_event(
                 learner=learner,
                 owner_email=owner_email,
@@ -11209,6 +11292,9 @@ def coach_timetable(request):
         return validation_error_response(exc)
     include_live_sessions = clean_text(request.GET.get("include_live_sessions", "1")).casefold() not in {"0", "false", "no", "off"}
     include_scheduler_queues = clean_text(request.GET.get("include_scheduler_queues", "1")).casefold() not in {"0", "false", "no", "off"}
+    # Catch-ups only: close this coach's elapsed catch-ups before listing them.
+    from learner_api.catchup_outcomes import sync_catchup_outcomes
+    sync_catchup_outcomes(owner_email=owner_email)
 
     try:
         timetable_payload = collect_generated_timetable(
@@ -11218,6 +11304,12 @@ def coach_timetable(request):
             include_live_sessions=include_live_sessions,
             include_scheduler_queues=include_scheduler_queues,
         )
+        # Elapsed meetings show Ended, or Completed when the learner attended.
+        from .meeting_outcomes import annotate_meeting_outcomes
+        annotate_meeting_outcomes(timetable_payload["events"])
+        # Live sessions keep their own rule: Completed when any learner attended.
+        from .live_session_outcomes import annotate_live_session_outcomes
+        annotate_live_session_outcomes(timetable_payload["events"])
     except Exception:
         logger.exception("coach_timetable_load_failed coach_account_id=%s", owner_email)
         return coach_error(
@@ -12203,6 +12295,10 @@ def serialize_absence_report(
             settings.AZURE_REJECTED_CONTAINER,
         },
     )
+    alternative_session = None
+    if report.recovery_method == 'alternative':
+        from learner_api.alternative_recovery import alternative_target_details
+        alternative_session = alternative_target_details(report.catchup_event_key)
     return {
         "id": str(report.id),
         "learnerId": str(report.learner_id),
@@ -12227,6 +12323,7 @@ def serialize_absence_report(
         "evidenceText": report.evidence_text or None,
         "recoveryMethod": report.recovery_method,
         "catchupEventKey": report.catchup_event_key,
+        "alternativeSession": alternative_session,
         "evidenceImageUrl": evidence_url or None,
         "previousAbsences": previous_absences_override if previous_absences_override is not None else report.previous_absences,
         "attendanceRate": attendance_rate,

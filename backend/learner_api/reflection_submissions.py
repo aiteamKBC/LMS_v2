@@ -180,6 +180,14 @@ def _submit_reflection(request):
     activity_id = _text(payload.get("activityId"))
     learning_reflection = _text(payload.get("learningReflection"))
     submission_mode = "draft" if _text(payload.get("submissionMode")).lower() == "draft" else "submit"
+    if submission_mode == "submit":
+        # Drafts may be saved before the cohort starts; submitting waits for it.
+        # The API gate lets this path through for drafts, so the submit half is
+        # refused here, before anything is written.
+        from .programme_access import submission_refusal
+        refused = submission_refusal(getattr(request, "login_account", None))
+        if refused is not None:
+            return refused
     is_extra_activity = activity_type == "extra_activity"
     is_assignment_form = activity_type.lower() in ("assignment", "extra_activity")
     if is_extra_activity:

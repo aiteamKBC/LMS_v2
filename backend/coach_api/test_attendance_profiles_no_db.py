@@ -83,7 +83,11 @@ class Rows:
                      for row in self.rows])
 
     def values_list(self, *fields):
-        return [tuple(getattr(row, field) for field in fields) for row in self.rows]
+        def value(row, field):
+            for part in field.split("__"):
+                row = getattr(row, part)
+            return row
+        return [tuple(value(row, field) for field in fields) for row in self.rows]
 
     def order_by(self, *fields):
         return Rows(sorted(self.rows, key=lambda row: tuple(getattr(row, field) for field in fields)))
@@ -112,11 +116,17 @@ class AttendanceProfilesTests(unittest.TestCase):
                         self.record("P2", "one@example.invalid", [(0, 5)]),
                         self.record("B1", "two@example.invalid", [(0, 5)])]
         self.launches = (defaultdict(set), defaultdict(set))
+        self.plan_modules = [
+            SimpleNamespace(module_ref="M1", learner=self.profiles[0]),
+            SimpleNamespace(module_ref="M2", learner=self.profiles[1]),
+        ]
         self.recovery = Mock(side_effect=lambda rows: rows)
         results_module = types.ModuleType("curriculum_api.session_results")
         results_module.launch_expectations = Mock(side_effect=lambda *args: self.launches)
         recovery_module = types.ModuleType("learner_api.session_recovery")
         recovery_module.apply_recovery_to_rows = self.recovery
+        alternative_module = types.ModuleType("learner_api.alternative_recovery")
+        alternative_module.approved_alternative_guests = lambda *_args: defaultdict(set)
         # Use the real shared invitation parser without importing Django views.
         views_module = types.ModuleType("curriculum_api.views")
         views_module.__dict__.update(json=json, re=re)
@@ -124,7 +134,8 @@ class AttendanceProfilesTests(unittest.TestCase):
                        {"teams_series_email_list", "parse_json_value", "clean_str"}, views_module.__dict__)
         self.modules = patch.dict(sys.modules, {"curriculum_api.views": views_module,
                                                "curriculum_api.session_results": results_module,
-                                               "learner_api.session_recovery": recovery_module})
+                                               "learner_api.session_recovery": recovery_module,
+                                               "learner_api.alternative_recovery": alternative_module})
         self.modules.start()
         self.addCleanup(self.modules.stop)
         self.namespace = {
@@ -143,12 +154,14 @@ class AttendanceProfilesTests(unittest.TestCase):
         self.namespace["evidence_seconds"] = policy_namespace["evidence_seconds"]
         self.bind_rows()
         load_functions(BACKEND / "learner_api/teams_attendance.py",
-                       {"_email", "_session_expected_emails", "_local_datetime", "_graph_datetime",
-                        "_attendance_interval_bounds", "_reported_participant_emails", "fetch_verified_teams_attendance_rows"},
+                       {"_email", "_assigned_learner_emails_by_module", "_module_expected_emails",
+                        "_local_datetime", "_graph_datetime", "_attendance_interval_bounds",
+                        "fetch_verified_teams_attendance_rows"},
                        self.namespace)
 
     def bind_rows(self):
         for name, rows in [("LearnerProfile", self.profiles), ("LiveSession", self.series),
+                           ("LearnerTrainingPlanModule", self.plan_modules),
                            ("LiveSessionOccurrence", self.occurrences), ("LiveSessionAttendance", self.records),
                            ("ModuleAuthoringModule", [SimpleNamespace(module_catalogue_id="M1", group_id="G1", group_name="Group One"),
                                                       SimpleNamespace(module_catalogue_id="M2", group_id="G2", group_name="Group Two")])]:
@@ -172,43 +185,53 @@ class AttendanceProfilesTests(unittest.TestCase):
         self.bind_rows()
         return self.namespace["fetch_verified_teams_attendance_rows"]([learner_id], **kwargs)
 
-    def test_default_roster_still_excludes_non_invitees(self):
-        self.assertEqual(self.fetch(), [])
+    def test_module_roster_is_used_when_invitation_snapshot_is_empty(self):
+        rows = self.fetch()
+        self.assertEqual([row["session_id"] for row in rows], ["O1", "O2"])
 
-    def test_reported_participant_is_visible_once_without_becoming_expected(self):
+    def test_assigned_reported_learner_is_visible_and_expected(self):
         rows = self.fetch(include_reported_participants=True)
-        self.assertEqual(len(rows), 1)
+        self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0]["session_id"], "O1")
         self.assertEqual(rows[0]["attended_seconds"], 240)
         self.assertEqual(rows[0]["attendance_status"], "present")
-        self.assertFalse(rows[0]["is_expected"])
-        self.assertEqual(rows[0]["eligibility_reason"], "verified_teams_participant")
+        self.assertTrue(rows[0]["is_expected"])
+        self.assertEqual(rows[0]["eligibility_reason"], "module_assignment")
         self.assertEqual(rows[0]["session_start_time"].hour, 10)
 
-    def test_participation_does_not_create_absences_in_other_occurrences(self):
-        self.assertEqual([row["session_id"] for row in self.fetch(include_reported_participants=True)], ["O1"])
+    def test_module_roster_creates_absences_in_other_completed_occurrences(self):
+        self.assertEqual(
+            [row["session_id"] for row in self.fetch(include_reported_participants=True)],
+            ["O1", "O2"],
+        )
 
     def test_pending_and_missing_reports_are_not_displayed(self):
-        self.records = [row for row in self.records if row.occurrence_id in {"P1", "P2"}]
+        for occurrence in self.occurrences:
+            occurrence.actual_end = None
         self.assertEqual(self.fetch(include_reported_participants=True), [])
 
-    def test_removed_participation_does_not_turn_into_an_absence(self):
-        self.namespace["_reported_participant_emails"] = Mock(return_value=(
-            defaultdict(set, {"S1": {"one@example.invalid"}}),
-            defaultdict(set, {"O1": {"one@example.invalid"}}),
-        ))
+    def test_removed_participation_leaves_module_roster_absences(self):
         self.records = []
-        self.assertEqual(self.fetch(include_reported_participants=True), [])
+        self.assertEqual(
+            [row["attendance_status"] for row in self.fetch(include_reported_participants=True)],
+            ["absent", "absent"],
+        )
 
     def test_unknown_email_is_not_attributed_by_display_name(self):
         self.records = [self.record("O1", "", [(0, 5)])]
-        self.assertEqual(self.fetch(include_reported_participants=True), [])
+        self.assertEqual(
+            [row["session_id"] for row in self.fetch(include_reported_participants=True)],
+            ["O2"],
+        )
 
     def test_learner_module_and_date_scopes_are_preserved(self):
         rows = self.fetch(2, include_reported_participants=True)
         self.assertEqual([(row["learner_id"], row["session_id"]) for row in rows], [(2, "B1")])
         self.assertEqual(self.fetch(module_refs=["M2"], include_reported_participants=True), [])
-        self.assertEqual(self.fetch(start_date=(self.start + timedelta(days=1)).date(), include_reported_participants=True), [])
+        self.assertEqual(
+            [row["session_id"] for row in self.fetch(start_date=(self.start + timedelta(days=1)).date(), include_reported_participants=True)],
+            ["O2"],
+        )
         self.assertEqual(self.fetch(end_date=(self.start - timedelta(days=1)).date(), include_reported_participants=True), [])
         self.assertEqual(self.fetch(99, include_reported_participants=True), [])
 
@@ -220,11 +243,11 @@ class AttendanceProfilesTests(unittest.TestCase):
         self.assertEqual([row["attendance_status"] for row in expanded], ["present", "absent"])
         self.assertTrue(all(row["is_expected"] for row in expanded))
 
-    def test_authenticated_launch_stays_limited_to_its_occurrence(self):
+    def test_authenticated_launch_does_not_change_module_assignment_scope(self):
         self.launches[0]["S1"].add("one@example.invalid")
         self.launches[1]["O1"].add("one@example.invalid")
         self.assertEqual(self.fetch(), self.fetch(include_reported_participants=True))
-        self.assertEqual(self.fetch()[0]["eligibility_reason"], "assigned_lms_join")
+        self.assertEqual(self.fetch()[0]["eligibility_reason"], "module_assignment")
 
     def test_existing_duration_threshold_is_preserved(self):
         for seconds, status in [(180, "absent"), (181, "present")]:
@@ -237,7 +260,10 @@ class AttendanceProfilesTests(unittest.TestCase):
     def test_recovery_still_receives_the_exact_occurrence_and_learner(self):
         self.fetch(include_reported_participants=True)
         recovered = self.recovery.call_args.args[0]
-        self.assertEqual([(row["learner_id"], row["occurrence_id"]) for row in recovered], [(1, "O1")])
+        self.assertEqual(
+            [(row["learner_id"], row["occurrence_id"]) for row in recovered],
+            [(1, "O1"), (1, "O2")],
+        )
 
 
 class CoachAttendanceContractTests(unittest.TestCase):

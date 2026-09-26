@@ -180,4 +180,8 @@ class CoachResolutionTests(SimpleTestCase):
                         patch('learner_api.training_plan_dashboard.booking_url', side_effect=lambda value: value or None):
                     profiles.objects.filter.return_value.first.return_value = profile()
                     result = read_dashboard(source, section='overview')
-                self.assertEqual(result['coach'], {'name': name, 'bookingUrl': email or None})
+                self.assertEqual(result['coach'], {
+                    'name': name,
+                    'bookingUrl': email or None,
+                    **({'email': email} if email else {}),
+                })

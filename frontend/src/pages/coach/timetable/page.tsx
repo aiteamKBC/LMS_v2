@@ -98,6 +98,8 @@ interface TimetableEvent {
   endHour: number;
   timeLabel?: string;
   isTimeEstimated?: boolean;
+  /** Server-derived once the booked time has passed: learner attended (completed) or not (ended). */
+  meetingOutcome?: 'ended' | 'completed' | null;
   learner?: string;
   email?: string;
   employer?: string;
@@ -465,6 +467,20 @@ function displayStatusLabel(status: TimetableEvent['status'], isOverdue: boolean
   if (statusKey === 'missed-overdue') return 'Overdue';
   if (statusKey === 'pending-due-soon') return 'Due Soon';
   return statusLabel(status);
+}
+
+// An elapsed meeting shows Ended, or Completed once Teams shows the learner attended.
+// Display only: the stored status still drives actions and the review lifecycle.
+function meetingStatusKey(event: TimetableEvent) {
+  if (event.meetingOutcome === 'completed') return 'completed';
+  if (event.meetingOutcome === 'ended') return 'missed-overdue';
+  return getCalendarStatusKey(event.status, isOverdueMetricEvent(event), isDueSoonMetricEvent(event));
+}
+
+function eventStatusLabel(event: TimetableEvent) {
+  if (event.meetingOutcome === 'completed') return 'Completed';
+  if (event.meetingOutcome === 'ended') return 'Ended';
+  return displayStatusLabel(event.status, isOverdueMetricEvent(event), isDueSoonMetricEvent(event));
 }
 
 function buildSummaryMetrics(events: TimetableEvent[], referenceDate = new Date()): TimetableSummaryMetrics {
@@ -2264,7 +2280,7 @@ export default function CoachTimetablePage() {
                         <div className="flex w-full flex-1 flex-col gap-1.5 overflow-hidden">
                           {eventsForDay.slice(0, 3).map(ev => {
                             const meetingType = calendarColors.meetingTypes[getMeetingTypeKey(ev)];
-                            const eventStatusKey = getCalendarStatusKey(ev.status, isOverdueMetricEvent(ev), isDueSoonMetricEvent(ev));
+                            const eventStatusKey = meetingStatusKey(ev);
                             const eventStatus = calendarColors.statuses[eventStatusKey];
                             return (
                               <button
@@ -2280,7 +2296,7 @@ export default function CoachTimetablePage() {
                                   <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: meetingType.accent }}></span>
                                   <span className="shrink-0 tabular-nums">{formatTime(ev.startHour)}</span>
                                   <span className="truncate leading-tight">{ev.title}</span>
-                                  <span className="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold leading-none" style={{ backgroundColor: eventStatus.background, color: eventStatus.accent }} title={displayStatusLabel(ev.status, isOverdueMetricEvent(ev), isDueSoonMetricEvent(ev))}>{displayStatusLabel(ev.status, isOverdueMetricEvent(ev), isDueSoonMetricEvent(ev))}</span>
+                                  <span className="ml-auto shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-bold leading-none" style={{ backgroundColor: eventStatus.background, color: eventStatus.accent }} title={eventStatusLabel(ev)}>{eventStatusLabel(ev)}</span>
                                 </div>
                                 {(ev.learner || ev.programme) && (
                                   <p className="mt-0.5 truncate text-[10px] font-medium opacity-75">
@@ -2353,7 +2369,7 @@ export default function CoachTimetablePage() {
                             >
                               {eventsInSlot.map(ev => {
                                 const meetingType = calendarColors.meetingTypes[getMeetingTypeKey(ev)];
-                                const eventStatusKey = getCalendarStatusKey(ev.status, isOverdueMetricEvent(ev), isDueSoonMetricEvent(ev));
+                                const eventStatusKey = meetingStatusKey(ev);
                                 const eventStatus = calendarColors.statuses[eventStatusKey];
                                 const duration = ev.endHour - ev.startHour;
                                 const heightPx = Math.max(24, duration * 48);
@@ -2367,7 +2383,7 @@ export default function CoachTimetablePage() {
                                     <p className="truncate text-[12px] font-semibold leading-tight" style={{ color: meetingType.accent }}>{ev.title}</p>
                                     <p className="flex items-center gap-1.5 text-[12px] text-foreground-400 truncate">
                                       <span>{formatTime(ev.startHour)} - {formatTime(ev.endHour)}</span>
-                                      <span className="rounded-full px-1 py-0.5 text-[9px] font-bold" style={{ backgroundColor: eventStatus.background, color: eventStatus.accent }}>{displayStatusLabel(ev.status, isOverdueMetricEvent(ev), isDueSoonMetricEvent(ev))}</span>
+                                      <span className="rounded-full px-1 py-0.5 text-[9px] font-bold" style={{ backgroundColor: eventStatus.background, color: eventStatus.accent }}>{eventStatusLabel(ev)}</span>
                                     </p>
                                     {ev.learner && <p className="text-[12px] text-foreground-400 truncate font-medium">{ev.learner}</p>}
                                     {ev.priority !== 'normal' && (
@@ -2419,7 +2435,7 @@ export default function CoachTimetablePage() {
                           <div className="space-y-1.5">
                             {eventsInSlot.map(ev => {
                               const meetingType = calendarColors.meetingTypes[getMeetingTypeKey(ev)];
-                              const eventStatusKey = getCalendarStatusKey(ev.status, isOverdueMetricEvent(ev), isDueSoonMetricEvent(ev));
+                              const eventStatusKey = meetingStatusKey(ev);
                               const eventStatus = calendarColors.statuses[eventStatusKey];
                               return (
                                 <button type="button" aria-haspopup="dialog"
@@ -2437,7 +2453,7 @@ export default function CoachTimetablePage() {
                                         </span>
                                       )}
                                       <span className="rounded-full px-1.5 py-0.5 text-[12px] font-semibold" style={{ backgroundColor: eventStatus.background, color: eventStatus.accent }}>
-                                        {displayStatusLabel(ev.status, isOverdueMetricEvent(ev), isDueSoonMetricEvent(ev))}
+                                        {eventStatusLabel(ev)}
                                       </span>
                                     </div>
                                   </div>
@@ -2497,7 +2513,7 @@ export default function CoachTimetablePage() {
                 <div className="space-y-2">
                   {selectedDayEvents.sort((a, b) => a.startHour - b.startHour).map(ev => {
                     const meetingType = calendarColors.meetingTypes[getMeetingTypeKey(ev)];
-                    const eventStatusKey = getCalendarStatusKey(ev.status, isOverdueMetricEvent(ev), isDueSoonMetricEvent(ev));
+                    const eventStatusKey = meetingStatusKey(ev);
                     const eventStatus = calendarColors.statuses[eventStatusKey];
                     return (
                       <button type="button" aria-haspopup="dialog"
@@ -2518,7 +2534,7 @@ export default function CoachTimetablePage() {
                           </div>
                         </div>
                         <span className="shrink-0 rounded-full px-2 py-0.5 text-[12px] font-semibold" style={{ backgroundColor: eventStatus.background, color: eventStatus.accent }}>
-                          {displayStatusLabel(ev.status, isOverdueMetricEvent(ev), isDueSoonMetricEvent(ev))}
+                          {eventStatusLabel(ev)}
                         </span>
                       </button>
                     );
@@ -2536,7 +2552,7 @@ export default function CoachTimetablePage() {
                 onClose={() => { if (!eventActionBusy) setSelectedEvent(null); }}
                 badges={<>
                   <span className="rounded-full px-2.5 py-1" style={{ backgroundColor: calendarColors.meetingTypes[getMeetingTypeKey(selectedEvent)].background, color: calendarColors.meetingTypes[getMeetingTypeKey(selectedEvent)].accent }}>{meetingTypeLabelForEvent(selectedEvent)}</span>
-                  <span className="rounded-full px-2.5 py-1" style={{ backgroundColor: calendarColors.statuses[getCalendarStatusKey(selectedEvent.status, isOverdueMetricEvent(selectedEvent), isDueSoonMetricEvent(selectedEvent))].background, color: calendarColors.statuses[getCalendarStatusKey(selectedEvent.status, isOverdueMetricEvent(selectedEvent), isDueSoonMetricEvent(selectedEvent))].accent }}>{displayStatusLabel(selectedEvent.status, isOverdueMetricEvent(selectedEvent), isDueSoonMetricEvent(selectedEvent))}</span>
+                  <span className="rounded-full px-2.5 py-1" style={{ backgroundColor: calendarColors.statuses[meetingStatusKey(selectedEvent)].background, color: calendarColors.statuses[meetingStatusKey(selectedEvent)].accent }}>{eventStatusLabel(selectedEvent)}</span>
                   {selectedEvent.priority !== 'normal' && <span className={`rounded-full border px-2.5 py-1 ${priorityBadge(selectedEvent.priority)}`}>{selectedEvent.priority === 'urgent' ? 'Urgent' : 'High'}</span>}
                 </>}
                 headerAction={selectedEventDetailsPath && (
@@ -2674,8 +2690,9 @@ export default function CoachTimetablePage() {
                         <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-primary-200/70 pt-3">
                           <button
                             onClick={handleJoinSelectedMeeting}
-                            disabled={eventActionBusy}
-                            className="meeting-join-action rounded-lg px-3.5 py-2.5 text-[12px] font-bold shadow-sm transition-smooth cursor-pointer whitespace-nowrap"
+                            disabled={eventActionBusy || Boolean(selectedEvent.meetingOutcome)}
+                            title={selectedEvent.meetingOutcome ? 'This session has ended.' : undefined}
+                            className="meeting-join-action rounded-lg px-3.5 py-2.5 text-[12px] font-bold shadow-sm transition-smooth cursor-pointer whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             <i className="ri-play-circle-line mr-1"></i>Join Session
                           </button>
@@ -2756,7 +2773,9 @@ export default function CoachTimetablePage() {
                             }
                             handleEventAction('start');
                           }}
-                          disabled={eventActionBusy || (selectedEvent.source !== 'catch-up' && !(selectedEvent.meetingLink || selectedEvent.graphWebLink))}
+                          // The booked time has passed: joining is closed.
+                          disabled={eventActionBusy || Boolean(selectedEvent.meetingOutcome) || (selectedEvent.source !== 'catch-up' && !(selectedEvent.meetingLink || selectedEvent.graphWebLink))}
+                          title={selectedEvent.meetingOutcome ? 'This meeting has ended.' : undefined}
                           className="rounded-lg bg-emerald-500 px-3.5 py-2.5 text-[12px] font-bold text-white shadow-sm transition-smooth hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60 cursor-pointer whitespace-nowrap"
                         >
                           <AppIcon className="ri-play-circle-line mr-1"></AppIcon>{selectedEvent.reviewTemplateId ? 'Join' : 'Start'}
@@ -2775,8 +2794,9 @@ export default function CoachTimetablePage() {
                         {selectedEvent.status === 'in-progress' && (selectedEvent.meetingLink || selectedEvent.graphWebLink) && (
                           <button
                             onClick={handleJoinSelectedMeeting}
-                            disabled={eventActionBusy}
-                            className="meeting-join-action rounded-lg px-3.5 py-2.5 text-[12px] font-bold shadow-sm transition-smooth cursor-pointer whitespace-nowrap"
+                            disabled={eventActionBusy || Boolean(selectedEvent.meetingOutcome)}
+                            title={selectedEvent.meetingOutcome ? 'This meeting has ended.' : undefined}
+                            className="meeting-join-action rounded-lg px-3.5 py-2.5 text-[12px] font-bold shadow-sm transition-smooth cursor-pointer whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60"
                           >
                             <AppIcon className="ri-video-on-line mr-1"></AppIcon>Join
                           </button>
@@ -2847,7 +2867,7 @@ export default function CoachTimetablePage() {
                 {upcomingEvents
                   .map(ev => {
                     const meetingType = calendarColors.meetingTypes[getMeetingTypeKey(ev)];
-                    const eventStatus = calendarColors.statuses[getCalendarStatusKey(ev.status, isOverdueMetricEvent(ev), isDueSoonMetricEvent(ev))];
+                    const eventStatus = calendarColors.statuses[meetingStatusKey(ev)];
                     const sourceLabel = ev.source && isSchedulableSource(ev.source)
                       ? eventSourceLabel(ev.source)
                       : meetingTypeLabelForEvent(ev);
@@ -2880,7 +2900,7 @@ export default function CoachTimetablePage() {
                               {sourceLabel}
                             </span>
                             <span className="rounded-full px-2 py-0.5 text-[12px] font-semibold" style={{ backgroundColor: eventStatus.background, color: eventStatus.accent }}>
-                              {displayStatusLabel(ev.status, isOverdueMetricEvent(ev), isDueSoonMetricEvent(ev))}
+                              {eventStatusLabel(ev)}
                             </span>
                           </div>
                           <p className="truncate text-[12px] font-heading font-bold leading-tight text-foreground-950">{ev.title}</p>

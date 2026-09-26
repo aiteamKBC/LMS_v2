@@ -139,5 +139,6 @@ describe('review presentation preserves review and booking rules', () => {
     expect(href).toBe('/learner/progress-reviews?kind=apprenticeship&learner=12&view=all&filter=past&page=2');
     expect(reviewsListHref(learner, new URLSearchParams('view=all&filter=unknown&page=-1'))).toBe('/learner/progress-reviews?kind=apprenticeship&learner=12&view=all');
     expect(reviewsListHref(learner, new URLSearchParams('filter=past&page=2'))).toBe('/learner/progress-reviews?kind=apprenticeship&learner=12');
+    expect(reviewsListHref(learner, new URLSearchParams('view=all&filter=upcoming'), '/learner/reviews')).toBe('/learner/reviews?kind=apprenticeship&learner=12&view=all&filter=upcoming');
   });
 });

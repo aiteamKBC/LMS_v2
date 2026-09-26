@@ -47,13 +47,17 @@ export function CalendarActionDialog({ target, onClose, onChanged }: {
     } catch (failure) { setError(failure instanceof Error ? failure.message : 'Review could not be loaded.'); }
     finally { setBusy(false); }
   };
-  const execute = async (statusOnly = false) => {
+  const execute = async ({ statusOnly = false, notifyAttendees = false }: {
+    statusOnly?: boolean; notifyAttendees?: boolean;
+  } = {}) => {
     if (!statusOnly && (!checked || !review || attempted)) return;
     setBusy(true); setError('');
     if (!statusOnly) setAttempted(true);
     try {
+      const notify = cancelling || notifyAttendees;
       const value = await calendarAction<ActionResult>(target.liveId, statusOnly ? { stage: 'status' }
-        : { stage: 'confirm', reviewToken: review!.reviewToken, acknowledgeNotifications: true });
+        : { stage: 'confirm', reviewToken: review!.reviewToken,
+          notifyAttendees: notify, acknowledgeNotifications: notify });
       setResult(value);
       await onChanged();
     } catch (failure) { setError(failure instanceof Error ? failure.message : 'The calendar action could not be confirmed.'); }
@@ -64,10 +68,11 @@ export function CalendarActionDialog({ target, onClose, onChanged }: {
       dismissible={!busy} size="max-w-4xl" scrollResetKey={review ? 'review' : 'edit'} footer={
         <div className="flex flex-wrap justify-end gap-2">
           <button type="button" disabled={busy} onClick={onClose} className="rounded-lg border px-4 py-2 text-sm font-semibold">{result?.status === 'done' ? 'Done' : 'Close'}</button>
-          {attempted ? result?.status !== 'done' && <button type="button" disabled={busy} onClick={() => void execute(true)} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-bold text-white">Check action status</button>
+          {attempted ? result?.status !== 'done' && <button type="button" disabled={busy} onClick={() => void execute({ statusOnly: true })} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-bold text-white">Check action status</button>
             : review ? <>
               <button type="button" disabled={busy} onClick={() => { setReview(null); setChecked(false); }} className="rounded-lg border px-4 py-2 text-sm font-semibold">Back to editing</button>
-              <button type="button" disabled={busy || !checked} onClick={() => void execute()} className={`rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-40 ${cancelling ? 'bg-red-700' : 'bg-primary-600'}`}>{busy ? 'Applying...' : cancelling ? 'Confirm cancellation' : 'Save and send update'}</button>
+              {!cancelling && <button type="button" disabled={busy || !checked} onClick={() => void execute()} className="rounded-lg border border-primary-300 bg-primary-50 px-4 py-2 text-sm font-bold text-primary-800 disabled:opacity-40">{busy ? 'Applying...' : 'Save without email'}</button>}
+              <button type="button" disabled={busy || !checked} onClick={() => void execute({ notifyAttendees: true })} className={`rounded-lg px-4 py-2 text-sm font-bold text-white disabled:opacity-40 ${cancelling ? 'bg-red-700' : 'bg-primary-600'}`}>{busy ? 'Applying...' : cancelling ? 'Confirm cancellation' : 'Save & notify attendees'}</button>
             </> : <button type="button" disabled={busy || !drafts.length} onClick={() => void prepare()} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-40">{busy ? 'Checking Microsoft...' : 'Review changes'}</button>}
         </div>
       }>
@@ -75,7 +80,7 @@ export function CalendarActionDialog({ target, onClose, onChanged }: {
         <p className="font-bold text-foreground-900">{target.title}</p>
         <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
           {cancelling ? 'Microsoft sends a cancellation notice to the affected invitees. Silent cancellation is not available.'
-            : 'The new times will update Teams, the module timetable and learner training plans. Microsoft sends calendar updates to invitees.'}
+            : 'The new times update Teams, the module timetable and learner training plans. You can send a Microsoft calendar update or save silently; with a silent save, invitees may keep the old time in their own calendar.'}
         </p>
         {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
         {result && <p role="status" className={`rounded-lg p-3 text-sm ${result.status === 'done' ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-900'}`}>
@@ -108,7 +113,9 @@ export function CalendarActionDialog({ target, onClose, onChanged }: {
             </table>
           </div>
           <p className="text-xs text-foreground-500">{review.calendarRequests} calendar request{review.calendarRequests === 1 ? '' : 's'}. 12 AM is midnight; 12 PM is noon. Existing meeting links are preserved when moving sessions.</p>
-          {!attempted && <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={checked} onChange={event => setChecked(event.target.checked)} />I checked these sessions and understand that Microsoft will notify the affected invitees.</label>}
+          {!attempted && <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={checked} onChange={event => setChecked(event.target.checked)} />{cancelling
+            ? 'I checked these sessions and understand that Microsoft will notify the affected invitees.'
+            : 'I checked these sessions and understand the notification choice.'}</label>}
         </>}
       </div>
     </Modal>

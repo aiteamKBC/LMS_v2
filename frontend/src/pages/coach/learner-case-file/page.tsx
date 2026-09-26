@@ -23,6 +23,7 @@ import ActivityTab from './components/ActivityTab';
 import DocumentsTab from './components/DocumentsTab';
 import NetworkTab from './components/NetworkTab';
 import LearningPlanTab from './components/OverviewTab';
+import AssignmentsTab from './components/AssignmentsTab';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import {
   createLearnerReviewAddition,
@@ -54,6 +55,7 @@ const CASE_FILE_TABS = [
   { id: 'attendance', label: 'Attendance', icon: 'ri-calendar-check-line' },
   { id: 'support', label: 'Learning Plan', icon: 'ri-route-line' },
   { id: 'reviews', label: 'Reviews', icon: 'ri-file-list-3-line' },
+  { id: 'assignments', label: 'Assignments', icon: 'ri-file-text-line' },
   { id: 'otjh', label: 'OTJH', icon: 'ri-time-line' },
   { id: 'ksbs', label: 'KSBs', icon: 'ri-award-line' },
   { id: 'evidence', label: 'Evidence', icon: 'ri-folder-upload-line' },
@@ -221,6 +223,10 @@ export default function LearnerCaseFile() {
           onOpen={handleOpenReviewMeeting}
           requestedReviewId={requestedReviewId}
         />;
+      case 'assignments':
+        return dashboardKind && (data.enrolmentId || data.learnerId)
+          ? <AssignmentsTab kind={dashboardKind} learnerId={data.enrolmentId || data.learnerId} />
+          : <EmptyState text="Assignments are unavailable because this learner's record type is unknown." />;
       case 'coach-notes':
         return <DocumentsTab data={data} />;
       case 'support':
