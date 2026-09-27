@@ -306,21 +306,22 @@ describe('ModuleFormDrawer', () => {
     await waitFor(() => expect(onSavingChange).toHaveBeenLastCalledWith(false));
   });
 
-  it('shows the end date the backend calculated by default', async () => {
-    // The end date is the last session of the generated plan, so the drawer
-    // displays it until the user picks a different date.
+  it('shows the end date calculated from the start date and the weeks entered', async () => {
+    // The end date is the module's calendar span -- the cohort's start date
+    // (2026-09-01) plus the 1 default week -- not the generated plan's last
+    // session, so the drawer displays it until the user picks a different date.
     renderDrawer({ lockGroup: true, defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1' } });
 
     const endDate = screen.getByRole('combobox', { name: 'End date' });
     expect(endDate).toBeEnabled();
-    await waitFor(() => expect(endDate).toHaveValue('07/10/2026'));
+    await waitFor(() => expect(endDate).toHaveValue('07/09/2026'));
   });
 
   it('saves a manually adjusted module end date', async () => {
     renderDrawer({ lockGroup: true, defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1' } });
 
     const endDate = screen.getByRole('combobox', { name: 'End date' });
-    await waitFor(() => expect(endDate).toHaveValue('07/10/2026'));
+    await waitFor(() => expect(endDate).toHaveValue('07/09/2026'));
     await userEvent.clear(endDate);
     await userEvent.type(endDate, '14/10/2026');
     await userEvent.type(screen.getByPlaceholderText('e.g. Data Modelling'), 'Manual End');
@@ -336,7 +337,7 @@ describe('ModuleFormDrawer', () => {
   it('has no session date preview button any more -- the Session dates panel was removed', async () => {
     renderDrawer({ lockGroup: true, defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1' } });
 
-    await waitFor(() => expect(screen.getByRole('combobox', { name: 'End date' })).toHaveValue('07/10/2026'));
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'End date' })).toHaveValue('07/09/2026'));
     expect(screen.queryByRole('button', { name: /view sessions/i })).not.toBeInTheDocument();
     expect(screen.queryByText('Session dates')).not.toBeInTheDocument();
   });
@@ -543,19 +544,10 @@ describe('ModuleFormDrawer', () => {
     expect(updateCurriculumModuleMock).not.toHaveBeenCalled();
   });
 
-  it('refuses a generated session plan that runs past the cohort end', async () => {
-    // Nobody typed this end date: it is the plan's own last session, which is
-    // why the field's own bounds cannot catch it.
-    previewModuleSessionPlanMock.mockResolvedValueOnce({
-      sessions: [
-        { sessionNumber: 1, date: '2027-08-25', day: 'Wednesday', skippedHolidays: [] },
-        { sessionNumber: 2, date: '2027-09-15', day: 'Wednesday', skippedHolidays: [] },
-      ],
-      skippedHolidays: [],
-      finalEndDate: '2027-09-15',
-      warnings: [],
-    });
-
+  it('refuses a calculated end date that runs past the cohort end', async () => {
+    // Nobody typed this end date: it is the module's own calendar span (start
+    // date plus its weeks), which is why the field's own bounds cannot catch
+    // it -- only the cohort-window check on save does.
     renderDrawer({
       module: {
         id: 'MOD-1',
@@ -570,7 +562,7 @@ describe('ModuleFormDrawer', () => {
     });
 
     const endDate = screen.getByRole('combobox', { name: 'End date' });
-    await waitFor(() => expect(endDate).toHaveValue('15/09/2027'));
+    await waitFor(() => expect(endDate).toHaveValue('07/09/2027'));
     await userEvent.click(screen.getByRole('button', { name: 'Save module' }));
 
     expect(await screen.findAllByText(/cannot finish after the cohort end date/)).not.toHaveLength(0);

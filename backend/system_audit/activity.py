@@ -42,9 +42,10 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from datetime import datetime, timedelta, timezone
 
-from django.db import connection
+from django.db import connection, transaction
 from django.http import JsonResponse
 from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_exempt
@@ -61,9 +62,31 @@ logger = logging.getLogger(__name__)
 
 ACTIVITY_TABLE = 'activity_events'
 
-DEFAULT_WINDOW_DAYS = 30
-MAX_WINDOW_DAYS = 365
+#: How long page activity is kept, and so the only window the Audit Trail reads.
+#: Rows older than this are deleted by ``purge_expired_activity``.
+RETENTION_DAYS = 7
+DEFAULT_WINDOW_DAYS = RETENTION_DAYS
+MAX_WINDOW_DAYS = RETENTION_DAYS
+
+#: The purge runs at most this often per process, and deletes in batches so the
+#: first run -- which clears everything already past the window -- stays bounded.
+PURGE_INTERVAL_SECONDS = 3600
+PURGE_BATCH = 5000
+PURGE_MAX_BATCHES = 40
+#: pg_try_advisory_xact_lock key: one of production's processes purges at a time.
+PURGE_LOCK_KEY = 7_202_609_240
+_PURGE = {}
 DEFAULT_PEOPLE_LIMIT = 200
+
+#: One page of the people list. Smaller than the old cap on purpose: the cap was
+#: how much could be reached at all, a page size is how much is read at once.
+DEFAULT_PEOPLE_PAGE_SIZE = 50
+MAX_PEOPLE_PAGE_SIZE = 200
+
+#: ``?role=`` for the people who have no role recorded. A reserved word rather
+#: than an empty value, because an empty one is indistinguishable from the
+#: filter being absent and would read as "everybody".
+NO_ROLE = '__none__'
 MAX_EVENTS_PER_CALL = 60
 MAX_PERSON_EVENTS = 2000
 MAX_PERSON_CHANGES = 400
@@ -189,6 +212,53 @@ def table():
     return versioning.qualified(ACTIVITY_TABLE)
 
 
+def purge_expired_activity():
+    """Delete page activity older than ``RETENTION_DAYS``. Never raises.
+
+    Only ``activity_events``. Change history (``record_revisions``) also feeds
+    every record's History panel and sign-ins are the security log, so both are
+    kept and only left out of the Audit Trail's window. Curriculum Studio's page
+    activity is kept in full: its trail has no window.
+
+    Rows are told apart by their stored workspace, so without that column there
+    is no safe way to spare Curriculum Studio's, and nothing is deleted.
+    """
+    started = time.monotonic()
+    last = _PURGE.get('last')
+    if last is not None and started - last < PURGE_INTERVAL_SECONDS:
+        return 0
+    _PURGE['last'] = started
+    if not activity_available() or not workspace_column_available():
+        return 0
+    kept = sorted(quality.UNLIMITED_WORKSPACES)
+    cutoff = datetime.utcnow() - timedelta(days=RETENTION_DAYS)
+    deleted = 0
+    try:
+        with transaction.atomic():
+            with connection.cursor() as cursor:
+                if connection.vendor == 'postgresql':
+                    cursor.execute('select pg_try_advisory_xact_lock(%s)', [PURGE_LOCK_KEY])
+                    if not cursor.fetchone()[0]:
+                        return 0
+                for _batch in range(PURGE_MAX_BATCHES):
+                    cursor.execute(
+                        f'delete from {table()} where id in ('
+                        f'select id from {table()} where occurred_at < %s '
+                        f"and coalesce(workspace, '') not in ({', '.join(['%s'] * len(kept))}) "
+                        f'limit {PURGE_BATCH})',
+                        [cutoff, *kept],
+                    )
+                    deleted += max(cursor.rowcount, 0)
+                    if cursor.rowcount < PURGE_BATCH:
+                        break
+    except Exception:
+        logger.warning('Could not delete expired LMS activity.', exc_info=True)
+        return 0
+    if deleted:
+        logger.info('Deleted %s LMS activity rows older than %s days.', deleted, RETENTION_DAYS)
+    return deleted
+
+
 # ------------------------------------------------------------------ helpers
 
 def clean(value, limit=MAX_TEXT):
@@ -202,6 +272,47 @@ def resolve_page(path):
     can never disagree about what a page is called or which workspace it is in.
     """
     return pages.resolve(path)
+
+
+def actor_role(account):
+    """The Role column, read from ``enrolment."Staff_users"`` and nowhere else.
+
+    One source, deliberately. The role this trail files somebody under is the
+    access grant the enrolment directory holds for them -- ``Access`` first,
+    and ``Type`` when no grant has been recorded, which is the same row saying
+    what kind of account it is. Both columns, one table, one read.
+
+    What it specifically does NOT do is fall back to ``account.role``. That is
+    the coarse sign-in gate ``login.identity.role_for_staff`` derives, and it
+    only ever says ``admin`` or ``staff`` -- it cannot tell a coach from a
+    tutor from an enrolment officer, which is the whole question this column
+    exists to answer. A fallback to it would fill the column with a second,
+    quieter meaning of the word "role" that reads exactly like the first, so a
+    row saying ``staff`` would be indistinguishable from a person whose grant
+    genuinely is staff-level. Better an empty cell, which the list draws as
+    "No role recorded", than a confident wrong one.
+
+    An account with no staff row -- a learner, an employer -- has no grant to
+    read, so it files under nothing.
+    """
+    subject_id = getattr(account, 'subject_id', None)
+    if not subject_id:
+        return ''
+    try:
+        from learner_api.models import StaffUser
+        from login.models import SUBJECT_STAFF
+
+        if getattr(account, 'subject_type', '') != SUBJECT_STAFF:
+            return ''
+        row = StaffUser.objects.filter(pk=subject_id).only('access', 'type').first()
+    except Exception:  # noqa: BLE001 - recording must never break a page
+        # Unreadable is not the same as unset, and neither is a guess: the
+        # column stays empty rather than inheriting a role from somewhere else.
+        logger.warning('Could not read the staff access grant for the audit trail.', exc_info=True)
+        return ''
+    if row is None:
+        return ''
+    return clean(row.access, 60).lower() or clean(row.type, 60).lower()
 
 
 def client_ip(request):
@@ -261,7 +372,7 @@ def requested_workspace(request):
     value = curriculum_views.clean_str(request.GET.get('workspace')).lower()
     if not value or value == 'all':
         return ''
-    return value if value in pages.WORKSPACES else ''
+    return value
 
 
 def workspace_clause(workspace, alias=''):
@@ -283,7 +394,7 @@ def workspace_clause(workspace, alias=''):
         return f'{prefix}workspace = %s', [workspace]
     roots = workspace_roots(workspace)
     if not roots:
-        return '', []
+        return '1 = 0', []
     clauses = []
     params = []
     for root in roots:
@@ -360,7 +471,7 @@ def activity_record(request):
 
     now = datetime.utcnow()
     name = clean(getattr(account, 'display_name', ''), 160) or email
-    role = clean(getattr(account, 'role', ''), 60)
+    role = clean(actor_role(account), 60)
     account_id = getattr(account, 'pk', None)
     ip = client_ip(request)
     agent = clean(request.META.get('HTTP_USER_AGENT'), MAX_USER_AGENT)
@@ -470,6 +581,7 @@ def activity_record(request):
         # losing the note of it must not turn into an error they can see.
         logger.warning('Could not record LMS activity.', exc_info=True)
         return JsonResponse({'recorded': recorded, 'available': True, 'reason': 'write-failed'})
+    purge_expired_activity()
     return JsonResponse({'recorded': recorded, 'available': True})
 
 
@@ -493,8 +605,19 @@ def activity_people(request):
     revision is curriculum's, and pretending either belonged to the workspace
     being filtered would be an invention.
     """
-    days = quality.parse_bounded_int(request.GET.get('days'), DEFAULT_WINDOW_DAYS, 1, MAX_WINDOW_DAYS)
+    purge_expired_activity()
+    days = quality.parse_bounded_int(
+        request.GET.get('days'), DEFAULT_WINDOW_DAYS, 1, quality.window_limit(requested_workspace(request)),
+    )
     search = curriculum_views.clean_str(request.GET.get('search')).lower()
+    # Answered here rather than on the client, because the client only holds one
+    # page: a role filter applied there would narrow the fifty rows on screen and
+    # report that as the whole answer.
+    role_filter = curriculum_views.clean_str(request.GET.get('role')).lower()
+    page = quality.parse_bounded_int(request.GET.get('page'), 1, 1, 10_000)
+    page_size = quality.parse_bounded_int(
+        request.GET.get('pageSize'), DEFAULT_PEOPLE_PAGE_SIZE, 1, MAX_PEOPLE_PAGE_SIZE,
+    )
     workspace = requested_workspace(request)
     since = datetime.utcnow() - timedelta(days=days)
 
@@ -612,6 +735,13 @@ def activity_people(request):
 
     sign_ins_recorded, sign_in_rows = read_sign_ins(since)
     for row in sign_in_rows:
+        # A sign-in is account-wide, not workspace-specific (see read_sign_ins).
+        # On the system-wide door that is the point: everyone who touched the
+        # LMS belongs on the list. On a workspace's own scoped door it is not --
+        # signing in proves nothing about Coach, so it must not be the reason
+        # somebody who never opened Coach appears on Coach's People list.
+        if workspace and row['email'] not in people:
+            continue
         entry = person(row['email'])
         entry['signIns'] = row['count']
         seen(entry, row['firstAt'])
@@ -620,12 +750,30 @@ def activity_people(request):
     matched = sorted(people.values(), key=lambda row: row['lastSeen'], reverse=True)
     if search:
         matched = [row for row in matched if search in row['email'] or search in row['name'].lower()]
+
+    # The roles on offer are read from everyone who matched the window, the
+    # workspace and the search -- deliberately before the role filter itself is
+    # applied, so choosing one does not empty the list it was chosen from.
+    roles = sorted({row['role'] for row in matched if row['role']})
+    roles_include_blank = any(not row['role'] for row in matched)
+
+    if role_filter == NO_ROLE:
+        matched = [row for row in matched if not row['role']]
+    elif role_filter:
+        matched = [row for row in matched if row['role'].lower() == role_filter]
+
     # The totals are counted over everyone who matched, not over the page that
     # is being sent. A busy window is exactly where the headline numbers matter,
-    # and exactly where summing the truncated page would quietly report the cap
+    # and exactly where summing one page would quietly report the page size
     # instead of the period.
-    truncated = len(matched) > DEFAULT_PEOPLE_LIMIT
-    rows = matched[:DEFAULT_PEOPLE_LIMIT]
+    total = len(matched)
+    # Past the last page is answered with the last page rather than with nothing:
+    # a stale page number in a link should not read as "nobody used the LMS".
+    pages_total = max(1, -(-total // page_size))
+    page = min(page, pages_total)
+    start = (page - 1) * page_size
+    rows = matched[start:start + page_size]
+    truncated = total > page_size
 
     return JsonResponse({
         'generatedAt': datetime.utcnow().isoformat(),
@@ -643,10 +791,19 @@ def activity_people(request):
         'changeWorkspaces': writes.change_workspaces(),
         'signInsRecorded': sign_ins_recorded,
         'truncated': truncated,
-        'limit': DEFAULT_PEOPLE_LIMIT,
+        'limit': page_size,
         'shown': len(rows),
+        'page': page,
+        'pageSize': page_size,
+        'pages': pages_total,
+        'total': total,
+        # The roles present in this window, for the Role filter. Sent rather than
+        # derived on the client for the same reason the filter is applied here:
+        # one page cannot name the roles held by the people on the other pages.
+        'roles': roles,
+        'rolesIncludeBlank': roles_include_blank,
         'totals': {
-            'people': len(matched),
+            'people': total,
             'visits': sum(row['visits'] for row in matched),
             'pageViews': sum(row['pageViews'] for row in matched),
             'readActions': sum(row['readActions'] for row in matched),
@@ -761,8 +918,10 @@ def activity_person(request, email):
     email = curriculum_views.clean_str(email).lower()[:160]
     if not email:
         return JsonResponse({'error': 'An email is required'}, status=400)
-    days = quality.parse_bounded_int(request.GET.get('days'), DEFAULT_WINDOW_DAYS, 1, MAX_WINDOW_DAYS)
     workspace = requested_workspace(request)
+    days = quality.parse_bounded_int(
+        request.GET.get('days'), DEFAULT_WINDOW_DAYS, 1, quality.window_limit(workspace),
+    )
     since = datetime.utcnow() - timedelta(days=days)
 
     person = {'email': email, 'name': email, 'role': '', 'firstSeen': '', 'lastSeen': ''}
@@ -799,6 +958,7 @@ def activity_person(request, email):
 
     visits = build_visits(events, changes)
     sign_ins_recorded, sign_ins = read_sign_ins(since, email=email)
+    account_events_recorded, account_events, account_events_truncated = read_account_events(since, email)
 
     stamps = [visit['startedAt'] for visit in visits] + [visit['endedAt'] for visit in visits]
     stamps += [change['at'] for change in changes] + [row['at'] for row in sign_ins]
@@ -828,8 +988,31 @@ def activity_person(request, email):
         },
         'visits': visits,
         'signIns': sign_ins,
+        'accountEventsRecorded': account_events_recorded,
+        'accountEvents': account_events,
+        'accountEventsTruncated': account_events_truncated,
         'changes': changes,
     })
+
+
+def read_account_events(since, email):
+    """Account-wide login/logout, including failed attempts; never credentials."""
+    try:
+        from login.models import EVENT_LOGIN, EVENT_LOGOUT, LoginAudit
+
+        rows = list(LoginAudit.objects.filter(
+            created_at__gte=since, email__iexact=email,
+            event__in=(EVENT_LOGIN, EVENT_LOGOUT),
+        ).order_by('-created_at', '-pk')[:201])
+        return True, [{
+            'id': row.pk,
+            'at': quality.iso(row.created_at),
+            'event': row.event,
+            'succeeded': row.succeeded,
+        } for row in rows[:200]], len(rows) > 200
+    except Exception:
+        logger.warning('Could not read account access history.', exc_info=True)
+        return False, [], False
 
 
 def read_person_changes(email, since, workspace=''):
@@ -857,11 +1040,9 @@ def read_person_changes(email, since, workspace=''):
         columns += ', actor_type, triggered_by_email, triggered_by_name, source, metadata'
     where = ['lower(actor_email) = %s', 'created_at >= %s']
     params = [email, since]
-    if workspace:
-        owned = writes.entity_types_for_workspace(workspace)
-        if owned:
-            where.append('entity_type in (' + ','.join(['%s'] * len(owned)) + ')')
-            params.extend(owned)
+    clause, scope_params = writes.revision_workspace_clause(workspace)
+    where.append(clause)
+    params.extend(scope_params)
     try:
         rows = curriculum_views.fetch_all(
             f'select {columns} from {revisions} '
@@ -876,7 +1057,7 @@ def read_person_changes(email, since, workspace=''):
     for row in rows:
         event = quality.revision_event(row)
         event['placed'] = False
-        event['workspace'] = writes.workspace_for_entity(event.get('entity', ''))
+        event['workspace'] = event.get('metadata', {}).get('page_workspace') or writes.workspace_for_entity(event.get('entity', ''))
         changes.append(event)
     return changes
 
@@ -978,20 +1159,21 @@ def build_visits(events, changes):
     # separate list, still reported.
     for change in changes:
         stamp = change.get('at') or ''
-        if not stamp:
+        recorded_path = (change.get('metadata') or {}).get('page_path')
+        if not stamp or not recorded_path:
             continue
         for visit in by_visit:
             if not visit['startedAt'] <= stamp <= visit['endedAt']:
                 continue
             target = None
             for page in visit['pages']:
-                if page['at'] <= stamp <= page['endedAt']:
+                if page['path'] == recorded_path and page['at'] <= stamp <= page['endedAt']:
                     target = page
             if target is None and visit['pages']:
                 # Inside the visit but after the last recorded page view: that
                 # page was still open, nothing new was navigated to.
                 last = visit['pages'][-1]
-                if stamp >= last['at']:
+                if last['path'] == recorded_path and stamp >= last['at']:
                     target = last
             if target is not None:
                 target['changes'].append(change)

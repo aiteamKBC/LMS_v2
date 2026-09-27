@@ -1244,6 +1244,8 @@ export interface CurriculumSession {
   legacyModuleId?: string;
   invalidModuleCatalogueId?: string;
   componentId?: string;
+  /** The live-session component's own title, when the caller matched one. Display only. */
+  componentTitle?: string;
   title: string;
   type: string;
   date: string;
@@ -1656,6 +1658,14 @@ export interface CurriculumAuditEvent {
    * person is `actorName`.
    */
   reason: string;
+  /**
+   * `reason` as a phrase that completes "... as part of" ("a cleanup sweep").
+   * Empty when the handler code has no mapped meaning - the row then says only
+   * what it knows, rather than dressing the code up as an explanation.
+   */
+  causeLabel?: string;
+  /** The recorded page's name. Empty when the write had no page. */
+  pageLabel?: string;
   /** Only the fields that actually moved. Empty for a create. */
   changes: CurriculumAuditChange[];
   /**
@@ -1681,12 +1691,21 @@ export interface CurriculumAuditActor {
 }
 
 export interface CurriculumAuditTrail {
+  workspaces?: { value: string; label: string }[];
+  changeWorkspaces?: string[];
   generatedAt: string;
   windowDays: number;
   since: string;
   limit: number;
+  /** Everything that matched the filters, across every page. */
   total: number;
+  /** Which page this is, 1-based. Clamped to the last page when asked for more. */
+  page: number;
+  pageSize: number;
+  /** How many pages the filtered window holds. Never below 1. */
+  pages: number;
   truncated: boolean;
+  /** Counted over the whole window, not the page, so paging does not move them. */
   actionCounts: Record<CurriculumAuditAction, number>;
   entityCounts: Record<string, number>;
   /** Entities whose table could not be read, so the page can name the gap. */
@@ -1795,6 +1814,21 @@ export interface CurriculumActivityPeople {
   shown: number;
   /** The server-side cap that `truncated` reports against. */
   limit: number;
+  /** Which page this is, 1-based. Clamped to the last page when asked for more. */
+  page: number;
+  pageSize: number;
+  /** How many pages the filtered window holds. Never below 1. */
+  pages: number;
+  /** Everyone who matched the filters, across every page. */
+  total: number;
+  /**
+   * The roles held by the people in this window, for the Role filter. Read
+   * from the whole window rather than from the page on screen, which can only
+   * name the roles of the fifty people it carries.
+   */
+  roles: string[];
+  /** Whether anyone in this window has no role recorded. */
+  rolesIncludeBlank: boolean;
   totals: {
     people: number;
     visits: number;
@@ -1859,6 +1893,9 @@ export interface CurriculumActivitySignIn {
 }
 
 export interface CurriculumPersonActivity {
+  accountEventsRecorded?: boolean;
+  accountEventsTruncated?: boolean;
+  accountEvents?: { id: number; at: string; event: 'login' | 'logout'; succeeded: boolean }[];
   generatedAt: string;
   windowDays: number;
   since: string;
@@ -2512,23 +2549,31 @@ function notifyRemoteWrite(path: string): void {
 // ---------------------------------------------------------------------------
 
 const EPOCH_PATH = '/curriculum/cache-epoch/';
-// 4s rather than the 10s before it (and the 25s this shipped with). A reader
-// watching a record somebody else is editing waits half the interval on
-// average, so this is ~2s instead of ~5s -- close enough to instant that a
-// second screen no longer reads as stale, which is the whole point of the
-// counter. Tabs of the same browser hear each other through BroadcastChannel
-// and do not wait for this at all.
+// 2s. This interval used to be a freshness setting; now that the curriculum
+// editors merge a write into an open screen rather than announcing it, it is
+// how long a colleague's typing takes to appear in front of somebody else. A
+// reader waits half the interval on average, so this is ~1s -- the point at
+// which two people on one module stop feeling like two people on two copies.
+// Tabs of the same browser hear each other through BroadcastChannel and do not
+// wait for this at all.
 // What it costs is one authenticated request per open tab: the shared epoch
 // read (Redis where it is configured, otherwise the one-row counter table),
 // plus the single indexed LoginSession lookup every request pays. The
 // last_seen_at write is throttled to 5 minutes (login/sessions.py), so polling
-// faster adds reads, never writes. Below ~3s the request rate stops buying
-// perceptible freshness and starts being felt by the database, so this is the
-// floor rather than a number to keep lowering.
+// faster adds reads, never writes.
+//
+// This is the floor. Below it the request rate buys nothing a person can
+// perceive and starts being felt by the database -- and note what it does NOT
+// buy at any speed: the epoch says only that curriculum changed, so a screen
+// still has to read the record to find out what. That read has its own, longer
+// floor per workspace (LIVE_SYNC_MIN_INTERVAL_MS in the module builder), which
+// is what keeps a busy hour elsewhere in the LMS from becoming a rebuild every
+// two seconds. Making co-editing feel faster than this means pushing the
+// change itself, not asking for it more often.
 // Exported so the tests can advance their fake clock by one tick of whatever
 // this is set to, rather than encoding the number and quietly meaning
 // something else the next time it moves.
-export const EPOCH_POLL_INTERVAL_MS = 4_000;
+export const EPOCH_POLL_INTERVAL_MS = 2_000;
 // The endpoint ships with the backend, and the frontend can be deployed ahead of
 // it. Rather than call a missing URL every few seconds for the life of the tab,
 // give up after a few failures and leave the return-to-tab refresh to cover it.
@@ -3411,7 +3456,7 @@ export function liveSessionArtifactPreviewUrl(liveSessionId: string, artifactId:
 
 export function fetchCurriculumSessions(
   signal?: AbortSignal,
-  options: { skipCache?: boolean; revalidate?: boolean } = {},
+  options: { skipCache?: boolean; revalidate?: boolean; moduleCatalogueId?: string } = {},
 ): Promise<CurriculumSession[]> {
   // Sessions live in the 45s "dynamic" cache tier, so a caller that has just
   // scheduled a module (or opens straight after) can otherwise read a stale
@@ -3419,7 +3464,12 @@ export function fetchCurriculumSessions(
   // the current plan instead of waiting out the TTL. `revalidate` is for the
   // background re-read after somebody else's write: past this tab's cache, but
   // answered from the server's.
-  return fetchCollection<CurriculumSession>('/curriculum/sessions/', { signal, skipCache: options.skipCache, revalidate: options.revalidate });
+  //
+  // `moduleCatalogueId` asks for that one module's sessions, which the server
+  // derives fresh from its own rows every time. Without it, current dates for
+  // one module meant skipCache forcing a rebuild of every session there is.
+  const query = options.moduleCatalogueId ? `?module_catalogue_id=${encodeURIComponent(options.moduleCatalogueId)}` : '';
+  return fetchCollection<CurriculumSession>(`/curriculum/sessions/${query}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate });
 }
 
 // 30s, not 15s: a forced rebuild of the curriculum payload takes ~13s, so a 15s
@@ -3513,6 +3563,8 @@ export function fetchCurriculumAuditTrail(
   options: {
     days?: number;
     limit?: number;
+    /** 1-based. Past the last page is answered with the last page. */
+    page?: number;
     entity?: string;
     action?: string;
     search?: string;
@@ -3548,6 +3600,7 @@ export function fetchCurriculumAuditTrail(
   if (options.source && options.source !== 'all') query.set('source', options.source);
   if (options.actorType && options.actorType !== 'all') query.set('actorType', options.actorType);
   if (options.workspace) query.set('workspace', options.workspace);
+  if (options.page && options.page > 1) query.set('page', String(options.page));
   if (options.scope && options.scopeId) {
     query.set('scope', options.scope);
     query.set('scopeId', options.scopeId);
@@ -3569,12 +3622,27 @@ export function fetchCurriculumAuditTrail(
  * response for the next visit.
  */
 export function fetchActivityPeople(
-  options: { days?: number; search?: string; workspace?: string; signal?: AbortSignal; skipCache?: boolean; revalidate?: boolean } = {},
+  options: {
+    days?: number;
+    search?: string;
+    workspace?: string;
+    /** One role, or `__none__` for the people with no role recorded. */
+    role?: string;
+    /** 1-based. Past the last page is answered with the last page. */
+    page?: number;
+    pageSize?: number;
+    signal?: AbortSignal;
+    skipCache?: boolean;
+    revalidate?: boolean;
+  } = {},
 ): Promise<CurriculumActivityPeople> {
   const query = new URLSearchParams();
   if (options.days) query.set('days', String(options.days));
   if (options.search) query.set('search', options.search);
   if (options.workspace) query.set('workspace', options.workspace);
+  if (options.role) query.set('role', options.role);
+  if (options.page && options.page > 1) query.set('page', String(options.page));
+  if (options.pageSize) query.set('pageSize', String(options.pageSize));
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return fetchJson<CurriculumActivityPeople>(`/activity/people/${suffix}`, {
     signal: options.signal,

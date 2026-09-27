@@ -42,8 +42,8 @@ from __future__ import annotations
 import logging
 from urllib.parse import quote
 
-from django.db import DEFAULT_DB_ALIAS, models
-from django.db.models.signals import m2m_changed, post_delete, post_save
+from django.db import DEFAULT_DB_ALIAS, connection, models, transaction
+from django.db.models.signals import m2m_changed, post_delete, post_save, pre_save
 
 from curriculum_api import versioning
 
@@ -192,7 +192,10 @@ def _as_columns(value):
 
 def workspace_for_entity(entity_type):
     """Which workspace a recorded change belongs to, or '' when unregistered."""
-    return WORKSPACE_BY_ENTITY.get(entity_type, '')
+    owner = WORKSPACE_BY_ENTITY.get(entity_type, '')
+    if owner == 'admin' and entity_type != 'staff_record':
+        return 'enrolment'
+    return owner
 
 
 def entity_types_for_workspace(workspace):
@@ -200,8 +203,34 @@ def entity_types_for_workspace(workspace):
     if not workspace:
         return sorted(WORKSPACE_BY_ENTITY)
     return sorted(
-        entity for entity, owner in WORKSPACE_BY_ENTITY.items() if owner == workspace
+        entity for entity in WORKSPACE_BY_ENTITY if workspace_for_entity(entity) == workspace
     )
+
+
+#: An edit whose saves cancelled each other out once folded together.
+EMPTY_EDIT_CLAUSE = "not (action = 'updated' and cast(changed_fields as text) in ('[]', 'null'))"
+
+
+def revision_workspace_clause(workspace):
+    """Scope by the recorded source page; older rows use their record owner.
+
+    A tutor can change a coaching record from the tutor workspace. Record type
+    alone cannot answer where that edit was made. An empty scope must never
+    silently become the entire system's history.
+    """
+    clause, params = _workspace_scope(workspace)
+    return f'({clause}) and {EMPTY_EDIT_CLAUSE}', params
+
+
+def _workspace_scope(workspace):
+    if not workspace or workspace == 'all':
+        return '1 = 1', []
+    owned = entity_types_for_workspace(workspace)
+    fallback = 'entity_type in (' + ','.join(['%s'] * len(owned)) + ')' if owned else '1 = 0'
+    if not versioning.metadata_columns_available():
+        return fallback, owned
+    source = "metadata ->> 'page_workspace'" if connection.vendor == 'postgresql' else "json_extract(metadata, '$.page_workspace')"
+    return f"({source} = %s or (coalesce({source}, '') = '' and ({fallback})))", [workspace, *owned]
 
 
 def record_href(entity_type, entity_id, fallback=''):
@@ -228,12 +257,12 @@ def change_workspaces():
     Trail starts telling the truth about a newly-wired workspace on the day it
     is wired, not on the day somebody remembers to edit a list.
     """
-    return sorted({workspace for workspace in WORKSPACE_BY_ENTITY.values() if workspace})
+    return sorted({workspace_for_entity(entity) for entity in WORKSPACE_BY_ENTITY if workspace_for_entity(entity)})
 
 
 # --------------------------------------------------------------------- rows
 
-def record_table_rows(table, rows, *, reason='', deleted=False, using=None):
+def record_table_rows(table, rows, *, reason='', deleted=False, using=None, before_rows=None):
     """Record rows a raw-SQL write left behind. Never raises.
 
     The alias defaults to the one the table was registered against, because a
@@ -243,7 +272,7 @@ def record_table_rows(table, rows, *, reason='', deleted=False, using=None):
     """
     config = versioning.VERSIONED_TABLES.get(table)
     alias = using or (config or {}).get('using') or DEFAULT_DB_ALIAS
-    versioning.record_rows(table, rows, reason=reason, deleted=deleted, using=alias)
+    versioning.record_rows(table, rows, reason=reason, deleted=deleted, using=alias, before_rows=before_rows)
 
 
 # ------------------------------------------------------------------- models
@@ -325,15 +354,33 @@ def register_model(
 
     uid = f'system_audit:{entity_type}'
 
+    def before_save(sender, instance, raw=False, using=None, **kwargs):
+        instance._audit_before_row = None
+        if raw or instance.pk is None:
+            return
+        try:
+            old = sender._base_manager.using(using or alias).filter(pk=instance.pk).first()
+            if old is not None:
+                instance._audit_before_row = row_from_instance(old, fields)
+        except Exception:
+            logger.warning('Could not read the previous %s state.', entity_type, exc_info=True)
+
     def on_save(sender, instance, created=False, raw=False, using=None, **kwargs):
         # `raw` is a fixture load: the rows are being installed, not changed by
         # anybody, and there is no actor to attribute them to.
         if raw:
             return
         try:
-            record_table_rows(table, [row_from_instance(instance, fields)], using=using or alias)
+            # update_fields and F() expressions make the in-memory object an
+            # unreliable account of what was actually persisted.
+            saved = sender._base_manager.using(using or alias).get(pk=instance.pk)
+            before = getattr(instance, '_audit_before_row', None)
+            record_table_rows(table, [row_from_instance(saved, fields)], using=using or alias,
+                              before_rows=[before] if before is not None else None)
         except Exception:
             logger.warning('Could not record a %s save.', entity_type, exc_info=True)
+        finally:
+            instance.__dict__.pop('_audit_before_row', None)
 
     def on_delete(sender, instance, using=None, **kwargs):
         try:
@@ -359,8 +406,12 @@ def register_model(
         except Exception:
             logger.warning('Could not record a %s link change.', entity_type, exc_info=True)
 
-    post_save.connect(on_save, sender=model, weak=False, dispatch_uid=uid)
-    post_delete.connect(on_delete, sender=model, weak=False, dispatch_uid=uid)
+    senders = [model, *(candidate for candidate in model._meta.apps.get_models()
+                       if candidate._meta.proxy and candidate._meta.concrete_model is model)]
+    for sender in senders:
+        pre_save.connect(before_save, sender=sender, weak=False, dispatch_uid=uid)
+        post_save.connect(on_save, sender=sender, weak=False, dispatch_uid=uid)
+        post_delete.connect(on_delete, sender=sender, weak=False, dispatch_uid=uid)
     for field in model._meta.many_to_many:
         m2m_changed.connect(
             on_m2m,
@@ -433,23 +484,26 @@ class AuditedQuerySet(models.QuerySet):
     def update(self, **fields):
         if not self._config():
             return super().update(**fields)
-        affected = list(self.values_list('pk', flat=True))
-        updated = super().update(**fields)
-        self._record_pks(affected)
+        columns = versioning.SNAPSHOT_COLUMNS[self._config()['entity_type']]
+        with transaction.atomic(using=self.db):
+            before = list(self.select_for_update())
+            updated = super().update(**fields)
+            self._record_pks([row.pk for row in before], before_rows=[row_from_instance(row, columns) for row in before])
         return updated
 
     update.alters_data = True
 
     def bulk_create(self, objs, *args, **kwargs):
         created = super().bulk_create(objs, *args, **kwargs)
-        self._record_instances(created)
+        self._record_pks([obj.pk for obj in created if obj.pk is not None])
         return created
 
     bulk_create.alters_data = True
 
     def bulk_update(self, objs, fields, *args, **kwargs):
         result = super().bulk_update(objs, fields, *args, **kwargs)
-        self._record_instances(objs)
+        # The objects may contain unsaved values in fields outside `fields`.
+        self._record_pks([obj.pk for obj in objs])
         return result
 
     bulk_update.alters_data = True
@@ -471,7 +525,7 @@ class AuditedQuerySet(models.QuerySet):
     def _config(self):
         return versioning.VERSIONED_TABLES.get(self.model._meta.db_table)
 
-    def _record_instances(self, instances, deleted=False):
+    def _record_instances(self, instances, deleted=False, before_rows=None):
         config = self._config()
         if not config or not instances:
             return
@@ -483,16 +537,17 @@ class AuditedQuerySet(models.QuerySet):
                 reason='bulk-delete' if deleted else '',
                 deleted=deleted,
                 using=self.db,
+                before_rows=before_rows,
             )
         except Exception:
             logger.warning('Could not record a bulk write of %s.', self.model.__name__, exc_info=True)
 
-    def _record_pks(self, pks):
+    def _record_pks(self, pks, before_rows=None):
         if not pks:
             return
         try:
             # A fresh queryset: `self` has already been consumed by the update
             # and its filters may no longer match the rows that were changed.
-            self._record_instances(list(self.model._base_manager.using(self.db).filter(pk__in=pks)))
+            self._record_instances(list(self.model._base_manager.using(self.db).filter(pk__in=pks)), before_rows=before_rows)
         except Exception:
             logger.warning('Could not read back a bulk update of %s.', self.model.__name__, exc_info=True)
