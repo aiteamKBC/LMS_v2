@@ -1517,9 +1517,14 @@ def pair_planned_occurrences(planned, existing_rows):
     """
     remaining = [row for row in existing_rows if clean_str(row.get('id'))]
     pairs = [None] * len(planned)
-    # Live rows before cancelled ones, so re-adding a date revives nothing while
-    # a live row already runs on it.
-    by_minute = sorted(remaining, key=lambda row: clean_str(row.get('status')) == 'cancelled')
+    # Cancelled rows are audit history, not reusable meeting identity. Keeping
+    # them out of both matching passes lets the replacement writer park any
+    # positive historical number before a new active row claims it.
+    active_remaining = [
+        row for row in remaining
+        if clean_str(row.get('status')).lower() not in {'cancelled', 'canceled', 'declined', 'deleted', 'removed'}
+    ]
+    by_minute = active_remaining
     for index, item in enumerate(planned):
         key = teams_calendar_minute_key(item['start'])
         match = next((row for row in by_minute if row in remaining
@@ -1530,7 +1535,8 @@ def pair_planned_occurrences(planned, existing_rows):
     for index, item in enumerate(planned):
         if pairs[index] is not None:
             continue
-        match = next((row for row in remaining if occurrence_session_number(row) == item['session_number']), None)
+        match = next((row for row in active_remaining if row in remaining
+                      and occurrence_session_number(row) == item['session_number']), None)
         if match is not None:
             remaining.remove(match)
         pairs[index] = (item, match)
@@ -1571,15 +1577,11 @@ def replace_live_session_occurrences(live_session_id, payload, utc_start, durati
                 authoring_upsert(LIVE_SESSION_OCCURRENCES_TABLE, ['live_session_id', 'session_number'],
                                  {**values, 'id': f'OCC-{uuid.uuid4().hex.upper()}', 'created_at': now})
         if rows:
-            # A row no planned session kept is cancelled, keeping its number
-            # unless a session now needs it -- then it takes the next free one.
-            taken = wanted_numbers | {occurrence_session_number(row) for row in unclaimed if row not in parked}
-            next_free = max([0, *taken]) + 1
+            # Rows no planned session kept remain audit history. A parked row
+            # stays in the negative range so it cannot block a future active
+            # session from reclaiming its former positive number.
             for row in unclaimed:
                 values = {'status': 'cancelled', 'updated_at': now}
-                if row in parked:
-                    values['session_number'] = next_free
-                    next_free += 1
                 update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [clean_str(row.get('id'))], values)
     return rows
 
@@ -1987,7 +1989,7 @@ def teams_single_occurrence_payload(title, target, attendees, transaction_id='')
         'onlineMeetingProvider': 'teamsForBusiness',
         'responseRequested': True,
         'allowNewTimeProposals': True,
-        'hideAttendees': False,
+        'hideAttendees': True,
     }
     transaction_id = clean_str(transaction_id)[:255]
     if transaction_id:
@@ -2165,6 +2167,7 @@ def apply_teams_occurrence_shifts(
     target_occurrences,
     invited_people,
     meeting_options=None,
+    existing_occurrences=None,
 ):
     """Move the plain weekly Graph occurrences onto the wizard's shifted dates.
 
@@ -2174,9 +2177,10 @@ def apply_teams_occurrence_shifts(
     shifted dates on both calls, and skipping the reconciliation leaves Teams showing
     sessions on the very holidays the wizard moved them off.
 
-    Returns `(warnings, recreated)`. The second value is retained for backward
-    compatibility and is always empty for recurring module calendars: a module
-    must keep one online meeting and one join URL for every occurrence.
+    Returns `(warnings, recreated)`. A recurrence occurrence that Microsoft has
+    already deleted cannot be restored inside the series. In that one case a
+    standalone online event is created without recipients, given the same meeting
+    options, and returned so its real event/link identity can be persisted.
     """
     from coach_api.views import microsoft_graph_request
 
@@ -2198,10 +2202,6 @@ def apply_teams_occurrence_shifts(
         'endDateTime': instance_end,
         '$top': 200,
     })
-    target_by_key = {
-        teams_calendar_minute_key(target['start']): target
-        for target in target_occurrences
-    }
     try:
         instances = teams_expanded_instances(owner_key, event_key, instance_query, len(target_occurrences))
         # Claim instances that already sit on a wanted date before assigning the
@@ -2209,10 +2209,89 @@ def apply_teams_occurrence_shifts(
         # correct onto another wanted date and duplicate it, because a shifted
         # series spans more weekly slots than there are sessions.
         sorted_targets = sorted(target_occurrences, key=lambda item: item['session_number'])
+        series_event_id = urllib_parse.unquote(event_key)
+        active_statuses = {'cancelled', 'canceled', 'declined', 'deleted', 'removed'}
+        standalone_rows = [
+            row for row in (existing_occurrences or [])
+            if clean_str(row.get('graph_event_id'))
+            and clean_str(row.get('graph_event_id')) != series_event_id
+            and clean_str(row.get('status')).lower() not in active_statuses
+        ]
+        standalone_assignments = {}
+        used_standalone_ids = set()
+        for target in sorted_targets:
+            target_key = teams_calendar_minute_key(target['start'])
+            match = next(
+                (
+                    row for row in standalone_rows
+                    if clean_str(row.get('id')) not in used_standalone_ids
+                    and teams_calendar_minute_key(row.get('scheduled_start')) == target_key
+                ),
+                None,
+            )
+            if match is None:
+                match = next(
+                    (
+                        row for row in standalone_rows
+                        if clean_str(row.get('id')) not in used_standalone_ids
+                        and int(row.get('session_number') or 0) == int(target['session_number'])
+                    ),
+                    None,
+                )
+            if match is not None:
+                standalone_assignments[target['session_number']] = match
+                used_standalone_ids.add(clean_str(match.get('id')))
+
+        # Existing standalone replacements remain first-class occurrences on
+        # later schedule or people saves. Move and reconfigure their own events
+        # instead of trying to pull them back into a recurrence that cannot own
+        # them again.
+        for target in sorted_targets:
+            row = standalone_assignments.get(target['session_number'])
+            if not row:
+                continue
+            standalone_id = clean_str(row.get('graph_event_id'))
+            standalone_path = f'users/{owner_key}/events/{urllib_parse.quote(standalone_id, safe="")}'
+            try:
+                standalone_event = microsoft_graph_request('GET', standalone_path)
+                if standalone_event.get('isCancelled'):
+                    raise RuntimeError('The standalone Teams occurrence is cancelled.')
+                current_start = teams_calendar_minute_key((standalone_event.get('start') or {}).get('dateTime'))
+                current_end = teams_calendar_minute_key((standalone_event.get('end') or {}).get('dateTime'))
+                if current_start != teams_calendar_minute_key(target['start']) or current_end != teams_calendar_minute_key(target['end']):
+                    standalone_event = microsoft_graph_request(
+                        'PATCH', standalone_path,
+                        payload={
+                            'start': {'dateTime': target['start'].replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
+                            'end': {'dateTime': target['end'].replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
+                            'hideAttendees': True,
+                        },
+                        extra_headers=GRAPH_SILENT_INVITE_HEADERS,
+                    ) or standalone_event
+                standalone = teams_standalone_occurrence_meeting(
+                    owner_key, standalone_event, target, invited_people, meeting_options,
+                )
+                warnings.extend(standalone.pop('warnings'))
+                recreated_details.append(standalone)
+            except RuntimeError as exc:
+                warnings.append({
+                    'code': 'teams_standalone_occurrence_not_updated',
+                    'message': 'Microsoft Teams could not verify the separately restored session.',
+                    'detail': str(exc),
+                })
+
+        series_targets = [
+            target for target in sorted_targets
+            if target['session_number'] not in standalone_assignments
+        ]
+        series_target_keys = {
+            teams_calendar_minute_key(target['start'])
+            for target in series_targets
+        }
         remaining_instances = list(instances)
         paired_instances = []
         unmatched_targets = []
-        for target in sorted_targets:
+        for target in series_targets:
             target_key = teams_calendar_minute_key(target['start'])
             match = next(
                 (
@@ -2272,7 +2351,11 @@ def apply_teams_occurrence_shifts(
                     'message': 'Microsoft Teams could not move this occurrence, so it was left in the recurring series to preserve the module\'s fixed join URL.',
                     'detail': str(exc),
                 })
-        if not remaining_instances and not moved_instances:
+        if (
+            not remaining_instances
+            and not moved_instances
+            and len(paired_instances) == len(series_targets)
+        ):
             # Every occurrence Microsoft listed was already on a wanted date and
             # none had to move, so nothing can be left over to delete. Re-reading
             # the series here only spends another round trip on a calendar that
@@ -2290,11 +2373,37 @@ def apply_teams_occurrence_shifts(
             # it on that reading destroys the session the move had just placed.
             if instance_id in moved_instances:
                 continue
-            if current_key and current_key not in target_by_key and instance_id not in protected_instances:
+            if current_key and current_key not in series_target_keys and instance_id not in protected_instances:
                 microsoft_graph_request(
                     'DELETE', f'users/{owner_key}/events/{urllib_parse.quote(instance_id, safe="")}',
                     extra_headers=GRAPH_SILENT_INVITE_HEADERS,
                 )
+        master_keys = {
+            teams_calendar_minute_key((instance.get('start') or {}).get('dateTime'))
+            for instance in instances
+        }
+        standalone_numbers = {
+            int(detail.get('session_number') or 0)
+            for detail in recreated_details
+            if clean_str(detail.get('graph_event_id'))
+        }
+        for target in series_targets:
+            target_key = teams_calendar_minute_key(target['start'])
+            if target_key in master_keys or int(target['session_number']) in standalone_numbers:
+                continue
+            transaction_seed = f'{series_event_id}:{target["session_number"]}:{target_key}'
+            transaction_id = hashlib.sha256(transaction_seed.encode('utf-8')).hexdigest()
+            recreated = microsoft_graph_request(
+                'POST',
+                f'users/{owner_key}/events',
+                payload=teams_single_occurrence_payload(title, target, [], transaction_id),
+                extra_headers=GRAPH_SILENT_INVITE_HEADERS,
+            )
+            standalone = teams_standalone_occurrence_meeting(
+                owner_key, recreated, target, invited_people, meeting_options,
+            )
+            warnings.extend(standalone.pop('warnings'))
+            recreated_details.append(standalone)
     except RuntimeError as exc:
         logger.warning('Unable to reconcile individual Teams event instances: %s', exc)
         warnings.append({
@@ -2305,7 +2414,82 @@ def apply_teams_occurrence_shifts(
     return warnings, recreated_details
 
 
-def reschedule_single_live_session_occurrence(series, occurrence, new_start_utc, duration):
+def verify_teams_calendar_with_standalones(
+    request, owner_key, event_id, targets, expected_join_url='', recurring=True,
+    occurrence_details=None,
+):
+    """Verify the master series and any deleted occurrences restored separately."""
+    details_by_number = {
+        int(detail.get('session_number') or 0): detail
+        for detail in (occurrence_details or [])
+        if clean_str(detail.get('graph_event_id'))
+        and clean_str(detail.get('graph_event_id')) != clean_str(event_id)
+    }
+    master_targets = [
+        target for target in targets
+        if int(target['session_number']) not in details_by_number
+    ]
+    if not master_targets:
+        raise CalendarMismatch('The recurring Teams calendar has no verified series occurrences.')
+    event = verify_calendar(
+        request, owner_key, event_id, master_targets, expected_join_url, recurring,
+    )
+    for target in targets:
+        detail = details_by_number.get(int(target['session_number']))
+        if not detail:
+            continue
+        verify_calendar(
+            request,
+            owner_key,
+            clean_str(detail.get('graph_event_id')),
+            [target],
+            clean_str(detail.get('join_url')),
+            False,
+        )
+    return event
+
+
+def publish_teams_calendar_attendees(
+    request, owner_key, event, attendees, occurrence_details=None, *, force=False,
+    title='',
+):
+    """Publish the final invitation list to the master and restored sessions."""
+    if force:
+        request(
+            'PATCH',
+            f'users/{owner_key}/events/{urllib_parse.quote(clean_str(event.get("id")), safe="")}',
+            payload={
+                'subject': clean_str(title) or clean_str(event.get('subject')),
+                'hideAttendees': True,
+                'attendees': attendees,
+            },
+        )
+    else:
+        publish_attendees(request, owner_key, event, attendees)
+    for detail in occurrence_details or []:
+        event_id = clean_str(detail.get('graph_event_id'))
+        if not event_id or event_id == clean_str(event.get('id')):
+            continue
+        standalone = request(
+            'GET', f'users/{owner_key}/events/{urllib_parse.quote(event_id, safe="")}',
+        )
+        if force:
+            request(
+                'PATCH',
+                f'users/{owner_key}/events/{urllib_parse.quote(event_id, safe="")}',
+                payload={
+                    'subject': clean_str(title) or clean_str(standalone.get('subject')),
+                    'hideAttendees': True,
+                    'attendees': attendees,
+                },
+            )
+        else:
+            publish_attendees(request, owner_key, standalone, attendees)
+
+
+def reschedule_single_live_session_occurrence(
+    series, occurrence, new_start_utc, duration, *, notify_attendees=False,
+):
     """Move one session of a live-session series to a new instant via Graph.
 
     The module schedule sets every session's time; this is the escape hatch for
@@ -2344,7 +2528,10 @@ def reschedule_single_live_session_occurrence(series, occurrence, new_start_utc,
         actual_link = clean_str((current.get('onlineMeeting') or {}).get('joinUrl'))
         if current.get('isCancelled') or actual_link != join_url or not safe_teams_join_url(actual_link):
             raise RuntimeError('The session join link or calendar identity could not be verified.')
-        microsoft_graph_request('PATCH', path, payload=patch_body)
+        microsoft_graph_request(
+            'PATCH', path, payload=patch_body,
+            extra_headers=None if notify_attendees else GRAPH_SILENT_INVITE_HEADERS,
+        )
         verify_calendar(microsoft_graph_request, owner_key, instance_id, [
             {'session_number': occurrence.get('session_number') or 1,
              'start': utc_datetime(new_start_utc), 'end': utc_datetime(new_end_utc)},
@@ -2690,7 +2877,6 @@ def curriculum_teams_meeting(request):
     payload = json_body(request)
     if not isinstance(payload, dict):
         return json_error('A valid JSON body is required.')
-
     # One module delivery owns one active Teams calendar. Creating from a
     # second live-session component used to POST another real Outlook event
     # first and only then mark the previous LMS row as superseded, leaving
@@ -2862,13 +3048,29 @@ def curriculum_teams_meeting(request):
     try:
         if warnings or not settings_applied:
             raise RuntimeError('The calendar or meeting options could not be verified. Invitations remain pending.')
-        event = verify_calendar(microsoft_graph_request, owner_key, event_id, targets, join_url, repeat != 'none')
-        publish_attendees(microsoft_graph_request, owner_key, event, event_payload['attendees'])
+        event = verify_teams_calendar_with_standalones(
+            microsoft_graph_request, owner_key, event_id, targets, join_url,
+            repeat != 'none', recreated_details,
+        )
+        publish_teams_calendar_attendees(
+            microsoft_graph_request, owner_key, event, event_payload['attendees'],
+            recreated_details,
+        )
         # Publishing must not resurrect deleted slots or change the shared link.
-        event = verify_calendar(microsoft_graph_request, owner_key, event_id, targets, join_url, repeat != 'none')
+        event = verify_teams_calendar_with_standalones(
+            microsoft_graph_request, owner_key, event_id, targets, join_url,
+            repeat != 'none', recreated_details,
+        )
         occurrence_rows = replace_live_session_occurrences(
             live_session_id, payload, utc_start, duration, repeat, occurrences,
             event_id=event_id, join_url=join_url,
+        )
+        persist_recreated_occurrence_details(live_session_id, recreated_details)
+        occurrence_rows = authoring_fetch_all(
+            LIVE_SESSION_OCCURRENCES_TABLE,
+            'live_session_id = %s and status != %s',
+            [live_session_id, 'cancelled'],
+            'session_number asc',
         )
         tracked_occurrences = len(occurrence_rows)
         update_authoring_rows(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id], {
@@ -3219,6 +3421,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     payload = json_body(request)
     if not isinstance(payload, dict):
         return json_error('A valid JSON body is required.')
+    notify_attendees = truthy(payload.get('notifyAttendees'))
     series = series_rows[0]
     schedule_before = held_schedule_snapshot(live_session_id)
     # Omitted options retain their saved values for schedule-only callers.
@@ -3293,6 +3496,10 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             code='teams_co_organizers_schema_required',
         )
     invited_people = list(dict.fromkeys([*co_organizers, *presenters, *attendees]))
+    calendar_attendees = [
+        {'emailAddress': {'address': email, 'name': email.split('@', 1)[0]}, 'type': 'required'}
+        for email in invited_people
+    ]
 
     duration = max(15, min(1440, int(payload.get('durationMinutes') or series.get('duration_minutes') or 60)))
     repeat = clean_str(payload.get('repeat') or series.get('repeat_pattern')).lower() or 'none'
@@ -3323,6 +3530,12 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
 
     owner_key = urllib_parse.quote(organizer, safe='')
     event_key = urllib_parse.quote(event_id, safe='')
+    current_occurrences = authoring_fetch_all(
+        LIVE_SESSION_OCCURRENCES_TABLE,
+        'live_session_id = %s and status != %s',
+        [live_session_id, 'cancelled'],
+        'session_number asc',
+    )
     dates_already_verified = False
     try:
         current = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}')
@@ -3332,7 +3545,10 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         if series.get('join_url') and current_join != series['join_url']:
             return json_error('The Microsoft join link differs from the saved calendar. Review it before continuing.', status=409)
         try:
-            current = verify_calendar(microsoft_graph_request, owner_key, event_id, targets, current_join, repeat != 'none')
+            current = verify_teams_calendar_with_standalones(
+                microsoft_graph_request, owner_key, event_id, targets, current_join,
+                repeat != 'none', current_occurrences,
+            )
             dates_already_verified = True
         except CalendarMismatch:
             pass  # A known difference is the reason to update. Read failures still abort.
@@ -3340,13 +3556,22 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             # Saving people must not reapply a series pattern and revive cancelled slots.
             event = current
             if current.get('hideAttendees') is not True:
-                microsoft_graph_request('PATCH', f'users/{owner_key}/events/{event_key}', payload={'hideAttendees': True})
+                microsoft_graph_request(
+                    'PATCH', f'users/{owner_key}/events/{event_key}',
+                    payload={'hideAttendees': True}, extra_headers=GRAPH_SILENT_INVITE_HEADERS,
+                )
         elif dates_already_verified:
             event = current
             if current.get('subject') != title:
-                event = microsoft_graph_request('PATCH', f'users/{owner_key}/events/{event_key}', payload={'subject': title})
+                event = microsoft_graph_request(
+                    'PATCH', f'users/{owner_key}/events/{event_key}',
+                    payload={'subject': title}, extra_headers=GRAPH_SILENT_INVITE_HEADERS,
+                )
         else:
-            event = microsoft_graph_request('PATCH', f'users/{owner_key}/events/{event_key}', payload=event_patch)
+            event = microsoft_graph_request(
+                'PATCH', f'users/{owner_key}/events/{event_key}', payload=event_patch,
+                extra_headers=GRAPH_SILENT_INVITE_HEADERS,
+            )
         if not isinstance(event, dict):
             event = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}')
     except RuntimeError as exc:
@@ -3362,9 +3587,11 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         'co_organizers': co_organizers,
     }
     warnings, recreated_details = [], []
-    if not payload.get('peopleOnly') and not dates_already_verified and repeat != 'none':
+    if repeat != 'none':
         warnings, recreated_details = apply_teams_occurrence_shifts(
-            owner_key, event_key, title, teams_shifted_occurrence_targets(payload, duration), invited_people, meeting_options,
+            owner_key, event_key, title,
+            teams_shifted_occurrence_targets(payload, duration), invited_people,
+            meeting_options, current_occurrences,
         )
 
     join_url = clean_str((event.get('onlineMeeting') or {}).get('joinUrl')) or clean_str(series.get('join_url'))
@@ -3387,15 +3614,27 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     try:
         if warnings or not _applied:
             raise RuntimeError('Microsoft did not accept every calendar or meeting option change.')
-        event = verify_calendar(microsoft_graph_request, owner_key, event_id, targets, join_url, repeat != 'none')
-        # Re-verify only when the invitation list was actually written. Publishing
-        # nothing cannot have revived a deleted slot or changed the shared link,
-        # and this path is already a long line of serial Microsoft round trips.
-        if publish_attendees(microsoft_graph_request, owner_key, event, [
-            {'emailAddress': {'address': email, 'name': email.split('@', 1)[0]}, 'type': 'required'}
-            for email in invited_people
-        ]):
-            event = verify_calendar(microsoft_graph_request, owner_key, event_id, targets, join_url, repeat != 'none')
+        occurrence_details = recreated_details or current_occurrences
+        event = verify_teams_calendar_with_standalones(
+            microsoft_graph_request, owner_key, event_id, targets, join_url,
+            repeat != 'none', occurrence_details,
+        )
+        # Keep the saved attendee/presenter/co-organizer roles in the online
+        # meeting, but do not send another invitation during a repair/update.
+        # The admin review flow can opt in explicitly with notifyAttendees=true.
+        if notify_attendees:
+            # Only notify after the organizer's master and every exception have
+            # been reconciled and verified. Updating the master then lets
+            # Exchange send the final series/exception state to attendees; it
+            # also avoids telling learners about a half-applied repair.
+            publish_teams_calendar_attendees(
+                microsoft_graph_request, owner_key, event, calendar_attendees,
+                occurrence_details, force=True, title=title,
+            )
+            event = verify_teams_calendar_with_standalones(
+                microsoft_graph_request, owner_key, event_id, targets, join_url,
+                repeat != 'none', occurrence_details,
+            )
     except RuntimeError as exc:
         update_authoring_rows(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id], {
             'warnings': json_db_value([*warnings, {'code': 'teams_calendar_unverified', 'message': str(exc)}]),
@@ -3414,6 +3653,13 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         join_url=join_url,
     )
     persist_recreated_occurrence_details(live_session_id, recreated_details)
+    if recreated_details:
+        occurrence_rows = authoring_fetch_all(
+            LIVE_SESSION_OCCURRENCES_TABLE,
+            'live_session_id = %s and status != %s',
+            [live_session_id, 'cancelled'],
+            'session_number asc',
+        )
     series_update = {
         **option_updates,
         'hide_attendees': True,
@@ -16066,6 +16312,7 @@ def live_occurrence_component_settings(occurrence, series_settings):
     if local_start:
         settings['sessionDate'] = local_start.date().isoformat()
         settings['sessionDay'] = local_start.strftime('%A')
+        settings['sessionTime'] = local_start.strftime('%H:%M')
     end_at = parse_graph_datetime(end_value)
     if start_at and end_at and end_at > start_at:
         minutes = int((end_at - start_at).total_seconds() // 60)
@@ -16182,6 +16429,22 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
         with none.
         """
         existing_settings = existing_settings if isinstance(existing_settings, dict) else {}
+        tracked_id = clean_str(existing_settings.get('teamsOccurrenceId'))
+        tracked_number = parse_int(existing_settings.get('teamsSessionNumber'), 0)
+        tracked_series = clean_str(existing_settings.get('teamsLiveSessionId'))
+        tracked = next((row for row in occurrence_rows if (
+            clean_str(row.get('id')) not in claimed_occurrence_ids
+            and (
+                (tracked_id and clean_str(row.get('id')) == tracked_id)
+                or (
+                    tracked_series == clean_str(series_row.get('id'))
+                    and tracked_number > 0
+                    and parse_int(row.get('session_number'), 0) == tracked_number
+                )
+            )
+        )), None)
+        if tracked:
+            return tracked
         stored_date = clean_str(existing_settings.get('sessionDate'))[:10]
         found = free_occurrence_on(stored_date)
         if found:
