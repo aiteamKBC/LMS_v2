@@ -2,25 +2,26 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import type { BookableSessionType } from '@/api/learnerCalendar';
 
 export const COACH_SESSION_TYPES = [
-  { value: 'first-session', label: 'First Session', icon: 'ri-hand-heart-line', desc: 'Your first session with your coach' },
+  { value: 'catch-up', label: 'Catch-up', icon: 'ri-chat-3-line', desc: 'Quick check-in on your progress' },
+  { value: 'student-support', label: 'Student Support', icon: 'ri-heart-2-line', desc: 'Help with challenges or wellbeing' },
   { value: 'progress-review', label: 'PR', icon: 'ri-line-chart-line', desc: 'Progress Review' },
   { value: 'mcr', label: 'MCM', icon: 'ri-calendar-check-line', desc: 'Monthly Coaching Meeting' },
   { value: 'gateway', label: 'Gateway', icon: 'ri-flag-line', desc: 'Gateway review or assessment' },
-  { value: 'catch-up', label: 'Catch-up', icon: 'ri-chat-3-line', desc: 'Quick check-in on your progress' },
-  { value: 'student-support', label: 'Student Support', icon: 'ri-heart-2-line', desc: 'Help with challenges or wellbeing' },
   { value: 'other', label: 'Other', icon: 'ri-more-line', desc: 'Request another session type' },
 ] as const;
 
 export type CoachSessionRequestType = typeof COACH_SESSION_TYPES[number]['value'];
 
-export default function CoachSessionTypePicker({ value, onChange, excludeTypes }: {
+export const COACH_APPROVAL_SESSION_TYPES: ReadonlySet<BookableSessionType> = new Set([
+  'student-support', 'gateway', 'other',
+]);
+
+export default function CoachSessionTypePicker({ value, onChange }: {
   value: BookableSessionType;
   onChange: (value: CoachSessionRequestType) => void;
-  excludeTypes?: readonly CoachSessionRequestType[];
 }) {
-  const visibleTypes = COACH_SESSION_TYPES.filter(type => !excludeTypes?.includes(type.value));
   return <div role="group" aria-label="Session Type" className="grid grid-cols-2 gap-3">
-    {visibleTypes.map((type, index, list) => <button
+    {COACH_SESSION_TYPES.map((type, index, list) => <button
       key={type.value}
       type="button"
       aria-pressed={value === type.value}
