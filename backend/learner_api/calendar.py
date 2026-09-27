@@ -1011,7 +1011,10 @@ def _learner_visible_review_definition(definition):
 @learner_self_or_staff(kwarg="pk")
 def learner_calendar_event_review_pdf(request, kind, pk, event_key):
     """Download the signed MCM PDF for a learner-visible calendar review."""
-    response = learner_calendar_event_review(request, kind, pk, event_key)
+    # The review view has its own learner_self_or_staff decorator, which reads
+    # ``pk`` from keyword arguments. Preserve that contract when delegating so
+    # the nested authorization gate can identify the learner as well.
+    response = learner_calendar_event_review(request, kind=kind, pk=pk, event_key=event_key)
     if getattr(response, "status_code", 500) != 200:
         return response
     try:
