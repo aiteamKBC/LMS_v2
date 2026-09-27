@@ -1798,12 +1798,14 @@ def fetch_caseload_dashboard_profiles(owner_email: str) -> list[LearnerProfile]:
 
 
 def caseload_dashboard_progress_projections(rows) -> dict[int, dict]:
-    """Project established caseload progress fields from bulk-prefetched rows.
+    """Project established KSB fallback and activity metadata in bulk.
 
-    This deliberately delegates to ``serialize_caseload_learner`` rather than
-    creating another KSB/activity calculation. ``refresh_live_snapshots=False``
-    makes the projection read-only, and every relation it consumes is loaded
-    in bounded prefetch queries by ``fetch_caseload_dashboard_profiles``.
+    Programme metrics belong exclusively to ``caseload_canonical_metrics``.
+    KSB target-code counts remain the established Caseload fallback when the
+    activity-point metric is unavailable; a ready canonical KSB metric overlays
+    them later. Training-plan activity counts must never be copied here because
+    they would overwrite the historical + native population with differently-
+    scoped values such as 158 / 133.
     """
     projections = {}
     for row in rows or []:
@@ -1816,17 +1818,12 @@ def caseload_dashboard_progress_projections(rows) -> dict[int, dict]:
             expected_otjh_by_component_id={},
             curriculum_ksbs=row.ksbs,
         )
-        activity_available = bool(learner.get("attendanceRateAvailable"))
         projections[int(row.id)] = {
             "ksbCompleted": learner.get("ksbCompleted"),
             "ksbTarget": learner.get("ksbTarget"),
             "ksbStatus": learner.get("ksbStatus") or "",
             "ksbProgress": learner.get("ksbProgress") if learner.get("ksbProgress") is not None else 0,
             "ksbProgressAvailable": bool(learner.get("ksbProgressAvailable")),
-            "componentsCompleted": learner.get("componentsCompleted"),
-            "componentsPlanned": learner.get("componentsPlanned"),
-            "activityProgress": learner.get("attendanceRate") if activity_available else None,
-            "activityProgressAvailable": activity_available,
             "lastActivity": learner.get("lastActivity"),
             "lastActivityDate": learner.get("lastActivityDate"),
             "lastActivityLabel": learner.get("lastActivityLabel"),
@@ -2696,10 +2693,11 @@ def apply_canonical_learner_metrics(payload: dict, metrics: dict | None) -> dict
     payload["programmeProgressAvailable"] = programme.get("status") == "ready"
     payload["componentsCompleted"] = programme.get("completed")
     payload["componentsPlanned"] = programme.get("total")
-    # The canonical metrics reader can report ``unavailable`` when one of the
-    # activity KSB mappings is incomplete. Keep the caseload snapshot in that
-    # case instead of replacing known values with ``None`` and rendering ``--``
-    # for every learner.
+    payload["activityProgress"] = programme.get("percent")
+    payload["activityProgressAvailable"] = programme.get("status") == "ready"
+    # Preserve the established fallback when the canonical reader cannot
+    # produce a complete KSB population. Dashboard payloads start unavailable,
+    # so no ratio is invented here.
     if ksb.get("status") == "ready":
         payload["ksbCompleted"] = ksb.get("completed")
         payload["ksbTarget"] = ksb.get("total")
@@ -11560,11 +11558,15 @@ def coach_dashboard(request):
     """
     endpoint_started = perf_counter()
     owner_email = authenticated_coach_email(request)
-    # Reuse the compact read-model payload briefly so a browser refresh or
-    # React remount does not repeat even the snapshot lookup.
-    dashboard_cache_key = f"coach-dashboard:v6:{normalize_email(owner_email)}"
-    cached_dashboard = cache.get(dashboard_cache_key)
+    # coach_access_required has already authenticated the caller, resolved
+    # viewAsCoach, and installed the effective coach identity at this point.
+    from .dashboard_cache import cache_coach_dashboard, get_cached_coach_dashboard
+    cached_dashboard = get_cached_coach_dashboard(owner_email)
     if cached_dashboard is not None:
+        _coach_perf(
+            "dashboard", "cache_hit", endpoint_started,
+            learner_count=len(cached_dashboard.get("learners", [])),
+        )
         return JsonResponse(cached_dashboard)
     try:
         from .dashboard_service import CoachDashboardService
@@ -11578,8 +11580,13 @@ def coach_dashboard(request):
             status=503,
         )
 
+    compute_duration_ms = round((perf_counter() - endpoint_started) * 1000, 2)
+    logger.info(
+        "coach_dashboard_cache status=MISS_COMPUTED namespace=coach-dashboard-summary:v1 duration_ms=%s",
+        compute_duration_ms,
+    )
     _coach_perf("dashboard", "total", endpoint_started, learner_count=len(response_payload.get("learners", [])))
-    cache.set(dashboard_cache_key, response_payload, 30)
+    cache_coach_dashboard(owner_email, response_payload)
     return JsonResponse(response_payload)
 
 

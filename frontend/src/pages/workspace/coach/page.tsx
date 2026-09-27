@@ -122,13 +122,18 @@ interface CoachLearner {
   activityProgressAvailable?: boolean;
   componentsCompleted?: number | null;
   componentsPlanned?: number | null;
+  attendancePresent?: number | null;
+  attendanceSessions?: number | null;
+  attendanceAbsent?: number | null;
   attendanceLastSession?: string | null;
   attendanceLastSessionDate?: string | null;
   otjhCompleted: number;
   otjhTarget: number;
   otjhVariance?: number | null;
   otjhStatus?: string | null;
-  ksbProgress: number;
+  ksbCompleted?: number | null;
+  ksbTarget?: number | null;
+  ksbProgress: number | null;
   ksbProgressAvailable?: boolean;
   /** Distinct KSB codes evidenced in the audit mapping. A count, not a
    *  percentage -- the mapping spans several standards, so it carries no
@@ -373,13 +378,18 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     activityProgressAvailable: Boolean(learner.activityProgressAvailable),
     componentsCompleted: learner.componentsCompleted ?? null,
     componentsPlanned: learner.componentsPlanned ?? null,
+    attendancePresent: learner.attendancePresent ?? null,
+    attendanceSessions: learner.attendanceSessions ?? null,
+    attendanceAbsent: learner.attendanceAbsent ?? null,
     attendanceLastSession: learner.attendanceLastSession ?? null,
     attendanceLastSessionDate: learner.attendanceLastSessionDate ?? null,
     otjhCompleted: toNumber(learner.otjhCompleted),
     otjhTarget: Math.max(toNumber(learner.otjhTarget), 0),
     otjhVariance: learner.otjhVariance ?? null,
     otjhStatus: displayValue(learner.otjhStatus),
-    ksbProgress: clampPercent(learner.ksbProgress),
+    ksbCompleted: learner.ksbCompleted ?? null,
+    ksbTarget: learner.ksbTarget ?? null,
+    ksbProgress: learner.ksbProgress == null ? null : clampPercent(learner.ksbProgress),
     ksbProgressAvailable: learner.ksbProgressAvailable,
     ksbEvidencedCount: learner.ksbEvidencedCount ?? null,
     evidenceCount: toNumber(learner.evidenceCount),

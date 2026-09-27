@@ -85,7 +85,9 @@ class CoachDashboardService:
     def __init__(self, owner_email: str, *, today: date | None = None):
         self.context = CoachDashboardContext(owner_email, today or date.today())
 
-    SCHEMA_VERSION = 2
+    # v3 restores canonical programme/KSB ratios and carries attendance detail
+    # counts through to the embedded caseload. Do not serve persisted v2 rows.
+    SCHEMA_VERSION = 3
 
     def build(self) -> dict:
         """Read the persistent projection; build once only if it is absent."""
@@ -220,10 +222,10 @@ class CoachDashboardService:
         }
         for row, learner in zip(context.rows, context.learners):
             learner.update(last_dates.get(int(row.id), {"lastPr": None, "lastMcm": None}))
+            learner.update(progress_projections.get(int(row.id), {}))
             domain.apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
             domain.apply_evidenced_ksb_count(learner, ksb_counts.get(int(row.id)))
             domain.apply_canonical_learner_metrics(learner, canonical_metrics.get(int(row.id)))
-            learner.update(progress_projections.get(int(row.id), {}))
             domain.apply_aptem_variance_status(learner, aptem_by_profile.get(int(row.id)))
             domain.apply_attendance_summary(learner, attendance_by_id.get(int(row.id)))
             learner["attendanceAvailable"] = bool(learner.get("attendanceRateAvailable"))

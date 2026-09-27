@@ -125,6 +125,9 @@ it('renders dashboard-owned KSB, activity, and attendance metrics without a case
   expect(within(row!).getByText('25%')).toBeVisible();
   expect(within(row!).getByText('40%')).toBeVisible();
   expect(within(row!).getByText('80%')).toBeVisible();
+  expect(within(row!).getByText('3 / 12')).toBeVisible();
+  expect(within(row!).getByText('8 / 20')).toBeVisible();
+  expect(within(row!).getByText('8 / 10')).toBeVisible();
   expect(mocks.load).toHaveBeenCalledTimes(1);
   expect(mocks.coachFetch).not.toHaveBeenCalled();
 });

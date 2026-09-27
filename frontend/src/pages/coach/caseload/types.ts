@@ -91,10 +91,10 @@ export interface Learner {
    *  rather than the training-plan reflection totals. */
   otjhSource?: 'audit';
 
-  ksbCompleted?: number;
-  ksbTarget?: number;
+  ksbCompleted?: number | null;
+  ksbTarget?: number | null;
   ksbStatus?: string;
-  ksbProgress: number;
+  ksbProgress: number | null;
   ksbProgressAvailable?: boolean;
   knowledgeCompleted?: number;
   knowledgeTarget?: number;

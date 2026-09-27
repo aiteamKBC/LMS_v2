@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from django.db import DatabaseError
+from django.core.cache import cache
 from django.db.utils import ConnectionDoesNotExist
 from django.test import RequestFactory, SimpleTestCase, override_settings
 from django.utils import timezone
@@ -530,6 +531,7 @@ class CanonicalCoachMetricsTests(SimpleTestCase):
         self.assertEqual(result["otjhStatus"], "At risk")
         self.assertEqual(result["programmeProgress"], 8.97)
         self.assertEqual((result["componentsCompleted"], result["componentsPlanned"]), (34, 379))
+        self.assertEqual((result["activityProgress"], result["activityProgressAvailable"]), (8.97, True))
         self.assertEqual((result["ksbCompleted"], result["ksbTarget"], result["ksbProgress"]), (14, 20, 70))
         self.assertEqual(result["metricsSource"], "learner-dashboard")
 
@@ -569,6 +571,22 @@ class CanonicalCoachMetricsTests(SimpleTestCase):
         result = apply_canonical_learner_metrics(payload, metrics)
         self.assertNotIn("ksbStatus", result)
         self.assertEqual(result["metricsSource"], "learner-dashboard")
+
+    def test_unavailable_programme_clears_activity_ratio_and_percentage_together(self):
+        payload = {
+            "componentsCompleted": 158, "componentsPlanned": 133,
+            "activityProgress": 100, "activityProgressAvailable": True,
+            "otjhCompleted": 4, "otjhTarget": 5, "ksbProgressAvailable": False,
+        }
+        metrics = {
+            "programme": {"completed": None, "total": None, "percent": None, "status": "unavailable"},
+            "otjh": {}, "ksb": {"status": "unavailable"},
+        }
+
+        result = apply_canonical_learner_metrics(payload, metrics)
+
+        self.assertEqual((result["componentsCompleted"], result["componentsPlanned"]), (None, None))
+        self.assertEqual((result["activityProgress"], result["activityProgressAvailable"]), (None, False))
 
     def test_ready_ksb_status_is_still_derived(self):
         payload = {"otjhCompleted": 4, "otjhTarget": 5, "ksbProgressAvailable": False}
@@ -985,15 +1003,14 @@ class ApplyAttendanceSummaryTests(SimpleTestCase):
 
 
 class CoachDashboardViewTests(SimpleTestCase):
-    @patch("coach_api.views.cache")
     @patch("coach_api.dashboard_service.CoachDashboardService.build")
     @patch("coach_api.views.collect_generated_timetable")
     @patch("coach_api.views.coach_caseload")
     @patch("coach_api.views.coach_marking_queue")
     def test_dashboard_uses_summary_service_and_never_detailed_loaders(
-        self, marking, caseload, timetable, build, dashboard_cache,
+        self, marking, caseload, timetable, build,
     ):
-        dashboard_cache.get.return_value = None
+        cache.clear()
         build.return_value = {
             "owner": {"name": "Coach", "email": "coach@example.com"},
             "learners": [{"id": "2"}],
@@ -1012,10 +1029,10 @@ class CoachDashboardViewTests(SimpleTestCase):
         caseload.assert_not_called()
         marking.assert_not_called()
 
-    @patch("coach_api.views.cache")
-    def test_dashboard_cache_key_is_scoped_per_coach(self, cache_mock):
+    @patch("coach_api.dashboard_cache.get_cached_coach_dashboard")
+    def test_dashboard_cache_key_is_scoped_per_coach(self, get_cached):
         """Rapid coach switching must never read another coach's cached payload."""
-        cache_mock.get.return_value = {"learners": [{"id": "shared-cache-guard"}]}
+        get_cached.return_value = {"learners": [{"id": "shared-cache-guard"}]}
         request_a = RequestFactory().get("/coach_api/coach/dashboard")
         request_a.coach_email = "coach-a@example.com"
         request_b = RequestFactory().get("/coach_api/coach/dashboard")
@@ -1024,13 +1041,111 @@ class CoachDashboardViewTests(SimpleTestCase):
         response_b = unwrap(coach_dashboard)(request_b)
         self.assertEqual(response_a.status_code, 200)
         self.assertEqual(response_b.status_code, 200)
-        cache_keys = {call.args[0] for call in cache_mock.get.call_args_list}
-        self.assertEqual(len(cache_keys), 2, "each coach must use a distinct cache key")
+        self.assertEqual(
+            [call.args[0] for call in get_cached.call_args_list],
+            ["coach-a@example.com", "coach-b@example.com"],
+        )
+
+    @patch("coach_api.dashboard_cache.get_cached_coach_dashboard")
+    def test_view_as_uses_the_resolved_effective_coach_cache_identity(self, get_cached):
+        get_cached.return_value = {"learners": []}
+        request = RequestFactory().get(
+            "/coach_api/coach/dashboard", {"viewAsCoach": "coach-a@example.com"},
+        )
+        # Installed by coach_access_required only after it validates the admin
+        # and resolves the selected coach account.
+        request.coach_email = "coach-a@example.com"
+        request.coach_view_as = True
+
+        unwrap(coach_dashboard)(request)
+
+        get_cached.assert_called_once_with("coach-a@example.com")
+
+    @patch("coach_api.dashboard_cache.get_cached_coach_dashboard")
+    def test_authentication_is_checked_before_dashboard_cache_lookup(self, get_cached):
+        request = RequestFactory().get("/coach_api/coach/dashboard")
+        request.session = {}
+
+        response = coach_dashboard(request)
+
+        self.assertIn(response.status_code, {401, 403})
+        get_cached.assert_not_called()
+
+    @override_settings(COACH_DASHBOARD_CACHE_TTL=90)
+    @patch("coach_api.dashboard_service.CoachDashboardService.build")
+    def test_first_request_misses_and_second_request_hits_final_response_cache(self, build):
+        cache.clear()
+        build.return_value = {"owner": {"email": "coach@example.com"}, "learners": [{"id": "1"}]}
+        request = RequestFactory().get("/coach_api/coach/dashboard")
+        request.coach_email = "coach@example.com"
+
+        first = unwrap(coach_dashboard)(request)
+        second = unwrap(coach_dashboard)(request)
+
+        self.assertEqual(json.loads(first.content), json.loads(second.content))
+        build.assert_called_once_with()
+
+    @override_settings(COACH_DASHBOARD_CACHE_TTL=90)
+    @patch("coach_api.dashboard_service.CoachDashboardService.build")
+    def test_different_effective_coaches_never_share_cached_payloads(self, build):
+        cache.clear()
+        build.side_effect = lambda: {"learners": [{"id": str(build.call_count)}]}
+        for identity in ("coach-a@example.com", "coach-b@example.com"):
+            request = RequestFactory().get("/coach_api/coach/dashboard")
+            request.coach_email = identity
+            unwrap(coach_dashboard)(request)
+        self.assertEqual(build.call_count, 2)
+
+    @override_settings(COACH_DASHBOARD_CACHE_TTL=90)
+    @patch("coach_api.dashboard_service.CoachDashboardService.build")
+    def test_expired_cache_recomputes_dashboard(self, build):
+        from coach_api.dashboard_cache import coach_dashboard_cache_key
+
+        cache.clear()
+        identity = "coach@example.com"
+        cache.set(coach_dashboard_cache_key(identity), {"learners": [{"id": "stale"}]}, timeout=-1)
+        build.return_value = {"learners": [{"id": "fresh"}]}
+        request = RequestFactory().get("/coach_api/coach/dashboard")
+        request.coach_email = identity
+
+        response = unwrap(coach_dashboard)(request)
+
+        self.assertEqual(json.loads(response.content)["learners"], [{"id": "fresh"}])
+        build.assert_called_once_with()
+
+    def test_invalidation_removes_only_the_selected_coachs_cache(self):
+        from coach_api.dashboard_cache import (
+            cache_coach_dashboard,
+            get_cached_coach_dashboard,
+            invalidate_coach_dashboard_cache,
+        )
+
+        cache.clear()
+        cache_coach_dashboard("coach-a@example.com", {"learners": [{"id": "a"}]})
+        cache_coach_dashboard("coach-b@example.com", {"learners": [{"id": "b"}]})
+        invalidate_coach_dashboard_cache("coach-a@example.com")
+
+        self.assertIsNone(get_cached_coach_dashboard("coach-a@example.com"))
+        self.assertEqual(get_cached_coach_dashboard("coach-b@example.com")["learners"], [{"id": "b"}])
+
+    @patch("coach_api.dashboard_cache.invalidate_coach_dashboard_cache")
+    def test_successful_coach_mutation_uses_central_invalidation_hook(self, invalidate):
+        from coach_api.auth import _invalidate_dashboard_after_mutation
+
+        view = lambda request: None
+        request = RequestFactory().post("/coach_api/coach/mutation")
+        response = SimpleNamespace(status_code=200)
+
+        self.assertIs(
+            _invalidate_dashboard_after_mutation(view, request, response, "coach@example.com"),
+            response,
+        )
+        invalidate.assert_called_once_with("coach@example.com")
 
 
 class CoachDashboardReadModelTests(SimpleTestCase):
     @patch("coach_api.views.serialize_caseload_learner")
-    def test_dashboard_projection_includes_available_ksb_activity_and_zero_values(self, serialize):
+    def test_dashboard_projection_keeps_ksb_fallback_but_cannot_overwrite_activities(self, serialize):
         serialize.return_value = {
             "ksbCompleted": 0,
             "ksbTarget": 12,
@@ -1053,10 +1168,15 @@ class CoachDashboardReadModelTests(SimpleTestCase):
             row, refresh_live_snapshots=False,
             expected_otjh_by_component_id={}, curriculum_ksbs=row.ksbs,
         )
-        self.assertEqual(payload["ksbProgress"], 0)
+        self.assertEqual(
+            (payload["ksbCompleted"], payload["ksbTarget"], payload["ksbProgress"]),
+            (0, 12, 0),
+        )
         self.assertTrue(payload["ksbProgressAvailable"])
-        self.assertEqual(payload["activityProgress"], 0)
-        self.assertTrue(payload["activityProgressAvailable"])
+        self.assertNotIn("componentsCompleted", payload)
+        self.assertNotIn("componentsPlanned", payload)
+        self.assertNotIn("activityProgress", payload)
+        self.assertNotIn("activityProgressAvailable", payload)
 
     @patch("coach_api.dashboard_service.CoachDashboardSnapshot.objects")
     @patch("coach_api.dashboard_service.CoachDashboardService.build_live")
@@ -1073,7 +1193,7 @@ class CoachDashboardReadModelTests(SimpleTestCase):
 
         self.assertEqual(payload["learners"], [{"id": "1"}])
         self.assertIn("readModel", payload)
-        objects.filter.assert_called_once_with(owner_email="coach@example.com", schema_version=2)
+        objects.filter.assert_called_once_with(owner_email="coach@example.com", schema_version=3)
         objects.filter.return_value.only.assert_called_once_with("payload", "refreshed_at")
         objects.filter.return_value.only.return_value.first.assert_called_once_with()
         build_live.assert_not_called()

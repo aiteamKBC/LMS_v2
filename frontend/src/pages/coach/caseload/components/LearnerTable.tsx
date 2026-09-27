@@ -40,7 +40,9 @@ function Progress({ label, value, detail, metric, tone }: { label: string; value
   return <div className={styles.miniProgress} data-metric={metric} data-tone={tone} aria-label={`${label}: ${value === null ? 'not available' : `${value}%`}`}>
     <div className={styles.miniLabel}><b>{value === null ? EMPTY_VALUE : `${value}%`}</b></div>
     <div className={styles.track}><div className={styles.fill} style={{ width: `${value ?? 0}%` }} /></div>
-    <div className={styles.miniRatio} title={label === 'OTJH' ? 'Actual hours / target hours' : undefined}>{detail || EMPTY_VALUE}</div>
+    {detail !== null && detail !== undefined
+      ? <div className={styles.miniRatio} title={label === 'OTJH' ? 'Actual hours / target hours' : undefined}>{detail}</div>
+      : null}
   </div>;
 }
 
