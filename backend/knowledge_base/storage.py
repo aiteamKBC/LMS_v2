@@ -2,14 +2,17 @@
 
 Files are keyed by their SHA-256, so the same image appearing in two books or
 two editions is stored once. Development uses the local disk under
-``MEDIA_ROOT/knowledge_base`` (gitignored); Azure is added for the approved
-Azure test and is never selected by default.
+``MEDIA_ROOT/knowledge_base`` (gitignored). Azure requires explicit selection
+and a dedicated, existing private container.
 
 References are stored in Neon as ``local:<key>`` or ``blob:<container>/<key>``.
 """
 from __future__ import annotations
 
 import hashlib
+import io
+import os
+import re
 from pathlib import Path
 
 from django.conf import settings
@@ -83,6 +86,8 @@ class LocalStorage:
         return self.prefix + key
 
     def get(self, ref: str) -> bytes:
+        if ref.startswith("blob:"):
+            return AzureStorage().get(ref)
         if not ref.startswith(self.prefix):
             raise StorageError(f"Not a local reference: {ref!r}")
         return self._path(ref[len(self.prefix):]).read_bytes()
@@ -91,8 +96,84 @@ class LocalStorage:
         return ref.startswith(self.prefix) and self._path(ref[len(self.prefix):]).exists()
 
 
+class AzureStorage:
+    """Private blobs; references, not expiring SAS URLs, are persisted."""
+
+    def __init__(self, container=None):
+        from azure.storage.blob import BlobServiceClient
+
+        self.container = container or getattr(settings, "KNOWLEDGE_BASE_AZURE_CONTAINER", None) or os.environ.get("KNOWLEDGE_BASE_AZURE_CONTAINER", "")
+        if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])", self.container) or "--" in self.container:
+            raise StorageError("Set KNOWLEDGE_BASE_AZURE_CONTAINER to a dedicated private container.")
+        account = getattr(settings, "AZURE_STORAGE_ACCOUNT", "")
+        key = getattr(settings, "AZURE_STORAGE_KEY", "")
+        if not account or not key:
+            raise StorageError("Azure storage account and key are required.")
+        # Bounded blocks avoid a single large PDF request timing out on slower uplinks.
+        self.client = BlobServiceClient(
+            account_url=f"https://{account}.blob.core.windows.net", credential=key,
+            max_single_put_size=256 * 1024, max_block_size=256 * 1024,
+            connection_timeout=30, read_timeout=120, retry_total=2,
+        )
+        self.prefix = f"blob:{self.container}/"
+        self._checked = False
+
+    def _check_private(self):
+        if not self._checked:
+            props = self.client.get_container_client(self.container).get_container_properties()
+            if props.get("public_access"):
+                raise StorageError("The Knowledge Base container must be private.")
+            self._checked = True
+
+    def _blob(self, key):
+        if not key or key.startswith("/") or "\\" in key or any(p in ("", ".", "..") for p in key.split("/")):
+            raise StorageError("Invalid Knowledge Base blob key.")
+        self._check_private()
+        return self.client.get_blob_client(container=self.container, blob=key)
+
+    def put(self, key, data):
+        return self.put_stream(key, io.BytesIO(data))
+
+    def put_stream(self, key, fileobj):
+        from azure.core.exceptions import ResourceExistsError
+        from azure.storage.blob import ContentSettings
+
+        blob = self._blob(key)
+        digest = sha256_of_file(fileobj)
+        media_type = "application/pdf" if key.endswith(".pdf") else "image/webp"
+        try:
+            blob.upload_blob(fileobj, overwrite=False, max_concurrency=4, metadata={"sha256": digest},
+                             content_settings=ContentSettings(content_type=media_type))
+        except ResourceExistsError:
+            # A retry may reuse an identical object, never replace different bytes.
+            if sha256_of(blob.download_blob().readall()) != digest:
+                raise StorageError("An existing Azure blob has different content.")
+        return self.prefix + key
+
+    def get(self, ref):
+        if ref.startswith("local:"):
+            return LocalStorage().get(ref)
+        if not ref.startswith(self.prefix):
+            raise StorageError("Blob reference is outside the configured Knowledge Base container.")
+        return self._blob(ref[len(self.prefix):]).download_blob().readall()
+
+    def exists(self, ref):
+        return ref.startswith(self.prefix) and self._blob(ref[len(self.prefix):]).exists()
+
+
+def read(ref):
+    """Read by reference during a partial migration, regardless of write mode."""
+    if ref.startswith("local:"):
+        return LocalStorage().get(ref)
+    if ref.startswith("blob:"):
+        return AzureStorage().get(ref)
+    raise StorageError("Unknown Knowledge Base storage reference.")
+
+
 def get_storage():
     mode = config.storage_mode()
     if mode == "local":
         return LocalStorage()
-    raise StorageError(f"Storage mode {mode!r} is not enabled yet; use 'local'.")
+    if mode == "azure":
+        return AzureStorage()
+    raise StorageError(f"Unknown Knowledge Base storage mode: {mode!r}.")

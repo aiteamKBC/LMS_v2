@@ -26,7 +26,9 @@ class FakeRepository:
         self.books, self.scopes, self.versions, self.builds, self.jobs = {}, {}, {}, {}, {}
         self.pages, self.assets, self.occurrences = {}, {}, []
         self.sections, self.chunks, self.chunk_vectors, self.embeddings = {}, {}, {}, {}
+        self.embedding_tokens = {}
         self.issues, self.page_writes = {}, 0
+        self.spaces = {1: {"id": 1, "provider": "fake", "model": "fake-embedding", "dims": 1536}}
 
     # registry
     def find_version_by_sha(self, sha):
@@ -46,18 +48,23 @@ class FakeRepository:
         self.scopes[book_id] |= set(scopes)
 
     def active_space(self):
-        return {"id": 1, "provider": "fake", "model": "fake-embedding", "dims": 1536}
+        return dict(self.spaces[1])
 
     def job_context(self, build_id):
         build = self.builds[build_id]
         version = self.versions[build["version_id"]]
-        return {"build_id": build_id, "embedding_space_id": build["space_id"], "version_id": build["version_id"],
+        space = self.spaces[build["space_id"]]
+        return {"build_id": build_id, "embedding_space_id": build["space_id"], "space_provider": space["provider"],
+                "space_model": space["model"], "space_dims": space["dims"], "version_id": build["version_id"],
                 "storage_ref": version["ref"], "page_count": version["page_count"], "book_id": version["book_id"],
                 "title": self.books[version["book_id"]]["title"]}
 
     # queue
-    def claim_job(self, lease_id, stale_minutes):
+    def claim_job(self, lease_id, stale_minutes, space=None):
         for job in self.jobs.values():
+            own = self.spaces[self.builds[job["build_id"]]["space_id"]]
+            if space is not None and tuple(space) != (own["provider"], own["model"], own["dims"]):
+                continue
             due = job["state"] in ("queued", "failed", "paused") and job["next"] <= self.now and job["attempts"] < job["max_attempts"]
             stale = job["state"] == "running" and job["heartbeat"] is not None and job["heartbeat"] < self.now - stale_minutes
             if due or stale:
@@ -136,8 +143,10 @@ class FakeRepository:
 
     def store_vectors(self, job, space_id, new_embeddings, chunk_vectors):
         self._fence(job)
-        for sha, vector, _tokens in new_embeddings:
-            self.embeddings.setdefault((sha, space_id), pipeline._literal(vector))
+        for sha, vector, tokens in new_embeddings:
+            if (sha, space_id) not in self.embeddings:
+                self.embeddings[(sha, space_id)] = pipeline._literal(vector)
+                self.embedding_tokens[(sha, space_id)] = tokens
         for chunk_id, literal in chunk_vectors:
             self.chunk_vectors[(chunk_id, space_id)] = literal
 
@@ -172,6 +181,7 @@ class CountingProvider(FakeEmbeddingProvider):
     def __init__(self, fail_on_call=None):
         super().__init__()
         self.texts = []
+        self.billed_tokens = 0
         self.fail_on_call = fail_on_call
 
     def embed(self, texts):
@@ -179,7 +189,9 @@ class CountingProvider(FakeEmbeddingProvider):
             self.calls += 1
             raise ConnectionError("provider timeout")
         self.texts.extend(texts)
-        return super().embed(texts)
+        result = super().embed(texts)
+        self.billed_tokens += result.total_tokens
+        return result
 
 
 class WorkerTests(SimpleTestCase):
@@ -259,6 +271,42 @@ class WorkerTests(SimpleTestCase):
             pipeline.run_build(ctx)
         self.assertEqual(self.repo.builds[created["build_id"]]["status"], "building")
         self.assertEqual(provider.texts, [])
+
+    def test_a_worker_never_takes_a_book_embedded_with_another_model(self):
+        self.repo.spaces[1] = {"id": 1, "provider": "openai", "model": "text-embedding-3-small", "dims": 1536}
+        created = self.upload()
+        provider = CountingProvider()
+        self.assertIsNone(jobs.run_one(self.repo, self.store, provider))
+        job = next(iter(self.repo.jobs.values()))
+        self.assertEqual((job["state"], job["attempts"]), ("queued", 0))     # untouched, no attempt used
+        self.assertEqual(self.repo.page_writes, 0)
+        self.assertEqual((provider.texts, self.repo.embeddings, self.repo.chunk_vectors), ([], {}, {}))
+        self.assertEqual(self.repo.builds[created["build_id"]]["status"], "building")
+
+    def test_vectors_of_another_model_are_never_stored(self):
+        self.upload()
+        provider = CountingProvider()
+        provider.model = "another-model"
+        lease = uuid.uuid4().hex
+        job = self.repo.claim_job(lease, jobs.STALE_MINUTES)     # no space filter: the pipeline must still refuse
+        job["lease_id"] = lease
+        ctx = pipeline.Context(job=job, repo=self.repo, store=self.store, provider=provider,
+                               info=self.repo.job_context(job["build_id"]))
+        with self.assertRaises(pipeline.ProviderMismatch):
+            pipeline.run_build(ctx)
+        self.assertEqual((provider.texts, self.repo.embeddings, self.repo.chunk_vectors), ([], {}, {}))
+
+    def test_stored_token_counts_add_up_to_what_was_billed(self):
+        self.upload()
+        provider = CountingProvider()
+        original_batch = pipeline.EMBED_BATCH
+        pipeline.EMBED_BATCH = 3
+        try:
+            self.assertEqual(jobs.run_one(self.repo, self.store, provider), "ready")
+        finally:
+            pipeline.EMBED_BATCH = original_batch
+        self.assertGreater(provider.billed_tokens, 0)
+        self.assertEqual(sum(self.repo.embedding_tokens.values()), provider.billed_tokens)
 
     def test_a_stale_running_job_is_taken_over(self):
         self.upload()

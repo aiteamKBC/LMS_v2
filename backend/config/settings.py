@@ -818,6 +818,8 @@ FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('FILE_UPLOAD_MAX_MEMORY_SIZE', 
 # Azure Blob Storage (learner evidence uploads — see learner_api/evidence_storage.py).
 AZURE_STORAGE_ACCOUNT = os.environ.get("AZURE_STORAGE_ACCOUNT", "")
 AZURE_STORAGE_KEY = os.environ.get("AZURE_STORAGE_KEY", "")
+KNOWLEDGE_BASE_AZURE_CONTAINER = os.environ.get("KNOWLEDGE_BASE_AZURE_CONTAINER", "")
+KNOWLEDGE_BASE_STORAGE = os.environ.get("KNOWLEDGE_BASE_STORAGE", "local")
 AZURE_QUARANTINE_CONTAINER = os.environ.get("AZURE_QUARANTINE_CONTAINER", "evidence-quarantine")
 AZURE_APPROVED_CONTAINER = os.environ.get("AZURE_APPROVED_CONTAINER", "evidence-approved")
 AZURE_REJECTED_CONTAINER = os.environ.get("AZURE_REJECTED_CONTAINER", "evidence-rejected")

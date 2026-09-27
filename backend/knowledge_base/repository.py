@@ -33,6 +33,29 @@ def _rows(cur):
 
 
 class Repository:
+    def book_storage_records(self, book_id):
+        """Only the selected book's versions and their assets, including old builds."""
+        with _cursor() as cur:
+            cur.execute("SELECT id, storage_ref, page_count, file_sha256 FROM knowledge.book_versions WHERE book_id = %s",
+                        [str(book_id)])
+            versions = _rows(cur)
+            cur.execute(
+                "SELECT DISTINCT a.id, a.storage_ref, a.sha256 FROM knowledge.assets a"
+                " JOIN knowledge.asset_occurrences o ON o.asset_id = a.id"
+                " JOIN knowledge.builds b ON b.id = o.build_id"
+                " JOIN knowledge.book_versions v ON v.id = b.book_version_id WHERE v.book_id = %s", [str(book_id)])
+            return versions, _rows(cur)
+
+    def replace_storage_refs(self, versions, assets):
+        # Compare-and-swap prevents a concurrent migration from being overwritten.
+        with transaction.atomic(using=DB), _cursor() as cur:
+            for table, records in (("book_versions", versions), ("assets", assets)):
+                for record in records:
+                    cur.execute(f"UPDATE knowledge.{table} SET storage_ref = %s WHERE id = %s AND storage_ref = %s",
+                                [record["new_ref"], record["id"], record["storage_ref"]])
+                    if cur.rowcount != 1:
+                        raise RuntimeError("Book storage changed during migration; retry the command.")
+
     # -- registry -------------------------------------------------------------
     def find_version_by_sha(self, file_sha):
         with _cursor() as cur:
@@ -57,6 +80,12 @@ class Repository:
         with transaction.atomic(using=DB), _cursor() as cur:
             self._add_scopes(cur, book_id, scopes)
 
+    def rename_book(self, book_id, title):
+        """Change only the display title. Returns False when the book does not exist."""
+        with _cursor() as cur:
+            cur.execute("UPDATE knowledge.books SET title = %s WHERE id = %s", [title, book_id])
+            return cur.rowcount == 1
+
     def _add_scopes(self, cur, book_id, scopes):
         for code in scopes:
             cur.execute("INSERT INTO knowledge.book_scopes (book_id, scope_code) VALUES (%s, %s) ON CONFLICT DO NOTHING",
@@ -78,20 +107,31 @@ class Repository:
     def job_context(self, build_id):
         with _cursor() as cur:
             cur.execute(
-                "SELECT b.id AS build_id, b.embedding_space_id, v.id AS version_id, v.storage_ref, v.page_count,"
+                "SELECT b.id AS build_id, b.embedding_space_id, s.provider AS space_provider, s.model AS space_model,"
+                " s.dims AS space_dims, v.id AS version_id, v.storage_ref, v.page_count,"
                 " bk.id AS book_id, bk.title FROM knowledge.builds b"
+                " JOIN knowledge.embedding_spaces s ON s.id = b.embedding_space_id"
                 " JOIN knowledge.book_versions v ON v.id = b.book_version_id"
                 " JOIN knowledge.books bk ON bk.id = v.book_id WHERE b.id = %s", [build_id])
             return _rows(cur)[0]
 
     # -- job queue --------------------------------------------------------------
-    def claim_job(self, lease_id, stale_minutes):
+    def claim_job(self, lease_id, stale_minutes, space=None):
+        """``space`` = (provider, model, dims) of the worker: it only takes books
+        whose vectors it can produce, and leaves the others queued untouched."""
+        space_filter, params = "", [stale_minutes]
+        if space is not None:
+            space_filter = (" AND EXISTS (SELECT 1 FROM knowledge.builds b JOIN knowledge.embedding_spaces s"
+                            " ON s.id = b.embedding_space_id WHERE b.id = j.build_id"
+                            " AND s.provider = %s AND s.model = %s AND s.dims = %s)")
+            params += list(space)
         with transaction.atomic(using=DB), _cursor() as cur:
             cur.execute(
-                "SELECT id, build_id, attempts, max_attempts, stage FROM knowledge.ingestion_jobs"
-                " WHERE (state IN ('queued', 'failed', 'paused') AND next_attempt_at <= now() AND attempts < max_attempts)"
-                "    OR (state = 'running' AND heartbeat_at < now() - make_interval(mins => %s))"
-                " ORDER BY requested_at FOR UPDATE SKIP LOCKED LIMIT 1", [stale_minutes])
+                "SELECT j.id, j.build_id, j.attempts, j.max_attempts, j.stage FROM knowledge.ingestion_jobs j"
+                " WHERE ((j.state IN ('queued', 'failed', 'paused') AND j.next_attempt_at <= now() AND j.attempts < j.max_attempts)"
+                "    OR (j.state = 'running' AND j.heartbeat_at < now() - make_interval(mins => %s)))"
+                f"{space_filter}"
+                " ORDER BY j.requested_at FOR UPDATE SKIP LOCKED LIMIT 1", params)
             rows = _rows(cur)
             if not rows:
                 return None
@@ -360,6 +400,135 @@ class Repository:
         with _cursor() as cur:
             cur.execute("SELECT max(last_seen_at), now() FROM knowledge.worker_heartbeats")
             return cur.fetchone()
+
+    # -- retrieval (read-only) ---------------------------------------------------------------
+    def images_for_chunks(self, chunk_ids, limit=24):
+        if not chunk_ids:
+            return []
+        with _cursor() as cur:
+            cur.execute(
+                "WITH candidates AS (SELECT DISTINCT ON (a.id) a.id, a.storage_ref, a.sha256, a.media_type,"
+                " a.size_bytes, o.id AS occurrence_id, o.pdf_page, o.book_caption, o.label_text,"
+                " c.id AS chunk_id, c.build_id, array_position(%s::bigint[], c.id) AS chunk_rank,"
+                " CASE ca.relation WHEN 'asset_chunk' THEN 0 WHEN 'referenced' THEN 1 ELSE 2 END AS relation_rank"
+                " FROM knowledge.chunk_assets ca"
+                " JOIN knowledge.chunks c ON c.id = ca.chunk_id"
+                " JOIN knowledge.asset_occurrences o ON o.id = ca.occurrence_id AND o.build_id = c.build_id"
+                " JOIN knowledge.assets a ON a.id = o.asset_id"
+                " WHERE c.id = ANY(%s) AND NOT o.decorative AND a.media_type = 'image/webp'"
+                " AND a.width >= 96 AND a.height >= 96"
+                " ORDER BY a.id, chunk_rank, relation_rank, o.id)"
+                " SELECT *, row_number() OVER (PARTITION BY chunk_id ORDER BY relation_rank, id) AS image_rank"
+                " FROM candidates ORDER BY image_rank, chunk_rank LIMIT %s", [list(chunk_ids), list(chunk_ids), limit])
+            return _rows(cur)
+
+    def active_builds(self, book_ids):
+        """Live build of each requested book (archived or unprocessed books are skipped)."""
+        if not book_ids:
+            return []
+        with _cursor() as cur:
+            cur.execute(
+                "SELECT bk.id AS book_id, bk.title, b.id AS build_id, b.embedding_space_id, s.dims,"
+                " s.provider AS space_provider, s.model AS space_model,"
+                " (SELECT array_agg(scope_code ORDER BY scope_code) FROM knowledge.book_scopes bs WHERE bs.book_id = bk.id) AS scopes"
+                " FROM knowledge.books bk"
+                " JOIN knowledge.book_versions v ON v.id = bk.current_version_id"
+                " JOIN knowledge.builds b ON b.id = v.active_build_id AND b.status = 'active'"
+                " JOIN knowledge.embedding_spaces s ON s.id = b.embedding_space_id"
+                " WHERE bk.status = 'active' AND bk.id::text = ANY(%s)", [[str(i) for i in book_ids]])
+            return _rows(cur)
+
+    def sections_for_builds(self, build_ids):
+        with _cursor() as cur:
+            cur.execute("SELECT id, build_id, parent_id, level, ordinal, number, title, pdf_page_start, pdf_page_end"
+                        " FROM knowledge.sections WHERE build_id = ANY(%s::uuid[]) ORDER BY build_id, ordinal",
+                        [[str(b) for b in build_ids]])
+            return _rows(cur)
+
+    def chunk_index(self, build_ids):
+        """Chunk metadata without content (cheap) for whole-book planning."""
+        with _cursor() as cur:
+            cur.execute("SELECT id, build_id, section_id, ordinal, kind, token_count, pdf_page_start, pdf_page_end"
+                        " FROM knowledge.chunks WHERE build_id = ANY(%s::uuid[]) ORDER BY build_id, ordinal",
+                        [[str(b) for b in build_ids]])
+            return _rows(cur)
+
+    def chunk_contents(self, chunk_ids):
+        if not chunk_ids:
+            return {}
+        with _cursor() as cur:
+            cur.execute("SELECT id, content FROM knowledge.chunks WHERE id = ANY(%s)", [list(chunk_ids)])
+            return dict(cur.fetchall())
+
+    def search_chunks(self, build_ids, space_id, dims, query_vector, query_text, limit=40):
+        """Hybrid search: vector similarity and full-text rank, fused with RRF.
+        Only chunks of the given live builds, only vectors of one embedding space."""
+        dims = int(dims)
+        builds = [str(b) for b in build_ids]
+        with _cursor() as cur:
+            cur.execute(
+                f"""
+                WITH q AS (SELECT %s::vector({dims}) AS v, plainto_tsquery('english', %s) AS t),
+                vec AS (
+                    SELECT c.id, (cv.embedding::vector({dims})) <=> q.v AS distance,
+                           row_number() OVER (ORDER BY (cv.embedding::vector({dims})) <=> q.v) AS r
+                    FROM knowledge.chunk_vectors cv JOIN knowledge.chunks c ON c.id = cv.chunk_id, q
+                    WHERE cv.embedding_space_id = %s AND c.build_id = ANY(%s::uuid[])
+                    ORDER BY (cv.embedding::vector({dims})) <=> q.v LIMIT %s),
+                txt AS (
+                    SELECT c.id, row_number() OVER (ORDER BY ts_rank(c.tsv, q.t) DESC) AS r
+                    FROM knowledge.chunks c, q
+                    WHERE c.build_id = ANY(%s::uuid[]) AND c.tsv @@ q.t
+                    ORDER BY ts_rank(c.tsv, q.t) DESC LIMIT %s)
+                SELECT c.id, c.build_id, c.section_id, c.ordinal, c.kind, c.token_count, c.pdf_page_start, c.pdf_page_end,
+                       coalesce(1.0 / (60 + vec.r), 0) + coalesce(1.0 / (60 + txt.r), 0) AS score,
+                       vec.distance, txt.r IS NOT NULL AS text_match
+                FROM knowledge.chunks c LEFT JOIN vec ON vec.id = c.id LEFT JOIN txt ON txt.id = c.id
+                WHERE vec.id IS NOT NULL OR txt.id IS NOT NULL
+                ORDER BY score DESC
+                """,
+                [query_vector, query_text, space_id, builds, limit, builds, limit])
+            return _rows(cur)
+
+    def search_chunks_text(self, build_ids, query_text, limit=40):
+        """Full-text search only, for when the topic cannot be embedded with the
+        model of these builds' vectors. Same row shape as search_chunks."""
+        builds = [str(b) for b in build_ids]
+        with _cursor() as cur:
+            cur.execute(
+                """
+                WITH q AS (SELECT plainto_tsquery('english', %s) AS t)
+                SELECT c.id, c.build_id, c.section_id, c.ordinal, c.kind, c.token_count, c.pdf_page_start, c.pdf_page_end,
+                       1.0 / (60 + row_number() OVER (ORDER BY ts_rank(c.tsv, q.t) DESC)) AS score,
+                       NULL::float8 AS distance, TRUE AS text_match
+                FROM knowledge.chunks c, q
+                WHERE c.build_id = ANY(%s::uuid[]) AND c.tsv @@ q.t
+                ORDER BY ts_rank(c.tsv, q.t) DESC LIMIT %s
+                """,
+                [query_text, builds, limit])
+            return _rows(cur)
+
+    def log_generation(self, record, sources):
+        """Provenance of one generation with books. Never raises into the caller."""
+        with transaction.atomic(using=DB), _cursor() as cur:
+            cur.execute(
+                "INSERT INTO knowledge.generation_log (created_by, mode, question_count, request, coverage_plan,"
+                " kb_tokens, ceiling_tokens, counterfactual_tokens) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                [record["created_by"], record["mode"], record["question_count"], json.dumps(record["request"]),
+                 json.dumps(record["coverage_plan"]), record["kb_tokens"], record["ceiling_tokens"], record.get("counterfactual_tokens")])
+            generation_id = cur.fetchone()[0]
+            cur.executemany(
+                "INSERT INTO knowledge.generation_sources (generation_id, block_index, position, chunk_id, build_id, token_count)"
+                " VALUES (%s, %s, %s, %s, %s, %s)",
+                [[generation_id, s["block"], s["position"], s["chunk_id"], s["build_id"], s["tokens"]] for s in sources])
+        return generation_id
+
+    def log_question_sources(self, generation_id, rows):
+        with transaction.atomic(using=DB), _cursor() as cur:
+            cur.executemany(
+                "INSERT INTO knowledge.generation_question_sources (generation_id, question_index, question_sha256,"
+                " chunk_id, confidence, method) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                [[generation_id, r["index"], r["sha"], r["chunk_id"], r["confidence"], r["method"]] for r in rows])
 
     # -- helpers ----------------------------------------------------------------------------
     def _fence(self, cur, job):

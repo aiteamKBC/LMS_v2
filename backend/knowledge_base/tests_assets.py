@@ -108,7 +108,7 @@ class StorageTests(SimpleTestCase):
             with self.assertRaises(storage.StorageError):
                 storage.get_storage().put("../outside.txt", b"x")
 
-    @override_settings(KNOWLEDGE_BASE_STORAGE="azure")
-    def test_azure_is_not_selectable_yet(self):
+    @override_settings(KNOWLEDGE_BASE_STORAGE="azure", KNOWLEDGE_BASE_AZURE_CONTAINER="")
+    def test_azure_requires_an_explicit_container(self):
         with self.assertRaises(storage.StorageError):
             storage.get_storage()

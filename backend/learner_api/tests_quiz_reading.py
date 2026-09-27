@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 from django.test import SimpleTestCase, override_settings
 
 from .active_users import completed_hours_value_from_progress
-from .quiz_reading import _apply_reading_time_mode, _attempt_analysis, _generate_material, _reading_shape
+from .quiz_reading import _answer_labels, _apply_reading_time_mode, _attempt_analysis, _generate_material, _reading_shape
 
 
 class Related(list):
@@ -14,6 +14,11 @@ class Related(list):
 
 
 class QuizReadingTests(SimpleTestCase):
+    def test_image_answers_send_concepts_to_reading_without_base64_or_urls(self):
+        pair = json.dumps({"kind": "image_matching_pair", "imageUrl": "data:image/webp;base64,private-image-bytes", "label": "", "match": "Brand awareness"})
+        labels = _answer_labels({"type": "image_matching", "answers": [{"id": 10, "text": pair}]}, [10])
+        self.assertEqual(labels, ["Image A -> Brand awareness"])
+
     def test_reading_depth_scales_with_question_count(self):
         short = _reading_shape(1)
         medium = _reading_shape(12)

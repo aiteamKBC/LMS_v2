@@ -9,6 +9,7 @@ import { QuestionAnswersView } from '@/components/feature/QuestionTypeRenderer';
 import { roleNavMap } from '@/mocks/navigation';
 import { kbcUsers } from '@/mocks/users';
 import { useToast } from '@/hooks/useToast';
+import { KnowledgeBookPicker, KnowledgeSourcesSummary, type KnowledgeSourcesMeta } from '@/features/knowledge-base/KnowledgeBookPicker';
 import { fetchWeeks, type WeekItem } from '@/api/curriculum';
 import { formatQuizGradeRange, type QuizGradeRow, type QuizGradeSettings, useQuizGradeSettings } from '@/lib/quizGradeSettings';
 import { type QuizGeneralSettings, useQuizGeneralSettings } from '@/lib/quizGeneralSettings';
@@ -268,7 +269,7 @@ const embeddedAiPromptPreview = `Create a mixed-format LMS quiz from only the su
 Core rules:
 - Use all readable files together and distribute coverage fairly across them.
 - Generate the requested number of questions where the source supports it.
-- Use mixed question types: single choice, multiple choice, true/false, matching, image matching, keywords, fill in the gap and ordering.
+- Use mixed question types: single choice, multiple choice, true/false, matching, keywords, fill in the gap and ordering. Use image matching only when actual book images are supplied; never use image placeholders.
 - Progress difficulty from easy to medium to hard across the quiz.
 - Prefer realistic workplace/admin scenarios and adult-learning assessment quality.
 - Align explanations to source concepts and KSBs where available.
@@ -920,6 +921,8 @@ export default function QuizXmlWorkspacePage() {
   const [generatorDragActive, setGeneratorDragActive] = useState(false);
   const [showPromptCustomize, setShowPromptCustomize] = useState(false);
   const [generatedQuestions, setGeneratedQuestions] = useState<QuizPreviewQuestion[]>([]);
+  const [knowledgeBookIds, setKnowledgeBookIds] = useState<string[]>([]);
+  const [knowledgeSources, setKnowledgeSources] = useState<KnowledgeSourcesMeta | null>(null);
   const [generatingQuestions, setGeneratingQuestions] = useState(false);
   const [savingGeneratedQuiz, setSavingGeneratedQuiz] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1193,6 +1196,8 @@ export default function QuizXmlWorkspacePage() {
     setGeneratorFiles([]);
     setGeneratorDragActive(false);
     setGeneratedQuestions([]);
+    setKnowledgeBookIds([]);
+    setKnowledgeSources(null);
     if (generatorFileInputRef.current) generatorFileInputRef.current.value = '';
   };
 
@@ -1444,7 +1449,7 @@ export default function QuizXmlWorkspacePage() {
 
   const generateQuestions = async () => {
     setError('');
-    if (!generatorForm.topic.trim() && !generatorForm.lessonContent.trim() && generatorFiles.length === 0) {
+    if (!generatorForm.topic.trim() && !generatorForm.lessonContent.trim() && generatorFiles.length === 0 && knowledgeBookIds.length === 0) {
       setError('Add a topic, paste lesson content, or upload source files first. The embedded prompt controls how AI writes questions, but it is not lesson content.');
       return;
     }
@@ -1463,6 +1468,7 @@ export default function QuizXmlWorkspacePage() {
         body.append('week', generatorForm.week);
         body.append('weekId', generatorForm.weekId);
         body.append('questionCount', generatorForm.questionCount);
+        knowledgeBookIds.forEach(id => body.append('knowledgeBookIds', id));
         response = await fetch('/quiz_api/ai/generate-questions/', { method: 'POST', body });
       } else {
         response = await fetch('/quiz_api/ai/generate-questions/', {
@@ -1478,12 +1484,14 @@ export default function QuizXmlWorkspacePage() {
             week: generatorForm.week,
             weekId: generatorForm.weekId,
             questionCount: Number(generatorForm.questionCount || 5),
+            ...(knowledgeBookIds.length ? { knowledgeBookIds } : {}),
           }),
         });
       }
       const data = await response.json().catch(() => null);
       if (!response.ok) throw new Error(data?.error || 'Could not generate questions');
       setGeneratedQuestions(data.questions || []);
+      setKnowledgeSources(data.source?.knowledgeBase || null);
       const unreadableFiles = data.source?.unreadableFiles || [];
       if (unreadableFiles.length) {
         setError(`Generated from readable files only. These files had no extractable text: ${unreadableFiles.join(', ')}. Upload a text-based version or OCR copy to include them.`);
@@ -2778,6 +2786,7 @@ export default function QuizXmlWorkspacePage() {
                     placeholder="Paste lesson text here, or upload TXT/CSV/XML/XLSX/PPTX/PDF/DOCX/SCORM ZIP files below."
                     className="w-full min-h-32 rounded-lg border border-foreground-200/60 bg-white p-3 text-sm leading-relaxed outline-none focus:border-primary-400"
                   />
+                  <KnowledgeBookPicker programme={generatorForm.programme} selected={knowledgeBookIds} onChange={setKnowledgeBookIds} />
                   <button
                     type="button"
                     onClick={() => generatorFileInputRef.current?.click()}
@@ -2846,6 +2855,8 @@ export default function QuizXmlWorkspacePage() {
                       {savingGeneratedQuiz ? 'Saving...' : 'Save as quiz'}
                     </button>
                   </div>
+
+                  {knowledgeSources ? <KnowledgeSourcesSummary meta={knowledgeSources} /> : null}
 
                   {generatedQuestions.length === 0 ? (
                     <div className="min-h-80 flex flex-col items-center justify-center text-center">

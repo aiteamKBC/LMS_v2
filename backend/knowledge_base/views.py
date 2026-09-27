@@ -117,6 +117,8 @@ def books(request):
 @csrf_exempt
 @require_access("curriculum")
 def book_detail(request, book_id):
+    if request.method == "PATCH":
+        return _rename_book(request, book_id)
     if request.method != "GET":
         return _error("Method not allowed.", 405)
     repo = _repo()
@@ -128,6 +130,25 @@ def book_detail(request, book_id):
     book["outline"] = repo.book_outline(build_id) if build_id else []
     book["issues"] = repo.build_issues(build_id) if build_id else []
     return _ok(book)
+
+
+MAX_TITLE_LENGTH = 200
+
+
+def _rename_book(request, book_id):
+    try:
+        body = json.loads(request.body or b"{}")
+    except ValueError:
+        return _error("Send the new title as JSON.", 400)
+    title = " ".join(str(body.get("title") or "").split())
+    if not title:
+        return _error("Enter a title.", 400)
+    if len(title) > MAX_TITLE_LENGTH:
+        return _error(f"Keep the title under {MAX_TITLE_LENGTH} characters.", 400)
+    if not _repo().rename_book(book_id, title):
+        return _error("Book not found.", 404)
+    logger.info("Knowledge book %s renamed by %s", book_id, _user(request))
+    return _ok({"id": str(book_id), "title": title})
 
 
 @csrf_exempt

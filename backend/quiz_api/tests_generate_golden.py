@@ -2,8 +2,9 @@
 
 They pin the exact request the generator sends to OpenAI for four inputs --
 topic only, pasted text, text files and a text PDF -- so any later change
-(the Knowledge Base insertion point) can prove a request without books is
-byte-for-byte what it is today. No network: the OpenAI client is faked.
+(the Knowledge Base insertion point) can detect unrelated request changes.
+Text-only requests exclude image matching: real images are required.
+No network: the OpenAI client is faked.
 
     python manage.py test quiz_api.tests_generate_golden
 

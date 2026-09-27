@@ -850,7 +850,7 @@ function MatchingInputRich({ question, value, onChange }: {
             <span className={`flex-1 rounded-lg bg-background-100 ${hasImage ? 'px-3 py-3' : 'px-3 py-2.5'} text-sm text-foreground-800`}>
               {hasImage ? (
                 <span className="flex items-center gap-3">
-                  <img src={answer.imageUrl} alt={label} className="h-20 w-20 rounded-lg object-cover border border-foreground-200/60 bg-white shrink-0" />
+                  <img src={answer.imageUrl} alt={label} className="h-32 w-32 rounded-lg object-contain border border-foreground-200/60 bg-white shrink-0" />
                   <span className="min-w-0">
                     <span className="block text-[11px] font-bold uppercase tracking-wide text-foreground-400">Image {String.fromCharCode(65 + index)}</span>
                     <span className="block break-words">{label}</span>

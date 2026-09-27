@@ -52,6 +52,45 @@ def _book_pdf(with_toc=True):
     return data
 
 
+SECTIONS = {(1, 1): "Objectives", (1, 2): "Audiences", (2, 1): "Elasticity", (2, 2): "Discounts"}
+TOPICS = {key: word for key, word in zip(
+    [(c, s, n) for c in (1, 2) for s in (1, 2) for n in (1, 2)],
+    ["SMART", "Mission", "Segments", "Personas", "Demand", "Anchoring", "Bundles", "Loyalty"])}
+
+
+def _numbered_book_pdf():
+    """No outline, a huge cover title and headings that carry their own numbering
+    (Chapter N / N.M / N.M.K), like the KBC course books."""
+    import fitz
+
+    doc = fitz.open()
+
+    def page_with(lines):
+        page = doc.new_page()
+        y = 60
+        for text, size, bold in lines:
+            page.insert_text((72, y), text, fontsize=size, fontname="hebo" if bold else "helv")
+            y += size + 8
+
+    counter = iter(range(10_000))
+
+    def body():
+        return [(f"Body line {next(counter)} explains the idea in plain words for the apprentice.", 10, False)
+                for _ in range(6)]
+
+    page_with([("MARKETING", 70, False), ("STRATEGY", 50, False), ("Kent Business College", 16, False)])
+    for chapter, name in ((1, "Planning"), (2, "Pricing")):
+        page_with([(f"Chapter {chapter}: {name} for a", 22, True), ("Structured Plan", 22, True), *body()])
+        for section in (1, 2):
+            page_with([(f"{chapter}.{section}. {SECTIONS[(chapter, section)]} in practice", 14, True), *body(),
+                       (f"1. Recognise the need first ({chapter}.{section}).", 11, True), *body()])
+            for sub in (1, 2):
+                page_with([(f"{chapter}.{section}.{sub}What {TOPICS[(chapter, section, sub)]} means", 12, True), *body()])
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
 def _run(data=None):
     document = extract.open_pdf(data or _book_pdf())
     pages = extract.strip_running_lines(extract.extract_pages(document))
@@ -123,6 +162,21 @@ class StructureTests(SimpleTestCase):
         self.assertIn("2 Pricing", titles)
 
 
+    def test_books_without_an_outline_use_their_own_heading_numbering(self):
+        _, _, sections, _ = _run(_numbered_book_pdf())
+        chapters = [s for s in sections if s.level == 1 and s.number]
+        self.assertEqual([(s.number, s.title) for s in chapters],
+                         [("1", "Chapter 1: Planning for a Structured Plan"), ("2", "Chapter 2: Pricing for a Structured Plan")])
+        self.assertEqual(sections[0].title, "Front matter")                   # the cover is not a chapter
+        self.assertEqual([s.number for s in sections if s.level == 2], ["1.1", "1.2", "2.1", "2.2"])
+        subs = [s for s in sections if s.level == 3]
+        self.assertEqual(len(subs), 8)
+        self.assertEqual(subs[0].number, "1.1.1")
+        self.assertEqual(next(s for s in sections if s.ordinal == subs[0].parent).number, "1.1")
+        self.assertNotIn("1", [s.number for s in sections if s.level == 1 and "Recognise" in s.title])
+        self.assertTrue(any("Recognise the need" in text for s in sections for _, text in s.paragraphs))
+
+
 class ChunkingTests(SimpleTestCase):
     def test_all_body_text_is_covered(self):
         _, _, sections, chunks = _run()
@@ -162,6 +216,7 @@ class ProviderTests(SimpleTestCase):
         with self.assertRaises(ValueError):
             providers.FakeEmbeddingProvider().embed(["x"] * (providers.MAX_BATCH_INPUTS + 1))
 
+    @override_settings(KNOWLEDGE_BASE_PROVIDERS="fake", KNOWLEDGE_BASE_ALLOW_PAID=False)
     def test_defaults_are_fake_and_paid_calls_are_refused(self):
         self.assertEqual(config.providers(), "fake")
         self.assertIsInstance(providers.get_embedding_provider(), providers.FakeEmbeddingProvider)

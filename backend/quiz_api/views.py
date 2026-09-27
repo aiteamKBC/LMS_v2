@@ -1,4 +1,5 @@
 import json
+import copy
 import csv
 import html
 import io
@@ -48,6 +49,10 @@ QUIZ_STATUSES = {"draft", "published", "pending", "validating", "trash", "privat
 ASSESSMENT_TYPES = {"quiz", "checkpoint"}
 
 
+_TABLE_EXISTS_CACHE = set()
+_COLUMN_EXISTS_CACHE = set()
+
+
 def _quote_ident(value):
     return '"' + str(value).replace('"', '""') + '"'
 
@@ -57,6 +62,11 @@ def _curriculum_table_name(table):
 
 
 def _curriculum_table_exists(table):
+    # Cached like curriculum_api.views.table_exists: the list endpoints ask the
+    # same question hundreds of times per request. Only "exists" is cached, so a
+    # table created later is still found and a failed probe is retried.
+    if table in _TABLE_EXISTS_CACHE:
+        return True
     try:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -69,12 +79,17 @@ def _curriculum_table_exists(table):
                 """,
                 [table],
             )
-            return bool(cursor.fetchone())
+            exists = bool(cursor.fetchone())
     except Exception:
         return False
+    if exists:
+        _TABLE_EXISTS_CACHE.add(table)
+    return exists
 
 
 def _curriculum_column_exists(table, column):
+    if (table, column) in _COLUMN_EXISTS_CACHE:
+        return True
     try:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -88,9 +103,12 @@ def _curriculum_column_exists(table, column):
                 """,
                 [table, column],
             )
-            return bool(cursor.fetchone())
+            exists = bool(cursor.fetchone())
     except Exception:
         return False
+    if exists:
+        _COLUMN_EXISTS_CACHE.add((table, column))
+    return exists
 
 
 def _first_existing_curriculum_table(*tables):
@@ -106,6 +124,11 @@ def _curriculum_table_name(table):
 
 
 def _curriculum_table_exists(table):
+    # Cached like curriculum_api.views.table_exists: the list endpoints ask the
+    # same question hundreds of times per request. Only "exists" is cached, so a
+    # table created later is still found and a failed probe is retried.
+    if table in _TABLE_EXISTS_CACHE:
+        return True
     try:
         with connection.cursor() as cursor:
             cursor.execute(
@@ -118,9 +141,12 @@ def _curriculum_table_exists(table):
                 """,
                 [table],
             )
-            return bool(cursor.fetchone())
+            exists = bool(cursor.fetchone())
     except Exception:
         return False
+    if exists:
+        _TABLE_EXISTS_CACHE.add(table)
+    return exists
 
 
 def _training_plan_table_exists():
@@ -2025,12 +2051,18 @@ def _sync_quiz_assignment_counts(quizzes):
     except Exception:
         pass
 
+    # Quizzes of one programme share the same module options; read them once
+    # per programme, and give each quiz its own copy.
+    module_options_by_programme = {}
     for quiz in quizzes:
         quiz_id = str(quiz.id)
         count = len(linked_module_ids.get(quiz_id, set())) or len(linked_component_ids.get(quiz_id, set()))
         group_count = len(linked_group_names.get(quiz_id, set()))
         if not count:
-            module_options = _quiz_module_options(quiz)
+            programme_key = (str(quiz.programme_id or "").strip(), str(quiz.programme or "").strip())
+            if programme_key not in module_options_by_programme:
+                module_options_by_programme[programme_key] = _quiz_module_options(quiz)
+            module_options = copy.deepcopy(module_options_by_programme[programme_key])
             inferred_module_ids = _infer_quiz_module_link_ids(quiz, module_options)
             count = len(inferred_module_ids)
             if inferred_module_ids:
@@ -3029,6 +3061,12 @@ def _seed_quizzes():
         )
 
 
+def _knowledge_finish(knowledge_meta, questions):
+    from knowledge_base.integration import finish
+
+    return finish(knowledge_meta, questions)
+
+
 @csrf_exempt
 @require_http_methods(["POST"])
 def generate_ai_questions(request):
@@ -3061,6 +3099,19 @@ def generate_ai_questions(request):
         or payload.get("custom_prompt")
         or ""
     ).strip()
+    # Retrieval and image loading only run when books are selected.
+    knowledge_meta = None
+    from knowledge_base import quiz_images
+    from knowledge_base.integration import KnowledgeBaseUnavailable, merge_into_source, requested_book_ids
+    if requested_book_ids(payload):
+        try:
+            source_text, knowledge_meta = merge_into_source(
+                payload, source_text, topic, user=getattr(getattr(request, "user", None), "email", "") or "")
+        except KnowledgeBaseUnavailable as exc:
+            return JsonResponse({"error": str(exc)}, status=400)
+        except Exception:
+            logger.exception("Could not load Knowledge Base generation sources")
+            return JsonResponse({"error": "Book sources or images could not be loaded. Please try again."}, status=503)
     if not source_text and not topic:
         unreadable_note = f" Unreadable files: {', '.join(unreadable_files)}." if unreadable_files else ""
         return JsonResponse({
@@ -3082,6 +3133,8 @@ def generate_ai_questions(request):
     source_file_count = len(source_files)
     source_allocation = _question_allocation_instruction(source_files, question_count)
 
+    book_images = knowledge_meta.get("_images", []) if knowledge_meta else []
+    generation_types = AI_GENERATION_QUESTION_TYPES - ({"image_matching"} if len(book_images) < 2 else set())
     schema = {
         "type": "object",
         "additionalProperties": False,
@@ -3095,7 +3148,7 @@ def generate_ai_questions(request):
                     "additionalProperties": False,
                     "properties": {
                         "question": {"type": "string"},
-                        "type": {"type": "string", "enum": sorted(AI_GENERATION_QUESTION_TYPES)},
+                        "type": {"type": "string", "enum": sorted(generation_types)},
                         "options": {
                             "type": "array",
                             "minItems": 2,
@@ -3172,7 +3225,9 @@ Rules:
 - For single_choice questions, provide 4 plausible options and exactly one correct answer.
 - For multiple_choice questions, provide 4 plausible options and exactly 2 or 3 correct answers. The correct_answer field must list all correct option letters or exact option texts separated by commas, for example "A, C" or "A, B, D". Do not create multiple_choice questions with only one correct answer.
 - For matching questions, write the stem as a matching task and put every correct pair in options using "left -> right" format, for example "Instagram -> visual discovery". Do not put the pairs only in explanation.
-- For image_matching questions, write a visual/image-selection style stem and put every image/concept match in options using "image placeholder -> concept" format if no actual image assets exist.
+- Use image_matching ONLY when at least two actual book images are attached. Otherwise use text matching. Never invent images, placeholders, URLs or image IDs.
+- For image_matching, inspect the attached images and use only their exact BOOK_IMAGE identifiers in options: "BOOK_IMAGE_123 -> concept". Use distinct images within each question. Do not use an image whose labels reveal its answer, and do not force an image question when the visuals do not support it. Never mention image IDs in the question or explanation.
+- Only image_matching displays images to learners. All other question types must be self-contained in text and must never ask learners to inspect an image, chart, diagram or figure that is not displayed with their question.
 - For keywords questions, ask learners to provide or identify key terms; put every accepted keyword or short concept as a separate option. Do not put accepted keywords only in explanation.
 - For fill_gap questions, include one clear blank using "____" in the stem; options should be possible gap completions and correct_answer must be the exact correct completion.
 - For ordering questions, ask learners to sequence a process; options should be steps and correct_answer should state the correct ordered sequence.
@@ -3205,7 +3260,7 @@ Rules:
                     "role": "system",
                     "content": "You generate assessment questions and return only structured JSON.",
                 },
-                {"role": "user", "content": prompt},
+                {"role": "user", "content": quiz_images.prompt_content(prompt, book_images)},
             ],
             text={
                 "format": {
@@ -3219,6 +3274,9 @@ Rules:
         raw_text = response.output_text
         generated = json.loads(raw_text)
         questions = _normalise_generated_questions(generated, "single_choice")
+        image_sources = quiz_images.resolve(questions, book_images)
+        if knowledge_meta is not None:
+            knowledge_meta["questionImages"] = image_sources
         if not questions:
             return JsonResponse({"error": "AI did not return usable questions."}, status=502)
         return JsonResponse({
@@ -3230,8 +3288,11 @@ Rules:
                 "questionType": "mixed",
                 "readableFiles": readable_files,
                 "unreadableFiles": unreadable_files,
+                **({"knowledgeBase": _knowledge_finish(knowledge_meta, questions)} if knowledge_meta else {}),
             },
         })
+    except quiz_images.InvalidImageQuestion as exc:
+        return JsonResponse({"error": str(exc)}, status=502)
     except json.JSONDecodeError:
         return JsonResponse({"error": "AI returned invalid JSON."}, status=502)
     except Exception as exc:

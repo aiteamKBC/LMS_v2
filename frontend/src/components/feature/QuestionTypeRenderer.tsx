@@ -159,7 +159,7 @@ function MatchingAnswers({ answers, type }: QuestionAnswersViewProps) {
                   <img
                     src={pair.imageUrl}
                     alt={pair.left || `Image ${answerLetter(index)}`}
-                    className="h-32 w-full rounded-lg border border-[#e2e8f0] object-cover bg-[#f8fafc]"
+                    className="h-48 w-full rounded-lg border border-[#e2e8f0] object-contain bg-[#f8fafc]"
                   />
                   {pair.left && <p className="mt-3 text-xs font-medium text-[#475569] break-words [overflow-wrap:anywhere]">{pair.left}</p>}
                 </div>
