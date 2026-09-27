@@ -146,7 +146,8 @@ describe("One person's curriculum activity", () => {
     expect(await screen.findByRole('heading', { name: 'Activity log' })).toBeInTheDocument();
     expect(fetchPersonActivity).toHaveBeenCalledWith(
       'ayman@kentbusinesscollege.com',
-      expect.objectContaining({ days: 30 }),
+      // Seven days is the whole window the Audit Trail keeps.
+      expect.objectContaining({ days: 7 }),
     );
   });
 

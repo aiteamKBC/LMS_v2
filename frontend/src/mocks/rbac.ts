@@ -678,6 +678,10 @@ export const NAV_PERMISSIONS: NavPermissionMap[] = [
   // widening what a page can show is not a reason to widen who can open it,
   // and this one shows every workspace at once.
   { navId: 'admin-audit-trail', allowedRoles: ['auditor', 'compliance', 'tenant-admin', 'super-admin'] },
+  // The Coach workspace's scoped door. Same four roles again: it reads every
+  // coach's activity, including the notes and marking feedback they wrote, so
+  // holding Coach access is not what entitles somebody to open it.
+  { navId: 'coach-audit-trail', allowedRoles: ['auditor', 'compliance', 'tenant-admin', 'super-admin'] },
   // Reports
   { navId: 'reports', allowedRoles: ['coach', 'tutor', 'employer', 'engagement', 'compliance', 'qa', 'mis', 'leadership', 'finance', 'auditor', 'tenant-admin', 'super-admin'] },
 ];

@@ -22,7 +22,7 @@ vi.mock('@/api/learnerCalendar', () => ({
 }));
 vi.mock('@/api/reviewHistory', () => ({ fetchReviewHistory: vi.fn(async () => ({ reviews: [] })) }));
 
-const now = new Date();
+const now = new Date(2026, 8, 23, 9, 0, 0);
 const isoDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 const event = (overrides: Partial<LearnerCalendarEvent> = {}): LearnerCalendarEvent => ({
   id: 'catch-up-1', eventKey: 'catch-up:1', title: 'Catch-up with your coach', source: 'catch-up', type: 'coaching',
@@ -38,11 +38,13 @@ function setup(events: LearnerCalendarEvent[] = [event()], search = '') {
 }
 
 beforeEach(() => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(now);
   vi.clearAllMocks();
   vi.mocked(fetchReviewHistory).mockResolvedValue({ learnerId: null, category: 'reviews', reviews: [] });
   localStorage.clear();
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('calendar event previews', () => {
   it('opens the colour customisation drawer from the learner calendar', async () => {
@@ -93,7 +95,7 @@ describe('calendar event previews', () => {
     const statusBadges = await screen.findAllByLabelText('Scheduled status');
     expect(statusBadges[0]).toBeVisible();
     expect(statusBadges[0]).toHaveTextContent('Scheduled');
-    expect(statusBadges[0]).toHaveClass('bg-primary-100', 'text-primary-800');
+    expect(statusBadges[0]).toHaveStyle({ backgroundColor: '#ECFDF5', color: '#059669' });
   });
 
   it('shows an elapsed meeting as Ended and closes its Join button', async () => {
@@ -211,8 +213,8 @@ describe('calendar event previews', () => {
     expect(document.body.style.overflow).toBe('');
     await user.click(trigger);
     await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Reschedule' }));
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    expect(screen.getByRole('heading', { name: /Reschedule/ })).toBeVisible();
+    expect(screen.queryByRole('dialog', { name: 'Catch-up with your coach' })).not.toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Reschedule Session' })).toBeVisible();
     expect(document.querySelector('input[type="date"]')).toHaveValue(isoDate);
     expect(document.querySelector('input[type="time"]')).toHaveValue('10:00');
     expect(rescheduleLearnerCalendarSession).not.toHaveBeenCalled();
@@ -248,7 +250,8 @@ describe('calendar event previews', () => {
   it('keeps dashboard schedule links opening the booking form without a second overlay', async () => {
     setup([event({ status: 'not-scheduled', scheduledTime: null, scheduledDate: null, meetingLink: '', source: 'mcr' })], '?event=catch-up%3A1&action=schedule');
     expect(await screen.findByRole('heading', { name: 'Schedule Monthly Coaching Meeting' })).toBeVisible();
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.getAllByRole('dialog')).toHaveLength(1);
+    expect(screen.getByRole('dialog', { name: 'Schedule Monthly Coaching Meeting' })).toBeVisible();
     expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
   });
 
@@ -303,8 +306,9 @@ describe('calendar event previews', () => {
     fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Reschedule' }));
     fireEvent.change(document.querySelector('input[type="date"]')!, { target: { value: nextDate } });
     fireEvent.change(document.querySelector('input[type="time"]')!, { target: { value: '11:30' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save New Time' }));
-    await within(await screen.findByRole('dialog')).findByText('11:30–12:30');
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save New Time' })); });
+    await waitFor(() => expect(rescheduleLearnerCalendarSession).toHaveBeenCalled());
+    await within(await screen.findByRole('dialog', { name: 'Catch-up with your coach' })).findByText('11:30–12:30');
     await act(async () => { resolveOldRead({ learner: { kind: 'commercial', id: 125 }, events: [event()] }); });
     expect(within(screen.getByRole('dialog')).getByText('11:30–12:30')).toBeVisible();
   });

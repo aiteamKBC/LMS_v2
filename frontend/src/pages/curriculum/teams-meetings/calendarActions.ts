@@ -11,7 +11,11 @@ export interface ActionReview {
   scope: 'series' | 'occurrence'; notificationRequired: boolean; calendarRequests: number; sessions: ActionSession[];
   warnings?: string[];
 }
-export interface ActionResult { status: 'done' | 'failed' | 'uncertain' | 'processing' | 'incomplete' | 'none'; completed?: number; total?: number; message: string }
+export interface ActionResult {
+  status: 'done' | 'failed' | 'uncertain' | 'processing' | 'incomplete' | 'none'; completed?: number; total?: number; message: string;
+  /** Once every change is confirmed: the server-signed before/after record the optional email is sent from. */
+  changeNotice?: string;
+}
 
 export async function calendarAction<T extends ActionReview | ActionResult>(liveId: string, body: Record<string, unknown>): Promise<T> {
   const controller = new AbortController();

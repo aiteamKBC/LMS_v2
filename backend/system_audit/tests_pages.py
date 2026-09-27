@@ -50,7 +50,7 @@ class ResolveTests(SimpleTestCase):
         self.assertEqual(pages.resolve('/workspace/auditor')['workspace'], 'audit')
 
     def test_aliased_roots_reach_their_workspace(self):
-        self.assertEqual(pages.resolve('/users/7/wizard/step-1')['workspace'], 'admin')
+        self.assertEqual(pages.resolve('/users/7/wizard/step-1')['workspace'], 'enrolment')
         self.assertEqual(pages.resolve('/employers/12')['workspace'], 'employer')
         self.assertEqual(pages.resolve('/activity-categories')['workspace'], 'audit')
 
