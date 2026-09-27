@@ -135,7 +135,7 @@ function hasAuthoritativePerformanceStatus(value?: string | null): boolean {
   return ['at-risk', 'on-track', 'high', 'new-starter'].includes(normalizedPerformanceStatus(value));
 }
 
-export function CoachCaseloadContent({ embedded = false }: { embedded?: boolean; embeddedLearners?: unknown[] }) {
+export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { embedded?: boolean; embeddedLearners?: unknown[] }) {
   const navigate = useNavigate();
   const { auth, isInitialized } = useAuth();
   // Whose caseload this is: the signed-in coach, or the coach an administrator
@@ -211,6 +211,26 @@ export function CoachCaseloadContent({ embedded = false }: { embedded?: boolean;
         return;
       }
 
+      if (embedded && Array.isArray(embeddedLearners)) {
+        const pageResults = embeddedLearners as CaseloadApiLearner[];
+        setOwnerName(authenticatedCoachName);
+        setLearners(pageResults.map((source) => normalizeLearner({
+          ...source,
+          lastProgressReview: source.lastProgressReview || source.lastPr || undefined,
+          lastReview: source.lastReview || source.lastMcm || undefined,
+        }, (source.attendanceAvailable ?? source.attendanceRateAvailable) ? {
+          id: source.id, learner: source.name || '', attendance: source.attendanceRate,
+          hasAttendance: true, sessions: source.attendanceSessions, present: source.attendancePresent,
+          absent: source.attendanceAbsent, lastSession: source.attendanceLastSession,
+          lastSessionDate: source.attendanceLastSessionDate,
+        } : null)));
+        setServerTotal(pageResults.length);
+        setServerTotalPages(pageResults.length ? 1 : 0);
+        setServerFilterOptions(null);
+        setLoading(false);
+        return;
+      }
+
       try {
         const caseloadResponse = await coachFetch(caseloadUrl, { signal: controller.signal });
         if (!caseloadResponse.ok) {
@@ -247,7 +267,7 @@ export function CoachCaseloadContent({ embedded = false }: { embedded?: boolean;
 
     loadCaseload();
     return () => controller.abort();
-  }, [authenticatedCoachEmail, authenticatedCoachName, caseloadUrl, isInitialized, reloadToken]);
+  }, [authenticatedCoachEmail, authenticatedCoachName, caseloadUrl, embedded, embeddedLearners, isInitialized, reloadToken]);
 
   // --- derived data ---------------------------------------------------------
 
