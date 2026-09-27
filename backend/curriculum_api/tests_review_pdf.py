@@ -228,6 +228,21 @@ class SignedMcmPdfTests(SimpleTestCase):
                 response = learner_calendar_event_review_pdf.__wrapped__(request, 'commercial', 1, 'other-event')
                 self.assertEqual(response.status_code, status)
 
+    def test_learner_download_passes_pk_as_a_keyword_to_the_nested_review_gate(self):
+        from learner_api.calendar import learner_calendar_event_review_pdf
+        request = RequestFactory().get('/review/pdf/')
+        denied = JsonResponse({'error': 'Denied'}, status=404)
+        with patch('learner_api.calendar.learner_calendar_event_review', return_value=denied) as review:
+            response = learner_calendar_event_review_pdf.__wrapped__(request, 'commercial', 42, 'mcr:42:1')
+
+        self.assertIs(response, denied)
+        review.assert_called_once_with(
+            request,
+            kind='commercial',
+            pk=42,
+            event_key='mcr:42:1',
+        )
+
     def test_learner_download_does_not_accept_a_completed_status_without_the_mark(self):
         from learner_api.calendar import learner_calendar_event_review_pdf
         definition = sample_definition()
