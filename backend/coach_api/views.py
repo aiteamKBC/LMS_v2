@@ -150,6 +150,11 @@ from learner_api.review_progress_snapshot import (
 
 logger = logging.getLogger(__name__)
 
+# Compatibility export for established imports. URL routing uses the thin
+# Dashboard HTTP module directly; canonical rebuild helpers remain below until
+# their cross-schema behavior can be split independently.
+from .dashboard_view import coach_dashboard
+
 
 def _coach_perf(endpoint, stage, started, *, learner_count=None, **extra):
     payload = {
@@ -11586,49 +11591,6 @@ def coach_directory(request):
             "caseloadCountsAvailable": counts_available,
         }
     )
-
-
-@coach_access_required
-@require_GET
-def coach_dashboard(request):
-    """Return the compact Coach Dashboard read model in one request.
-
-    Detailed caseload, timetable and marking payloads belong to their own
-    endpoints.  Keep all dashboard aggregation behind CoachDashboardService so
-    an endpoint cannot quietly reintroduce one of those expensive loaders.
-    """
-    endpoint_started = perf_counter()
-    owner_email = authenticated_coach_email(request)
-    # coach_access_required has already authenticated the caller, resolved
-    # viewAsCoach, and installed the effective coach identity at this point.
-    from .dashboard_cache import cache_coach_dashboard, get_cached_coach_dashboard
-    cached_dashboard = get_cached_coach_dashboard(owner_email)
-    if cached_dashboard is not None:
-        _coach_perf(
-            "dashboard", "cache_hit", endpoint_started,
-            learner_count=len(cached_dashboard.get("learners", [])),
-        )
-        return JsonResponse(cached_dashboard)
-    try:
-        from .dashboard_service import CoachDashboardService
-        response_payload = CoachDashboardService(owner_email, today=timezone.localdate()).build()
-    except Exception:
-        logger.exception("coach_dashboard_load_failed coach_account_id=%s", owner_email)
-        return coach_error(
-            request,
-            code="database_unavailable",
-            message="Unable to load coach dashboard data.",
-            status=503,
-        )
-
-    compute_duration_ms = round((perf_counter() - endpoint_started) * 1000, 2)
-    logger.info(
-        "coach_dashboard_cache status=MISS_COMPUTED namespace=coach-dashboard-summary:v1 duration_ms=%s",
-        compute_duration_ms,
-    )
-    _coach_perf("dashboard", "total", endpoint_started, learner_count=len(response_payload.get("learners", [])))
-    cache_coach_dashboard(owner_email, response_payload)
-    return JsonResponse(response_payload)
 
 
 @coach_access_required
