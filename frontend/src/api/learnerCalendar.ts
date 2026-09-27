@@ -169,9 +169,9 @@ export type BookableSessionType =
   | 'first-session'
   | 'catch-up'
   | 'student-support'
-  // Monthly coaching and progress reviews also come from the programme cycle,
-  // scheduled coach-side; booking one here adds a meeting of that kind rather
-  // than filling a scheduled slot.
+  // Monthly coaching and progress reviews resolve to their official
+  // Curriculum occurrence before scheduling; they never create an unlinked
+  // standalone review row.
   | 'mcr'
   | 'progress-review'
   | 'review'

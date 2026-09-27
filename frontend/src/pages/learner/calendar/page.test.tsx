@@ -52,6 +52,17 @@ describe('calendar event previews', () => {
     expect(screen.getByRole('dialog', { name: 'Calendar Colour Preferences' })).toBeVisible();
   });
 
+  it('describes catch-up as an immediate booking while keeping support requests approval-based', async () => {
+    setup();
+    await screen.findAllByRole('button', { name: /Catch-up with your coach/ });
+    fireEvent.click(screen.getByRole('button', { name: 'Book Coach Session' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Book a Coach Session' });
+    expect(within(dialog).getByText(/Catch-up bookings are scheduled immediately/)).toBeVisible();
+    expect(within(dialog).getByRole('button', { name: 'Book Session' })).toBeVisible();
+    fireEvent.click(within(dialog).getByRole('button', { name: /Student Support/ }));
+    expect(within(dialog).getByRole('button', { name: 'Send Request' })).toBeVisible();
+  });
+
   it('shows horizontally scrollable source and status filters with distinct status colours', async () => {
     setup();
     await screen.findAllByRole('button', { name: /Catch-up with your coach/ });
