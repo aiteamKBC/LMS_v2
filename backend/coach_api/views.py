@@ -2516,11 +2516,16 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
 
     enrolment_ids = [int(source.pk) for _, source, _ in work]
     direct_progress = load_direct_progress_records_bulk(enrolment_ids)
-    attempt_keys = [
-        (int(source.pk), int(source.aptem_id))
+    # ``source.pk`` is the canonical internal enrolment identity. ``aptem_id``
+    # is only an optional bridge to retained Aptem/audit data: native learners
+    # created in this LMS legitimately have no value.  Normalize that bridge
+    # once so no Aptem-dependent preload invents an identity or coerces NULL.
+    aptem_by_enrolment = {
+        int(source.pk): int(str(source.aptem_id).strip())
         for _, source, _ in work
-        if getattr(source, 'aptem_id', None) not in (None, '')
-    ]
+        if student_activity_available(getattr(source, 'aptem_id', None))
+    }
+    attempt_keys = list(aptem_by_enrolment.items())
     subject_attempts = load_subject_attempts_bulk(attempt_keys)
     manual_hours = load_manual_hours_bulk([aptem for _, aptem in attempt_keys])
     reflection_keys = [(kind, int(source.pk)) for _, source, kind in work]
@@ -2540,9 +2545,9 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
     ])
     contracts = load_contracts_bulk([aptem for _, aptem in attempt_keys])
     accepted_ksb_rows = load_accepted_ksb_rows_bulk([
-        (int(source.pk), int(source.aptem_id), kind)
+        (int(source.pk), aptem_by_enrolment[int(source.pk)], kind)
         for _, source, kind in work
-        if getattr(source, 'aptem_id', None) not in (None, '')
+        if int(source.pk) in aptem_by_enrolment
     ])
     audit_groups = {
         int(item['group_id'])
@@ -2563,31 +2568,34 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
         loaded = []
         for item in items:
             profile_id, source, kind = item
+            enrolment_id = int(source.pk)
+            aptem_id = aptem_by_enrolment.get(enrolment_id)
+            audit_input = audit_inputs.get(aptem_id) if aptem_id is not None else None
             try:
                 loaded.append((profile_id, read_metrics(
                     source, kind,
                     preloaded={
-                        'direct_progress': direct_progress.get(int(source.pk), []),
-                        'subject_attempts': subject_attempts.get((int(source.pk), int(source.aptem_id)), set()),
-                        'manual_hours': manual_hours.get(int(source.aptem_id)),
+                        'direct_progress': direct_progress.get(enrolment_id, []),
+                        'subject_attempts': subject_attempts.get((enrolment_id, aptem_id), set()) if aptem_id is not None else set(),
+                        'manual_hours': manual_hours.get(aptem_id) if aptem_id is not None else None,
                         'reflection_submissions': reflection_submissions.get((kind, str(source.pk)), []),
-                        'audit_inputs': audit_inputs.get(int(source.aptem_id)),
+                        'audit_inputs': audit_input,
                         'historical_metadata_loaded': True,
-                        'native_progress': native_progress.get(int(source.pk), []),
-                        'effective_plan_ids': plan_ids_by_enrolment.get(int(source.pk), []),
+                        'native_progress': native_progress.get(enrolment_id, []),
+                        'effective_plan_ids': plan_ids_by_enrolment.get(enrolment_id, []),
                         'native_components': [
-                            item for module_id in plan_ids_by_enrolment.get(int(source.pk), [])
+                            item for module_id in plan_ids_by_enrolment.get(enrolment_id, [])
                             for item in component_by_module.get(str(module_id), [])
                         ],
-                        'planned_hours_document': planned_documents.get((int(source.pk), kind)),
-                        'planned_hours_contract': contracts.get(int(source.aptem_id)),
-                        'aptem_planned_total': (audit_inputs.get(int(source.aptem_id)) or {}).get('aptem_planned_total'),
-                        'accepted_ksb_rows': accepted_ksb_rows.get(int(source.pk), []),
+                        'planned_hours_document': planned_documents.get((enrolment_id, kind)),
+                        'planned_hours_contract': contracts.get(aptem_id) if aptem_id is not None else None,
+                        'aptem_planned_total': (audit_input or {}).get('aptem_planned_total'),
+                        'accepted_ksb_rows': accepted_ksb_rows.get(enrolment_id, []),
                         'export_links': [
                             row
                             for group_id in {
                                 int(item['group_id'])
-                                for item in (audit_inputs.get(int(source.aptem_id)) or {}).get('historical', [])
+                                for item in (audit_input or {}).get('historical', [])
                                 if item.get('group_id') is not None
                             }
                             for row in export_links.get(group_id, [])
@@ -2604,7 +2612,7 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
                             for component in component_by_module.get(str(module_id), [])
                         ],
                         'native_progress': native_progress.get(int(source.pk), []),
-                        'audit_inputs': audit_inputs.get(int(source.aptem_id)) if getattr(source, 'aptem_id', None) not in (None, '') else None,
+                        'audit_inputs': audit_input,
                     }
                     native_components = preloaded['native_components']
                     audit_input = preloaded['audit_inputs'] or {}
