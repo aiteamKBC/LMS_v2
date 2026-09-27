@@ -765,6 +765,7 @@ class LearnerProfile(models.Model):
                 "passed": entry.passed,
                 "feedback": entry.feedback,
                 "reportedTime": entry.reported_time,
+                "reflectionSkipped": entry.reflection_skipped,
                 "startedAt": entry.started_at.isoformat() if entry.started_at else "",
                 "submittedAt": entry.submitted_at.isoformat() if entry.submitted_at else "",
                 "timeTaken": entry.time_taken,
@@ -1043,6 +1044,7 @@ class LearnerProgressEntry(models.Model):
     passed = models.BooleanField(null=True, blank=True)
     feedback = models.TextField(blank=True)
     reported_time = models.TextField(blank=True)
+    reflection_skipped = models.BooleanField(default=False)
     started_at = models.DateTimeField(null=True, blank=True)
     submitted_at = models.DateTimeField(null=True, blank=True)
     time_taken = models.TextField(blank=True)

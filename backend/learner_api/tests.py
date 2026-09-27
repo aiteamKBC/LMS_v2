@@ -1719,7 +1719,7 @@ class ComponentWriteEndpointRejectionTests(SimpleTestCase):
         with patch("learner_api.components.timezone.now", return_value=access_time), patch('learner_api.time_tracking.is_working_hours_holiday', return_value=holiday):
             return view(request, component_id)
 
-    def _run(self, save_side_effect=None, **post_options):
+    def _run(self, save_side_effect=None, tutor_validation_required=False, **post_options):
         profile = SimpleNamespace(training_plan_progress=[])
         with patch("learner_api.components.SOURCE_MODELS", {"apprenticeship": Mock()}) as models:
             models["apprenticeship"].objects.get.return_value = SimpleNamespace(id=19)
@@ -1731,8 +1731,22 @@ class ComponentWriteEndpointRejectionTests(SimpleTestCase):
                                 with patch(
                                     "learner_api.components.save_progress_record",
                                     side_effect=save_side_effect,
-                                ), patch("learner_api.components.requires_tutor_validation", return_value=False):
+                                ), patch("learner_api.components.requires_tutor_validation", return_value=tutor_validation_required), patch(
+                                    "learner_api.components.queue_for_marking"
+                                ):
                                     return self._post("COMP-UNDER-TEST", **post_options)
+
+    def test_explicit_reflection_skip_is_audited_on_the_progress_record(self):
+        save = Mock()
+        response = self._run(save, payload={"skipReflection": True})
+        self.assertEqual(response.status_code, 200)
+        self.assertIs(save.call_args.args[1]["reflectionSkipped"], True)
+
+    def test_reflection_skip_remains_optional_with_tutor_validation(self):
+        save = Mock()
+        response = self._run(save, tutor_validation_required=True, payload={"skipReflection": True})
+        self.assertEqual(response.status_code, 200)
+        self.assertIs(save.call_args.args[1]["reflectionSkipped"], True)
 
     def test_unknown_component_write_returns_400(self):
         response = self._run(OrphanComponentReferenceError("COMP-GHOST"))

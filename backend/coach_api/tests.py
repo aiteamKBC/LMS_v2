@@ -87,16 +87,17 @@ class AuditKsbOverlayTests(SimpleTestCase):
     workspace shows the same figure as a count for that reason.
     """
 
-    def test_the_count_is_overlaid_without_inventing_a_percentage(self):
-        payload = {"ksbCompleted": 0, "ksbTarget": 14, "ksbProgress": 0}
+    def test_audit_count_does_not_replace_comparable_curriculum_progress(self):
+        payload = {"ksbCompleted": 14, "ksbTarget": 14, "ksbProgress": 100}
 
         overlaid = apply_evidenced_ksb_count(payload, 23)
 
         self.assertEqual(overlaid["ksbEvidencedCount"], 23)
-        self.assertEqual(overlaid["ksbCompleted"], 23)
+        self.assertEqual(overlaid["ksbCompleted"], 14)
         self.assertEqual(overlaid["ksbSource"], "audit")
-        # Untouched: 23 of a 14-code curriculum target would read past 100%.
-        self.assertEqual(overlaid["ksbProgress"], 0)
+        # The ratio remains internally consistent; the raw audit figure has no
+        # compatible denominator and is exposed only through its dedicated key.
+        self.assertEqual(overlaid["ksbProgress"], 100)
         self.assertEqual(overlaid["ksbTarget"], 14)
 
     def test_learners_without_audit_ksbs_keep_their_own(self):

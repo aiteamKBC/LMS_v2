@@ -111,4 +111,19 @@ describe('Coach case file Assignments tab', () => {
     render(<AssignmentsTab kind="apprenticeship" learnerId="125" />);
     expect(screen.getByRole('status', { name: 'Loading assignments' })).toBeInTheDocument();
   });
+
+  it('isolates marking loading and failure inside Assignments', () => {
+    const retry = vi.fn();
+    const { rerender } = render(<AssignmentsTab kind="apprenticeship" learnerId="125" markingState={{
+      data: null, loading: true, error: null, retry, invalidate: retry,
+    }} />);
+    expect(screen.getByRole('status', { name: 'Loading assignments' })).toBeInTheDocument();
+
+    rerender(<AssignmentsTab kind="apprenticeship" learnerId="125" markingState={{
+      data: null, loading: false, error: 'Marking unavailable', retry, invalidate: retry,
+    }} />);
+    expect(screen.getByRole('alert')).toHaveTextContent('Marking unavailable');
+    fireEvent.click(screen.getByRole('button', { name: 'Retry marking' }));
+    expect(retry).toHaveBeenCalledTimes(1);
+  });
 });
