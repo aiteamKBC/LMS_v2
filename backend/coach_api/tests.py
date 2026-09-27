@@ -45,6 +45,7 @@ from coach_api.views import (
     apply_evidenced_ksb_count,
     caseload_audit_hour_totals,
     caseload_aptem_ids,
+    caseload_canonical_metrics,
     caseload_canonical_attendance,
     caseload_dashboard_progress_projections,
     caseload_evidenced_ksb_counts,
@@ -503,6 +504,111 @@ class OtjhTargetContractTests(SimpleTestCase):
 
 
 class CanonicalCoachMetricsTests(SimpleTestCase):
+    def canonical_loader_patches(self, *, read_metrics):
+        mocks = {
+            "load_direct_progress_records_bulk": MagicMock(return_value={
+                10: [{"componentId": "native-null"}],
+                11: [{"componentId": "native-aptem"}],
+            }),
+            "load_subject_attempts_bulk": MagicMock(return_value={
+                (11, 42): {("group-1", "activity-1")},
+            }),
+            "load_manual_hours_bulk": MagicMock(return_value={42: 7.5}),
+            "load_reflection_submissions_bulk": MagicMock(return_value={
+                ("commercial", "10"): [{"id": "reflection-null"}],
+                ("apprenticeship", "11"): [{"id": "reflection-aptem"}],
+            }),
+            "load_audit_inputs_bulk": MagicMock(return_value={
+                42: {"identity": ("learner@example.test",), "historical": [], "aptem_planned_total": 400},
+            }),
+            "load_native_progress_bulk": MagicMock(return_value={
+                10: [{"componentId": "native-null", "passed": True}],
+                11: [{"componentId": "native-aptem", "passed": True}],
+            }),
+            "_effective_plan_ids": MagicMock(side_effect=lambda source, _cache: [source.pk * 100]),
+            "load_native_components_bulk": MagicMock(return_value={
+                "1000": [{"id": "native-null"}],
+                "1100": [{"id": "native-aptem"}],
+            }),
+            "load_planned_hours_documents_bulk": MagicMock(return_value={
+                (10, "commercial"): {"otjh": {"plannedTotal": 24}},
+            }),
+            "load_contracts_bulk": MagicMock(return_value={42: {"training_plan_planned_hours": 400}}),
+            "load_accepted_ksb_rows_bulk": MagicMock(return_value={11: [{"source_ref": "legacy"}]}),
+            "load_export_links_bulk": MagicMock(return_value={}),
+            "read_metrics": read_metrics,
+        }
+        return patch.multiple("coach_api.views", **mocks), mocks
+
+    def test_null_aptem_identity_keeps_native_metrics_and_skips_aptem_lookups(self):
+        captured = {}
+
+        def read_metrics(source, kind, preloaded):
+            captured[source.pk] = preloaded
+            return {
+                "programme": {"completed": len(preloaded["native_progress"]), "total": len(preloaded["native_components"])},
+                "otjh": {"planned": (preloaded["planned_hours_document"] or {}).get("otjh", {}).get("plannedTotal")},
+                "ksb": {"completed": len(preloaded["native_progress"])},
+            }
+
+        native = SimpleNamespace(pk=10, aptem_id=None, email="native@example.test")
+        row = SimpleNamespace(id=100, learner_type="commercial", _caseload_source=native)
+
+        patches, mocks = self.canonical_loader_patches(read_metrics=MagicMock(side_effect=read_metrics))
+        with patches:
+            result = caseload_canonical_metrics([row])
+
+        self.assertEqual(result[100]["programme"], {"completed": 1, "total": 1})
+        self.assertEqual(result[100]["otjh"]["planned"], 24)
+        self.assertEqual(result[100]["ksb"]["completed"], 1)
+        self.assertEqual(captured[10]["subject_attempts"], set())
+        self.assertIsNone(captured[10]["audit_inputs"])
+        self.assertIsNone(captured[10]["planned_hours_contract"])
+        mocks["load_subject_attempts_bulk"].assert_called_once_with([])
+        mocks["load_manual_hours_bulk"].assert_called_once_with([])
+        mocks["load_audit_inputs_bulk"].assert_called_once_with([])
+
+    def test_mixed_caseload_only_builds_external_keys_for_valid_aptem_ids(self):
+        captured = {}
+
+        def read_metrics(source, kind, preloaded):
+            captured[source.pk] = preloaded
+            return {"source": source.pk, "nativeProgress": preloaded["native_progress"]}
+
+        rows = [
+            SimpleNamespace(
+                id=100,
+                learner_type="commercial",
+                _caseload_source=SimpleNamespace(pk=10, aptem_id=None, email="native@example.test"),
+            ),
+            SimpleNamespace(
+                id=101,
+                learner_type="apprenticeship",
+                _caseload_source=SimpleNamespace(pk=11, aptem_id=" 42 ", email="learner@example.test"),
+            ),
+        ]
+
+        patches, mocks = self.canonical_loader_patches(read_metrics=MagicMock(side_effect=read_metrics))
+        with patches:
+            result = caseload_canonical_metrics(rows)
+
+        self.assertEqual(set(result), {100, 101})
+        self.assertEqual(captured[10]["subject_attempts"], set())
+        self.assertEqual(captured[11]["subject_attempts"], {("group-1", "activity-1")})
+        self.assertEqual(captured[11]["manual_hours"], 7.5)
+        self.assertEqual(captured[11]["aptem_planned_total"], 400)
+        mocks["load_subject_attempts_bulk"].assert_called_once_with([(11, 42)])
+        mocks["load_accepted_ksb_rows_bulk"].assert_called_once_with([(11, 42, "apprenticeship")])
+
+    def test_zero_learner_caseload_runs_no_metric_loaders(self):
+        read_metrics = MagicMock()
+        patches, mocks = self.canonical_loader_patches(read_metrics=read_metrics)
+        with patches:
+            self.assertEqual(caseload_canonical_metrics([]), {})
+
+        read_metrics.assert_not_called()
+        mocks["load_direct_progress_records_bulk"].assert_not_called()
+
     def test_otjh_status_uses_agreed_variance_boundaries(self):
         self.assertEqual(otjh_status_from_variance(Decimal("-19.99")), "On track")
         self.assertEqual(otjh_status_from_variance(Decimal("-20")), "On track")
