@@ -20,7 +20,9 @@ const saved = {
   id: 'O6', seriesId: 'S1', sessionNumber: 6, startsAt: '2026-09-17T09:00:00Z', endsAt: '2026-09-17T11:00:00Z',
   state: 'completed', reportReady: true, archiveReady: true, syncedAt: '2026-09-17T12:00:00Z',
   attendance: [{ email: 'learner@example.invalid', name: 'Learner One', seconds: 240, attendance: 1,
-    status: 'present', expected: true, excused: false, catchupCompleted: false }],
+    status: 'present', rawAttendance: 1, rawStatus: 'present', effectiveAttendance: 1,
+    effectiveStatus: 'present', finalOutcome: 'present', excuseStatus: 'none', recoveryStatus: 'none',
+    expected: true, excused: false, catchupCompleted: false }],
   artifacts: [{ id: 'R6', type: 'recording', state: 'ready' },
     { id: 'T6', type: 'transcript', state: 'ready', text: 'Speaker: Saved session six.' }],
 };

@@ -22,6 +22,7 @@ import {
 } from '@/utils/learnerJourney';
 import { fetchEvidence, getEvidenceDownloadUrl, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
 import { ReflectionWindow, formatClock, formatRecordedClock } from '@/components/feature/ReflectionWindow';
+import { ReflectionChoicePopup } from '@/components/feature/ReflectionChoicePopup';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { rememberLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
@@ -54,7 +55,7 @@ import {
 
 const learnerNav = roleNavMap.learner;
 
-type Phase = 'consume' | 'reflect' | 'confirm';
+type Phase = 'consume' | 'reflection-choice' | 'reflect' | 'confirm';
 type TimeSource = 'timer' | 'input';
 
 interface DoneRecord { activityKey: string; componentId: string; timeTaken: string | null }
@@ -245,6 +246,7 @@ export default function ComponentViewPage() {
   const [evidencePreview, setEvidencePreview] = useState<EvidencePreview | null>(null);
   const evidenceInputId = useId();
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const completionInFlightRef = useRef(false);
   const trackingSessionRef = useRef<TimeTrackingSession | null>(null);
   const trackingPromiseRef = useRef<Promise<TimeTrackingSession> | null>(null);
 
@@ -555,7 +557,7 @@ export default function ComponentViewPage() {
       setPhase('confirm');
       return;
     }
-    setPhase('reflect');
+    setPhase('reflection-choice');
   };
 
   const confirmCompletion = () => {
@@ -569,9 +571,9 @@ export default function ComponentViewPage() {
 
   const finalizeSubmit = async (
     reflection: { ksbs: string[]; feedback: string; reportedTime: string },
-    options: { rethrow?: boolean } = {},
+    options: { rethrow?: boolean; skipReflection?: boolean } = {},
   ) => {
-    if (!component || !componentId || !kind || !id || submitting || !canUseComponent) return;
+    if (!component || !componentId || !kind || !id || completionInFlightRef.current || !canUseComponent) return;
     if (componentAccess.holidayCalendarReady === false) {
       const message = componentAccess.holidayError || 'Please wait for the holiday calendar before submitting.';
       setSubmitError(message);
@@ -584,6 +586,7 @@ export default function ComponentViewPage() {
       if (options.rethrow) throw new Error(message);
       return;
     }
+    completionInFlightRef.current = true;
     setSubmitting(true);
     setSubmitError(null);
     setRefreshError(null);
@@ -598,6 +601,7 @@ export default function ComponentViewPage() {
           insideWorkingHoursConfirmed,
           videoTitle: meta?.detail || meta?.label || 'Video',
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
+          skipReflection: options.skipReflection === true,
         });
         setRecord({ activityKey: timerStorageKey, componentId, timeTaken: res.record.timeTaken });
       } else {
@@ -608,6 +612,7 @@ export default function ComponentViewPage() {
           insideWorkingHoursConfirmed,
           componentTitle: pageTitle, componentType: component.type || undefined,
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
+          skipReflection: options.skipReflection === true,
         });
         setRecord({ activityKey: timerStorageKey, componentId, timeTaken: res.record.timeTaken });
       }
@@ -628,6 +633,7 @@ export default function ComponentViewPage() {
       setSubmitError(e instanceof Error ? e.message : 'Could not save progress');
       if (options.rethrow) throw e;
     } finally {
+      completionInFlightRef.current = false;
       setSubmitting(false);
     }
   };
@@ -691,7 +697,7 @@ export default function ComponentViewPage() {
             {componentAccess.holidayError && <button type="button" onClick={componentAccess.refreshHolidays} className="ml-2 underline">Retry</button>}
           </div>
         )}
-        {workingHoursNotice && <div className="mb-5">{workingHoursNotice}</div>}
+        {workingHoursNotice && phase !== 'reflect' && <div className="mb-5">{workingHoursNotice}</div>}
 
         {loading ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} avatar={false} /></div>
@@ -715,14 +721,13 @@ export default function ComponentViewPage() {
         ) : isVideo && !parsed ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="This video has no playable URL yet." /></div>
         ) : phase === 'reflect' ? (
-          <div className="w-full max-w-5xl mx-auto">
+          <div className="space-y-4">
+            {workingHoursNotice}
             <ReflectionWindow
               noun={noun}
               plannedTimeLabel={plannedTimeLabel}
               plannedHours={plannedHours ?? undefined}
               learnerKsbs={learnerKsbs}
-              // Components carry their own authored KSB mappings, so the learner
-              // is shown what will be credited instead of picking by hand.
               autoKsbs={component.ksbMappings ?? []}
               elapsedSeconds={elapsedSeconds}
               submitting={submitting}
@@ -737,7 +742,7 @@ export default function ComponentViewPage() {
               learnerId={id}
               evidenceSectionRef={componentId}
               reflectionQuestion={component.reflectionQuestion}
-              onClose={() => navigate(backHref)}
+              onClose={() => setPhase('consume')}
             />
           </div>
         ) : (
@@ -1068,6 +1073,20 @@ export default function ComponentViewPage() {
             onSelectSource={setTimeSource}
             onCancel={() => setPhase('consume')}
             onConfirm={confirmCompletion}
+          />
+        )}
+        {phase === 'reflection-choice' && (
+          <ReflectionChoicePopup
+            noun={noun}
+            submitting={submitting}
+            error={submitError}
+            onCancel={() => setPhase('consume')}
+            onAddReflection={() => setPhase('reflect')}
+            onFinishWithoutReflection={() => void finalizeSubmit({
+              ksbs: (component?.ksbMappings || []).map(mapping => mapping.code),
+              feedback: '',
+              reportedTime: plannedTimeLabel,
+            }, { skipReflection: true })}
           />
         )}
         {evidencePreview && (

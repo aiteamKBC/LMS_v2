@@ -5,7 +5,15 @@ import { fetchReviewHistory, type ImportedReview } from '@/api/reviewHistory';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 
-export function isReviewSession(event: LearnerCalendarEvent, source: 'mcr' | 'progress-review') {
+export type ReviewSessionSource = 'mcr' | 'progress-review' | 'review';
+
+export function isReviewSession(event: LearnerCalendarEvent, source: ReviewSessionSource) {
+  if (source === 'review') {
+    // Generic Reviews are Curriculum occurrences.  Requiring the template
+    // link keeps legacy/imported rows out of this section and prevents a new
+    // review type from being silently treated as a Progress Review.
+    return event.source === 'review' && Boolean(event.reviewTemplateId);
+  }
   const code = source === 'mcr' ? 'mcm' : 'progress_review';
   return event.reviewTypeCode ? event.reviewTypeCode === code : !event.reviewTemplateId && event.source === source;
 }
@@ -24,7 +32,7 @@ export function mergeCompletedReviewHistory(events: LearnerCalendarEvent[], hist
 }
 
 /** Programme sessions remain usable if the learning summary is unavailable. */
-export function useReviewSessions(source: 'mcr' | 'progress-review') {
+export function useReviewSessions(source: ReviewSessionSource) {
   const myLearner = useLinkedLearner();
   const [learner, setLearner] = useState<LearnerDetail | null>(null);
   const [currentCoach, setCurrentCoach] = useState<{ name: string; email: string } | null>(null);
@@ -58,13 +66,15 @@ export function useReviewSessions(source: 'mcr' | 'progress-review') {
     void fetchLearnerDetail(myLearner.kind, myLearner.id, { revalidate: true })
       .then(detail => { if (!cancelled) setLearner(detail); })
       .catch(() => { if (!cancelled) setDetailError('Could not load the learner summary. Please try again.'); });
-    const historyPromise = fetchReviewHistory(myLearner.kind, myLearner.id,
-      source === 'mcr' ? 'monthly-coaching' : 'reviews')
-      .then(history => importedReviewsToEvents(history.reviews, source))
-      .catch(() => {
-        if (!cancelled) setDetailError('Could not load archived reviews. Please try again.');
-        return [];
-      });
+    const historyPromise = source === 'review'
+      ? Promise.resolve([] as LearnerCalendarEvent[])
+      : fetchReviewHistory(myLearner.kind, myLearner.id,
+        source === 'mcr' ? 'monthly-coaching' : 'reviews')
+        .then(history => importedReviewsToEvents(history.reviews, source))
+        .catch(() => {
+          if (!cancelled) setDetailError('Could not load archived reviews. Please try again.');
+          return [];
+        });
     void fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { revalidate: true })
       .then(async calendar => {
         if (cancelled) return;

@@ -85,6 +85,22 @@ describe('calendar event previews', () => {
     expect(statusBadges[0]).toHaveClass('bg-primary-100', 'text-primary-800');
   });
 
+  it('shows an elapsed meeting as Ended and closes its Join button', async () => {
+    setup([event({ status: 'in-progress', meetingOutcome: 'ended' })]);
+    const statusBadges = await screen.findAllByLabelText('Ended status');
+    expect(statusBadges[0]).toHaveTextContent('Ended');
+    fireEvent.click(screen.getAllByRole('button', { name: /Catch-up with your coach/ })[0]);
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('button', { name: 'Meeting ended' })).toBeDisabled();
+    expect(within(dialog).queryByRole('link', { name: 'Join Meeting' })).not.toBeInTheDocument();
+  });
+
+  it('shows an elapsed meeting the learner attended as Completed', async () => {
+    setup([event({ status: 'in-progress', meetingOutcome: 'completed' })]);
+    const statusBadges = await screen.findAllByLabelText('Completed status');
+    expect(statusBadges[0]).toHaveTextContent('Completed');
+  });
+
   it.each(['book', 'reschedule'] as const)('uses the appointment date timezone offset when a future session is %s', async action => {
     // A browser in London is UTC+1 in September, but UTC in November.
     vi.spyOn(Date.prototype, 'getTimezoneOffset').mockImplementation(function (this: Date) {

@@ -68,6 +68,7 @@ export interface QuizSubmission {
   ksbs?: string[];           // KSB codes the learner marked as fulfilled
   feedback?: string;         // general feedback about the quiz
   reportedTime?: string;     // self-reported time-to-complete (planned time or free text)
+  skipReflection?: boolean;  // explicit learner choice, audited separately from an empty answer
 }
 
 export interface QuizQuestionResult {
@@ -94,6 +95,7 @@ export interface QuizAttempt {
   ksbs?: string[];
   feedback?: string;
   reportedTime?: string;
+  reflectionSkipped?: boolean;
   questions: unknown[];       // slim id-referenced questions (not read by the results screen)
   startedAt: string;
   submittedAt: string;

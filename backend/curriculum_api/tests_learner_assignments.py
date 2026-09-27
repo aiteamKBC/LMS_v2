@@ -136,6 +136,10 @@ class AssignmentEndpointTests(SimpleTestCase):
     def post(self, data):
         return assignments.module_learner_assignments(self.factory.post('/', json.dumps(data), content_type='application/json'), 'MOD-1')
 
+    def delete(self, data):
+        request = self.factory.delete('/', json.dumps(data), content_type='application/json')
+        return assignments.module_learner_assignments(request, 'MOD-1')
+
     def test_post_adds_only_selected_learners_with_row_locks(self):
         with patch.object(assignments, '_assign', return_value=True) as assign:
             response = self.post({'learnerIds': ['1', '1']})
@@ -143,6 +147,15 @@ class AssignmentEndpointTests(SimpleTestCase):
         assign.assert_called_once()
         self.atomic.assert_called_once_with(using='enrolment')
         self.model.all_learners.select_for_update.return_value.filter.assert_called_once_with(pk__in=[1])
+        self.invalidate.assert_called_once()
+
+    def test_delete_removes_only_selected_learners(self):
+        with patch.object(assignments, '_unassign', return_value=True) as unassign:
+            response = self.delete({'learnerIds': ['1']})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(unassign.call_args.args), 3)
+        self.assertEqual(unassign.call_args.args[1], MODULE)
+        self.atomic.assert_called_once_with(using='enrolment')
         self.invalidate.assert_called_once()
 
     def test_malformed_or_empty_ids_do_not_write(self):

@@ -30,6 +30,9 @@ from .models import CoachAbsenceReport, CoachCalendarEvent
 COACH_ENDPOINTS = (
     ("GET", "/coach_api/coach/dashboard", None),
     ("GET", "/coach_api/coach/caseload", None),
+    ("GET", "/coach_api/coach/learners/101/case-file", None),
+    ("GET", "/coach_api/coach/learners/101/next-session", None),
+    ("GET", "/coach_api/coach/learners/101/reviews", None),
     ("GET", "/coach_api/coach/caseload/101/coach-rag", None),
     ("PATCH", "/coach_api/coach/caseload/101/coach-rag", {"coachRag": "green"}),
     ("GET", "/coach_api/coach/attendance", None),
@@ -193,6 +196,49 @@ class CoachAuthorizationSecurityTests(TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.json()["code"], "coach_identity_mismatch")
         profiles.assert_not_called()
+
+    @staticmethod
+    def _case_file_profile():
+        return SimpleNamespace(
+            id=101, enrolment_id=501, aptem_id=None, learner_type="apprenticeship",
+            full_name="Owned Learner", email="owned@example.test", programme="Programme A",
+            programme_status="Active", cohort="Cohort A", group_name="Group A",
+            lifecycle_status="active", coach_name="Coach A", coach_email="coach-a@example.com",
+            coach_rag="green", start_date=None, end_date=None, gateway_review_date=None,
+        )
+
+    @patch("coach_api.views.fetch_case_file_shell")
+    def test_case_file_shell_allows_an_owned_learner(self, fetch_shell):
+        fetch_shell.return_value = (self._case_file_profile(), None)
+        self._authenticate(self._make_staff_account(email="coach-a@example.com", access="coach"))
+
+        response = self.client.get("/coach_api/coach/learners/101/case-file")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["identity"]["learnerId"], "101")
+        fetch_shell.assert_called_once_with("coach-a@example.com", 101)
+
+    @patch("coach_api.views.fetch_case_file_shell", return_value=(None, None))
+    def test_case_file_shell_hides_another_coachs_learner(self, fetch_shell):
+        self._authenticate(self._make_staff_account(email="coach-a@example.com", access="coach"))
+
+        response = self.client.get("/coach_api/coach/learners/202/case-file")
+
+        self.assertEqual(response.status_code, 404)
+        fetch_shell.assert_called_once_with("coach-a@example.com", 202)
+
+    @patch("coach_api.views.fetch_case_file_shell")
+    def test_case_file_shell_view_as_uses_the_selected_coach_scope(self, fetch_shell):
+        fetch_shell.return_value = (self._case_file_profile(), None)
+        self._make_staff_account(email="coach-a@example.com", access="coach")
+        self._authenticate(self._make_staff_account(email="admin@example.com", access="super-admin"))
+
+        response = self.client.get(
+            "/coach_api/coach/learners/101/case-file", {"viewAsCoach": "coach-a@example.com"}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        fetch_shell.assert_called_once_with("coach-a@example.com", 101)
 
     @patch("coach_api.views.sync_calendar_event_to_graph")
     @patch("coach_api.views.fetch_caseload_learner_profiles")

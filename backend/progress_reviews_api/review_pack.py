@@ -25,6 +25,7 @@ from django.conf import settings
 from django.db import DatabaseError
 
 from .period import ReviewPeriod
+from .evidence_images import blob_image_ref
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,18 @@ def _iso(value):
     return parsed.isoformat() if isinstance(parsed, date) else None
 
 
+def evidence_pool_keys(pack: dict) -> tuple:
+    """The pack lists the deck's evidence slides draw from, in order: the list
+    an edit saved in the owner's chosen order (see edits.py), else the
+    classified assignments and workplace activities, or — when neither has
+    anything — every evidence row."""
+    if "slide_evidence" in pack:
+        return ("slide_evidence",)
+    if pack.get("assignments") or pack.get("workplace_activities"):
+        return ("assignments", "workplace_activities")
+    return ("evidence",)
+
+
 def _within(day, start, end) -> bool:
     return bool(day and start and end and start <= day <= end)
 
@@ -129,6 +142,16 @@ def completed_component_ids(detail: dict) -> set:
         if cid and progress_counts_as_achieved(row):
             ids.add(cid)
     return ids
+
+
+def recorded_ksb_evidence_codes(detail: dict) -> set:
+    """Mirrors frontend/src/utils/learnerJourney.ts::recordedKsbEvidenceCodes."""
+    records = [
+        *[a for a in detail.get("quizAttempts") or [] if progress_counts_as_achieved({**a, "kind": "quiz"})],
+        *[r for r in detail.get("videoProgress") or [] if progress_counts_as_achieved(r)],
+        *[r for r in detail.get("componentProgress") or [] if progress_counts_as_achieved(r)],
+    ]
+    return {ksb_parent_code(code) for record in records for code in record.get("ksbs") or [] if ksb_parent_code(code)}
 
 
 def build_ksb_progress(detail: dict, evidenced_codes=None) -> list:
@@ -272,17 +295,14 @@ def _build_review_section(period: ReviewPeriod, *, review_id, generated_by, gene
 # --------------------------------------------------------------------------- #
 
 def _build_attendance_section(source, period: ReviewPeriod, warnings: list) -> dict:
-    """Live KBC register rows for the review window only (attendance.py itself
-    has no date-range parameter — the window filter happens here)."""
+    """The learner's lecture register — the same rows the learner page's
+    attendance view summarises (attendance_lectures.lecture_register) — cut to
+    the review window. Upcoming sessions are not attendance yet."""
     try:
-        from learner_api.attendance import _summarize_attendance, fetch_kbc_attendance_rows
+        from learner_api.attendance import _summarize_attendance
+        from learner_api.attendance_lectures import lecture_register
 
-        rows = fetch_kbc_attendance_rows(
-            aptem_id=_clean(getattr(source, "aptem_id", None)),
-            learner_id=source.id,
-            learner_name=_clean(source.username),
-            learner_email=_clean(source.email),
-        )
+        rows = [row for row in lecture_register(source) if row.get("attendance_status") != "upcoming"]
     except Exception as exc:  # live external DB: network/config errors are expected
         logger.warning("Progress review: attendance lookup failed for learner %s: %s", source.id, exc)
         warnings.append("Attendance register could not be reached; attendance section is 'Not available'.")
@@ -311,17 +331,21 @@ def _build_attendance_section(source, period: ReviewPeriod, warnings: list) -> d
             "engagement_notes": "No recorded sessions in this review period.",
         }
 
-    monthly: dict[str, dict] = {}
+    # sessionHistory statuses are attended/missed/late.
+    status_bucket = {"attended": "present", "present": "present", "missed": "absent", "absent": "absent", "late": "late"}
+    monthly: dict[tuple, dict] = {}
     for entry in summary.get("sessionHistory") or []:
         entry_date = _parse_date(entry.get("date"))
         if not entry_date:
             continue
-        label = entry_date.strftime("%B %Y")
-        bucket = monthly.setdefault(label, {"month": label, "sessions": 0, "present": 0, "absent": 0, "late": 0})
+        bucket = monthly.setdefault(
+            (entry_date.year, entry_date.month),
+            {"month": entry_date.strftime("%B %Y"), "sessions": 0, "present": 0, "absent": 0, "late": 0},
+        )
         bucket["sessions"] += 1
-        status = _clean(entry.get("status")).lower()
-        if status in bucket:
-            bucket[status] += 1
+        key = status_bucket.get(_clean(entry.get("status")).lower())
+        if key:
+            bucket[key] += 1
 
     absent = summary.get("absent", 0) or 0
     catchup = summary.get("catchup", 0) or 0
@@ -339,7 +363,7 @@ def _build_attendance_section(source, period: ReviewPeriod, warnings: list) -> d
 
     return {
         "attendance_percentage": rate if rate is not None else NOT_AVAILABLE,
-        "monthly_summary": sorted(monthly.values(), key=lambda item: item["month"]),
+        "monthly_summary": [monthly[key] for key in sorted(monthly)],
         "missed_sessions": absent,
         "catch_ups_completed": catchup,
         "catch_ups_needed": catch_ups_needed,
@@ -351,15 +375,28 @@ def _build_attendance_section(source, period: ReviewPeriod, warnings: list) -> d
 # progress / LMS modules
 # --------------------------------------------------------------------------- #
 
-def _build_progress_section(detail: dict, profile, period: ReviewPeriod, warnings: list):
-    completed_hours = _num(getattr(profile, "completed_hours", None))
-    planned_hours = _num(getattr(profile, "planned_hours", None))
-    target_hours = _num(getattr(profile, "target_hours", None))
+def _programme_elapsed_fraction(source, profile, on_day):
+    start = _parse_date(getattr(source, "start_date", None)) or _parse_date(getattr(profile, "start_date", None))
+    end = _parse_date(getattr(profile, "end_date", None)) or _parse_date(getattr(source, "end_date", None))
+    if not (start and end and end > start):
+        return None
+    return max(0.0, min(1.0, (on_day - start).days / (end - start).days))
 
-    current_pct = round(completed_hours / planned_hours * 100) if completed_hours is not None and planned_hours else None
-    target_pct = round(target_hours / planned_hours * 100) if target_hours is not None and planned_hours else None
-    if current_pct is None or target_pct is None:
-        warnings.append("Programme progress percentage could not be computed (missing planned/target hours).")
+
+def _build_progress_section(detail: dict, source, profile, metrics, period: ReviewPeriod, warnings: list):
+    """Programme progress is activities completed out of activities planned,
+    the learner dashboard's own figure (dashboard_metrics.read_metrics), not
+    an OTJ-hours ratio. The target is the share of programme time elapsed by
+    the review date."""
+    programme = (metrics or {}).get("programme") or {}
+    ready = programme.get("status") == "ready" and programme.get("percent") is not None
+    current_pct = round(programme["percent"]) if ready else None
+    elapsed = _programme_elapsed_fraction(source, profile, period.review_date)
+    target_pct = round(elapsed * 100) if elapsed is not None else None
+    if current_pct is None:
+        warnings.append("Programme progress could not be computed (learner activity metrics unavailable).")
+    if target_pct is None:
+        warnings.append("Programme progress target could not be computed (missing or invalid programme dates).")
 
     done_ids = completed_component_ids(detail)
     modules: dict[str, dict] = {}
@@ -401,12 +438,30 @@ def _build_progress_section(detail: dict, profile, period: ReviewPeriod, warning
 # OTJ
 # --------------------------------------------------------------------------- #
 
-def _build_otj_section(source, profile, detail: dict, warnings: list) -> dict:
+def _build_otj_section(source, profile, detail: dict, metrics, warnings: list) -> dict:
+    """OTJ hours from dashboard_metrics.read_metrics, with the target rescaled
+    and the RAG status derived as the coach caseload does
+    (coach_api.views.apply_canonical_learner_metrics). The learner profile's
+    snapshot is only the fallback when live metrics cannot be read."""
+    from learner_api.learner_detail import otjh_status_from_variance
+
     completed = _num(getattr(profile, "completed_hours", None))
     target = _num(getattr(profile, "target_hours", None))
     planned = _num(getattr(profile, "planned_hours", None))
     minimum = _num(getattr(source, "minimum_required_hours", None))
     status = _clean(getattr(profile, "otjh_status", None)) or detail.get("otjhStatus") or NOT_AVAILABLE
+
+    otjh = (metrics or {}).get("otjh") or {}
+    if otjh.get("planned") is not None:
+        canonical_plan = _num(otjh["planned"])
+        ratio = target / planned if target is not None and planned else None
+        if ratio is not None and target > 1 and 0 < ratio <= 1:
+            target = max(round(canonical_plan * ratio, 2), 1)
+        planned = canonical_plan
+    if otjh.get("actual") is not None:
+        completed = round(_num(otjh["actual"]), 1)
+    if completed is not None and target:
+        status = otjh_status_from_variance(completed - target)
 
     start = _parse_date(getattr(profile, "start_date", None)) or _parse_date(getattr(source, "start_date", None))
     end = _parse_date(getattr(profile, "end_date", None)) or _parse_date(getattr(source, "end_date", None))
@@ -524,7 +579,13 @@ def _build_evidence_sections(kind, learner_id, period: ReviewPeriod, warnings: l
             "evidence_status": row.get("status") or NOT_AVAILABLE,
             "evidence_summary": details.get("componentTitle") or NOT_AVAILABLE,
             "evidence_file_link": file_link,
-            "image_or_screenshot_link": file_link if _clean(row.get("content_type")).startswith("image/") else NOT_AVAILABLE,
+            # A stable blob reference, not the short-lived SAS link, so a deck
+            # rebuilt later from this snapshot (an edit) still finds the image.
+            "image_or_screenshot_link": (
+                blob_image_ref(row["container"], row["blob_name"])
+                if row.get("status") == "approved" and _clean(row.get("content_type")).startswith("image/")
+                else NOT_AVAILABLE
+            ),
             "manager_verification_status": marking or "not submitted",
             "ai_classification_summary": NOT_AVAILABLE,
             "ksb_mappings": ksb_codes or [],
@@ -563,9 +624,14 @@ def _recommend_evidence(ksb: dict) -> str:
 
 
 def _build_ksb_sections(detail: dict, profile, warnings: list) -> dict:
-    progress = build_ksb_progress(detail)
+    # Same inputs as the learner page's useKsbProgress: recorded evidence
+    # counts, and a KSB that no activity maps to cannot be progressed yet.
+    progress = [
+        item for item in build_ksb_progress(detail, recorded_ksb_evidence_codes(detail))
+        if item["totalCount"] > 0 or item["status"] == "complete"
+    ]
     if not progress:
-        warnings.append("No KSBs are assigned to this learner's programme.")
+        warnings.append("No KSBs are mapped to this learner's programme activities.")
 
     def by_type(type_code):
         return [
@@ -722,9 +788,6 @@ def build_review_pack(
 
     warnings: list = []
     kind, source = _resolve_learner(learner_id)
-    profile = _resolve_profile(source, learner_id)
-    if profile is None:
-        warnings.append("This learner has no active LearnerProfile record; profile-derived fields may be limited.")
 
     try:
         detail = build_learner_detail(source, learner_id)
@@ -733,13 +796,27 @@ def build_review_pack(
         warnings.append("Learner detail could not be loaded; programme/KSB/module sections are limited.")
         detail = {}
 
+    # Read after build_learner_detail, which refreshes the profile's OTJ snapshot.
+    profile = _resolve_profile(source, learner_id)
+    if profile is None:
+        warnings.append("This learner has no active LearnerProfile record; profile-derived fields may be limited.")
+
+    try:
+        from learner_api.dashboard_metrics import read_metrics
+
+        metrics = read_metrics(source, kind)
+    except Exception as exc:
+        logger.warning("Progress review: learner metrics failed for learner %s: %s", learner_id, exc)
+        warnings.append("Live learner metrics could not be read; OTJ figures fall back to the profile snapshot.")
+        metrics = None
+
     learner_section = _build_learner_section(source, profile, detail, warnings)
     review_section = _build_review_section(
         period, review_id=review_id, generated_by=generated_by, generated_at=timezone.now(),
     )
     attendance_section = _build_attendance_section(source, period, warnings)
-    progress_section, lms_modules = _build_progress_section(detail, profile, period, warnings)
-    otj_section = _build_otj_section(source, profile, detail, warnings)
+    progress_section, lms_modules = _build_progress_section(detail, source, profile, metrics, period, warnings)
+    otj_section = _build_otj_section(source, profile, detail, metrics, warnings)
     evidence, assignments, workplace_activities = _build_evidence_sections(kind, learner_id, period, warnings)
     ksb_sections, ksb_progress = _build_ksb_sections(detail, profile, warnings)
     epa_section = _build_epa_section(detail, ksb_progress, evidence, warnings)

@@ -209,9 +209,11 @@ def _handle(request, scope, identifier):
             if len(learners) != len(ids):
                 return JsonResponse({'error': 'One or more selected learners no longer exist.'}, status=400)
             cache = {}
-            action = _unassign if request.method == 'DELETE' else _assign
             for learner in learners:
-                changed += int(action(learner, target, catalogue, cache))
+                if request.method == 'DELETE':
+                    changed += int(_unassign(learner, target, cache))
+                else:
+                    changed += int(_assign(learner, target, catalogue, cache))
         from .views import invalidate_curriculum_cache
         invalidate_curriculum_cache()
         return JsonResponse({'assignedCount': len(ids), 'changedCount': changed, 'moduleCount': len(target['moduleIds'])})

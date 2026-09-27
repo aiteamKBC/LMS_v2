@@ -24,6 +24,7 @@ export interface ReviewsHomeProps {
   onSchedule: (session: LearnerCalendarEvent) => void;
   onAttend: (id: string) => void;
   onReport: (session: MeetingAttendance) => void;
+  basePath?: string;
 }
 
 const filters: { id: ReviewFilter; label: string }[] = [{ id: 'all', label: 'All' }, { id: 'upcoming', label: 'Upcoming' }, { id: 'past', label: 'Past' }];
@@ -48,11 +49,12 @@ export default function ReviewsHome(props: ReviewsHomeProps) {
     if (previousView.current !== allView) heading.current?.focus();
     previousView.current = allView;
   }, [allView]);
-  const viewHref = (all: boolean) => reviewsListHref(learner, new URLSearchParams(all ? 'view=all' : ''));
+  const basePath = props.basePath || '/learner/progress-reviews';
+  const viewHref = (all: boolean) => reviewsListHref(learner, new URLSearchParams(all ? 'view=all' : ''), basePath);
   const detailHref = (state: ReviewPresentation) => {
-    const next = new URLSearchParams(reviewsListHref(learner, params).split('?')[1]);
+    const next = new URLSearchParams(reviewsListHref(learner, params, basePath).split('?')[1]);
     if (allView) { next.set('filter', filter); next.set('page', String(page)); }
-    return `/learner/progress-reviews/${encodeURIComponent(state.session.id)}?${next}`;
+    return `${basePath}/${encodeURIComponent(state.session.id)}?${next}`;
   };
   const updateView = (selected: ReviewFilter, selectedPage = 1) => {
     const next = new URLSearchParams({ kind: learner.kind, learner: learner.id, view: 'all', filter: selected });

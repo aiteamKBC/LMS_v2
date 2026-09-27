@@ -16,6 +16,7 @@ from .attendance_lectures import (
     read_legacy_metadata, report_id, session_key,
     read_native_occurrences, read_native_components, ATTENDANCE_SOURCE_FIELDS,
 )
+from .attendance import _summarize_attendance
 from .attendance_mode import _payload, _manager, MAX_AGE, SALT, review_attendance_mode
 from .absence_reports import _fetch_missed_sessions, _resolve_absent_attendance, learner_absence_reports
 from .management.commands.send_attendance_reminders import reminder_candidates
@@ -36,6 +37,9 @@ class AttendanceLectureTests(SimpleTestCase):
         confirmations = patch('learner_api.attendance_confirmation.read_confirmations', return_value={})
         confirmations.start()
         self.addCleanup(confirmations.stop)
+        catchups = patch('learner_api.attendance_lectures._completed_catchup_occurrences', return_value=set())
+        catchups.start()
+        self.addCleanup(catchups.stop)
 
     def test_monthly_log_link_uses_exact_source_key_and_saved_report_month(self):
         row = register_row()
@@ -64,7 +68,7 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertEqual(result['session_start_time'].strftime('%H:%M'), '00:30')
         self.assertEqual(result['scheduled_start'].tzinfo, datetime_timezone.utc)
 
-    def test_schedule_requires_assignment_and_accepts_invitation_or_confirmed_attendance(self):
+    def test_schedule_uses_current_module_assignment_without_stale_invitation_gate(self):
         conn = MagicMock()
         cur = conn.cursor.return_value.__enter__.return_value
         cur.fetchall.return_value = [('assigned-module', 'Current module title')]
@@ -75,14 +79,24 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertIn('enrolment."Created_users" WHERE id=%s', assignment_sql)
         self.assertEqual(assignment_params, [12])
         schedule_sql, schedule_params = cur.execute.call_args_list[1].args
-        self.assertEqual(schedule_params, ['learner@example.test', ['assigned-module'],
-                                           'learner@example.test', 'learner@example.test',
-                                           'learner@example.test'])
+        self.assertEqual(schedule_params, ['learner@example.test', ['assigned-module']])
         self.assertIn('s.module_catalogue_id=ANY(%s)', schedule_sql)
-        self.assertIn('jsonb_array_elements_text', schedule_sql)
         self.assertIn('curriculum.live_session_attendance', schedule_sql)
-        self.assertIn('a.total_attendance_seconds>0', schedule_sql)
+        self.assertIn('a.total_attendance_seconds>180', schedule_sql)
         self.assertIn('m.title AS module_title', schedule_sql)
+        self.assertNotIn('jsonb_array_elements_text', schedule_sql)
+        self.assertNotIn('live_session_join_launches', schedule_sql)
+
+    def test_empty_json_plan_still_uses_normalized_module_assignments(self):
+        conn = MagicMock()
+        cur = conn.cursor.return_value.__enter__.return_value
+        cur.fetchall.return_value = [('assigned-module', 'Current module title')]
+        with patch('learner_api.attendance_lectures.connections', {'enrolment': conn}), \
+             patch('learner_api.attendance_lectures.dict_rows', return_value=[]):
+            read_native_occurrences(SimpleNamespace(id=12, email='learner@example.test'))
+        assignment_sql = cur.execute.call_args_list[0].args[0]
+        self.assertIn('"Learner".learner_training_plan_modules', assignment_sql)
+        self.assertNotIn("WHERE jsonb_typeof(source.plan) IS DISTINCT FROM 'array'", assignment_sql)
 
     def test_confirmed_teams_attendee_is_present_when_the_saved_invite_is_missing(self):
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
@@ -128,7 +142,7 @@ class AttendanceLectureTests(SimpleTestCase):
         activity = {'group_id': 20, 'group_name': 'Business', 'activity_id': 4,
                     'activity_date': date(2026, 9, 1), 'title': 'Recording',
                     'activity_type': 'video', 'video_completed': True}
-        metadata = {row['session_id']: {'ksbs': [{'code': 'K1'}, {'code': 'S2'}], 'activity_hours': 2}}
+        metadata = {row['session_id']: {'ksbs': [{'code': 'K1'}, {'code': 'S2'}], 'activity_hours': 17}}
         result = build_lectures([row], metadata, [activity], [], 'apprenticeship', 12)[0]
         self.assertEqual(result['ksbs'], ['K1', 'S2'])
         self.assertEqual(result['durationMinutes'], 120)
@@ -142,7 +156,8 @@ class AttendanceLectureTests(SimpleTestCase):
         row = register_row()
         first = build_lectures([row], {}, [], [], 'apprenticeship', 12)[0]
         self.assertEqual(first['ksbs'], [])
-        self.assertIsNone(first['durationMinutes'])
+        # Live sessions are a fixed two-hour lecture; no audit hours are needed.
+        self.assertEqual(first['durationMinutes'], 120)
         self.assertEqual(first['catchupStatus'], 'pending')
         second = build_lectures([{**row, 'attendance_status': 'present'}],
                                 {row['session_id']: {'ksbs': ['K3']}}, [], [], 'apprenticeship', 12)[0]
@@ -268,6 +283,76 @@ class AttendanceLectureTests(SimpleTestCase):
 
     @patch('learner_api.attendance_lectures.read_native_occurrences')
     @patch('learner_api.attendance_lectures.combined_attendance_rows')
+    def test_kbc_and_teams_record_of_one_lecture_count_once(self, combined, scheduled):
+        now = timezone.now()
+        day = now.date() - timedelta(days=7)
+        teams = register_row(source='microsoft-teams', session_id='occ-1', module_title='Martech - Thur',
+                             module_catalogue_id='mod-1', session_date=day, attendance_status='pending',
+                             scheduled_start=now-timedelta(days=7, hours=2), scheduled_end=now-timedelta(days=7))
+        kbc = register_row(session_id='kbc-1', module_title='Martech  -  Thur', session_date=day,
+                           attendance_status='present')
+        other_module = register_row(session_id='kbc-2', module_title='Social Media', session_date=day,
+                                    attendance_status='present')
+        scheduled.return_value = [teams]
+        combined.return_value = [kbc, other_module]
+        rows = lecture_register(SimpleNamespace(id=12))
+        self.assertEqual(sorted(row['session_id'] for row in rows), ['kbc-2', 'occ-1'])
+        merged = next(row for row in rows if row['session_id'] == 'occ-1')
+        self.assertEqual(merged['attendance_status'], 'present')
+        self.assertEqual(build_lectures([merged], {}, [], [], 'apprenticeship', 12)[0]['durationMinutes'], 120)
+        summary = _summarize_attendance(rows)
+        self.assertEqual((summary['sessions'], summary['present']), (2, 2))
+
+    def test_completed_teams_catchup_is_shown_as_covered(self):
+        row = register_row(source='microsoft-teams', session_id='occ-1', module_catalogue_id='mod-1',
+                           attendance_status='absent', catchup_completed=True, effective_attendance=1)
+        lecture = build_lectures([row], {}, [], [], 'apprenticeship', 12)[0]
+        self.assertEqual((lecture['status'], lecture['catchupStatus'], lecture['effectiveAttendance']),
+                         ('absent', 'completed', 1))
+        pending = build_lectures([{**row, 'catchup_completed': False, 'effective_attendance': 0}],
+                                 {}, [], [], 'apprenticeship', 12)[0]
+        self.assertEqual(pending['catchupStatus'], 'pending')
+
+    def _alternative_register(self, guest_status):
+        now = timezone.now()
+        original = register_row(source='microsoft-teams', session_id='occ-1', module_catalogue_id='mod-1',
+                                attendance_status='absent', session_date=now.date() - timedelta(days=7),
+                                scheduled_start=now-timedelta(days=7, hours=2), scheduled_end=now-timedelta(days=7))
+        guest = {**original, 'session_id': 'occ-alt', 'module_title': 'Other group',
+                 'eligibility_reason': 'approved_recovery_guest', 'attendance_status': guest_status}
+        with patch('learner_api.attendance_lectures.read_native_occurrences', return_value=[original]), \
+             patch('learner_api.attendance_lectures.combined_attendance_rows', return_value=[original, guest]), \
+             patch('learner_api.attendance_lectures._approved_alternative_targets',
+                   return_value={str(report_id(original)): 'occ-alt'}):
+            return lecture_register(SimpleNamespace(id=12))
+
+    def test_attended_alternative_session_makes_up_the_original_absence(self):
+        rows = self._alternative_register('present')
+        self.assertEqual([row['session_id'] for row in rows], ['occ-1'])
+        self.assertEqual((rows[0]['attendance_status'], rows[0]['final_outcome'], rows[0]['catchup_completed']),
+                         ('absent', 'made_up', True))
+        summary = _summarize_attendance(rows)
+        self.assertEqual((summary['sessions'], summary['present'], summary['absent']), (1, 1, 0))
+
+    def test_missed_alternative_session_leaves_the_absence_unrecovered(self):
+        rows = self._alternative_register('absent')
+        self.assertFalse(rows[0].get('catchup_completed'))
+        self.assertEqual(_summarize_attendance(rows)['absent'], 1)
+
+    @patch('learner_api.attendance_lectures.read_native_occurrences')
+    @patch('learner_api.attendance_lectures.combined_attendance_rows')
+    def test_kbc_row_is_kept_when_teams_match_is_ambiguous(self, combined, scheduled):
+        now = timezone.now()
+        day = now.date() + timedelta(days=7)
+        first = register_row(source='microsoft-teams', session_id='occ-1', session_date=day,
+                             attendance_status='upcoming', scheduled_start=now+timedelta(days=7),
+                             scheduled_end=now+timedelta(days=7, hours=2))
+        scheduled.return_value = [first, {**first, 'session_id': 'occ-2'}]
+        combined.return_value = [register_row(session_id='kbc-1', session_date=day)]
+        self.assertEqual(len(lecture_register(SimpleNamespace(id=12))), 3)
+
+    @patch('learner_api.attendance_lectures.read_native_occurrences')
+    @patch('learner_api.attendance_lectures.combined_attendance_rows')
     def test_future_zero_attendance_is_upcoming(self, combined, scheduled):
         scheduled.return_value = []
         combined.return_value = [register_row(session_date=timezone.localdate()+timedelta(days=1))]
@@ -340,29 +425,83 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertEqual([lecture['catchupStatus'] for lecture in result], ['completed', 'pending'])
 
 
+class UnreportedLectureCatchupTests(SimpleTestCase):
+    def test_missed_lecture_without_a_teams_report_is_made_up_by_its_completed_catchup(self):
+        from .attendance_lectures import _apply_completed_catchups
+        rows = [
+            {'source': 'microsoft-teams', 'session_id': 'OCC-1', 'attendance_status': 'absent'},
+            {'source': 'microsoft-teams', 'session_id': 'OCC-2', 'attendance_status': 'absent'},
+            {'source': 'microsoft-teams', 'session_id': 'OCC-3', 'attendance_status': 'absent', 'effective_attendance': 0},
+            {'source': 'microsoft-teams', 'session_id': 'OCC-4', 'attendance_status': 'present'},
+        ]
+        with patch('learner_api.attendance_lectures._completed_catchup_occurrences',
+                   return_value={'OCC-1', 'OCC-3'}) as ledger:
+            result = _apply_completed_catchups(rows, 12)
+        self.assertEqual([row.get('effective_attendance') for row in result], [1, None, 0, None])
+        self.assertTrue(result[0]['catchup_completed'])
+        self.assertEqual(result[0]['attendance_status'], 'absent')
+        self.assertEqual(ledger.call_args.args, (12, {'OCC-1', 'OCC-2'}))
+
+
+class AttendanceRecoveryDisplayTests(SimpleTestCase):
+    def test_each_reported_lecture_carries_its_recovery_method_and_catchup_date(self):
+        from .attendance_lectures import _attach_recovery
+        lectures = [{'reportId': '1'}, {'reportId': '2'}, {'reportId': '3'}]
+        reported = {
+            '1': {'recovery_method': 'catch-up', 'catchup_event_key': 'catch-up:6'},
+            '2': {'recovery_method': 'alternative', 'catchup_event_key': 'alternative:9'},
+        }
+        with patch('coach_api.models.CoachCalendarEvent.objects') as events:
+            events.filter.return_value.values_list.return_value = [('catch-up:6', date(2026, 9, 26))]
+            _attach_recovery(lectures, reported)
+        self.assertEqual(lectures[0]['recovery'], {'method': 'catch-up', 'date': '2026-09-26'})
+        self.assertEqual(lectures[1]['recovery'], {'method': 'alternative', 'date': None})
+        self.assertIsNone(lectures[2]['recovery'])
+        events.filter.assert_called_once_with(event_key__in=['catch-up:6'])
+
+
 class AttendanceAbsenceTests(SimpleTestCase):
     def test_reason_only_report_saves_without_optional_evidence(self):
         request = RequestFactory().post('/', {'sessionId': 'teams:future', 'sessionTitle': 'Lecture',
-                                             'sessionDate': '2026-10-01', 'reasonCategory': 'illness', 'recoveryMethod': 'recorded'})
+                                             'sessionDate': '2026-10-01', 'reasonCategory': 'illness',
+                                             'recoveryMethod': 'recorded', 'recordingDate': '2026-10-02',
+                                             'recordingTime': '18:00', 'recordingDurationMinutes': '60'})
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
         with patch('learner_api.absence_reports._source_learner', return_value=source), \
              patch('learner_api.absence_reports._resolve_absent_attendance', return_value=8000000000000000001), \
              patch('learner_api.absence_reports.CoachAbsenceReport.objects') as manager, \
-             patch('learner_api.absence_reports.learner_profile_for_source', return_value=None), \
+             patch('learner_api.absence_reports.learner_profile_for_source', return_value=SimpleNamespace(id=99)), \
+             patch('learner_api.absence_reports.record_reported_absence') as record_absence, \
              patch('learner_api.absence_reports.transaction.atomic', return_value=nullcontext()), \
+             patch('learner_api.absence_reports._recording_recovery_event') as calendar_event, \
+             patch('learner_api.absence_reports.email_azure.send_mail', return_value=(True, 'sent')) as send_mail, \
              patch('learner_api.absence_reports._serialize', return_value={'id': 1}):
             manager.filter.return_value.exists.return_value = False
             manager.filter.return_value.count.return_value = 0
+            manager.create.return_value = SimpleNamespace(
+                id=1, owner_email='med.maher@kbc.ac.uk', owner_name='Med Maher',
+                learner_name='Learner', learner_email='learner@example.test',
+                session_title='Lecture', recovery_method='recorded',
+            )
             response = inspect.unwrap(learner_absence_reports)(request, 'apprenticeship', 12)
         self.assertEqual(response.status_code, 201)
         self.assertFalse(manager.create.call_args.kwargs['evidence_provided'])
         self.assertEqual(manager.create.call_args.kwargs['evidence_kind'], 'none')
+        self.assertEqual(manager.create.call_args.kwargs['status'], 'approved')
         self.assertEqual(manager.create.call_args.kwargs['recovery_method'], 'recorded')
         self.assertIsNone(manager.create.call_args.kwargs['catchup_event_key'])
+        calendar_event.assert_called_once()
+        record_absence.assert_called_once()
+        send_mail.assert_called_once()
+        self.assertIn('Watch the recording', send_mail.call_args.kwargs['text_body'])
+        self.assertNotIn('Catch-up session', send_mail.call_args.kwargs['text_body'])
+        self.assertNotIn('Alternative group session', send_mail.call_args.kwargs['text_body'])
 
     def test_duplicate_report_is_rejected_before_writing(self):
         request = RequestFactory().post('/', {'sessionId': 'same', 'sessionTitle': 'Lecture',
-                                             'sessionDate': '2026-09-01', 'reasonCategory': 'illness', 'recoveryMethod': 'recorded'})
+                                             'sessionDate': '2026-09-01', 'reasonCategory': 'illness',
+                                             'recoveryMethod': 'recorded', 'recordingDate': '2026-10-02',
+                                             'recordingTime': '18:00'})
         source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
         with patch('learner_api.absence_reports._source_learner', return_value=source), \
              patch('learner_api.absence_reports._resolve_absent_attendance', return_value=123), \
@@ -377,7 +516,8 @@ class AttendanceAbsenceTests(SimpleTestCase):
         read.return_value = [register_row(), register_row(source='microsoft-teams', session_id='upcoming', attendance_status='upcoming'),
                              register_row(session_id='present', attendance_status='present'), register_row(attendance_status='pending')]
         source = SimpleNamespace(id=12)
-        result = _fetch_missed_sessions(source, 12)
+        with patch('learner_api.absence_reports.eligible_alternative_occurrences', return_value=[]):
+            result = _fetch_missed_sessions(source, 12)
         self.assertEqual(len(result), 2)
         self.assertEqual(result[1]['sessionId'], 'teams:upcoming')
         self.assertIsNotNone(_resolve_absent_attendance(source, 12, 'teams:upcoming', 'Business introduction', date(2026, 9, 1), None))

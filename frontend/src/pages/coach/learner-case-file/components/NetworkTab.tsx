@@ -4,7 +4,8 @@ import { MetricCard } from '@/components/ui/MetricCard';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { type StatusTone } from '@/lib/statusTone';
 import { LearnerAvatar } from '@/pages/coach/shared/LearnerIdentity';
-import { formatPercent, type CaseFileTabProps } from '../data';
+import { formatPercent } from '../data';
+import type { CaseFileTabProps } from '../types';
 
 interface NetworkLearnerRow {
   id: string;

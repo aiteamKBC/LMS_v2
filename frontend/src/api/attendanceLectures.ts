@@ -16,9 +16,14 @@ export interface AttendanceLecture {
   tutor?: string; coach?: string; attendanceConfirmed?: boolean; creditedMinutes?: number | null;
   contentSummary: string; ksbs: string[]; activities: LectureActivity[];
   ksbScope?: 'lecture' | 'activities' | 'module' | null;
-  status: LectureStatus; catchupStatus: 'completed' | 'pending' | null;
+  status: LectureStatus; catchupStatus: 'completed' | 'pending' | 'missed' | null;
+  rawAttendanceStatus?: string;
+  effectiveAttendanceStatus?: string;
+  effectiveAttendance?: 0 | 1 | null;
+  finalOutcome?: string;
   updatedAt: string | null; canReportAbsence: boolean; excused?: boolean;
   absenceReport: { id: number; status: string } | null;
+  recovery?: { method: string; date: string | null } | null;
   monthlyLog?: { month: string; sourceRef: string };
 }
 export interface AttendanceMode {

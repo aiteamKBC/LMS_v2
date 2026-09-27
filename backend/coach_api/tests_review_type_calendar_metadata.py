@@ -25,6 +25,7 @@ from curriculum_api import review_instances, review_schedule, review_types, revi
 from curriculum_api import views as curriculum_views
 
 from .views import (
+    build_catchup_calendar_event,
     build_generated_calendar_event,
     review_event_type_for_type_code,
     review_type_event_fields,
@@ -187,6 +188,49 @@ class GeneratedCoachEventTests(CoachReviewTypeMetadataTestCase):
         event = self._events()[0]
         self.assertEqual(event['title'], 'Monthly Learner Catch-up')
         self.assertEqual(event['reviewTypeName'], 'Monthly Coaching Meeting')
+
+    def test_non_curriculum_catchup_does_not_become_mcm_from_stale_review_linkage(self):
+        record = SimpleNamespace(
+            event_key='catch-up:248:1:2026-09-21',
+            operation_id='OP-CATCHUP',
+            event_type='catch-up',
+            review_template_id='REV-MCM',
+            review_instance_id='INSTANCE-MCM',
+            target_date=date(2026, 9, 21),
+            scheduled_date=date(2026, 9, 21),
+            scheduled_time=None,
+            duration_minutes=30,
+            meeting_provider='',
+            meeting_link='',
+            graph_web_link='',
+            owner_email='coach@example.com',
+            owner_name='Coach One',
+            learner_id=248,
+            learner_name='Test Learner',
+            learner_email='learner@example.com',
+            sequence=1,
+            status='not-scheduled',
+            sync_state='pending',
+            sync_attempt_count=0,
+            notes='Catch-up for missed lecture.',
+            last_graph_sync_error='',
+        )
+        event = build_catchup_calendar_event(
+            record,
+            review_type_fields={
+                'REV-MCM': review_type_event_fields({
+                    'reviewTypeId': 'REVT-MCM',
+                    'reviewTypeCode': 'mcm',
+                    'reviewTypeName': 'Monthly Coaching Meeting',
+                    'reviewTypeIsSystem': True,
+                }),
+            },
+        )
+        self.assertEqual(event['source'], 'catch-up')
+        self.assertEqual(event['title'], 'Catch-up Session')
+        self.assertIsNone(event['reviewTemplateId'])
+        self.assertIsNone(event['reviewInstanceId'])
+        self.assertIsNone(event['reviewTypeCode'])
 
     def test_renaming_the_template_retitles_the_card_but_not_the_type(self):
         review_id = self._review(name='Monthly Coaching Meeting', type_id=self._system('mcm'))

@@ -1064,6 +1064,7 @@ def save_progress_record(learner, record, activity=None):
             passed=record.get("passed") if isinstance(record.get("passed"), bool) else None,
             feedback=_s(record.get("feedback")),
             reported_time=_s(record.get("reportedTime")),
+            reflection_skipped=record.get("reflectionSkipped") is True,
             started_at=_datetime(record.get("startedAt")),
             submitted_at=_datetime(record.get("submittedAt")),
             time_taken=_s(record.get("timeTaken")),

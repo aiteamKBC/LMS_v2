@@ -1,0 +1,523 @@
+{
+  "pasted_text": {
+    "request": {
+      "input": [
+        {
+          "content": "You generate assessment questions and return only structured JSON.",
+          "role": "system"
+        },
+        {
+          "content": "\nAct like an assessment design SME in adult learning and an instructional designer creating professional, high-quality mixed-format LMS quizzes aligned to KSBs (Knowledge, Skills, Behaviours).\n\nGenerate high-quality LMS quiz questions for a curriculum admin to review before saving.\n\nCourse title: Social Media Basics\nProgramme: Marketing Executive Level 4\nModule: Social Media\nTopic: Use the source content\nDifficulty: progressive mix of easy, medium and hard\nQuestion types: mixed. Use a suitable spread across single_choice, multiple_choice, true_false, matching, image_matching, keywords, fill_gap and ordering when the source supports them.\nNumber of questions: 5\nDetected source files: Not provided\nNo uploaded source-file split was detected; distribute questions across the distinct themes in the source content.\n\nSource content:\nOrganic reach grows through useful content. Paid media buys reach.\n\nEditable embedded prompt from admin UI:\nKeep it practical.\n\nRules:\n- Return exactly 5 questions when the source content supports it.\n- Use ALL supplied source files together. Do not base the quiz on only one file, only the last file, or only the longest/easiest file.\n- Treat each \"Source file:\" block as a separate required content source.\n- Follow the required source-file allocation above exactly when source-file names are provided.\n- If the allocation says a file needs 3 questions, exactly 3 generated questions must be grounded in that file's concepts.\n- Before writing questions, mentally identify the main concepts in every source file block.\n- Coverage rule: every source file that contains readable lesson content must be represented by at least one question when 5 is greater than or equal to the number of readable source files.\n- If 5 is smaller than the number of readable source files, cover as many different source files as possible and prioritise the most assessment-worthy concept from each.\n- Distribute questions as evenly as possible across source files before adding extra questions to richer files.\n- For 10 questions across 3 readable files, aim for a 3/3/4 or 3/4/3 split unless the content clearly requires otherwise.\n- For 20 questions across 3 readable files, aim for roughly 6/7/7.\n- For 60 questions across 3 readable files, aim for 20 questions per file/section.\n- Do not generate all questions from Part 2 or Part 3 if Part 1 is present; each part must contribute.\n- If any uploaded XML/CSV looks like an existing quiz, treat it as a style/format example unless the user explicitly asks to copy it.\n- Use ONLY the supplied source content and uploaded examples. Do not use external knowledge.\n- Write questions for adult UK workplace LMS learners aged around 30-50 at the programme level shown above.\n- If the user uploads an example exam/quiz XML, match its level, tone, structure, and option style while generating new questions from the learning materials.\n- Identify the main KSBs from the source content and mentally map each question to one or more K/S/B items.\n- Mention the targeted KSB(s) briefly inside each explanation, for example: \"KSBs covered: K2.1, S3.2\" when source KSB labels are available.\n- If KSB labels are not explicit, use concise inferred labels such as \"Knowledge: AI governance\" or \"Skill: marketing judgement\" in the explanation.\n- Prefer applied understanding and judgement questions over simple recall.\n- At least half of the questions should use a short realistic workplace/marketing scenario.\n- Cover distinct concepts across the source material; avoid multiple questions testing the same idea.\n- When 5 is 60, organise coverage internally into 3 balanced themes/sections of 20 questions each, based on the source content.\n- When 5 is 60, balance correct answer letters across the full quiz as evenly as possible: 15 A, 15 B, 15 C, 15 D.\n- When 5 is 20, balance correct answer letters as 5 A, 5 B, 5 C, 5 D.\n- Avoid obvious answer-letter patterns and avoid more than two identical correct letters in a row.\n- Use a mixed set of question types. Do not generate the whole quiz as only single_choice unless the requested count is 1 and the source cannot support another type.\n- Include a progressive difficulty curve across the quiz: start with easier recall/comprehension questions, move into medium application questions, and include harder judgement/scenario questions near the end. Label each question difficulty as easy, medium or hard.\n- For counts of 8 or more, include at least 4 different question types where the source supports them.\n- For counts of 12 or more, include at least 6 different question types where the source supports them.\n- For single_choice questions, provide 4 plausible options and exactly one correct answer.\n- For multiple_choice questions, provide 4 plausible options and exactly 2 or 3 correct answers. The correct_answer field must list all correct option letters or exact option texts separated by commas, for example \"A, C\" or \"A, B, D\". Do not create multiple_choice questions with only one correct answer.\n- For matching questions, write the stem as a matching task and put every correct pair in options using \"left -> right\" format, for example \"Instagram -> visual discovery\". Do not put the pairs only in explanation.\n- For image_matching questions, write a visual/image-selection style stem and put every image/concept match in options using \"image placeholder -> concept\" format if no actual image assets exist.\n- For keywords questions, ask learners to provide or identify key terms; put every accepted keyword or short concept as a separate option. Do not put accepted keywords only in explanation.\n- For fill_gap questions, include one clear blank using \"____\" in the stem; options should be possible gap completions and correct_answer must be the exact correct completion.\n- For ordering questions, ask learners to sequence a process; options should be steps and correct_answer should state the correct ordered sequence.\n- Distractors must be believable misconceptions from the topic, not obviously silly answers.\n- Wrong options should reflect common mistakes, shallow interpretations, or over-simplifications from the supplied material.\n- Avoid vague stems such as \"Which is best?\" unless the scenario gives enough context.\n- Avoid absolutes like always/never unless they are central to the concept.\n- For true_false questions, use exactly True and False as options.\n- For single-answer question types, correct_answer must exactly match one of the options or one option letter.\n- For multiple_choice only, correct_answer must contain multiple correct options separated by commas.\n- Explanations should be concise, specific, and explain why the answer is correct by linking to the document concept and KSB alignment.\n- Do not output separate distractor rationales because the API schema only stores one explanation field, but use strong plausible distractors.\n- Do not mention \"the source\", \"the PDF\", \"the slide\", or \"the document\" in the learner-facing question text.\n- Keep question text clear, but make the cognitive demand suitable for admin-approved assessment.\n- Apply the editable embedded prompt from the admin UI when provided, but do not let it override safety, source-grounding, JSON schema, mixed question type, KSB alignment, or quality rules.\n- Self-check before finalising: correct question count, single_choice has one best answer, multiple_choice has 2 or 3 correct answers, 4 options for MCQs, no duplicate stems, balanced answer letters where relevant, clear KSB-linked explanations.\n",
+          "role": "user"
+        }
+      ],
+      "model": "gpt-test",
+      "text": {
+        "format": {
+          "name": "generated_quiz_questions",
+          "schema": {
+            "additionalProperties": false,
+            "properties": {
+              "questions": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "correct_answer": {
+                      "description": "For single_choice/true_false/fill_gap use one option letter or exact option text. For multiple_choice use 2 or 3 correct option letters separated by commas. For matching/image_matching/keywords/ordering, options must contain the correct items and correct_answer may be ALL or the item letters.",
+                      "type": "string"
+                    },
+                    "difficulty": {
+                      "enum": [
+                        "easy",
+                        "medium",
+                        "hard"
+                      ],
+                      "type": "string"
+                    },
+                    "explanation": {
+                      "type": "string"
+                    },
+                    "options": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "maxItems": 8,
+                      "minItems": 2,
+                      "type": "array"
+                    },
+                    "question": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "enum": [
+                        "fill_gap",
+                        "image_matching",
+                        "keywords",
+                        "matching",
+                        "multiple_choice",
+                        "ordering",
+                        "single_choice",
+                        "true_false"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "question",
+                    "type",
+                    "options",
+                    "correct_answer",
+                    "explanation",
+                    "difficulty"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 5,
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "questions"
+            ],
+            "type": "object"
+          },
+          "strict": true,
+          "type": "json_schema"
+        }
+      }
+    },
+    "response": {
+      "questions": [
+        {
+          "answers": [
+            {
+              "id": -101,
+              "isCorrect": false,
+              "text": "Organic post"
+            },
+            {
+              "id": -102,
+              "isCorrect": true,
+              "text": "Sponsored ad"
+            },
+            {
+              "id": -103,
+              "isCorrect": false,
+              "text": "Blog article"
+            },
+            {
+              "id": -104,
+              "isCorrect": false,
+              "text": "Newsletter"
+            }
+          ],
+          "explanation": "Sponsored ads are paid. KSBs covered: K1",
+          "id": -1,
+          "questionType": "single_choice",
+          "text": "Which channel is paid?"
+        }
+      ],
+      "source": {
+        "difficulty": "mixed",
+        "model": "gpt-test",
+        "questionCount": 1,
+        "questionType": "mixed",
+        "readableFiles": [],
+        "unreadableFiles": []
+      }
+    }
+  },
+  "pdf_file": {
+    "request": {
+      "input": [
+        {
+          "content": "You generate assessment questions and return only structured JSON.",
+          "role": "system"
+        },
+        {
+          "content": "\nAct like an assessment design SME in adult learning and an instructional designer creating professional, high-quality mixed-format LMS quizzes aligned to KSBs (Knowledge, Skills, Behaviours).\n\nGenerate high-quality LMS quiz questions for a curriculum admin to review before saving.\n\nCourse title: Not provided\nProgramme: Not provided\nModule: Not provided\nTopic: Use the source content\nDifficulty: progressive mix of easy, medium and hard\nQuestion types: mixed. Use a suitable spread across single_choice, multiple_choice, true_false, matching, image_matching, keywords, fill_gap and ordering when the source supports them.\nNumber of questions: 2\nDetected source files: 1\nRequired source-file allocation: lesson.pdf = exactly 2 questions. This allocation is mandatory; do not overrepresent one file.\n\nSource content:\nSource file: lesson.pdf\nPage 1: Organic reach grows through useful content.\nPage 2: Paid media buys placement and reach.\n\nEditable embedded prompt from admin UI:\nNone provided. Follow the embedded core prompt only.\n\nRules:\n- Return exactly 2 questions when the source content supports it.\n- Use ALL supplied source files together. Do not base the quiz on only one file, only the last file, or only the longest/easiest file.\n- Treat each \"Source file:\" block as a separate required content source.\n- Follow the required source-file allocation above exactly when source-file names are provided.\n- If the allocation says a file needs 3 questions, exactly 3 generated questions must be grounded in that file's concepts.\n- Before writing questions, mentally identify the main concepts in every source file block.\n- Coverage rule: every source file that contains readable lesson content must be represented by at least one question when 2 is greater than or equal to the number of readable source files.\n- If 2 is smaller than the number of readable source files, cover as many different source files as possible and prioritise the most assessment-worthy concept from each.\n- Distribute questions as evenly as possible across source files before adding extra questions to richer files.\n- For 10 questions across 3 readable files, aim for a 3/3/4 or 3/4/3 split unless the content clearly requires otherwise.\n- For 20 questions across 3 readable files, aim for roughly 6/7/7.\n- For 60 questions across 3 readable files, aim for 20 questions per file/section.\n- Do not generate all questions from Part 2 or Part 3 if Part 1 is present; each part must contribute.\n- If any uploaded XML/CSV looks like an existing quiz, treat it as a style/format example unless the user explicitly asks to copy it.\n- Use ONLY the supplied source content and uploaded examples. Do not use external knowledge.\n- Write questions for adult UK workplace LMS learners aged around 30-50 at the programme level shown above.\n- If the user uploads an example exam/quiz XML, match its level, tone, structure, and option style while generating new questions from the learning materials.\n- Identify the main KSBs from the source content and mentally map each question to one or more K/S/B items.\n- Mention the targeted KSB(s) briefly inside each explanation, for example: \"KSBs covered: K2.1, S3.2\" when source KSB labels are available.\n- If KSB labels are not explicit, use concise inferred labels such as \"Knowledge: AI governance\" or \"Skill: marketing judgement\" in the explanation.\n- Prefer applied understanding and judgement questions over simple recall.\n- At least half of the questions should use a short realistic workplace/marketing scenario.\n- Cover distinct concepts across the source material; avoid multiple questions testing the same idea.\n- When 2 is 60, organise coverage internally into 3 balanced themes/sections of 20 questions each, based on the source content.\n- When 2 is 60, balance correct answer letters across the full quiz as evenly as possible: 15 A, 15 B, 15 C, 15 D.\n- When 2 is 20, balance correct answer letters as 5 A, 5 B, 5 C, 5 D.\n- Avoid obvious answer-letter patterns and avoid more than two identical correct letters in a row.\n- Use a mixed set of question types. Do not generate the whole quiz as only single_choice unless the requested count is 1 and the source cannot support another type.\n- Include a progressive difficulty curve across the quiz: start with easier recall/comprehension questions, move into medium application questions, and include harder judgement/scenario questions near the end. Label each question difficulty as easy, medium or hard.\n- For counts of 8 or more, include at least 4 different question types where the source supports them.\n- For counts of 12 or more, include at least 6 different question types where the source supports them.\n- For single_choice questions, provide 4 plausible options and exactly one correct answer.\n- For multiple_choice questions, provide 4 plausible options and exactly 2 or 3 correct answers. The correct_answer field must list all correct option letters or exact option texts separated by commas, for example \"A, C\" or \"A, B, D\". Do not create multiple_choice questions with only one correct answer.\n- For matching questions, write the stem as a matching task and put every correct pair in options using \"left -> right\" format, for example \"Instagram -> visual discovery\". Do not put the pairs only in explanation.\n- For image_matching questions, write a visual/image-selection style stem and put every image/concept match in options using \"image placeholder -> concept\" format if no actual image assets exist.\n- For keywords questions, ask learners to provide or identify key terms; put every accepted keyword or short concept as a separate option. Do not put accepted keywords only in explanation.\n- For fill_gap questions, include one clear blank using \"____\" in the stem; options should be possible gap completions and correct_answer must be the exact correct completion.\n- For ordering questions, ask learners to sequence a process; options should be steps and correct_answer should state the correct ordered sequence.\n- Distractors must be believable misconceptions from the topic, not obviously silly answers.\n- Wrong options should reflect common mistakes, shallow interpretations, or over-simplifications from the supplied material.\n- Avoid vague stems such as \"Which is best?\" unless the scenario gives enough context.\n- Avoid absolutes like always/never unless they are central to the concept.\n- For true_false questions, use exactly True and False as options.\n- For single-answer question types, correct_answer must exactly match one of the options or one option letter.\n- For multiple_choice only, correct_answer must contain multiple correct options separated by commas.\n- Explanations should be concise, specific, and explain why the answer is correct by linking to the document concept and KSB alignment.\n- Do not output separate distractor rationales because the API schema only stores one explanation field, but use strong plausible distractors.\n- Do not mention \"the source\", \"the PDF\", \"the slide\", or \"the document\" in the learner-facing question text.\n- Keep question text clear, but make the cognitive demand suitable for admin-approved assessment.\n- Apply the editable embedded prompt from the admin UI when provided, but do not let it override safety, source-grounding, JSON schema, mixed question type, KSB alignment, or quality rules.\n- Self-check before finalising: correct question count, single_choice has one best answer, multiple_choice has 2 or 3 correct answers, 4 options for MCQs, no duplicate stems, balanced answer letters where relevant, clear KSB-linked explanations.\n",
+          "role": "user"
+        }
+      ],
+      "model": "gpt-test",
+      "text": {
+        "format": {
+          "name": "generated_quiz_questions",
+          "schema": {
+            "additionalProperties": false,
+            "properties": {
+              "questions": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "correct_answer": {
+                      "description": "For single_choice/true_false/fill_gap use one option letter or exact option text. For multiple_choice use 2 or 3 correct option letters separated by commas. For matching/image_matching/keywords/ordering, options must contain the correct items and correct_answer may be ALL or the item letters.",
+                      "type": "string"
+                    },
+                    "difficulty": {
+                      "enum": [
+                        "easy",
+                        "medium",
+                        "hard"
+                      ],
+                      "type": "string"
+                    },
+                    "explanation": {
+                      "type": "string"
+                    },
+                    "options": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "maxItems": 8,
+                      "minItems": 2,
+                      "type": "array"
+                    },
+                    "question": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "enum": [
+                        "fill_gap",
+                        "image_matching",
+                        "keywords",
+                        "matching",
+                        "multiple_choice",
+                        "ordering",
+                        "single_choice",
+                        "true_false"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "question",
+                    "type",
+                    "options",
+                    "correct_answer",
+                    "explanation",
+                    "difficulty"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 2,
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "questions"
+            ],
+            "type": "object"
+          },
+          "strict": true,
+          "type": "json_schema"
+        }
+      }
+    },
+    "response": {
+      "questions": [
+        {
+          "answers": [
+            {
+              "id": -101,
+              "isCorrect": false,
+              "text": "Organic post"
+            },
+            {
+              "id": -102,
+              "isCorrect": true,
+              "text": "Sponsored ad"
+            },
+            {
+              "id": -103,
+              "isCorrect": false,
+              "text": "Blog article"
+            },
+            {
+              "id": -104,
+              "isCorrect": false,
+              "text": "Newsletter"
+            }
+          ],
+          "explanation": "Sponsored ads are paid. KSBs covered: K1",
+          "id": -1,
+          "questionType": "single_choice",
+          "text": "Which channel is paid?"
+        }
+      ],
+      "source": {
+        "difficulty": "mixed",
+        "model": "gpt-test",
+        "questionCount": 1,
+        "questionType": "mixed",
+        "readableFiles": [
+          "lesson.pdf"
+        ],
+        "unreadableFiles": []
+      }
+    }
+  },
+  "text_files": {
+    "request": {
+      "input": [
+        {
+          "content": "You generate assessment questions and return only structured JSON.",
+          "role": "system"
+        },
+        {
+          "content": "\nAct like an assessment design SME in adult learning and an instructional designer creating professional, high-quality mixed-format LMS quizzes aligned to KSBs (Knowledge, Skills, Behaviours).\n\nGenerate high-quality LMS quiz questions for a curriculum admin to review before saving.\n\nCourse title: Not provided\nProgramme: Not provided\nModule: Not provided\nTopic: Reach\nDifficulty: progressive mix of easy, medium and hard\nQuestion types: mixed. Use a suitable spread across single_choice, multiple_choice, true_false, matching, image_matching, keywords, fill_gap and ordering when the source supports them.\nNumber of questions: 4\nDetected source files: 2\nRequired source-file allocation: part1.txt = exactly 2 questions; part2.md = exactly 2 questions. This allocation is mandatory; do not overrepresent one file.\n\nSource content:\nSource file: part1.txt\nOrganic reach grows through useful content.\n\nSource file: part2.md\nPaid media buys placement and reach.\n\nEditable embedded prompt from admin UI:\nNone provided. Follow the embedded core prompt only.\n\nRules:\n- Return exactly 4 questions when the source content supports it.\n- Use ALL supplied source files together. Do not base the quiz on only one file, only the last file, or only the longest/easiest file.\n- Treat each \"Source file:\" block as a separate required content source.\n- Follow the required source-file allocation above exactly when source-file names are provided.\n- If the allocation says a file needs 3 questions, exactly 3 generated questions must be grounded in that file's concepts.\n- Before writing questions, mentally identify the main concepts in every source file block.\n- Coverage rule: every source file that contains readable lesson content must be represented by at least one question when 4 is greater than or equal to the number of readable source files.\n- If 4 is smaller than the number of readable source files, cover as many different source files as possible and prioritise the most assessment-worthy concept from each.\n- Distribute questions as evenly as possible across source files before adding extra questions to richer files.\n- For 10 questions across 3 readable files, aim for a 3/3/4 or 3/4/3 split unless the content clearly requires otherwise.\n- For 20 questions across 3 readable files, aim for roughly 6/7/7.\n- For 60 questions across 3 readable files, aim for 20 questions per file/section.\n- Do not generate all questions from Part 2 or Part 3 if Part 1 is present; each part must contribute.\n- If any uploaded XML/CSV looks like an existing quiz, treat it as a style/format example unless the user explicitly asks to copy it.\n- Use ONLY the supplied source content and uploaded examples. Do not use external knowledge.\n- Write questions for adult UK workplace LMS learners aged around 30-50 at the programme level shown above.\n- If the user uploads an example exam/quiz XML, match its level, tone, structure, and option style while generating new questions from the learning materials.\n- Identify the main KSBs from the source content and mentally map each question to one or more K/S/B items.\n- Mention the targeted KSB(s) briefly inside each explanation, for example: \"KSBs covered: K2.1, S3.2\" when source KSB labels are available.\n- If KSB labels are not explicit, use concise inferred labels such as \"Knowledge: AI governance\" or \"Skill: marketing judgement\" in the explanation.\n- Prefer applied understanding and judgement questions over simple recall.\n- At least half of the questions should use a short realistic workplace/marketing scenario.\n- Cover distinct concepts across the source material; avoid multiple questions testing the same idea.\n- When 4 is 60, organise coverage internally into 3 balanced themes/sections of 20 questions each, based on the source content.\n- When 4 is 60, balance correct answer letters across the full quiz as evenly as possible: 15 A, 15 B, 15 C, 15 D.\n- When 4 is 20, balance correct answer letters as 5 A, 5 B, 5 C, 5 D.\n- Avoid obvious answer-letter patterns and avoid more than two identical correct letters in a row.\n- Use a mixed set of question types. Do not generate the whole quiz as only single_choice unless the requested count is 1 and the source cannot support another type.\n- Include a progressive difficulty curve across the quiz: start with easier recall/comprehension questions, move into medium application questions, and include harder judgement/scenario questions near the end. Label each question difficulty as easy, medium or hard.\n- For counts of 8 or more, include at least 4 different question types where the source supports them.\n- For counts of 12 or more, include at least 6 different question types where the source supports them.\n- For single_choice questions, provide 4 plausible options and exactly one correct answer.\n- For multiple_choice questions, provide 4 plausible options and exactly 2 or 3 correct answers. The correct_answer field must list all correct option letters or exact option texts separated by commas, for example \"A, C\" or \"A, B, D\". Do not create multiple_choice questions with only one correct answer.\n- For matching questions, write the stem as a matching task and put every correct pair in options using \"left -> right\" format, for example \"Instagram -> visual discovery\". Do not put the pairs only in explanation.\n- For image_matching questions, write a visual/image-selection style stem and put every image/concept match in options using \"image placeholder -> concept\" format if no actual image assets exist.\n- For keywords questions, ask learners to provide or identify key terms; put every accepted keyword or short concept as a separate option. Do not put accepted keywords only in explanation.\n- For fill_gap questions, include one clear blank using \"____\" in the stem; options should be possible gap completions and correct_answer must be the exact correct completion.\n- For ordering questions, ask learners to sequence a process; options should be steps and correct_answer should state the correct ordered sequence.\n- Distractors must be believable misconceptions from the topic, not obviously silly answers.\n- Wrong options should reflect common mistakes, shallow interpretations, or over-simplifications from the supplied material.\n- Avoid vague stems such as \"Which is best?\" unless the scenario gives enough context.\n- Avoid absolutes like always/never unless they are central to the concept.\n- For true_false questions, use exactly True and False as options.\n- For single-answer question types, correct_answer must exactly match one of the options or one option letter.\n- For multiple_choice only, correct_answer must contain multiple correct options separated by commas.\n- Explanations should be concise, specific, and explain why the answer is correct by linking to the document concept and KSB alignment.\n- Do not output separate distractor rationales because the API schema only stores one explanation field, but use strong plausible distractors.\n- Do not mention \"the source\", \"the PDF\", \"the slide\", or \"the document\" in the learner-facing question text.\n- Keep question text clear, but make the cognitive demand suitable for admin-approved assessment.\n- Apply the editable embedded prompt from the admin UI when provided, but do not let it override safety, source-grounding, JSON schema, mixed question type, KSB alignment, or quality rules.\n- Self-check before finalising: correct question count, single_choice has one best answer, multiple_choice has 2 or 3 correct answers, 4 options for MCQs, no duplicate stems, balanced answer letters where relevant, clear KSB-linked explanations.\n",
+          "role": "user"
+        }
+      ],
+      "model": "gpt-test",
+      "text": {
+        "format": {
+          "name": "generated_quiz_questions",
+          "schema": {
+            "additionalProperties": false,
+            "properties": {
+              "questions": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "correct_answer": {
+                      "description": "For single_choice/true_false/fill_gap use one option letter or exact option text. For multiple_choice use 2 or 3 correct option letters separated by commas. For matching/image_matching/keywords/ordering, options must contain the correct items and correct_answer may be ALL or the item letters.",
+                      "type": "string"
+                    },
+                    "difficulty": {
+                      "enum": [
+                        "easy",
+                        "medium",
+                        "hard"
+                      ],
+                      "type": "string"
+                    },
+                    "explanation": {
+                      "type": "string"
+                    },
+                    "options": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "maxItems": 8,
+                      "minItems": 2,
+                      "type": "array"
+                    },
+                    "question": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "enum": [
+                        "fill_gap",
+                        "image_matching",
+                        "keywords",
+                        "matching",
+                        "multiple_choice",
+                        "ordering",
+                        "single_choice",
+                        "true_false"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "question",
+                    "type",
+                    "options",
+                    "correct_answer",
+                    "explanation",
+                    "difficulty"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 4,
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "questions"
+            ],
+            "type": "object"
+          },
+          "strict": true,
+          "type": "json_schema"
+        }
+      }
+    },
+    "response": {
+      "questions": [
+        {
+          "answers": [
+            {
+              "id": -101,
+              "isCorrect": false,
+              "text": "Organic post"
+            },
+            {
+              "id": -102,
+              "isCorrect": true,
+              "text": "Sponsored ad"
+            },
+            {
+              "id": -103,
+              "isCorrect": false,
+              "text": "Blog article"
+            },
+            {
+              "id": -104,
+              "isCorrect": false,
+              "text": "Newsletter"
+            }
+          ],
+          "explanation": "Sponsored ads are paid. KSBs covered: K1",
+          "id": -1,
+          "questionType": "single_choice",
+          "text": "Which channel is paid?"
+        }
+      ],
+      "source": {
+        "difficulty": "mixed",
+        "model": "gpt-test",
+        "questionCount": 1,
+        "questionType": "mixed",
+        "readableFiles": [
+          "part1.txt",
+          "part2.md"
+        ],
+        "unreadableFiles": []
+      }
+    }
+  },
+  "topic_only": {
+    "request": {
+      "input": [
+        {
+          "content": "You generate assessment questions and return only structured JSON.",
+          "role": "system"
+        },
+        {
+          "content": "\nAct like an assessment design SME in adult learning and an instructional designer creating professional, high-quality mixed-format LMS quizzes aligned to KSBs (Knowledge, Skills, Behaviours).\n\nGenerate high-quality LMS quiz questions for a curriculum admin to review before saving.\n\nCourse title: Not provided\nProgramme: Not provided\nModule: Not provided\nTopic: Organic vs Paid Marketing\nDifficulty: progressive mix of easy, medium and hard\nQuestion types: mixed. Use a suitable spread across single_choice, multiple_choice, true_false, matching, image_matching, keywords, fill_gap and ordering when the source supports them.\nNumber of questions: 3\nDetected source files: Not provided\nNo uploaded source-file split was detected; distribute questions across the distinct themes in the source content.\n\nSource content:\nOrganic vs Paid Marketing\n\nEditable embedded prompt from admin UI:\nNone provided. Follow the embedded core prompt only.\n\nRules:\n- Return exactly 3 questions when the source content supports it.\n- Use ALL supplied source files together. Do not base the quiz on only one file, only the last file, or only the longest/easiest file.\n- Treat each \"Source file:\" block as a separate required content source.\n- Follow the required source-file allocation above exactly when source-file names are provided.\n- If the allocation says a file needs 3 questions, exactly 3 generated questions must be grounded in that file's concepts.\n- Before writing questions, mentally identify the main concepts in every source file block.\n- Coverage rule: every source file that contains readable lesson content must be represented by at least one question when 3 is greater than or equal to the number of readable source files.\n- If 3 is smaller than the number of readable source files, cover as many different source files as possible and prioritise the most assessment-worthy concept from each.\n- Distribute questions as evenly as possible across source files before adding extra questions to richer files.\n- For 10 questions across 3 readable files, aim for a 3/3/4 or 3/4/3 split unless the content clearly requires otherwise.\n- For 20 questions across 3 readable files, aim for roughly 6/7/7.\n- For 60 questions across 3 readable files, aim for 20 questions per file/section.\n- Do not generate all questions from Part 2 or Part 3 if Part 1 is present; each part must contribute.\n- If any uploaded XML/CSV looks like an existing quiz, treat it as a style/format example unless the user explicitly asks to copy it.\n- Use ONLY the supplied source content and uploaded examples. Do not use external knowledge.\n- Write questions for adult UK workplace LMS learners aged around 30-50 at the programme level shown above.\n- If the user uploads an example exam/quiz XML, match its level, tone, structure, and option style while generating new questions from the learning materials.\n- Identify the main KSBs from the source content and mentally map each question to one or more K/S/B items.\n- Mention the targeted KSB(s) briefly inside each explanation, for example: \"KSBs covered: K2.1, S3.2\" when source KSB labels are available.\n- If KSB labels are not explicit, use concise inferred labels such as \"Knowledge: AI governance\" or \"Skill: marketing judgement\" in the explanation.\n- Prefer applied understanding and judgement questions over simple recall.\n- At least half of the questions should use a short realistic workplace/marketing scenario.\n- Cover distinct concepts across the source material; avoid multiple questions testing the same idea.\n- When 3 is 60, organise coverage internally into 3 balanced themes/sections of 20 questions each, based on the source content.\n- When 3 is 60, balance correct answer letters across the full quiz as evenly as possible: 15 A, 15 B, 15 C, 15 D.\n- When 3 is 20, balance correct answer letters as 5 A, 5 B, 5 C, 5 D.\n- Avoid obvious answer-letter patterns and avoid more than two identical correct letters in a row.\n- Use a mixed set of question types. Do not generate the whole quiz as only single_choice unless the requested count is 1 and the source cannot support another type.\n- Include a progressive difficulty curve across the quiz: start with easier recall/comprehension questions, move into medium application questions, and include harder judgement/scenario questions near the end. Label each question difficulty as easy, medium or hard.\n- For counts of 8 or more, include at least 4 different question types where the source supports them.\n- For counts of 12 or more, include at least 6 different question types where the source supports them.\n- For single_choice questions, provide 4 plausible options and exactly one correct answer.\n- For multiple_choice questions, provide 4 plausible options and exactly 2 or 3 correct answers. The correct_answer field must list all correct option letters or exact option texts separated by commas, for example \"A, C\" or \"A, B, D\". Do not create multiple_choice questions with only one correct answer.\n- For matching questions, write the stem as a matching task and put every correct pair in options using \"left -> right\" format, for example \"Instagram -> visual discovery\". Do not put the pairs only in explanation.\n- For image_matching questions, write a visual/image-selection style stem and put every image/concept match in options using \"image placeholder -> concept\" format if no actual image assets exist.\n- For keywords questions, ask learners to provide or identify key terms; put every accepted keyword or short concept as a separate option. Do not put accepted keywords only in explanation.\n- For fill_gap questions, include one clear blank using \"____\" in the stem; options should be possible gap completions and correct_answer must be the exact correct completion.\n- For ordering questions, ask learners to sequence a process; options should be steps and correct_answer should state the correct ordered sequence.\n- Distractors must be believable misconceptions from the topic, not obviously silly answers.\n- Wrong options should reflect common mistakes, shallow interpretations, or over-simplifications from the supplied material.\n- Avoid vague stems such as \"Which is best?\" unless the scenario gives enough context.\n- Avoid absolutes like always/never unless they are central to the concept.\n- For true_false questions, use exactly True and False as options.\n- For single-answer question types, correct_answer must exactly match one of the options or one option letter.\n- For multiple_choice only, correct_answer must contain multiple correct options separated by commas.\n- Explanations should be concise, specific, and explain why the answer is correct by linking to the document concept and KSB alignment.\n- Do not output separate distractor rationales because the API schema only stores one explanation field, but use strong plausible distractors.\n- Do not mention \"the source\", \"the PDF\", \"the slide\", or \"the document\" in the learner-facing question text.\n- Keep question text clear, but make the cognitive demand suitable for admin-approved assessment.\n- Apply the editable embedded prompt from the admin UI when provided, but do not let it override safety, source-grounding, JSON schema, mixed question type, KSB alignment, or quality rules.\n- Self-check before finalising: correct question count, single_choice has one best answer, multiple_choice has 2 or 3 correct answers, 4 options for MCQs, no duplicate stems, balanced answer letters where relevant, clear KSB-linked explanations.\n",
+          "role": "user"
+        }
+      ],
+      "model": "gpt-test",
+      "text": {
+        "format": {
+          "name": "generated_quiz_questions",
+          "schema": {
+            "additionalProperties": false,
+            "properties": {
+              "questions": {
+                "items": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "correct_answer": {
+                      "description": "For single_choice/true_false/fill_gap use one option letter or exact option text. For multiple_choice use 2 or 3 correct option letters separated by commas. For matching/image_matching/keywords/ordering, options must contain the correct items and correct_answer may be ALL or the item letters.",
+                      "type": "string"
+                    },
+                    "difficulty": {
+                      "enum": [
+                        "easy",
+                        "medium",
+                        "hard"
+                      ],
+                      "type": "string"
+                    },
+                    "explanation": {
+                      "type": "string"
+                    },
+                    "options": {
+                      "items": {
+                        "type": "string"
+                      },
+                      "maxItems": 8,
+                      "minItems": 2,
+                      "type": "array"
+                    },
+                    "question": {
+                      "type": "string"
+                    },
+                    "type": {
+                      "enum": [
+                        "fill_gap",
+                        "image_matching",
+                        "keywords",
+                        "matching",
+                        "multiple_choice",
+                        "ordering",
+                        "single_choice",
+                        "true_false"
+                      ],
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "question",
+                    "type",
+                    "options",
+                    "correct_answer",
+                    "explanation",
+                    "difficulty"
+                  ],
+                  "type": "object"
+                },
+                "maxItems": 3,
+                "minItems": 1,
+                "type": "array"
+              }
+            },
+            "required": [
+              "questions"
+            ],
+            "type": "object"
+          },
+          "strict": true,
+          "type": "json_schema"
+        }
+      }
+    },
+    "response": {
+      "questions": [
+        {
+          "answers": [
+            {
+              "id": -101,
+              "isCorrect": false,
+              "text": "Organic post"
+            },
+            {
+              "id": -102,
+              "isCorrect": true,
+              "text": "Sponsored ad"
+            },
+            {
+              "id": -103,
+              "isCorrect": false,
+              "text": "Blog article"
+            },
+            {
+              "id": -104,
+              "isCorrect": false,
+              "text": "Newsletter"
+            }
+          ],
+          "explanation": "Sponsored ads are paid. KSBs covered: K1",
+          "id": -1,
+          "questionType": "single_choice",
+          "text": "Which channel is paid?"
+        }
+      ],
+      "source": {
+        "difficulty": "mixed",
+        "model": "gpt-test",
+        "questionCount": 1,
+        "questionType": "mixed",
+        "readableFiles": [],
+        "unreadableFiles": []
+      }
+    }
+  }
+}

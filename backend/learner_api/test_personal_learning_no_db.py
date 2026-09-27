@@ -166,6 +166,16 @@ class PersonalLearningTests(unittest.TestCase):
         detail = policy.progress_detail(self.detail, self.state['progress'], self.state['submissions'])
         self.assertEqual(self.ns['progress'](detail, 'MOD-A')['progressPercent'], 0)
 
+    def test_tutor_required_activity_accepts_an_explicit_reflection_skip(self):
+        self.detail['components'][0]['tutorValidationRequired'] = True
+        result = self.ns['complete_activity'](
+            self.context, self.account, self.detail, 'C1', 'component',
+            {'feedback': '', 'skipReflection': True},
+        )
+        self.assertTrue(result['record']['reflectionSkipped'])
+        self.assertEqual(result['record']['feedback'], '')
+        self.assertFalse(result['record']['passed'])
+
     def test_quiz_uses_server_grade_and_retry_retains_original_result(self):
         self.detail['components'] = [{'componentId': 'Q1', 'component': 'Final quiz', 'moduleId': 'MOD-A', 'module': 'Module A', 'isQuiz': True, 'quizMeta': {'quizId': 1}}]
         result = self.ns['submit_quiz'](self.context, self.account, self.detail, '1', {'answers': {'1': 9}, 'passed': True, 'grade': 1})

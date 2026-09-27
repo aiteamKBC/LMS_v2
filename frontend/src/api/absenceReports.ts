@@ -18,12 +18,29 @@ export interface LearnerAbsenceReport {
   evidenceUrl: string;
   evidenceText: string;
   coachNote: string;
-  recoveryMethod?: 'recorded' | 'catch-up' | '';
+  recoveryMethod?: 'recorded' | 'catch-up' | 'alternative' | '';
   catchupEventKey?: string | null;
+  alternativeSession?: AlternativeAttendanceSession | null;
   attendanceRate: number | null;
   previousAbsences: number;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface AlternativeAttendanceSession {
+  id: string;
+  sessionId?: string;
+  title: string;
+  dateIso: string;
+  startTime: string;
+  endTime: string;
+  groupId: string;
+  group: string;
+  cohortId: string;
+  cohort: string;
+  module?: string;
+  status?: string;
+  joinUrl?: string;
 }
 
 export interface MissedAttendanceSession {
@@ -38,6 +55,7 @@ export interface MissedAttendanceSession {
   endTime: string;
   coach: string;
   module: string;
+  alternativeSessions?: AlternativeAttendanceSession[];
 }
 
 export interface AbsenceReportData {

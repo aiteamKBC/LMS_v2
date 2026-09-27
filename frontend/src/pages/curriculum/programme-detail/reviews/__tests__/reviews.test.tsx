@@ -449,6 +449,54 @@ describe('ReviewFormModal', () => {
     expect(screen.getByDisplayValue('Progress notes')).toBeInTheDocument();
   });
 
+  it('disables only the Referrer required-signature control', async () => {
+    render(<ReviewFormModal programmeId="PROG-DATA" review={null} onClose={vi.fn()} onSaved={vi.fn()} />);
+    await vi.waitFor(() => expect(api.fetchReviewTypes).toHaveBeenCalled());
+    await userEvent.type(screen.getByLabelText(/Review name/), 'Progress Review');
+    await userEvent.click(screen.getByRole('combobox', { name: /Review type/ }));
+    await userEvent.click(await screen.findByRole('option', { name: 'Progress Review' }));
+    for (let step = 0; step < 3; step += 1) {
+      await userEvent.click(screen.getByRole('button', { name: /Next/ }));
+    }
+
+    const signatures = screen.getByRole('group', { name: 'Signatures required from' });
+    const referrer = within(signatures).getByRole('checkbox', { name: /Referrer/ });
+    expect(referrer).toBeDisabled();
+    expect(referrer).not.toBeChecked();
+    expect(within(signatures).getByText('Coming soon')).toBeInTheDocument();
+    await userEvent.click(referrer);
+    expect(referrer).not.toBeChecked();
+    for (const role of ['Advisor', 'Employer', 'Participant']) {
+      expect(within(signatures).getByRole('checkbox', { name: role })).toBeEnabled();
+    }
+    await userEvent.click(within(signatures).getByRole('checkbox', { name: 'Employer' }));
+    expect(within(signatures).getByRole('checkbox', { name: 'Employer' })).toBeChecked();
+
+    const visibleTo = screen.getByRole('group', { name: 'Visible to' });
+    expect(within(visibleTo).getByRole('checkbox', { name: 'Referrer' })).toBeEnabled();
+  });
+
+  it('keeps a legacy Referrer signature requirement unchanged when saving an unrelated edit', async () => {
+    const legacy: ReviewDetail = { ...detail, signatures: { ...detail.signatures, referrer: true } };
+    api.fetchReviewDetail.mockResolvedValue(legacy);
+    api.updateReviewTemplate.mockResolvedValue(legacy);
+    render(<ReviewFormModal programmeId="PROG-DATA" review={summary} onClose={vi.fn()} onSaved={vi.fn()} />);
+    const name = await screen.findByDisplayValue('Progress Review');
+    await userEvent.type(name, ' renamed');
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Participants & Permissions' }));
+    const referrer = within(screen.getByRole('group', { name: 'Signatures required from' })).getByRole('checkbox', { name: /Referrer/ });
+    expect(referrer).toBeDisabled();
+    expect(referrer).toBeChecked();
+
+    await userEvent.click(screen.getByRole('tab', { name: /Form Builder/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    expect(api.updateReviewTemplate).toHaveBeenCalledWith(summary.id, expect.objectContaining({
+      name: 'Progress Review renamed',
+      signatures: { advisor: true, employer: false, participant: true, referrer: true },
+    }));
+  });
+
   it('shows the API error when a save fails', async () => {
     api.createReviewTemplate.mockRejectedValue(new Error('Curriculum API returned 400 for /curriculum/programmes/PROG-DATA/reviews/'));
     const { showCurriculumAlert } = await import('@/components/feature/CurriculumSweetAlert');

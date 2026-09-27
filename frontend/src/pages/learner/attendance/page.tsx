@@ -26,6 +26,7 @@ import AttendanceModePanel from './components/AttendanceModePanel';
 import AttendanceLectureList, { type AttendanceFilter } from './components/AttendanceLectureList';
 import FeaturedLecture from './components/FeaturedLecture';
 import CatchupBooking from './components/CatchupBooking';
+import RecoveryPlansDialog from './components/RecoveryPlansDialog';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { featuredLecture, useLectureClock } from './liveLecture';
 import styles from './attendance.module.css';
@@ -33,8 +34,10 @@ import styles from './attendance.module.css';
 const learnerNav = roleNavMap.learner;
 
 export function lectureCounts(lectures: AttendanceLecture[]) {
-  const attended = lectures.filter(row => ['completed', 'late'].includes(row.status)).length;
-  const absent = lectures.filter(row => row.status === 'absent').length;
+  // A missed lecture made up by a completed catch-up or attended alternative counts as attended.
+  const madeUp = (row: AttendanceLecture) => row.status === 'absent' && row.effectiveAttendance === 1;
+  const attended = lectures.filter(row => ['completed', 'late'].includes(row.status) || madeUp(row)).length;
+  const absent = lectures.filter(row => row.status === 'absent' && !madeUp(row)).length;
   return { all: lectures.length, attended, absent,
     covered: lectures.filter(row => row.catchupStatus === 'completed').length,
     upcoming: lectures.filter(row => row.status === 'upcoming').length,
@@ -51,6 +54,7 @@ export default function AttendancePage() {
   const [moduleId, setModuleId] = useState('all');
   const [filter, setFilter] = useState<AttendanceFilter>('all');
   const [report, setReport] = useState<AttendanceLecture | 'choose' | null>(null);
+  const [showRecoveryPlans, setShowRecoveryPlans] = useState(false);
   const [showAllActivity, setShowAllActivity] = useState(false);
   const [modeBusy, setModeBusy] = useState(false);
   const [modeError, setModeError] = useState('');
@@ -145,7 +149,10 @@ export default function AttendancePage() {
     userName={data?.summary?.learnerName || 'Learner'} userRole="Learner">
     <PageContainer className={styles.page}>
       <SectionHeader title="Attendance" description="Your scheduled lectures, attendance status and learning resources." icon="ri-calendar-check-line"
-        actions={data ? <RowAction label="Report absence" icon="ri-calendar-close-line" emphasis="primary" onClick={() => setReport('choose')} /> : undefined} />
+        actions={data ? <div className="flex flex-wrap items-center gap-2">
+          <RowAction label="My recovery plans" icon="ri-calendar-todo-line" onClick={() => setShowRecoveryPlans(true)} />
+          <RowAction label="Report absence" icon="ri-calendar-close-line" emphasis="primary" onClick={() => setReport('choose')} />
+        </div> : undefined} />
       {read.error && data && <div role="alert" className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm">
         Lectures could not refresh. Showing the last loaded record. <button onClick={read.refresh} className="font-semibold underline">Retry</button>
       </div>}
@@ -207,17 +214,24 @@ export default function AttendancePage() {
     {report && <AbsenceReportDialog onClose={() => setReport(null)}>
       <AbsenceReportForm key={typeof report === 'string' ? report : report.id}
         preselectMatch={typeof report === 'string' ? null : { id: report.id, dateIso: report.date, title: report.title }}
-        onSubmitted={() => read.refresh()} onCancel={() => setReport(null)} showGuidance={false} showHistory={false} compact />
+        onSubmitted={() => read.refresh()} onCancel={() => setReport(null)} showGuidance={false} showHistory compact />
+    </AbsenceReportDialog>}
+    {showRecoveryPlans && <AbsenceReportDialog title="My recovery plans" onClose={() => setShowRecoveryPlans(false)}>
+      <RecoveryPlansDialog />
     </AbsenceReportDialog>}
     {catchup && <AbsenceReportDialog title="Book Catchup Session" onClose={() => { setCatchup(null); read.refresh(); }}>
-      <p className={styles.catchupLectureTitle}>{catchup.title} · {catchup.date}</p>
-      <CatchupBooking key={catchup.id} lecture={{ ...catchup, status: 'absent', dateIso: catchup.date,
-        sessionType: 'live_session', coach: catchup.coach || '' }} selectedKey={catchupBooking?.eventKey || ''}
-        onSelect={selectCatchupBooking} onBusyChange={setBookingBusy} standalone />
-      {attendError && <p role="alert">{attendError}</p>}
-      {catchup.absenceReport ? <button type="button" className={styles.catchupDone} disabled={bookingBusy || !catchupBooking} onClick={() => void saveCatchup()}>Link catch-up to this absence</button>
-        : <p className="mt-3 text-sm">Submit an absence report to link your catch-up booking. Attendance changes after approval and coach-confirmed completion.</p>}
-      <button type="button" className={styles.catchupDone} disabled={bookingBusy} onClick={() => { setCatchup(null); read.refresh(); }}>Close</button>
+      {catchup.absenceReport ? <>
+        <p className={styles.catchupLectureTitle}>{catchup.title} · {catchup.date}</p>
+        <CatchupBooking key={catchup.id} lecture={{ ...catchup, status: 'absent', dateIso: catchup.date,
+          sessionType: 'live_session', coach: catchup.coach || '' }} selectedKey={catchupBooking?.eventKey || ''}
+          onSelect={selectCatchupBooking} onBusyChange={setBookingBusy} standalone />
+        {attendError && <p role="alert">{attendError}</p>}
+        <button type="button" className={styles.catchupDone} disabled={bookingBusy || !catchupBooking} onClick={() => void saveCatchup()}>Link catch-up to this absence</button>
+        <button type="button" className={styles.catchupDone} disabled={bookingBusy} onClick={() => { setCatchup(null); read.refresh(); }}>Close</button>
+      </> : <AbsenceReportForm key={catchup.id} initialRecoveryMethod="catch-up"
+        preselectMatch={{ id: catchup.id, dateIso: catchup.date, title: catchup.title }}
+        onSubmitted={() => { setCatchup(null); read.refresh(); }}
+        onCancel={() => { setCatchup(null); read.refresh(); }} showGuidance={false} showHistory={false} compact />}
     </AbsenceReportDialog>}
   </WorkspaceShell>;
 }

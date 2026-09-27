@@ -7,13 +7,18 @@ import { AssignmentSubmissions } from '@/pages/learner/monthly-submission/Assign
 import { groupMonthlyAssignments, monthName, statusLabels } from '@/pages/learner/monthly-submission/model';
 import { useMonthlyAssignmentPlan } from '@/pages/learner/monthly-submission/useMonthlyAssignmentPlan';
 import { hasSubmission } from './assignmentSubmitted';
+import type { useCaseFileMarking } from '../useCaseFileMarking';
 
 /**
  * Every assignment this learner has submitted, by Training Plan month, with the
  * same submission history and PDF report the learner sees on Monthly
  * submission. Read only: marking stays in the Marking queue.
  */
-export default function AssignmentsTab({ kind, learnerId }: { kind: LearnerKind; learnerId: string }) {
+export default function AssignmentsTab({ kind, learnerId, markingState }: {
+  kind: LearnerKind;
+  learnerId: string;
+  markingState?: ReturnType<typeof useCaseFileMarking>;
+}) {
   const { real, loading, loadError, refresh } = useLearnerDetailParam(kind, learnerId);
   const plan = useMonthlyAssignmentPlan(kind, learnerId);
   const [open, setOpen] = useState<string | null>(null);
@@ -27,13 +32,19 @@ export default function AssignmentsTab({ kind, learnerId }: { kind: LearnerKind;
     : []), [real, plan.metadata, plan.contract, plan.statuses, plan.submissionCounts]);
   const total = months.reduce((sum, group) => sum + group.assignments.length, 0);
 
-  if (loading || plan.loading) {
+  if (loading || plan.loading || markingState?.loading) {
     return <div className="bg-background-50 rounded-xl border border-foreground-200/60 p-5" role="status" aria-label="Loading assignments"><RowsSkeleton rows={4} /></div>;
   }
   if (loadError) {
     return <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-800">
       <p>{loadError}</p>
       <button type="button" onClick={refresh} className="mt-3 rounded-lg border border-red-200 px-3 py-1.5 font-semibold hover:bg-red-100">Retry assignments</button>
+    </div>;
+  }
+  if (markingState?.error) {
+    return <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-5 text-sm text-red-800">
+      <p>{markingState.error}</p>
+      <button type="button" onClick={markingState.retry} className="mt-3 rounded-lg border border-red-200 px-3 py-1.5 font-semibold hover:bg-red-100">Retry marking</button>
     </div>;
   }
 

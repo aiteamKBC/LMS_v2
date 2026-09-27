@@ -14,12 +14,132 @@ though no coach would ever see it. A hand-in is a row in
 ``learning_reflection_submissions`` -- the reflection the learner signs and
 sends -- and that is what these assert.
 """
+import inspect
 from unittest.mock import MagicMock, patch
 
 from django.db import DatabaseError
-from django.test import SimpleTestCase
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import RequestFactory, SimpleTestCase
 
-from .evidence import _is_submitted_for_marking
+from . import evidence
+from .evidence import _evidence_lineage, _is_submitted_for_marking
+
+
+class EvidenceLineageOwnershipTests(SimpleTestCase):
+    """A component match alone must never attach another learner's progress."""
+
+    def test_progress_lookup_is_scoped_to_the_target_learners_profile_ids(self):
+        cursor = MagicMock()
+        cursor.fetchone.side_effect = [(1,), (902,)]
+        connection = patch("learner_api.evidence._conn").start()
+        connection.return_value.cursor.return_value.__enter__.return_value = cursor
+        patch(
+            "learner_api.evidence._learner_profile_ids_for_source",
+            return_value=["248"],
+        ).start()
+        self.addCleanup(patch.stopall)
+
+        lineage = _evidence_lineage("commercial", "56", "COMP-1")
+
+        self.assertEqual(lineage, {"component_ref": "COMP-1", "progress_entry_id": 902})
+        progress_sql, progress_params = cursor.execute.call_args_list[1].args
+        self.assertIn("p.learner_id::text = any(%s)", progress_sql)
+        self.assertEqual(progress_params, ["COMP-1", ["248"]])
+
+    def test_missing_target_profile_cannot_attach_any_progress_entry(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (1,)
+        connection = patch("learner_api.evidence._conn").start()
+        connection.return_value.cursor.return_value.__enter__.return_value = cursor
+        patch(
+            "learner_api.evidence._learner_profile_ids_for_source",
+            return_value=[],
+        ).start()
+        self.addCleanup(patch.stopall)
+
+        lineage = _evidence_lineage("commercial", "56", "COMP-1")
+
+        self.assertEqual(lineage, {"component_ref": "COMP-1", "progress_entry_id": None})
+        self.assertEqual(cursor.execute.call_count, 1)
+
+
+class EvidenceUploadDeleteTests(SimpleTestCase):
+    """Exercise the request handlers without a database or live Azure calls."""
+
+    def setUp(self):
+        self.factory = RequestFactory()
+
+    def test_upload_saves_the_server_resolved_progress_lineage(self):
+        cursor = MagicMock()
+        connection = self.enterContext(patch.object(evidence, "_conn"))
+        connection.return_value.cursor.return_value.__enter__.return_value = cursor
+        self.enterContext(patch.object(evidence, "azure_configured", return_value=True))
+        self.enterContext(patch.object(evidence, "ensure_evidence_tables"))
+        self.enterContext(patch.object(evidence, "upload_to_quarantine"))
+        self.enterContext(patch.object(evidence, "move_blob"))
+        self.enterContext(patch.object(evidence, "blob_url", return_value="https://files.example.test/evidence"))
+        self.enterContext(patch.object(evidence, "_record_approved_evidence"))
+        self.enterContext(patch.object(
+            evidence,
+            "_evidence_lineage",
+            return_value={"component_ref": "COMP-1", "progress_entry_id": 902},
+        ))
+        uploaded = SimpleUploadedFile("report.pdf", b"evidence", content_type="application/pdf")
+        request = self.factory.post("/upload/", {"section_ref": "COMP-1", "file": uploaded})
+
+        response = inspect.unwrap(evidence.upload_evidence)(request, kind="commercial", pk=56)
+
+        self.assertEqual(response.status_code, 201)
+        insert_call = next(call for call in cursor.execute.call_args_list if "insert into" in call.args[0].lower())
+        self.assertEqual(insert_call.args[1][-2:], ["COMP-1", 902])
+
+    def test_delete_of_another_learners_file_is_not_found(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = None
+        connection = self.enterContext(patch.object(evidence, "_conn"))
+        connection.return_value.cursor.return_value.__enter__.return_value = cursor
+        self.enterContext(patch.object(evidence, "ensure_evidence_tables"))
+        delete_blob = self.enterContext(patch.object(evidence, "delete_blob"))
+        request = self.factory.delete("/evidence/file-id/")
+
+        response = inspect.unwrap(evidence.delete_evidence)(
+            request,
+            kind="commercial",
+            pk=56,
+            file_id="file-id",
+        )
+
+        self.assertEqual(response.status_code, 404)
+        lookup_sql, lookup_params = cursor.execute.call_args.args
+        self.assertIn("learner_kind = %s and learner_id = %s", lookup_sql)
+        self.assertEqual(lookup_params, ["file-id", "commercial", "56"])
+        delete_blob.assert_not_called()
+        self.assertEqual(cursor.execute.call_count, 1)
+
+    def test_owner_can_delete_an_unsubmitted_file_with_scoped_queries(self):
+        cursor = MagicMock()
+        cursor.fetchone.return_value = ("commercial/56/COMP-1/file.pdf", "approved", "COMP-1", None)
+        connection = self.enterContext(patch.object(evidence, "_conn"))
+        connection.return_value.cursor.return_value.__enter__.return_value = cursor
+        self.enterContext(patch.object(evidence, "ensure_evidence_tables"))
+        self.enterContext(patch.object(evidence, "_is_submitted_for_marking", return_value=False))
+        self.enterContext(patch.object(evidence, "azure_configured", return_value=False))
+        request = self.factory.delete("/evidence/file-id/")
+
+        response = inspect.unwrap(evidence.delete_evidence)(
+            request,
+            kind="commercial",
+            pk=56,
+            file_id="file-id",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        delete_call = next(
+            call for call in cursor.execute.call_args_list
+            if call.args[0].strip().lower().startswith("delete from")
+            and "evidence_files" in call.args[0]
+        )
+        self.assertEqual(delete_call.args[1], ["file-id", "commercial", "56"])
 
 
 class SubmittedForMarkingTests(SimpleTestCase):

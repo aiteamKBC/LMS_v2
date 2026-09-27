@@ -15,7 +15,7 @@ shape as tables.ensure_progress_review_tables.
 """
 from django.conf import settings
 
-from learner_api.evidence_storage import azure_configured, blob_url, get_download_sas, upload_blob
+from learner_api.evidence_storage import azure_configured, blob_exists, blob_url, download_blob_bytes, get_download_sas, upload_blob
 
 PPTX_CONTENT_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 
@@ -54,3 +54,19 @@ def upload_pptx(file_obj, blob_name: str) -> str:
 
 def download_sas_for(container: str, blob_name: str, filename: str) -> str:
     return get_download_sas(container, blob_name, filename=filename)
+
+
+def download_bytes(container: str, blob_name: str) -> bytes:
+    return download_blob_bytes(container, blob_name)
+
+
+def upload_pdf(file_obj, blob_name: str) -> None:
+    """Cache a deck's PDF preview next to the deck itself."""
+    _ensure_container()
+    upload_blob(file_obj, settings.AZURE_PROGRESS_REVIEW_CONTAINER, blob_name, "application/pdf")
+
+
+def upload_image(file_obj, blob_name: str) -> None:
+    """A replacement photo uploaded while editing a deck."""
+    _ensure_container()
+    upload_blob(file_obj, settings.AZURE_PROGRESS_REVIEW_CONTAINER, blob_name, "image/jpeg")

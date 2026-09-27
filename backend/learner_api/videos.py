@@ -95,6 +95,7 @@ def submit_video_progress(request, component_id):
         ksbs = payload["ksbs"]
     feedback = payload.get("feedback") or ""
     reported_time = payload.get("reportedTime") or ""
+    reflection_skipped = payload.get("skipReflection") is True
     time_entry_source = "input" if payload.get("timeEntrySource") == "input" else "timer"
     # Client may pass the title it rendered; fall back to a live master lookup.
     video_title = payload.get("videoTitle") or None
@@ -166,6 +167,7 @@ def submit_video_progress(request, component_id):
         "ksbs": ksbs,                          # KSB codes the learner selected
         "feedback": feedback,                  # reflection note
         "reportedTime": reported_time,         # self-reported time-to-complete
+        "reflectionSkipped": reflection_skipped,
         "startedAt": started_at,
         "submittedAt": submitted_at,
         "timeTaken": time_taken,

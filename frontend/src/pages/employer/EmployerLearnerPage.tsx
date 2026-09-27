@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { useAuth } from '@/hooks/useAuth';
 import { useToast } from '@/hooks/useToast';
 import { roleNavMap } from '@/mocks/navigation';
 import {
@@ -44,7 +45,8 @@ import { LearnerReviewInstanceForm } from '@/pages/learner/reviews/LearnerReview
 // mirroring how a learner reuses the mark captured during enrolment.
 // ============================================================================
 
-const employerNav = roleNavMap.apprentice;
+const staffNav = roleNavMap.apprentice;
+const employerNav = roleNavMap.employer;
 
 function fmt(value: string | null | undefined) {
   if (!value) return '—';
@@ -275,6 +277,7 @@ export default function EmployerLearnerPage() {
   // The URL segment is a plain string; the document APIs want the narrowed union.
   const kind: LearnerKind = kindParam === 'commercial' ? 'commercial' : 'apprenticeship';
   const navigate = useNavigate();
+  const { auth } = useAuth();
   const { success, error: toastError } = useToast();
   const [data, setData] = useState<EmployerLearnerDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -398,6 +401,18 @@ export default function EmployerLearnerPage() {
   // Active learners lead with performance; anyone still being set up leads with
   // the paperwork. Both panels always render.
   const documentsFirst = !learner?.isActive || outstanding > 0;
+  const isEmployerViewer = auth.account?.role === 'employer';
+  const nav = isEmployerViewer ? employerNav : staffNav;
+  const navItems = isEmployerViewer
+    ? nav.items.map((item) =>
+        item.id === 'employer-dashboard'
+          ? { ...item, href: `/employers/${employerId}` }
+          : item,
+      )
+    : nav.items;
+  const viewerName = isEmployerViewer
+    ? auth.account?.displayName || data?.employer.name || 'Employer'
+    : 'Enrolment Officer';
 
   const documentsPanel = (
     <SectionPanel
@@ -459,14 +474,14 @@ export default function EmployerLearnerPage() {
 
   return (
     <WorkspaceShell
-      role="compliance"
-      roleLabel={employerNav.label}
-      navItems={employerNav.items}
-      workspaceLabel={employerNav.workspaceLabel}
+      role={isEmployerViewer ? 'employer' : 'compliance'}
+      roleLabel={nav.label}
+      navItems={navItems}
+      workspaceLabel={nav.workspaceLabel}
       pageTitle="Learner"
       pageSubtitle={learner?.name ?? 'Learner'}
-      userName="Enrolment Officer"
-      userRole="Enrolment Officer"
+      userName={viewerName}
+      userRole={nav.label}
     >
       {/* The progress tabs render the learner's own multi-column layouts, which
           need more room than the signing queue does. */}
@@ -486,7 +501,7 @@ export default function EmployerLearnerPage() {
             }
             right={
               <button
-                onClick={() => navigate(-1)}
+                onClick={() => isEmployerViewer ? navigate(`/employers/${employerId}`) : navigate(-1)}
                 className="inline-flex items-center gap-1.5 px-4 py-2.5 bg-white/15 backdrop-blur-sm border border-white/25 text-white rounded-xl text-[13px] font-semibold hover:bg-white/25 transition-smooth cursor-pointer"
               >
                 <i className="ri-arrow-left-line" />All learners

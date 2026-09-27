@@ -147,6 +147,7 @@ interface SidebarProps {
 function resolveSidebarIcon(id = '', label = '', sourceIcon = ''): LucideIcon {
   const key = `${id} ${label} ${sourceIcon}`.toLowerCase();
 
+  if (id === 'admin-inclusion' || id === 'coach-inclusion') return HeartPulse;
   if (id === 'learner-onboarding') return Users;
   if (id === 'learner-compliance-documents') return ShieldCheck;
   if (/clipboard/.test(sourceIcon.toLowerCase())) return ClipboardList;

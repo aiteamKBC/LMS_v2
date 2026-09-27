@@ -76,7 +76,10 @@ export function CoachSidebar({ navItems, mobileOpen, onCloseMobile, collapsed, o
             <SidebarIcon id={child.id} label={child.label} sourceIcon={child.icon} size={15} /><span className={styles.label}>{child.label}</span>
           </Link>)}
         </div>}
-      </div> : <Link key={item.id} to={item.href} className={styles.row} aria-current={active(item) ? 'page' : undefined} onClick={onCloseMobile}
+      </div> : item.external ? <a key={item.id} href={item.href} target="_blank" rel="noopener noreferrer" className={styles.row} onClick={onCloseMobile}
+        aria-label={compact ? item.label : undefined} title={compact ? item.label : undefined}>
+        <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} /><span className={styles.label}>{item.label}</span>
+      </a> : <Link key={item.id} to={item.href} className={styles.row} aria-current={active(item) ? 'page' : undefined} onClick={onCloseMobile}
         aria-label={compact ? item.label : undefined} title={compact ? item.label : undefined}>
         <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} /><span className={styles.label}>{item.label}</span>
       </Link>)}

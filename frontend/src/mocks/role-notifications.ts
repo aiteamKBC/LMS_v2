@@ -1,6 +1,6 @@
 // Role-specific notifications for workspace sidebar widgets & /notifications page
 export interface RoleNotification {
-  id: number;
+  id: number | string;
   text: string;
   time: string;
   unread: boolean;

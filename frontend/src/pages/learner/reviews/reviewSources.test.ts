@@ -23,6 +23,18 @@ describe('Review source ownership', () => {
     expect(isReviewSession(event({ reviewTemplateId: null, reviewTypeCode: null }), 'mcr')).toBe(true);
   });
 
+  it('keeps Curriculum Reviews in their own learner section', () => {
+    const curriculum = event({
+      id: 'review:1:CAREER_REVIEW:1', eventKey: 'review:1:CAREER_REVIEW:1',
+      source: 'review', type: 'review', reviewTemplateId: 'CAREER_REVIEW',
+      reviewTypeCode: 'career_review', reviewTypeName: 'Career Review',
+    });
+    expect(isReviewSession(curriculum, 'review')).toBe(true);
+    expect(isReviewSession(curriculum, 'mcr')).toBe(false);
+    expect(isReviewSession(curriculum, 'progress-review')).toBe(false);
+    expect(isReviewSession({ ...curriculum, reviewTemplateId: null }, 'review')).toBe(false);
+  });
+
   it('preserves current Curriculum events beside completed imported history only', () => {
     const current = event();
     const complete = event({ id: 'imported:1', eventKey: 'imported:1', status: 'completed' });

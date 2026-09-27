@@ -1,6 +1,8 @@
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
 import { CHAT_ENABLED } from '@/lib/featureFlags';
 
+const inclusionLoginUrl = `${(import.meta.env.VITE_INCLUSION_URL || "https://admin.kentbusinesscollege.net").replace(/\/$/, "")}/login`;
+
 // ============================================================================
 // Learner tools reached from the dashboard, with the same permission IDs as
 // their former Community navigation entries. No sample counters or badges.
@@ -31,7 +33,8 @@ export const learnerNavItems: SidebarNavItem[] = [
       { id: 'learner-monthly-submission', label: 'Monthly Submission', icon: 'ri-file-upload-line', href: '/learner/monthly-submission' },
       { id: 'learner-monthly-logs', label: 'Monthly Logs', icon: 'ri-file-list-3-line', href: '/learner/monthly-logs', matchPaths: ['/learner/monthly-cycle'] },
       { id: 'learner-monthly-coaching', label: 'Monthly Coaching Meeting', icon: 'ri-chat-smile-2-line', href: '/learner/monthly-coaching' },
-      { id: 'learner-progress-reviews', label: 'Reviews', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
+      { id: 'learner-progress-reviews', label: 'Progress Review', icon: 'ri-file-chart-line', href: '/learner/progress-reviews' },
+      { id: 'learner-reviews', label: 'Reviews', icon: 'ri-file-list-3-line', href: '/learner/reviews' },
     ],
   },
 
@@ -64,6 +67,7 @@ export const learnerNavItems: SidebarNavItem[] = [
 // ============================================================================
 export const coachNavItems: SidebarNavItem[] = [
   { id: 'coach-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/coach' },
+  { id: 'coach-notifications', label: 'Notifications', icon: 'ri-notification-3-line', href: '/notifications' },
   {
     id: 'coach-meetings',
     label: 'Meetings',
@@ -95,6 +99,8 @@ export const coachNavItems: SidebarNavItem[] = [
     href: '/coach/monthly-logs',
     matchPaths: ['/coach/monthly-cycle'],
   },
+  { id: 'coach-inclusion', label: 'Inclusion Ticket System', icon: 'ri-heart-pulse-line', href: inclusionLoginUrl, external: true },
+  { id: 'coach-absence-reports', label: 'Absence Reports', icon: 'ri-error-warning-line', href: '/coach/absence-reports' },
 ];
 
 // ============================================================================
@@ -182,6 +188,7 @@ export const employerNavItems: SidebarNavItem[] = [
     label: 'Communication',
     icon: 'ri-mail-line',
     children: [
+      { id: 'employer-notifications', label: 'Notifications', icon: 'ri-notification-3-line', href: '/notifications' },
       { id: 'employer-messages', label: 'Messages', icon: 'ri-mail-line', href: '/messages', statusDot: 'blue' },
       { id: 'employer-support', label: 'Support Requests', icon: 'ri-question-line', href: '/employer/support' },
     ],
@@ -229,6 +236,7 @@ export const curriculumNavItems: SidebarNavItem[] = [
       '/curriculum/standards',
       '/curriculum/ksb-frameworks',
       '/curriculum/quiz-xml',
+      '/curriculum/knowledge-base',
       '/curriculum/question-bank',
       '/curriculum/checkpoints',
     ],
@@ -622,6 +630,7 @@ export const adminNavItems: SidebarNavItem[] = [
       { id: 'admin-tutor-dashboard', label: 'Tutor Dashboard', icon: 'ri-dashboard-line', href: 'https://tutordashboard.kentbusinesscollege.net', external: true },
     ],
   },
+  { id: 'admin-inclusion', label: 'Inclusion System', icon: 'ri-heart-pulse-line', href: inclusionLoginUrl, external: true },
 ];
 
 // ============================================================================

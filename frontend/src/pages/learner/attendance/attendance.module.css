@@ -316,14 +316,53 @@
   .absenceDialog { margin: auto; max-height: calc(100dvh - 24px); }
 }
 
-.recoveryPlan { min-width: 0; }
-.recoveryPlan legend { margin-bottom: 8px; font-size: 12px; font-weight: 600; }
-.recoveryOptions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-.recoveryOptions label { display: flex; align-items: center; gap: 7px; margin: 0; padding: 10px; border: 1px solid var(--attendance-border, #dee2e8); border-radius: 7px; font-size: 11px; cursor: pointer; }
-.recoveryOptions label:has(input:checked) { border-color: var(--attendance-accent, #673ab7); background: color-mix(in srgb, var(--attendance-accent, #673ab7) 7%, var(--attendance-surface, #fff)); }
-.recoveryOptions input { flex: 0 0 auto; accent-color: var(--attendance-accent, #673ab7); }
+.recoveryPlan { min-width: 0; padding: 12px; border: 1px solid var(--attendance-border, #dee2e8); border-radius: 10px; background: var(--attendance-soft, #f6f8fb); }
+.recoveryPlan legend { padding: 0 4px; font-size: 12px; font-weight: 700; }
+.recoveryIntro { margin: -2px 0 10px; color: var(--attendance-muted, #637388); font-size: 10px; line-height: 1.5; }
+.recoveryOptions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.recoveryOptions label { position: relative; display: grid; grid-template-columns: 28px minmax(0, 1fr); align-items: start; gap: 8px; min-height: 76px; margin: 0; padding: 11px 30px 11px 11px; border: 1px solid var(--attendance-border, #dee2e8); border-radius: 8px; background: var(--attendance-surface, #fff); cursor: pointer; transition: border-color .15s ease, background-color .15s ease, box-shadow .15s ease; }
+.recoveryOptions label:has(input:checked) { border-color: var(--attendance-accent, #673ab7); background: color-mix(in srgb, var(--attendance-accent, #673ab7) 7%, var(--attendance-surface, #fff)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--attendance-accent, #673ab7) 35%, transparent); }
+.recoveryOptions label > svg { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 7px; background: color-mix(in srgb, var(--attendance-accent, #673ab7) 10%, transparent); color: var(--attendance-accent, #673ab7); font-size: 15px; }
+.recoveryOptions label > span { display: grid; gap: 3px; min-width: 0; }
+.recoveryOptions strong { color: var(--attendance-text, #1f3147); font-size: 11px; line-height: 1.35; }
+.recoveryOptions small { color: var(--attendance-muted, #637388); font-size: 9px; line-height: 1.4; }
+.recoveryOptions input { position: absolute; top: 10px; right: 10px; accent-color: var(--attendance-accent, #673ab7); }
 .recoveryPlan:disabled { opacity: .6; }
 .recoveryHint { color: var(--attendance-muted, #637388); font-size: 11px; line-height: 1.5; }
+.recoveryDetails { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--attendance-border, #dee2e8); border-radius: 8px; background: var(--attendance-surface, #fff); font-size: 11px; }
+.recoveryDetails > label { font-weight: 600; }
+.recoveryDetails .bookingFields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.recoveryUnavailable { display: flex; align-items: flex-start; gap: 8px; color: var(--attendance-muted, #637388); font-size: 11px; line-height: 1.5; }
+.recoveryUnavailable > svg { margin-top: 1px; color: var(--attendance-accent, #673ab7); font-size: 15px; }
+.recoveryUnavailable span { display: grid; gap: 2px; }
+.recoveryUnavailable strong { color: var(--attendance-text, #1f3147); }
+.recoveryPlans { display: grid; gap: 12px; }
+.recoveryPlansSummary { display: flex; align-items: center; gap: 12px; padding: 11px 12px; border-radius: 9px; background: color-mix(in srgb, var(--attendance-accent) 6%, var(--attendance-soft)); }
+.recoveryPlansSummary > div { display: grid; place-items: center; flex: 0 0 64px; min-height: 52px; border-right: 1px solid var(--attendance-border); }
+.recoveryPlansSummary strong { color: var(--attendance-accent); font-size: 20px; line-height: 1; }
+.recoveryPlansSummary span { color: var(--attendance-muted); font-size: 9px; }
+.recoveryPlansSummary p { color: var(--attendance-muted); font-size: 10px; line-height: 1.5; }
+.recoveryPlanList { display: grid; gap: 10px; }
+.recoveryPlanCard { display: grid; gap: 11px; padding: 12px; border: 1px solid var(--attendance-border); border-radius: 10px; background: var(--attendance-surface); }
+.recoveryPlanTop { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: start; gap: 9px; }
+.recoveryPlanIcon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; background: color-mix(in srgb, var(--attendance-accent) 10%, transparent); color: var(--attendance-accent); }
+.recoveryPlanIdentity { min-width: 0; }
+.recoveryPlanIdentity p { color: var(--attendance-accent); font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; }
+.recoveryPlanIdentity h3 { margin-top: 2px; overflow: hidden; color: var(--kbc-text, #182d48); font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.recoveryPlanIdentity > span { display: block; margin-top: 3px; color: var(--attendance-muted); font-size: 9px; }
+.recoveryPlanStatus { padding: 4px 7px; border: 1px solid #f2d794; border-radius: 999px; background: #fff8e7; color: #8a6416; font-size: 9px; font-weight: 700; text-transform: capitalize; }
+.recoveryPlanStatus[data-confirmed="true"] { border-color: #b9e8d5; background: #ecfdf5; color: #167853; }
+.recoveryPlanSchedule { display: flex; align-items: center; gap: 8px; padding: 9px 10px; border-radius: 8px; background: var(--attendance-soft); }
+.recoveryPlanSchedule > svg { color: var(--attendance-accent); font-size: 16px; }
+.recoveryPlanSchedule div { display: grid; gap: 1px; }
+.recoveryPlanSchedule span { color: var(--attendance-muted); font-size: 9px; }
+.recoveryPlanSchedule strong { color: var(--kbc-text, #182d48); font-size: 10px; font-weight: 650; }
+.recoveryPlanActions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+.recoveryPlanActions a { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 6px 9px; border: 1px solid color-mix(in srgb, var(--attendance-accent) 25%, var(--attendance-border)); border-radius: 6px; color: var(--attendance-accent); font-size: 10px; font-weight: 650; }
+.recoveryPlanActions a:hover { background: color-mix(in srgb, var(--attendance-accent) 6%, var(--attendance-surface)); }
+.recoveryPlansLoading { display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 180px; color: var(--attendance-muted); font-size: 11px; }
+.recoveryPlansError { display: grid; justify-items: start; gap: 10px; padding: 12px; border: 1px solid #fecaca; border-radius: 8px; background: #fef2f2; color: #b93737; font-size: 11px; }
+.recoveryPlansError button { padding: 6px 9px; border: 1px solid currentColor; border-radius: 6px; font-weight: 650; }
 .catchupBooking { display: grid; gap: 10px; padding: 12px; border: 1px solid var(--attendance-border, #dee2e8); border-radius: 8px; background: var(--attendance-soft, #f6f8fb); font-size: 11px; line-height: 1.5; }
 .bookingHeading { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .bookingHeading button { font-size: 10px; text-decoration: underline; text-underline-offset: 3px; }
@@ -335,6 +374,10 @@
 .catchupBooking [role="alert"] { color: var(--learner-danger, #b93737); }
 @media (max-width: 440px) {
   .recoveryOptions { grid-template-columns: minmax(0, 1fr); }
+  .recoveryPlanTop { grid-template-columns: 34px minmax(0, 1fr); }
+  .recoveryPlanStatus { grid-column: 2; justify-self: start; }
+  .recoveryPlanActions { justify-content: stretch; }
+  .recoveryPlanActions a { flex: 1; justify-content: center; }
   .bookingFields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .bookingFields > label:first-child { grid-column: 1 / -1; }
 }
