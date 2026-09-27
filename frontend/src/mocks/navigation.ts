@@ -1,7 +1,8 @@
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
 import { CHAT_ENABLED } from '@/lib/featureFlags';
+import { inclusionLoginUrl } from '@/features/inclusion/navigation';
 
-const inclusionLoginUrl = `${(import.meta.env.VITE_INCLUSION_URL || "https://admin.kentbusinesscollege.net").replace(/\/$/, "")}/login`;
+const inclusionLoginHref = inclusionLoginUrl();
 
 // ============================================================================
 // Learner tools reached from the dashboard, with the same permission IDs as
@@ -113,7 +114,7 @@ export const coachNavItems: SidebarNavItem[] = [
     href: '/coach/monthly-logs',
     matchPaths: ['/coach/monthly-cycle'],
   },
-  { id: 'coach-inclusion', label: 'Inclusion Ticket System', icon: 'ri-heart-pulse-line', href: inclusionLoginUrl, external: true },
+  { id: 'coach-inclusion', label: 'Inclusion Ticket System', icon: 'ri-heart-pulse-line', href: inclusionLoginHref, external: true },
 ];
 
 // ============================================================================
@@ -643,7 +644,7 @@ export const adminNavItems: SidebarNavItem[] = [
       { id: 'admin-tutor-dashboard', label: 'Tutor Dashboard', icon: 'ri-dashboard-line', href: 'https://tutordashboard.kentbusinesscollege.net', external: true },
     ],
   },
-  { id: 'admin-inclusion', label: 'Inclusion System', icon: 'ri-heart-pulse-line', href: inclusionLoginUrl, external: true },
+  { id: 'admin-inclusion', label: 'Inclusion System', icon: 'ri-heart-pulse-line', href: inclusionLoginHref, external: true },
 ];
 
 // ============================================================================

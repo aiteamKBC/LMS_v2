@@ -40,7 +40,9 @@ from coach_api.auth import (
     is_coach_view_as,
 )
 from coach_api.errors import coach_error
+from coach_api.cache.learners import coach_caseload_cache_key, coach_caseload_lock_key
 from coach_api.models import CoachAbsenceReport, CoachCalendarEvent, CoachCalendarSequence
+from coach_api.services.learners.context import CaseloadRequestContext
 from coach_api.validation import (
     ObjectValidator,
     ValidationError,
@@ -1908,42 +1910,15 @@ def fetch_case_file_shell(owner_email: str, learner_id: int):
 
 
 def serialize_case_file_shell(profile, source) -> dict:
-    def optional_date(value):
-        return format_date(value) if value else None
-
-    source_aptem = getattr(source, "aptem_id", None)
-    profile_aptem = getattr(profile, "aptem_id", None)
-    source_aptem_id = int(str(source_aptem).strip()) if student_activity_available(source_aptem) else None
-    profile_aptem_id = int(str(profile_aptem).strip()) if student_activity_available(profile_aptem) else None
-    identity_conflict = bool(source_aptem_id and profile_aptem_id and source_aptem_id != profile_aptem_id)
-    aptem_id = None if identity_conflict else source_aptem_id or profile_aptem_id
-    raw_kind = clean_text(getattr(source, "learner_type", None) or getattr(profile, "learner_type", None)).casefold()
-    kind = "commercial" if raw_kind == "commercial" else "apprenticeship"
-    return {
-        "identity": {
-            "learnerId": str(profile.id),
-            "enrolmentId": str(profile.enrolment_id) if profile.enrolment_id else None,
-            "aptemId": str(aptem_id) if aptem_id else None,
-            "kind": kind,
-            "source": "conflict" if identity_conflict else ("aptem" if aptem_id else "native"),
-            "identityConflict": identity_conflict,
-        },
-        "profile": {
-            "name": clean_text(getattr(profile, "full_name", None) or getattr(source, "username", None)) or None,
-            "email": clean_text(getattr(profile, "email", None) or getattr(source, "email", None)) or None,
-            "programme": clean_text(getattr(profile, "programme", None) or getattr(source, "programme", None)) or None,
-            "cohort": clean_text(getattr(profile, "cohort", None) or getattr(source, "cohort", None)) or None,
-            "group": clean_text(getattr(profile, "group_name", None) or getattr(source, "group", None)) or None,
-            "employer": clean_text(getattr(source, "employer", None)) or None,
-            "coachName": clean_text(getattr(profile, "coach_name", None) or getattr(source, "coach_name", None)) or None,
-            "coachEmail": clean_text(getattr(profile, "coach_email", None) or getattr(source, "coach_email", None)) or None,
-            "status": clean_text(getattr(profile, "programme_status", None) or getattr(source, "programme_status", None)) or None,
-            "startDate": optional_date(getattr(profile, "start_date", None) or getattr(source, "start_date", None)),
-            "plannedEndDate": optional_date(getattr(profile, "end_date", None) or getattr(source, "end_date", None)),
-            "gatewayReviewDate": optional_date(getattr(profile, "gateway_review_date", None)),
-            "coachRag": format_coach_rag_value(getattr(profile, "coach_rag", None)) or None,
-        },
-    }
+    from .serializers.learner_profile import serialize_learner_profile_shell
+    return serialize_learner_profile_shell(
+        profile,
+        source,
+        clean_text=clean_text,
+        format_date=format_date,
+        student_activity_available=student_activity_available,
+        format_coach_rag_value=format_coach_rag_value,
+    )
 
 
 def fetch_attendance_caseload_rows(owner_email: str) -> list[LearnerProfile]:
@@ -11847,8 +11822,9 @@ def coach_caseload(request):
     endpoint_started = perf_counter()
     owner_email = authenticated_coach_email(request)
     refresh_live_snapshots = request_prefers_live_caseload_snapshots(request)
-    summary_only = clean_text(request.GET.get("summary")).casefold() in {"1", "true", "yes", "on"}
-    paginated = any(key in request.GET for key in ("page", "page_size", "search", "status", "cohort", "group", "sort", "direction"))
+    request_context = CaseloadRequestContext.from_request(request)
+    summary_only = request_context.summary_only
+    paginated = request_context.paginated
     validator = ObjectValidator(request.GET)
     page = validator.integer("page", default=1, minimum=1)
     requested_page_size = validator.integer("page_size", default=10, minimum=1)
@@ -11870,8 +11846,11 @@ def coach_caseload(request):
     # Caseload enrichment is expensive and the page may request it again on a
     # refresh/remount.  Keep a short per-coach snapshot for read-only GETs;
     # live snapshot requests explicitly bypass this cache.
-    cache_scope = hashlib.sha256(request.META.get("QUERY_STRING", "").encode()).hexdigest()[:16]
-    caseload_cache_key = f"coach-caseload:v3:{normalize_email(owner_email)}:{int(summary_only)}:{cache_scope}"
+    caseload_cache_key = coach_caseload_cache_key(
+        owner_email,
+        summary_only=summary_only,
+        query_string=request_context.query_string,
+    )
     if not refresh_live_snapshots:
         cached_caseload = cache.get(caseload_cache_key)
         if cached_caseload is not None:
@@ -11880,7 +11859,7 @@ def coach_caseload(request):
     # two tabs must not run that identical work concurrently and exhaust the
     # per-process pools. The winner fills the ordinary response cache; followers
     # wait only for that same scoped coach/page/filter key.
-    caseload_lock_key = f"{caseload_cache_key}:building"
+    caseload_lock_key = coach_caseload_lock_key(caseload_cache_key)
     owns_caseload_lock = True
     if paginated and not refresh_live_snapshots:
         owns_caseload_lock = cache.add(caseload_lock_key, "1", 120)
