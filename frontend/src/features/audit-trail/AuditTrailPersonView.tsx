@@ -21,6 +21,7 @@ import {
   InlineError,
 } from '@/pages/curriculum/shared/entities/ui';
 import { auditEventHref, auditFieldValueLabel, auditValueLabel, auditValueTitle, clockLabel, durationLabel, parseActivityStamp, spanLabel, stampLabel, timeMetaLabel } from './activityTime';
+import { actionMeaning, changeStory, snapshotEntries, type ChangeTone } from './changeStory';
 import { useAuditRecordNames } from './auditNames';
 import { DEFAULT_WINDOW_DAYS, windowLimitFor, windowOptionsFor, type AuditTrailScope } from './scope';
 
@@ -57,6 +58,164 @@ const ACTION_ICON: Record<string, string> = {
   tab: 'ri-layout-column-line',
   print: 'ri-printer-line',
 };
+
+type AccountEvent = { id: number; at: string; event: 'login' | 'logout'; succeeded: boolean };
+
+function eventKind(e: AccountEvent): 'in' | 'out' | 'fail' {
+  if (e.event === 'logout') return 'out';
+  return e.succeeded ? 'in' : 'fail';
+}
+
+const EVENT_META = {
+  in:   { label: 'Signed in',      dot: 'bg-emerald-500', text: 'text-emerald-700',  icon: 'ri-login-circle-line' },
+  out:  { label: 'Signed out',     dot: 'bg-foreground-300', text: 'text-foreground-500', icon: 'ri-logout-circle-r-line' },
+  fail: { label: 'Sign-in failed', dot: 'bg-red-500',     text: 'text-red-600',      icon: 'ri-error-warning-line' },
+};
+
+function accountEventDayLabel(isoStamp: string): string {
+  const d = new Date(isoStamp);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (d.toDateString() === today.toDateString()) return 'Today';
+  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: d.getFullYear() !== today.getFullYear() ? 'numeric' : undefined });
+}
+
+function groupByDay(events: AccountEvent[]): { day: string; events: AccountEvent[] }[] {
+  const groups: { day: string; events: AccountEvent[] }[] = [];
+  for (const e of events) {
+    const day = accountEventDayLabel(e.at);
+    if (!groups.length || groups[groups.length - 1].day !== day) {
+      groups.push({ day, events: [e] });
+    } else {
+      groups[groups.length - 1].events.push(e);
+    }
+  }
+  return groups;
+}
+
+function AccountAccessButton({ events, truncated }: { events: AccountEvent[]; truncated: boolean }) {
+  const [open, setOpen] = useState(false);
+
+  const signIns  = events.filter(e => eventKind(e) === 'in').length;
+  const signOuts = events.filter(e => eventKind(e) === 'out').length;
+  const failures = events.filter(e => eventKind(e) === 'fail').length;
+  const groups   = useMemo(() => groupByDay(events), [events]);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="flex items-center gap-3 rounded-xl border border-foreground-200/60 bg-background-50 px-4 py-3 text-sm font-semibold hover:bg-background-100 transition-colors w-full text-left"
+      >
+        <i className="ri-shield-keyhole-line text-base text-foreground-400 shrink-0" aria-hidden="true" />
+        <span className="flex-1">Account access history</span>
+        <span className="flex items-center gap-2 text-xs font-normal">
+          {failures > 0 && (
+            <span className="flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-red-700">
+              <i className="ri-error-warning-line" aria-hidden="true" />{failures} failed
+            </span>
+          )}
+          <span className="rounded-full bg-foreground-100 px-2 py-0.5 text-foreground-600">
+            {events.length}{truncated ? '+' : ''} events
+          </span>
+          <i className="ri-arrow-right-s-line text-foreground-400" aria-hidden="true" />
+        </span>
+      </button>
+
+      {open && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Account access history"
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/50 p-0 sm:p-6"
+          onClick={e => { if (e.target === e.currentTarget) setOpen(false); }}
+        >
+          <div className="flex w-full sm:max-w-2xl flex-col rounded-t-2xl sm:rounded-2xl bg-background-50 shadow-2xl max-h-[90vh] sm:max-h-[80vh]">
+
+            {/* Header */}
+            <div className="flex items-start justify-between px-5 py-4 border-b border-background-200 shrink-0">
+              <div>
+                <h2 className="font-bold text-foreground-900">Account access</h2>
+                <p className="mt-0.5 text-xs text-foreground-500">Sign-ins and sign-outs across the LMS, independent of workspace.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                aria-label="Close"
+                className="rounded-lg p-1.5 text-foreground-400 hover:bg-background-100 hover:text-foreground-700 transition-colors ml-4 shrink-0"
+              >
+                <i className="ri-close-line text-lg" aria-hidden="true" />
+              </button>
+            </div>
+
+            {/* Summary chips */}
+            <div className="flex gap-3 px-5 py-3 border-b border-background-200/60 shrink-0 flex-wrap">
+              <span className="flex items-center gap-1.5 text-xs">
+                <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" />
+                <span className="font-semibold text-foreground-700">{signIns}</span>
+                <span className="text-foreground-500">signed in</span>
+              </span>
+              <span className="text-foreground-300 text-xs">·</span>
+              <span className="flex items-center gap-1.5 text-xs">
+                <span className="h-2 w-2 rounded-full bg-foreground-300 shrink-0" />
+                <span className="font-semibold text-foreground-700">{signOuts}</span>
+                <span className="text-foreground-500">signed out</span>
+              </span>
+              {failures > 0 && (
+                <>
+                  <span className="text-foreground-300 text-xs">·</span>
+                  <span className="flex items-center gap-1.5 text-xs">
+                    <span className="h-2 w-2 rounded-full bg-red-500 shrink-0" />
+                    <span className="font-semibold text-red-700">{failures}</span>
+                    <span className="text-red-600">failed attempt{failures !== 1 ? 's' : ''}</span>
+                  </span>
+                </>
+              )}
+              {truncated && (
+                <span role="status" className="ml-auto text-xs text-amber-700 flex items-center gap-1">
+                  <i className="ri-information-line" aria-hidden="true" />Latest 200 shown
+                </span>
+              )}
+            </div>
+
+            {/* Event list grouped by day */}
+            <div className="overflow-y-auto flex-1 px-5 py-3 space-y-4">
+              {groups.map(group => (
+                <div key={group.day}>
+                  <p className="sticky top-0 bg-background-50 pb-1.5 pt-0.5 text-[11px] font-bold uppercase tracking-wider text-foreground-400">
+                    {group.day}
+                  </p>
+                  <ul className="space-y-1">
+                    {group.events.map(event => {
+                      const kind = eventKind(event);
+                      const meta = EVENT_META[kind];
+                      return (
+                        <li key={event.id} className="flex items-center gap-3 rounded-lg px-2 py-1.5 hover:bg-background-100 transition-colors">
+                          <span className={`h-2 w-2 rounded-full shrink-0 ${meta.dot}`} aria-hidden="true" />
+                          <span className={`flex-1 text-xs font-medium ${meta.text}`}>{meta.label}</span>
+                          <time
+                            dateTime={event.at}
+                            title={timeMetaLabel(event.at)}
+                            className="text-[11px] text-foreground-400 tabular-nums shrink-0"
+                          >
+                            {new Date(event.at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                          </time>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
 
 export default function AuditTrailPersonView({ scope }: { scope: AuditTrailScope }) {
   const params = useParams();
@@ -223,19 +382,7 @@ export default function AuditTrailPersonView({ scope }: { scope: AuditTrailScope
               <p role="status" className="text-sm text-amber-700">Account access history could not be read.</p>
             )}
             {!!activity?.accountEvents?.length && (
-              <section aria-label="Account access" className="rounded-2xl border border-foreground-200/60 bg-background-50 p-4">
-                <h2 className="text-sm font-bold">Account access</h2>
-                <p className="text-xs text-foreground-500">Sign-ins and sign-outs across the LMS, independent of workspace.</p>
-                {activity.accountEventsTruncated && <p role="status" className="text-xs text-amber-700">Showing the latest 200 account events. Narrow the period to see more.</p>}
-                <ul className="mt-2 space-y-2">
-                  {activity.accountEvents.map(event => (
-                    <li key={event.id} className="flex gap-3 text-xs">
-                      <time dateTime={event.at} title={timeMetaLabel(event.at)}>{stampLabel(event.at)}</time>
-                      <span>{event.event === 'logout' ? 'Signed out' : event.succeeded ? 'Signed in' : 'Sign-in failed'}</span>
-                    </li>
-                  ))}
-                </ul>
-              </section>
+              <AccountAccessButton events={activity.accountEvents} truncated={!!activity.accountEventsTruncated} />
             )}
             {logChanges.length > 0 && (
               <section className="overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50">
@@ -244,36 +391,21 @@ export default function AuditTrailPersonView({ scope }: { scope: AuditTrailScope
                     Activity log
                   </h2>
                   <p className="mt-0.5 text-[11px] text-foreground-400">
-                    Every saved change made by this person in the selected period. Changes without a linked page are
-                    kept here with the same clear record details instead of being assigned to a page by guesswork.
+                    Every saved change made by this person in the selected period, said in plain words. A change the
+                    system made on its own says so, rather than reading as this person’s edit.
                   </p>
                 </div>
-                <div className="overflow-x-auto">
-                  <table className="min-w-[720px] w-full text-left">
-                    <caption className="sr-only">Activity log with filters for time, activity, record, and details</caption>
-                    <thead className="border-b border-background-200 bg-background-100/60">
-                      <tr className="text-[10px] font-extrabold uppercase tracking-wide text-foreground-500">
-                        <th scope="col" className="w-44 px-4 py-2.5">
-                          <TableFilter label="Time" value={timeFilter} onChange={setTimeFilter} options={[['all', 'All times'], ['today', 'Today'], ['yesterday', 'Yesterday'], ['earlier', 'Earlier']]} />
-                        </th>
-                        <th scope="col" className="w-40 px-4 py-2.5">
-                          <TableFilter label="Activity" value={activityFilter} onChange={setActivityFilter} options={[['all', 'All activity'], ...filterOptions.activities]} />
-                        </th>
-                        <th scope="col" className="px-4 py-2.5">
-                          <TableFilter label="Record" value={recordFilter} onChange={setRecordFilter} options={[['all', 'All records'], ...filterOptions.records]} />
-                        </th>
-                        <th scope="col" className="px-4 py-2.5">
-                          <TableFilter label="Details" value={detailFilter} onChange={setDetailFilter} options={[['all', 'All details'], ['none', 'No field details'], ...filterOptions.details.map(label => [label, label] as [string, string])]} />
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-background-200/70">
-                      {pageChanges.map(({ change, count }) => (
-                        <ChangeTableRow key={change.id} change={change} count={count} names={names} />
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="flex flex-wrap items-end gap-3 border-b border-background-200 bg-background-100/60 px-4 py-2.5">
+                  <TableFilter label="Time" value={timeFilter} onChange={setTimeFilter} options={[['all', 'All times'], ['today', 'Today'], ['yesterday', 'Yesterday'], ['earlier', 'Earlier']]} />
+                  <TableFilter label="Activity" value={activityFilter} onChange={setActivityFilter} options={[['all', 'All activity'], ...filterOptions.activities]} />
+                  <TableFilter label="Record" value={recordFilter} onChange={setRecordFilter} options={[['all', 'All records'], ...filterOptions.records]} />
+                  <TableFilter label="Details" value={detailFilter} onChange={setDetailFilter} options={[['all', 'All details'], ['none', 'No field details'], ...filterOptions.details.map(label => [label, label] as [string, string])]} />
                 </div>
+                <ul className="divide-y divide-background-200/70">
+                  {pageChanges.map(({ change, count }) => (
+                    <ChangeTableRow key={change.id} change={change} count={count} names={names} />
+                  ))}
+                </ul>
               </section>
             )}
             {logChanges.length > 0 && (
@@ -454,69 +586,122 @@ function ChangeLine({ change, count = 1 }: { change: CurriculumAuditEvent; count
   );
 }
 
+const TONE_STYLES: Record<ChangeTone, { dot: string; chip: string }> = {
+  created:  { dot: 'bg-emerald-500', chip: 'border-emerald-200 bg-emerald-50 text-emerald-700' },
+  edited:   { dot: 'bg-sky-500',     chip: 'border-sky-200 bg-sky-50 text-sky-700' },
+  removed:  { dot: 'bg-red-500',     chip: 'border-red-200 bg-red-50 text-red-700' },
+  restored: { dot: 'bg-violet-500',  chip: 'border-violet-200 bg-violet-50 text-violet-700' },
+  neutral:  { dot: 'bg-foreground-300', chip: 'border-background-200 bg-background-100 text-foreground-600' },
+};
+
 function ChangeTableRow({ change, count, names }: { change: CurriculumAuditEvent; count: number; names: ReadonlyMap<string, string> }) {
   const [expanded, setExpanded] = useState(false);
   const fieldCount = change.changes?.length || 0;
+  const story = changeStory(change);
+  const tone = TONE_STYLES[story.tone];
+  // A create and a delete carry the stored record instead of a diff, so they
+  // have something to show even though `changes` is empty.
+  const snapshot = snapshotEntries(change.snapshot);
+  const hasDetail = fieldCount > 0 || snapshot.length > 0;
+
   return (
-    <>
-      <tr className="align-top hover:bg-background-100/40">
-        <td className="px-4 py-3">
-          <span className="block text-[12px] font-semibold tabular-nums text-foreground-800" title={timeMetaLabel(change.at)}>
-            {clockLabel(change.at)}
-          </span>
-          <span className="mt-0.5 block text-[10px] leading-4 text-foreground-400">
-            {timeMetaLabel(change.at)}
-          </span>
-        </td>
-        <td className="px-4 py-3">
-          <ActivityBadge change={change} />
-        </td>
-        <td className="max-w-[260px] px-4 py-3">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500">
-              {change.entityLabel}
+    <li className="px-4 py-3 hover:bg-background-100/40">
+      <div className="flex gap-3">
+        <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${tone.dot}`} aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+
+          {/* The sentence. Only the record's own name is the link, so it stays
+              scannable and keeps an accessible name a reader can search for. */}
+          <p className="text-[13px] leading-5 text-foreground-800">
+            {/* The action carries its own explanation, so "First recorded" can
+                be understood without expanding a row that may have nothing to
+                expand. */}
+            <span className="font-semibold text-foreground-700" title={actionMeaning(change)}>{story.verb}</span>
+            <span className="text-foreground-600"> {story.subject}</span>
+            {story.named && (
+              <>
+                {' '}
+                <Link to={auditEventHref(change)} className="font-semibold text-foreground-900 hover:text-primary-700 hover:underline">
+                  {change.title}
+                </Link>
+              </>
+            )}
+            {story.cause && <span className="text-foreground-500"> {story.cause}</span>}
+            <span className="text-foreground-400">.</span>
+            {count > 1 && (
+              <span className="ml-2 rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500">
+                {count} identical records
+              </span>
+            )}
+          </p>
+
+          {/* Why no person is named */}
+          {story.systemNote && (
+            <p className="mt-1 flex items-start gap-1.5 text-[11px] text-amber-700">
+              <AppIcon className="ri-robot-2-line mt-0.5 shrink-0" />
+              <span>{story.systemNote}</span>
+            </p>
+          )}
+
+          {/* Where and when */}
+          <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-foreground-400">
+            <span title={timeMetaLabel(change.at)} className="tabular-nums font-medium text-foreground-500">
+              {clockLabel(change.at)}
             </span>
-            <Link to={auditEventHref(change)} className="truncate text-[12px] font-bold text-foreground-900 hover:text-primary-700 hover:underline">
-              {change.title}
-            </Link>
-          </div>
-          <p className="mt-1 break-all text-[11px] text-foreground-500">Page: {String(change.metadata?.page_path || 'Not recorded')}</p>
-        </td>
-        <td className="px-4 py-3 text-[11px] text-foreground-500">
-          {count > 1 && <span className="mr-2 rounded-full bg-background-100 px-2 py-0.5 font-bold text-foreground-500">{count} identical records</span>}
-          {fieldCount ? (
-            <button
-              type="button"
-              onClick={() => setExpanded(value => !value)}
-              aria-expanded={expanded}
-              className="font-semibold text-primary-700 underline decoration-primary-200 underline-offset-2 hover:text-primary-900"
-            >
-              {fieldCount} {fieldCount === 1 ? 'field' : 'fields'} changed
-            </button>
-          ) : 'No field details recorded'}
-        </td>
-      </tr>
-      {expanded && fieldCount > 0 && (
-        <tr className="bg-primary-50/40">
-          <td colSpan={4} className="px-4 py-3">
-            <div className="rounded-lg border border-primary-100 bg-background-50 p-3">
-              <p className="mb-2 text-[11px] font-bold text-foreground-700">What changed in this save</p>
-              <dl className="grid gap-2">
-                {change.changes.map(field => (
-                  <div key={field.field} className="rounded-lg border border-background-200 bg-background-50 px-3 py-2.5">
-                    <dt className="text-[10px] font-bold uppercase tracking-wide text-foreground-600">{field.label}</dt>
-                    <dd className="mt-2 grid gap-2 sm:grid-cols-2">
-                      <AuditValue label="Before" value={field.before} tone="muted" field={field} fields={change.changes} side="before" names={names} />
-                      <AuditValue label="After" value={field.after} tone="changed" field={field} fields={change.changes} side="after" names={names} />
-                    </dd>
-                  </div>
-                ))}
-              </dl>
+            {change.context && <span className="truncate">in {change.context}</span>}
+            {story.page
+              ? <span>on {story.page}</span>
+              : <span className="italic">no page recorded</span>}
+            {hasDetail ? (
+              <button
+                type="button"
+                onClick={() => setExpanded(value => !value)}
+                aria-expanded={expanded}
+                className="font-semibold text-primary-700 hover:underline"
+              >
+                {fieldCount
+                  ? `${fieldCount} ${fieldCount === 1 ? 'field' : 'fields'} changed`
+                  : `What it held (${snapshot.length} ${snapshot.length === 1 ? 'field' : 'fields'})`}
+              </button>
+            ) : <span>No field details recorded</span>}
+          </p>
+
+          {expanded && (
+            <div className="mt-2 rounded-lg border border-primary-100 bg-primary-50/40 p-3">
+              <p className="text-[11px] font-bold text-foreground-700">
+                {fieldCount > 0 ? 'What changed in this save' : 'What this record held'}
+              </p>
+              <p className="mb-2 mt-0.5 text-[11px] text-foreground-600">{actionMeaning(change)}</p>
+
+              {fieldCount > 0 ? (
+                <dl className="grid gap-2">
+                  {change.changes.map(field => (
+                    <div key={field.field} className="rounded-lg border border-background-200 bg-background-50 px-3 py-2.5">
+                      <dt className="text-[10px] font-bold uppercase tracking-wide text-foreground-600">{field.label}</dt>
+                      <dd className="mt-2 grid gap-2 sm:grid-cols-2">
+                        <AuditValue label="Before" value={field.before} tone="muted" field={field} fields={change.changes} side="before" names={names} />
+                        <AuditValue label="After" value={field.after} tone="changed" field={field} fields={change.changes} side="after" names={names} />
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              ) : (
+                <dl className="grid gap-1.5 sm:grid-cols-2">
+                  {snapshot.map(([key, value]) => (
+                    <div key={key} className="min-w-0 rounded-md border border-background-200 bg-background-50 px-2.5 py-2">
+                      <dt className="text-[9px] font-bold uppercase tracking-wide text-foreground-400">{key.replace(/_/g, ' ')}</dt>
+                      <dd className="mt-0.5 truncate text-[11px] text-foreground-700" title={auditValueTitle(value)}>
+                        {auditValueLabel(value)}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
             </div>
-          </td>
-        </tr>
-      )}
-    </>
+          )}
+        </div>
+      </div>
+    </li>
   );
 }
 
@@ -569,30 +754,6 @@ function TableFilter({ label, value, onChange, options }: { label: string; value
       </select>
     </label>
   );
-}
-
-function ActivityBadge({ change }: { change: CurriculumAuditEvent }) {
-  const label = change.actionLabel || change.action;
-  return (
-    <span
-      className="inline-flex items-center rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-sky-700"
-      title={activityDescription(change)}
-      aria-label={`${label}: ${activityDescription(change)}`}
-    >
-      {label}
-    </span>
-  );
-}
-
-function activityDescription(change: CurriculumAuditEvent): string {
-  if (change.action === 'recorded') return 'The first activity for this record was captured in the audit history; it does not mean someone edited it just now.';
-  if (change.action === 'created') return 'This record was created.';
-  if (change.action === 'updated') return 'A saved change was made to this record.';
-  // Not "removed from active curriculum": the same page now shows learner,
-  // staff, employer and coaching records, and none of those are curriculum.
-  if (change.action === 'archived') return 'This record was archived. It is withdrawn from use and still restorable.';
-  if (change.action === 'deleted') return 'This record was deleted.';
-  return `${change.actionLabel || change.action} activity was recorded for this record.`;
 }
 
 function activityTimeBucket(value: string): string {

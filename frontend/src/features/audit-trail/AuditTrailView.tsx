@@ -7,6 +7,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { auditEventHref, auditFieldValueLabel, auditValueLabel, auditValueTitle, clockLabel, durationLabel, spanLabel, stampLabel, timeMetaLabel } from './activityTime';
 import { useAuditRecordNames } from './auditNames';
+import { actionMeaning, changeStory } from './changeStory';
 import { DEFAULT_WINDOW_DAYS, personHref, windowLimitFor, windowOptionsFor, type AuditTrailScope } from './scope';
 import { ActivityPrefetcher } from './prefetch';
 import {
@@ -1213,6 +1214,7 @@ function SignInLines({ signIns }: { signIns: CurriculumActivitySignIn[] }) {
 function AuditRow({ event, names }: { event: CurriculumAuditEvent; names: ReadonlyMap<string, string> }) {
   const [open, setOpen] = useState(false);
   const style = ACTION_STYLE[event.action] || ACTION_STYLE.updated;
+  const story = changeStory(event);
   // A create has no diff (nothing moved, it arrived) and a delete has no after,
   // so both are explained by the snapshot instead. Everything else is explained
   // by the fields that moved.
@@ -1236,15 +1238,23 @@ function AuditRow({ event, names }: { event: CurriculumAuditEvent; names: Readon
               <AppIcon className={`${style.icon} text-[11px]`}></AppIcon>
               {event.actionLabel || style.label}
             </span>
-            <span className="rounded-full bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500">
-              {event.entityLabel}
-            </span>
-            <Link
-              to={auditEventHref(event)}
-              className="min-w-0 truncate text-[12px] font-bold text-foreground-900 hover:text-primary-700 hover:underline"
-            >
-              {event.title}
-            </Link>
+            {/* The sentence, with only the record's own name as the link: a
+                link named after a whole sentence is one a reader cannot scan
+                for and a screen reader cannot announce usefully. */}
+            <span className="text-[12px] text-foreground-600" title={actionMeaning(event)}>{story.verb} {story.subject}</span>
+            {story.named && (
+              <Link
+                to={auditEventHref(event)}
+                className="min-w-0 truncate text-[12px] font-bold text-foreground-900 hover:text-primary-700 hover:underline"
+              >
+                {event.title}
+              </Link>
+            )}
+            {/* Why a record nobody touched went away. Shown only when the
+                handler code has a known meaning, never as a paraphrase. */}
+            {story.cause && (
+              <span className="text-[11px] text-foreground-500">{story.cause}</span>
+            )}
             {/* Who, said plainly. A write no person directly made is marked as
                 the system rather than credited to anybody -- and where a person
                 caused it, they are named as the cause, not as the author. */}
@@ -1266,15 +1276,26 @@ function AuditRow({ event, names }: { event: CurriculumAuditEvent; names: Readon
               </span>
             )}
           </div>
+          {/* A change no person made says so, rather than sitting under
+              somebody's name and reading as their edit. */}
+          {story.systemNote && (
+            <p className="mt-1 flex items-start gap-1.5 text-[11px] text-amber-700">
+              <AppIcon className="ri-robot-2-line mt-0.5 shrink-0 text-[11px]"></AppIcon>
+              <span>{story.systemNote}</span>
+            </p>
+          )}
           <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-foreground-400">
             {/* The record's own ancestry, or — where it has none recorded —
                 what kind of record it is. It used to fall back to the words
                 "Curriculum record", which was wrong on every learner, staff,
                 employer and coaching row in the feed. */}
             <span className="truncate">{event.context || event.entityLabel || 'Record'}</span>
-            <span title={String(event.metadata?.page_path || '')}>
-              Page: {String(event.metadata?.page_path || 'Not recorded')}
-            </span>
+            {/* The page's NAME. The raw path is recorded beside it and stays in
+                the tooltip, but a reader should not have to parse a URL to
+                learn where a change was made. */}
+            {story.page
+              ? <span title={String(event.metadata?.page_path || '')}>on {story.page}</span>
+              : <span className="italic">no page recorded</span>}
             {/* Auto-save is how the save arrived, not what happened. */}
             {event.source && (
               <>

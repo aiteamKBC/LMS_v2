@@ -24,6 +24,7 @@ from curriculum_api.session_overrides import (
     apply_session_overrides, override_clock, schedule_override, session_overrides, validate_exception_plan,
 )
 from curriculum_api.teams_cancellation_checks import CalendarStateError, cancellation_plan
+from curriculum_api.weekly_schedule import module_weekly_schedule
 from curriculum_api.teams_calendar_checks import utc_datetime, event_instant
 
 
@@ -405,10 +406,17 @@ class PureTests(unittest.TestCase):
             'module_session_plan_for_weeks': lambda *_args, **_kwargs: plan,
             'defaultdict': defaultdict,
             'module_session_clock': lambda module, group=None, session_date=None: override_clock(module, session_date) or ('09:00', '11:00', 120),
+            # Group-first resolution is its own subject, in
+            # test_group_delivery_pattern_no_db; this call passes no group.
+            'module_delivery_row': lambda module, group=None: module,
             'clean_str': lambda v: str(v or '').strip(), 'parse_int': lambda v, default=0: int(v or default),
             'format_date': lambda v: str(v or ''),
-            'calendar_clock_to_utc_iso': lambda day, clock: day + 'T' + clock + ':00+01:00'}
-        functions(ROOT / 'views.py', ['apply_module_session_plan_to_weeks'], ns)
+            # The reader resolves each slot through the real live-session clock,
+            # so an override still outranks the component's stored time here.
+            'module_weekly_schedule': module_weekly_schedule, 'override_clock': override_clock, 're': re,
+            'calendar_clock_to_utc_iso': lambda day, clock, zone=None: day + 'T' + clock + ':00+01:00'}
+        functions(ROOT / 'views.py', ['apply_module_session_plan_to_weeks', 'module_live_session_clock',
+                                      'clock_time_plus_minutes', 'parse_clock_minutes'], ns)
         ns['apply_module_session_plan_to_weeks'](module, {}, weeks, holidays=[])
         first = weeks[0]['components'][0]['settings']
         self.assertEqual((first['sessionDate'], first['sessionTime']), ('2026-10-09', '12:00'))
@@ -454,12 +462,18 @@ class PureTests(unittest.TestCase):
             'cohort_selected_holidays_by_cohort': lambda _ids: {'COHORT-1': []},
             'module_session_plan_for_weeks': lambda *_args, **_kwargs: copy.deepcopy(plan),
             'module_session_clock': lambda *_args, **_kwargs: ('09:00', '11:00', 120),
-            'calendar_clock_to_utc_iso': lambda day, clock: f'{day}T{clock}:00Z',
+            # As above: this call passes no group row of its own.
+            'module_delivery_row': lambda module, group=None: module,
+            'calendar_clock_to_utc_iso': lambda day, clock, zone=None: f'{day}T{clock}:00Z',
             'format_date': lambda value: str(value or ''), 'defaultdict': defaultdict,
             'datetime': Frozen, 'json_db_value': lambda value: value,
+            # As above: the real clock decides the slot; this module states no
+            # weekly schedule and no override, so the stored time stands.
+            'module_weekly_schedule': module_weekly_schedule, 'override_clock': override_clock, 're': re,
             'update_authoring_rows': update,
         }
-        functions(ROOT / 'views.py', ['apply_module_session_plan_to_weeks', 'persist_group_module_session_dates'], ns)
+        functions(ROOT / 'views.py', ['apply_module_session_plan_to_weeks', 'persist_group_module_session_dates',
+                                      'module_live_session_clock', 'clock_time_plus_minutes', 'parse_clock_minutes'], ns)
 
         updated = ns['persist_group_module_session_dates']([module], {})
 
@@ -468,6 +482,148 @@ class PureTests(unittest.TestCase):
         settings = writes[0][3]['settings_json']
         self.assertEqual((settings['sessionDate'], settings['sessionDay']), ('2026-09-11', 'Friday'))
         self.assertEqual(settings['custom'], 'keep')
+
+
+class PersistMoveTests(unittest.TestCase):
+    """Where a confirmed move writes, and what it writes there.
+
+    The subject is the write path, not the diff: ``persist_move`` wrote its
+    components with a raw UPDATE that never reached ``versioning.record_rows``,
+    so a session moving to a different day left no trace. It goes through the
+    authoring helper now. What the trail then keeps of that write is the
+    recorder's decision and is proved against a real database in
+    ``tests_audit_trail.CalendarMoveAuditTests``.
+    """
+
+    STORED = {'version': '0.1', 'contentStatus': 'Draft', 'sessionDate': '2026-10-08',
+              'sessionDay': 'Thursday', 'sessionTime': '09:00', 'durationMinutes': 120,
+              'teamsOccurrenceId': 'OCC-1', 'teamsLiveSessionId': 'LIVE-1', 'teamsSessionNumber': 1}
+
+    def setUp(self):
+        network = patch('socket.socket', side_effect=AssertionError('Network forbidden'))
+        network.start()
+        self.addCleanup(network.stop)
+        self.matched = [{'id': 'COMP-1', 'settings_json': {**self.STORED, 'custom': 'keep'}}]
+        self.reads, self.writes, self.statements = [], [], []
+
+        def fetch(table, where='', params=None, *_args, **_kwargs):
+            self.reads.append((table, ' '.join(where.split()), list(params or [])))
+            return copy.deepcopy(self.matched)
+
+        def update(table, where, params, values):
+            self.writes.append((table, where, list(params), copy.deepcopy(values)))
+            return []
+
+        self.v = types.SimpleNamespace(
+            AUTHORING_COMPONENTS_TABLE='components', authoring_fetch_all=fetch,
+            update_authoring_rows=update, json_db_value=lambda value: value,
+            as_json_value=lambda value, fallback: value if isinstance(value, dict) else fallback,
+            module_stored_session_count=lambda _module: 2,
+            module_session_plan_for_count=lambda *_args: {'finalEndDate': '2026-12-10'},
+            invalidate_curriculum_cache=Mock())
+        self.previous_views = getattr(package, 'views', None)
+        package.views = self.v
+        self.addCleanup(lambda: setattr(package, 'views', self.previous_views))
+
+        test = self
+
+        class Cursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_exc):
+                return False
+
+            def execute(self, sql, params):
+                test.statements.append((' '.join(sql.split()), list(params)))
+
+        self.ns = dict(json=json, datetime=datetime, timezone=timezone,
+                       session_overrides=session_overrides,
+                       connection=types.SimpleNamespace(cursor=Cursor),
+                       __package__='curriculum_api')
+        functions(ROOT / 'teams_calendar_actions.py', ['persist_move'], self.ns)
+        self.module = {'module_catalogue_id': 'MODULE-1', 'session_overrides': {}, 'sessions_number': 2}
+        self.snapshot = {'occurrences': {'OCC-1': {'eventId': 'event-before', 'dates': []}}}
+
+    def move(self, **exception):
+        command = {'sessionNumber': 1, 'occurrenceId': 'OCC-1', 'eventId': 'event-after',
+                   'start': '2026-10-15T08:00:00Z', 'end': '2026-10-15T10:00:00Z',
+                   'exception': {'date': '2026-10-15', 'startTime': '09:00', 'durationMinutes': 120, **exception}}
+        self.ns['persist_move']({'id': 'LIVE-1'}, [], self.module, command, self.snapshot)
+        return command
+
+    def test_components_are_written_through_the_audited_helper(self):
+        self.move()
+        self.assertEqual([write[0] for write in self.writes], ['components'])
+        # And never again as a statement of its own, which is what bypassed the
+        # recorder before.
+        self.assertFalse([sql for sql, _params in self.statements if 'components' in sql])
+
+    def test_the_moved_schedule_is_what_gets_written(self):
+        self.move()
+        settings = self.writes[0][3]['settings_json']
+        self.assertEqual(settings['sessionDate'], '2026-10-15')
+        self.assertEqual(settings['sessionDay'], 'Thursday')
+        self.assertEqual(settings['sessionTime'], '09:00')
+        self.assertEqual(settings['durationMinutes'], 120)
+        self.assertEqual(settings['teamsDurationMinutes'], 120)
+        self.assertEqual(settings['sessionDateTimeUtc'], '2026-10-15T08:00:00Z')
+        self.assertEqual(settings['teamsStartDateTimeUtc'], '2026-10-15T08:00:00Z')
+        self.assertEqual(settings['teamsEventId'], 'event-after')
+
+    def test_settings_the_move_does_not_name_survive(self):
+        """The statement this replaced merged into settings_json; so must this."""
+        self.move()
+        settings = self.writes[0][3]['settings_json']
+        self.assertEqual(settings['custom'], 'keep')
+        self.assertEqual(settings['contentStatus'], 'Draft')
+        self.assertEqual(settings['teamsOccurrenceId'], 'OCC-1')
+
+    def test_each_component_keeps_its_own_other_settings(self):
+        """One assignment for every matched row would flatten them into one."""
+        self.matched.append({'id': 'COMP-2', 'settings_json': {**self.STORED, 'custom': 'second'}})
+        self.move()
+        self.assertEqual([write[2] for write in self.writes], [['COMP-1'], ['COMP-2']])
+        self.assertEqual([write[3]['settings_json']['custom'] for write in self.writes], ['keep', 'second'])
+
+    def test_one_matched_component_is_written_once(self):
+        self.move()
+        self.assertEqual(len(self.writes), 1)
+        self.assertEqual(self.writes[0][1], 'id = %s')
+
+    def test_only_this_session_is_selected(self):
+        """Scoping is the invariant: never another group's or another session's."""
+        self.move()
+        table, where, params = self.reads[0]
+        self.assertEqual(table, 'components')
+        self.assertIn('deleted_at IS NULL', where)
+        self.assertIn("type IN ('live-session', 'live_session')", where)
+        self.assertIn("settings_json->>'teamsOccurrenceId' = %s", where)
+        self.assertIn("settings_json->>'teamsLiveSessionId' = %s", where)
+        self.assertEqual(params, ['MODULE-1', 'OCC-1', 'LIVE-1', '1'])
+
+    def test_a_component_nothing_matches_is_not_invented(self):
+        self.matched = []
+        self.move()
+        self.assertEqual(self.writes, [])
+        self.v.invalidate_curriculum_cache.assert_called_once()
+
+    def test_the_module_and_the_occurrence_are_written_as_before(self):
+        """Everything either side of the component write is untouched by this fix."""
+        command = self.move()
+        modules, occurrences = self.statements
+        self.assertIn('UPDATE curriculum.modules', modules[0])
+        self.assertEqual(modules[1][1], '2026-12-10')
+        self.assertIn('UPDATE curriculum.live_session_occurrences', occurrences[0])
+        self.assertEqual(occurrences[1][:3], [command['start'], command['end'], command['eventId']])
+        self.assertEqual(occurrences[1][4:], ['OCC-1', 'LIVE-1'])
+
+    def test_the_saved_snapshot_still_follows_the_move(self):
+        command = self.move()
+        binding = self.snapshot['occurrences']['OCC-1']
+        self.assertEqual(binding['eventId'], 'event-after')
+        self.assertEqual(binding['dates'], [command['start'], command['end']])
+        self.assertEqual(self.module['session_overrides'], {})
 
 
 if __name__ == '__main__':

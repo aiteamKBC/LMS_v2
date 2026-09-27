@@ -29,6 +29,7 @@ import {
 } from '@/lib/curriculumApi';
 import { cleanText, cohortWeekCapacity, cohortsForProgramme, formatDateLabel, normaliseKey, programmeIdentity, programmeSelectValue, sameFormValues, sameIdentifier, weekendDateNotice } from './model';
 import {
+  CoEditNotice,
   ColorControl,
   EntityDrawer,
   FormField,
@@ -39,9 +40,41 @@ import {
   type FormChainStep,
 } from './ui';
 import { confirmTeamsCalendarUpdate } from './teamsCalendarNotice';
-import { useFormSeedGuard } from './useDrawerState';
+import { useFormFieldMerge, useFormSeedGuard } from './useDrawerState';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { DatePickerField } from '@/components/feature/DatePickerField';
+
+// The names these fields go by on screen. A notice that says "you both changed
+// the programmeId" is our vocabulary, not the reader's.
+const COHORT_FIELD_LABELS: Record<string, string> = {
+  name: 'cohort name',
+  programmeId: 'programme',
+  startDate: 'start date',
+  durationMonths: 'duration',
+  practicalEndDate: 'practical end date',
+  epaMonths: 'EPA months',
+  apprenticeshipEndOverride: 'apprenticeship end date',
+  color: 'colour',
+  excludedHolidayIds: 'holiday selection',
+};
+
+const PROGRAMME_FIELD_LABELS: Record<string, string> = {
+  name: 'programme name',
+  level: 'level',
+  description: 'description',
+  color: 'colour',
+};
+
+const GROUP_FIELD_LABELS: Record<string, string> = {
+  name: 'group name',
+  programmeId: 'programme',
+  cohortId: 'cohort',
+  coach: 'coach',
+  capacity: 'capacity',
+  color: 'colour',
+  startDate: 'start date',
+  endDate: 'end date',
+};
 
 // --------------------------------------------------------------- programme
 
@@ -79,24 +112,38 @@ export function ProgrammeFormDrawer({
   // untouched form from one holding answers that a save has not taken yet.
   const baseline = useRef<Record<string, unknown>>({});
 
+  const liveValues = { name, level, description, color };
+  const dirty = !sameFormValues(liveValues, baseline.current);
+  const liveRef = useRef<Record<string, unknown>>(liveValues);
+  liveRef.current = liveValues;
+  const coEdit = useFormFieldMerge(baseline, liveRef, PROGRAMME_FIELD_LABELS);
+  // `programme` gets a new identity on every background refresh of the list
+  // behind this drawer, and this effect depends on it. Without the guard the
+  // refresh re-seeded the fields from the stored record and threw away whatever
+  // was half-typed -- the drawer "resetting itself" mid-edit, with no write
+  // from anyone involved.
+  const allowSeed = useFormSeedGuard(dirty);
+
   useEffect(() => {
-    if (!open) return;
+    const verdict = allowSeed(open, cleanText(programme?.id) || cleanText(programme?.sourceId) || 'new-programme');
+    if (!verdict) return;
     const initial = {
       name: cleanText(programme?.name),
       level: cleanText(programme?.level).replace(/\D/g, ''),
       description: cleanText(programme?.description),
       color: programme?.color || '#6941c6',
     };
-    baseline.current = initial;
-    setError(null);
-    setSaving(false);
-    setName(initial.name);
-    setLevel(initial.level);
-    setDescription(initial.description);
-    setColor(initial.color);
-  }, [open, programme]);
-
-  const dirty = !sameFormValues({ name, level, description, color }, baseline.current);
+    if (verdict === 'seed') {
+      baseline.current = initial;
+      setError(null);
+      setSaving(false);
+    }
+    setName(coEdit.take(verdict, 'name', initial.name));
+    setLevel(coEdit.take(verdict, 'level', initial.level));
+    setDescription(coEdit.take(verdict, 'description', initial.description));
+    setColor(coEdit.take(verdict, 'color', initial.color));
+    coEdit.publish();
+  }, [allowSeed, coEdit, open, programme]);
 
   const submit = async () => {
     if (!name.trim()) { setError('Give the programme a name.'); return; }
@@ -164,6 +211,7 @@ export function ProgrammeFormDrawer({
       error={error}
       dirty={dirty}
     >
+      <CoEditNotice notices={coEdit.notices} onDismiss={coEdit.dismiss} />
       <FormField label="Programme name" required>
         <TextControl value={name} onChange={setName} placeholder="e.g. Data Analyst" />
       </FormField>
@@ -237,7 +285,7 @@ export function CohortFormDrawer({
   // field mirrors whatever the backend preview returns, which is not something
   // the user typed and must not make an untouched drawer ask before it closes.
   const authoredPracticalEnd = practicalEndIsManual ? practicalEndDate : '';
-  const dirty = !sameFormValues({
+  const liveValues = {
     name,
     programmeId,
     startDate,
@@ -247,16 +295,28 @@ export function CohortFormDrawer({
     apprenticeshipEndOverride,
     color,
     excludedHolidayIds: [...excludedHolidayIds].sort(),
-  }, baseline.current);
+  };
+  const dirty = !sameFormValues(liveValues, baseline.current);
+  // Read by the merge below at the moment a colleague's save arrives, rather
+  // than put in the seeding effect's dependencies where it would re-run the
+  // whole thing on every keystroke.
+  const liveRef = useRef<Record<string, unknown>>(liveValues);
+  liveRef.current = liveValues;
+  const coEdit = useFormFieldMerge(baseline, liveRef, COHORT_FIELD_LABELS);
   // `programmes` is in the seeding effect's dependencies and gets a new identity
   // on every background refresh; without this the list landing mid-edit reset the
   // form. See useFormSeedGuard.
   const allowSeed = useFormSeedGuard(dirty);
 
   useEffect(() => {
-    if (!allowSeed(open, cleanText(cohort?.id) || 'new-cohort')) return;
-    setError(null);
-    setSaving(false);
+    const verdict = allowSeed(open, cleanText(cohort?.id) || 'new-cohort');
+    if (!verdict) return;
+    // On a merge the drawer is already open on this cohort with edits in it, so
+    // the two refusals below would be answering a question nobody asked.
+    if (verdict === 'seed') {
+      setError(null);
+      setSaving(false);
+    }
     if (cohort) {
       // A stored cohort already carries a practical end date, and it may have
       // been authored rather than calculated. Treat it as manual so reopening
@@ -273,17 +333,23 @@ export function CohortFormDrawer({
         color: cohort.color || '#6d28d9',
         excludedHolidayIds: [...new Set((cohort.excludedHolidayIds || []).map(normaliseKey).filter(Boolean))].sort(),
       };
-      baseline.current = initial;
-      setName(initial.name);
-      setProgrammeId(initial.programmeId);
-      setStartDate(initial.startDate);
-      setDurationMonths(initial.durationMonths);
-      setPracticalEndDate(storedPracticalEnd);
-      setPracticalEndIsManual(Boolean(storedPracticalEnd));
-      setEpaMonths(initial.epaMonths);
-      setApprenticeshipEndOverride(initial.apprenticeshipEndOverride);
-      setColor(initial.color);
-      setExcludedHolidayIds(initial.excludedHolidayIds);
+      if (verdict === 'seed') baseline.current = initial;
+      // `take` decides each field: the stored value when this reader has not
+      // touched it, theirs when they have, and theirs plus a sentence when both
+      // of them changed it. On a plain seed every one of these is the stored
+      // value, which is what it always was.
+      const mergedPracticalEnd = coEdit.take(verdict, 'practicalEndDate', initial.practicalEndDate);
+      setName(coEdit.take(verdict, 'name', initial.name));
+      setProgrammeId(coEdit.take(verdict, 'programmeId', initial.programmeId));
+      setStartDate(coEdit.take(verdict, 'startDate', initial.startDate));
+      setDurationMonths(coEdit.take(verdict, 'durationMonths', initial.durationMonths));
+      setPracticalEndDate(mergedPracticalEnd);
+      setPracticalEndIsManual(Boolean(mergedPracticalEnd));
+      setEpaMonths(coEdit.take(verdict, 'epaMonths', initial.epaMonths));
+      setApprenticeshipEndOverride(coEdit.take(verdict, 'apprenticeshipEndOverride', initial.apprenticeshipEndOverride));
+      setColor(coEdit.take(verdict, 'color', initial.color));
+      setExcludedHolidayIds(coEdit.take(verdict, 'excludedHolidayIds', initial.excludedHolidayIds));
+      coEdit.publish();
       return;
     }
     const initial = {
@@ -309,7 +375,7 @@ export function CohortFormDrawer({
     setApprenticeshipEndOverride(initial.apprenticeshipEndOverride);
     setColor(initial.color);
     setExcludedHolidayIds(initial.excludedHolidayIds);
-  }, [allowSeed, cohort, defaults?.programmeId, open, programmes]);
+  }, [allowSeed, coEdit, cohort, defaults?.programmeId, open, programmes]);
 
   // `authoredPracticalEnd` above is also what the preview is given: in automatic
   // mode the backend works the practical end out from the start date and
@@ -523,6 +589,7 @@ export function CohortFormDrawer({
       error={error}
       dirty={dirty}
     >
+      <CoEditNotice notices={coEdit.notices} onDismiss={coEdit.dismiss} />
       <FormField label="Programme" required>
         <SelectControl value={programmeId} onChange={setProgrammeId} options={programmeOptions} placeholder="Select a programme" />
       </FormField>
@@ -861,19 +928,31 @@ export function GroupFormDrawer({
   // What the drawer opened with, for the unsaved-changes check below.
   const baseline = useRef<Record<string, unknown>>({});
 
-  const dirty = !sameFormValues(
-    { name, programmeId, cohortId, coach, weekDays, startTime, endTime, color },
-    baseline.current,
-  );
+  // The delivery slot travels as one value as well as three. A colleague moving
+  // the group to Thursdays while this reader moves it to 14:00 must not settle
+  // as "Thursdays at 14:00" -- that is a slot neither of them chose, and the
+  // Teams calendar would go and book it. So the three are merged together and
+  // one of the two versions wins whole.
+  const schedule = { weekDays, startTime, endTime };
+  const liveValues = { name, programmeId, cohortId, coach, weekDays, startTime, endTime, color, schedule };
+  const dirty = !sameFormValues(liveValues, baseline.current);
+  const liveRef = useRef<Record<string, unknown>>(liveValues);
+  liveRef.current = liveValues;
+  const coEdit = useFormFieldMerge(baseline, liveRef, GROUP_FIELD_LABELS);
   // `cohorts` is a dependency of the seeding effect and gets a new identity on
   // every background refresh; without this a reload landing mid-edit reset the
   // form. See useFormSeedGuard.
   const allowSeed = useFormSeedGuard(dirty);
 
   useEffect(() => {
-    if (!allowSeed(open, cleanText(group?.id) || 'new-group')) return;
-    setError(null);
-    setSaving(false);
+    const verdict = allowSeed(open, cleanText(group?.id) || 'new-group');
+    if (!verdict) return;
+    // On a merge the drawer is already open on this group with edits in it, so
+    // the two refusals below would be answering a question nobody asked.
+    if (verdict === 'seed') {
+      setError(null);
+      setSaving(false);
+    }
     if (group) {
       const parent = cohorts.find(cohort => normaliseKey(cohort.id) === normaliseKey(group.cohortId));
       const initial = {
@@ -889,15 +968,23 @@ export function GroupFormDrawer({
         endTime: cleanText(group.endTime) || '11:00',
         color: group.color || '#2563eb',
       };
-      baseline.current = initial;
-      setName(initial.name);
-      setProgrammeId(initial.programmeId);
-      setCohortId(initial.cohortId);
-      setCoach(initial.coach);
-      setWeekDays(initial.weekDays);
-      setStartTime(initial.startTime);
-      setEndTime(initial.endTime);
-      setColor(initial.color);
+      const storedSchedule = { weekDays: initial.weekDays, startTime: initial.startTime, endTime: initial.endTime };
+      if (verdict === 'seed') baseline.current = { ...initial, schedule: storedSchedule };
+      const mergedSchedule = coEdit.take(verdict, 'schedule', storedSchedule);
+      setName(coEdit.take(verdict, 'name', initial.name));
+      setProgrammeId(coEdit.take(verdict, 'programmeId', initial.programmeId));
+      setCohortId(coEdit.take(verdict, 'cohortId', initial.cohortId));
+      setCoach(coEdit.take(verdict, 'coach', initial.coach));
+      // The slot was decided once, above. Its three fields are set from
+      // whichever version won, and the baseline for them is moved onto what is
+      // stored -- never onto the winning value, which would tell the dirty
+      // check this reader has no unsaved changes.
+      setWeekDays(mergedSchedule.weekDays);
+      setStartTime(mergedSchedule.startTime);
+      setEndTime(mergedSchedule.endTime);
+      coEdit.sync(verdict, storedSchedule);
+      setColor(coEdit.take(verdict, 'color', initial.color));
+      coEdit.publish();
       return;
     }
     const parent = cohorts.find(cohort => normaliseKey(cohort.id) === normaliseKey(defaults?.cohortId));
@@ -911,7 +998,7 @@ export function GroupFormDrawer({
       endTime: '11:00',
       color: '#2563eb',
     };
-    baseline.current = initial;
+    baseline.current = { ...initial, schedule: { weekDays: initial.weekDays, startTime: initial.startTime, endTime: initial.endTime } };
     setName(initial.name);
     setProgrammeId(initial.programmeId);
     setCohortId(initial.cohortId);
@@ -920,7 +1007,7 @@ export function GroupFormDrawer({
     setStartTime(initial.startTime);
     setEndTime(initial.endTime);
     setColor(initial.color);
-  }, [allowSeed, cohorts, defaults?.cohortId, defaults?.programmeId, group, open, programmes]);
+  }, [allowSeed, coEdit, cohorts, defaults?.cohortId, defaults?.programmeId, group, open, programmes]);
 
   const programmeOptions = useMemo(
     () => programmes.map(programme => ({ value: programmeIdentity(programme), label: programme.name })),
@@ -1009,6 +1096,7 @@ export function GroupFormDrawer({
       error={error}
       dirty={dirty}
     >
+      <CoEditNotice notices={coEdit.notices} onDismiss={coEdit.dismiss} />
       {!lockCohort && (
         <>
           <FormField label="Programme" hint="Filters the cohorts below.">

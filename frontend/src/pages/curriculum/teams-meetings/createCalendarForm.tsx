@@ -17,7 +17,7 @@ import {
   type HolidayShiftPlan,
 } from '../shared/entities/sessionShiftPreview';
 import { FormField, SelectControl, TextAreaControl, TextControl } from '../shared/entities/ui';
-import { calendarInputError, normalizedClock, clockLabel, durationLabel, reviewDateLabel } from './calendarTime';
+import { calendarInputError, normalizedClock, clockLabel, durationLabel, pairHeldDates } from './calendarTime';
 
 // ============================================================================
 // The one create form for a module's Teams calendar.
@@ -298,10 +298,14 @@ export function ModuleSessionSchedulePreview({
   title?: string;
   calendarDates?: string[];
   holidayLabelFor?: (date: string) => string;
-  /** The way into one meeting, shown on the session's own row. */
-  renderActions?: (index: number, durationMinutes: number) => ReactNode;
+  /**
+   * The way into one meeting, shown on the session's own row. `teamsUtc` is the
+   * start of the Teams session paired with this row by date, '' when Teams holds
+   * none for it -- the meeting a row's buttons act on, never its neighbour's.
+   */
+  renderActions?: (index: number, durationMinutes: number, teamsUtc: string) => ReactNode;
   /** What one meeting left behind — attendance, transcript, recording. */
-  renderFacts?: (index: number, durationMinutes: number) => ReactNode;
+  renderFacts?: (index: number, durationMinutes: number, teamsUtc: string) => ReactNode;
   /**
    * One length for every session, when the form is overriding them.
    *
@@ -320,16 +324,42 @@ export function ModuleSessionSchedulePreview({
   const sessionRows: Array<TeamsPlannedSession | undefined> = row.sessions.length
     ? row.sessions
     : row.teamsStarts.map(() => undefined);
-  const occurrences = sessionRows.map((session, index) => {
-    const teamsUtc = calendarDates?.[index] || row.teamsStarts[index] || '';
-    const plannedUtc = session
-      ? row.plannedStarts[index] || zonedNaiveToUtcIso(sessionNaiveLocal(session), session.timeZone || row.timeZone)
+  const held = calendarDates?.length ? calendarDates : row.teamsStarts;
+  const plannedStarts = sessionRows.map((session, index) => (session
+    ? row.plannedStarts[index] || zonedNaiveToUtcIso(sessionNaiveLocal(session), session.timeZone || row.timeZone)
+    : ''));
+  // Paired by date, so one session missing from Teams reads as that one
+  // session, not as every later row "still held" a week out. Rows that are the
+  // Teams dates themselves (no module sessions) are their own pairing.
+  const pairing = row.sessions.length && hasCalendar
+    ? pairHeldDates(plannedStarts, held, value => calendarLabel(value, row.timeZone).split(', ')[0])
+    : { paired: sessionRows.map((_, index) => held[index] || ''), extra: [] as string[] };
+  // One clock pair for the whole list, taken from the first session that has
+  // one. Repeated under every row it was read as decoration rather than as a
+  // fact, and it crowded out the things that really are per session. Stated
+  // once, a row only has to speak up where a clock change actually moves it --
+  // which it does: a series running through late October is 09:00 Egypt at
+  // both ends, but 07:00 in England before the change and 06:00 after it.
+  const countryPair = (iso: string) => {
+    const egypt = utcIsoToCalendarParts(iso, 'Africa/Cairo');
+    const england = utcIsoToCalendarParts(iso, 'Europe/London');
+    return egypt.time && england.time
+      ? `Egypt: ${clockLabel(egypt.time)} · England: ${clockLabel(england.time)}${england.date < egypt.date ? ' (previous day)' : ''}`
       : '';
+  };
+  const usualCountryPair = sessionRows
+    .map((_session, index) => countryPair(plannedStarts[index] || pairing.paired[index] || ''))
+    .find(Boolean) || '';
+  const occurrences = sessionRows.map((session, index) => {
+    const teamsUtc = pairing.paired[index] || '';
+    const plannedUtc = plannedStarts[index];
     const durationMinutes = overrideDuration || (session
       ? session.durationMinutes || Math.max(15, minutesBetween(session.startTime, session.endTime) || row.durationMinutes)
       : row.durationMinutes);
     const gap = teamsGapNote(plannedUtc, teamsUtc, hasCalendar);
-    const facts = renderFacts?.(index, durationMinutes);
+    const facts = renderFacts?.(index, durationMinutes, teamsUtc);
+    const rowCountryPair = showAlternateTimeZones ? countryPair(plannedUtc || teamsUtc) : '';
+    const driftedCountryPair = rowCountryPair && rowCountryPair !== usualCountryPair ? rowCountryPair : '';
     return {
       session,
       name: session?.componentTitle,
@@ -338,13 +368,10 @@ export function ModuleSessionSchedulePreview({
       durationMinutes,
       shift: plan.shifts[index] && { ...plan.shifts[index], sessionNumber: session?.sessionNumber ?? plan.shifts[index].sessionNumber },
       matches: gap.matches,
-      actions: renderActions?.(index, durationMinutes),
-      extra: (showAlternateTimeZones || !session || facts || gap.note) ? (
+      actions: renderActions?.(index, durationMinutes, teamsUtc),
+      extra: (driftedCountryPair || !session || facts || gap.note) ? (
         <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          {showAlternateTimeZones && <>
-            <span>Egypt: {reviewDateLabel(plannedUtc || teamsUtc, 'Africa/Cairo')}</span>
-            <span>England: {reviewDateLabel(plannedUtc || teamsUtc, 'Europe/London')}</span>
-          </>}
+          {driftedCountryPair && <span className="font-semibold">{driftedCountryPair}</span>}
           {!session && <span className="font-semibold text-amber-700">Held on Teams, but the module has no session on this date.</span>}
           {facts}
           {gap.note && <span className="font-semibold text-amber-700">{gap.note}</span>}
@@ -356,20 +383,9 @@ export function ModuleSessionSchedulePreview({
   // repeated down twenty rows is read as decoration, not as a fact.
   const durations = Array.from(new Set(occurrences.map(item => item.durationMinutes)));
   const uniformDuration = durations.length === 1 ? durations[0] : 0;
-  // The compact modal states one clock pair, from the soonest occurrence --
-  // not every distinct pairing a long module can pick up from genuinely
-  // different weekly slots or daylight-saving drift between the two zones.
-  const countryTimes = showAlternateTimeZones ? [] : (() => {
-    const first = occurrences.find(item => {
-      const egypt = utcIsoToCalendarParts(item.plannedUtc, 'Africa/Cairo');
-      const england = utcIsoToCalendarParts(item.plannedUtc, 'Europe/London');
-      return Boolean(egypt.time && england.time);
-    });
-    if (!first) return [];
-    const egypt = utcIsoToCalendarParts(first.plannedUtc, 'Africa/Cairo');
-    const england = utcIsoToCalendarParts(first.plannedUtc, 'Europe/London');
-    return [`Egypt: ${clockLabel(egypt.time)} · England: ${clockLabel(england.time)}${england.date < egypt.date ? ' (previous day)' : ''}`];
-  })();
+  // Stated once for the whole list. A session a clock change moves off it says
+  // so on its own row; the rest stay quiet.
+  const countryTimes = usualCountryPair ? [usualCountryPair] : [];
 
   return (
     <div className="overflow-hidden rounded-xl border border-background-200 bg-background-50">
@@ -420,9 +436,16 @@ export function ModuleSessionSchedulePreview({
             showSessionNumbers={false}
             formatLabel={(plannedUtc, date) => calendarLabel(plannedUtc || date, row.timeZone)}
           />
+          {pairing.extra.length > 0 && (
+            <p className="border-t border-background-200 px-3 py-2 text-[11px] font-semibold text-amber-700">
+              Teams also holds {pairing.extra.map(value => calendarLabel(value, row.timeZone)).join('; ')}, which
+              {' '}{pairing.extra.length === 1 ? 'is not a session' : 'are not sessions'} in this module — sending removes
+              {' '}{pairing.extra.length === 1 ? 'it' : 'them'}.
+            </p>
+          )}
           {/* A note about a pending change is only useful next to the thing
               that makes it happen. */}
-          {occurrences.some(item => !item.matches) && (
+          {(occurrences.some(item => !item.matches) || pairing.extra.length > 0) && (
             <p className="border-t border-background-200 px-3 py-2 text-[11px] font-semibold text-foreground-500">
               Nothing on the Teams calendar changes until you press
               {' '}
@@ -468,7 +491,12 @@ export interface TeamsCalendarForm {
 
 export function emptyTeamsCalendarForm(): TeamsCalendarForm {
   return {
-    scheduleTimeZone: 'Africa/Cairo',
+    // England, because the learners and presenters a new calendar invites are
+    // in England: the hour they read in their invitation is the hour they turn
+    // up for. Defaulting to Egypt put an author's 9 AM into their calendars as
+    // 7 AM, one clock change apart from the time the module says it runs at.
+    // Egypt stays in the picker for a calendar that really is delivered there.
+    scheduleTimeZone: 'Europe/London',
     title: '',
     organizerEmail: '',
     attendees: '',
@@ -549,6 +577,54 @@ export function buildTeamsCalendarInput(row: TeamsCalendarTarget, form: TeamsCal
   };
 }
 
+type TeamsUpdateFields = Partial<Pick<TeamsMeetingInput, 'attendees' | 'presenters' | 'coOrganizers' | 'recording' | 'lobbyBypass' | 'spokenLanguage'>>;
+
+/**
+ * What an update form changes on an existing calendar, and who it newly invites.
+ *
+ * Only changed fields are returned, so an untouched list or option keeps the
+ * value the calendar has saved -- the server treats an omitted key as "keep".
+ * `addedPeople` is everyone invited now, in any role, who was not invited
+ * before; moving someone between roles does not make them new.
+ */
+export function teamsUpdateChanges(form: TeamsCalendarForm, before: TeamsCalendarForm): { fields: TeamsUpdateFields; addedPeople: string[] } {
+  const fields: TeamsUpdateFields = {};
+  const lower = (value: string) => emailList(value).map(email => email.toLowerCase());
+  const sameList = (left: string[], right: string[]) => left.length === right.length && left.every(value => right.includes(value));
+  for (const key of ['attendees', 'presenters', 'coOrganizers'] as const) {
+    if (!sameList(lower(form[key]), lower(before[key]))) fields[key] = emailList(form[key]);
+  }
+  for (const key of ['recording', 'lobbyBypass', 'spokenLanguage'] as const) {
+    if (form[key] !== before[key]) fields[key] = form[key];
+  }
+  const invited = (value: TeamsCalendarForm) => new Set([value.organizerEmail.trim().toLowerCase(),
+    ...lower(value.attendees), ...lower(value.presenters), ...lower(value.coOrganizers)]);
+  const was = invited(before);
+  return { fields, addedPeople: [...invited(form)].filter(email => email && !was.has(email)) };
+}
+
+/** Who may skip the lobby. The values the backend accepts, in the order offered. */
+export const TEAMS_LOBBY_OPTIONS = [
+  { value: 'invited', label: 'People invited to this meeting' },
+  { value: 'organization', label: 'People in my organization' },
+  { value: 'organization-excluding-guests', label: 'Organization, excluding guests' },
+  { value: 'everyone', label: 'Everyone' },
+  { value: 'organizer', label: 'Only organizers' },
+];
+
+export const TEAMS_RECORDING_OPTIONS = [
+  { value: 'none', label: 'Do not start automatically' },
+  { value: 'record', label: 'Record automatically' },
+  { value: 'record-transcribe', label: 'Record and transcribe' },
+];
+
+export const TEAMS_LANGUAGE_OPTIONS = [
+  { value: 'en-GB', label: 'English (UK)' },
+  { value: 'en-US', label: 'English (US)' },
+  { value: 'ar-EG', label: 'Arabic (Egypt)' },
+  { value: 'fr-FR', label: 'French' },
+];
+
 const DURATION_OPTIONS = [30, 45, 60, 90, 120, 180];
 
 /**
@@ -593,6 +669,89 @@ function durationFieldHint(row: TeamsSchedulePreviewRow, firstPlannedUtc: string
     firstPlannedUtc ? `First session ${calendarLabel(firstPlannedUtc, row.timeZone)}.` : '',
     'Choosing a length here books every session above at it.',
   ].filter(Boolean).join(' ');
+}
+
+type TeamsFieldProps = {
+  form: Pick<TeamsCalendarForm, 'lobbyBypass' | 'recording' | 'spokenLanguage' | 'presenters' | 'coOrganizers' | 'attendees'>;
+  patch: (value: Partial<TeamsCalendarForm>) => void;
+};
+
+/**
+ * Lobby, recording and language: grid cells of a two-column form. Create and
+ * Update render these same fields, so a calendar is updated with exactly the
+ * choices it could have been created with.
+ */
+export function TeamsMeetingOptionFields({ form, patch }: TeamsFieldProps) {
+  return (
+    <>
+      <FormField label="Who can bypass the lobby?">
+        <SelectControl
+          value={form.lobbyBypass}
+          onChange={value => patch({ lobbyBypass: value })}
+          options={TEAMS_LOBBY_OPTIONS}
+        />
+      </FormField>
+      <FormField label="Recording">
+        <SelectControl
+          value={form.recording}
+          onChange={value => patch({ recording: value })}
+          options={TEAMS_RECORDING_OPTIONS}
+        />
+      </FormField>
+      <FormField label="Spoken language">
+        <SelectControl
+          value={form.spokenLanguage}
+          onChange={value => patch({ spokenLanguage: value })}
+          options={TEAMS_LANGUAGE_OPTIONS}
+        />
+      </FormField>
+    </>
+  );
+}
+
+/** Presenters, co-organisers and attendees, with the optional roster prefill; grid cells, as above. */
+export function TeamsPeopleFields({ form, patch, prefilling, onPrefill }: TeamsFieldProps & {
+  prefilling?: boolean;
+  onPrefill?: () => void;
+}) {
+  return (
+    <>
+      {onPrefill && (
+        <div className="sm:col-span-2 -mb-2 flex items-center justify-end">
+          <button
+            type="button"
+            disabled={prefilling}
+            onClick={onPrefill}
+            className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-700 hover:underline disabled:opacity-50"
+          >
+            <AppIcon className="ri-refresh-line text-sm"></AppIcon>
+            {prefilling ? 'Loading…' : "Prefill from the module's tutor and learner plans"}
+          </button>
+        </div>
+      )}
+      <FormField label="Presenters" hint="These people can share and record.">
+        <EntraPeopleInput label="Presenters"
+          value={form.presenters}
+          onChange={value => patch({ presenters: value })}
+        />
+      </FormField>
+      <FormField
+        label="Co-organisers"
+        hint="They run the meeting with the organizer: start and stop the recording, admit people from the lobby and change the meeting options. Invited automatically."
+      >
+        <EntraPeopleInput label="Co-organizers"
+          value={form.coOrganizers}
+          onChange={value => patch({ coOrganizers: value })}
+        />
+      </FormField>
+      <FormField label="Attendees" hint="Presenters and co-organisers are invited automatically.">
+        <EntraPeopleInput label="Attendees"
+          value={form.attendees}
+          onChange={value => patch({ attendees: value })}
+        />
+      </FormField>
+    </>
+  );
 }
 
 /**
@@ -694,42 +853,7 @@ export function TeamsCalendarFormBody({
                 options={durationSelectOptions(form, row)}
               />
             </FormField>
-            <FormField label="Who can bypass the lobby?">
-              <SelectControl
-                value={form.lobbyBypass}
-                onChange={value => patch({ lobbyBypass: value })}
-                options={[
-                  { value: 'invited', label: 'People invited to this meeting' },
-                  { value: 'organization', label: 'People in my organization' },
-                  { value: 'organization-excluding-guests', label: 'Organization, excluding guests' },
-                  { value: 'everyone', label: 'Everyone' },
-                  { value: 'organizer', label: 'Only organizers' },
-                ]}
-              />
-            </FormField>
-            <FormField label="Recording">
-              <SelectControl
-                value={form.recording}
-                onChange={value => patch({ recording: value })}
-                options={[
-                  { value: 'none', label: 'Do not start automatically' },
-                  { value: 'record', label: 'Record automatically' },
-                  { value: 'record-transcribe', label: 'Record and transcribe' },
-                ]}
-              />
-            </FormField>
-            <FormField label="Spoken language">
-              <SelectControl
-                value={form.spokenLanguage}
-                onChange={value => patch({ spokenLanguage: value })}
-                options={[
-                  { value: 'en-GB', label: 'English (UK)' },
-                  { value: 'en-US', label: 'English (US)' },
-                  { value: 'ar-EG', label: 'Arabic (Egypt)' },
-                  { value: 'fr-FR', label: 'French' },
-                ]}
-              />
-            </FormField>
+            <TeamsMeetingOptionFields form={form} patch={patch} />
             {existingCalendar ? <p className="self-center text-[11px] text-foreground-500">The existing invitation text is preserved. Edit its details in Outlook.</p> : <FormField label="Details" hint="Optional. Included in the calendar invitation.">
               <TextAreaControl
                 value={form.details}
@@ -737,40 +861,7 @@ export function TeamsCalendarFormBody({
                 rows={2}
               />
             </FormField>}
-            {onPrefill && (
-              <div className="sm:col-span-2 -mb-2 flex items-center justify-end">
-                <button
-                  type="button"
-                  disabled={prefilling}
-                  onClick={onPrefill}
-                  className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-700 hover:underline disabled:opacity-50"
-                >
-                  <AppIcon className="ri-refresh-line text-sm"></AppIcon>
-                  {prefilling ? 'Loading…' : "Prefill from the module's tutor and learner plans"}
-                </button>
-              </div>
-            )}
-            <FormField label="Presenters" hint="These people can share and record.">
-              <EntraPeopleInput label="Presenters"
-                value={form.presenters}
-                onChange={value => patch({ presenters: value })}
-              />
-            </FormField>
-            <FormField
-              label="Co-organisers"
-              hint="They run the meeting with the organizer: start and stop the recording, admit people from the lobby and change the meeting options. Invited automatically."
-            >
-              <EntraPeopleInput label="Co-organizers"
-                value={form.coOrganizers}
-                onChange={value => patch({ coOrganizers: value })}
-              />
-            </FormField>
-            <FormField label="Attendees" hint="Presenters and co-organisers are invited automatically.">
-              <EntraPeopleInput label="Attendees"
-                value={form.attendees}
-                onChange={value => patch({ attendees: value })}
-              />
-            </FormField>
+            <TeamsPeopleFields form={form} patch={patch} prefilling={prefilling} onPrefill={onPrefill} />
           </div>
           {(form.scheduleTimeZone || timeZoneLabel) && (
             <p className="text-[10px] font-semibold text-foreground-400">

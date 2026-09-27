@@ -65,6 +65,7 @@ def eligible(row):
 
 def action_preview(live_id, payload, actor):
     from . import views as v
+    from .teams_schedule_notice import schedule_snapshot
     series, rows, saved = load_calendar_state(live_id)
     module = load_module(series)
     previous = saved.get('management') or {}
@@ -165,7 +166,10 @@ def action_preview(live_id, payload, actor):
         raise ValueError('Keep the cancellation message within 1,000 characters.')
     operation = {'id': uuid.uuid4().hex, 'actor': actor, 'liveId': live_id, 'action': action, 'scope': scope,
                  'version': fingerprint(series, rows, module), 'commands': commands, 'comment': comment,
-                 'snapshot': plan['snapshot'], 'status': 'reviewed'}
+                 'snapshot': plan['snapshot'], 'status': 'reviewed',
+                 # What the calendar held when this was reviewed, so the change
+                 # can be told as "was ... now ..." once Microsoft confirms it.
+                 'before': schedule_snapshot(rows)}
     reviewed_sessions = []
     for row in affected:
         event = captured.get((bindings.get(row['id']) or {}).get('eventId')) or {}
@@ -258,18 +262,39 @@ def persist_move(series, rows, module, command, snapshot):
         cursor.execute('''UPDATE curriculum.live_session_occurrences SET scheduled_start = %s, scheduled_end = %s,
                           graph_event_id = %s, updated_at = %s WHERE id = %s AND live_session_id = %s''',
                        [command['start'], command['end'], command['eventId'], now, command['occurrenceId'], series['id']])
-        # Components already carrying this stable occurrence/session identity
-        # feed learner activities and training plans. Never update other sessions.
-        settings = {'sessionDate': exception['date'], 'sessionDay': datetime.fromisoformat(exception['date']).strftime('%A'),
-                    'sessionTime': exception['startTime'], 'sessionDateTimeUtc': command['start'],
-                    'teamsStartDateTimeUtc': command['start'], 'durationMinutes': exception['durationMinutes'],
-                    'teamsDurationMinutes': exception['durationMinutes'], 'teamsEventId': command['eventId']}
-        cursor.execute('''UPDATE curriculum.components SET settings_json = COALESCE(settings_json, '{}'::jsonb) || %s::jsonb,
-                          updated_at = %s WHERE module_catalogue_id = %s AND deleted_at IS NULL
-                          AND type IN ('live-session', 'live_session') AND
-                          (settings_json->>'teamsOccurrenceId' = %s OR
-                          (settings_json->>'teamsLiveSessionId' = %s AND settings_json->>'teamsSessionNumber' = %s))''',
-                       [json.dumps(settings), now, module['module_catalogue_id'], command['occurrenceId'], series['id'], str(command['sessionNumber'])])
+    # Components already carrying this stable occurrence/session identity
+    # feed learner activities and training plans. Never update other sessions.
+    settings = {'sessionDate': exception['date'], 'sessionDay': datetime.fromisoformat(exception['date']).strftime('%A'),
+                'sessionTime': exception['startTime'], 'sessionDateTimeUtc': command['start'],
+                'teamsStartDateTimeUtc': command['start'], 'durationMinutes': exception['durationMinutes'],
+                'teamsDurationMinutes': exception['durationMinutes'], 'teamsEventId': command['eventId']}
+    # Through the authoring write helper rather than a raw UPDATE, so a move is
+    # recorded like every other change to a component. The statement this
+    # replaced wrote the same values but never reached `versioning.record_rows`,
+    # so a session moving to a different day -- `sessionDate`, `sessionTime`,
+    # `durationMinutes`, the confirmed instant -- left nothing in the trail.
+    # What the log keeps is still the log's decision: a write that only restamps
+    # Teams identifiers diffs to nothing and records nothing, exactly as before.
+    #
+    # Read first and merge per row, because the statement this replaced merged
+    # into `settings_json` (`||`) and the WHERE can match more than one
+    # component. One assignment for all of them would flatten each row to the
+    # same settings and drop whatever else it held.
+    matched = v.authoring_fetch_all(
+        v.AUTHORING_COMPONENTS_TABLE,
+        '''module_catalogue_id = %s AND deleted_at IS NULL
+           AND type IN ('live-session', 'live_session') AND
+           (settings_json->>'teamsOccurrenceId' = %s OR
+           (settings_json->>'teamsLiveSessionId' = %s AND settings_json->>'teamsSessionNumber' = %s))''',
+        [module['module_catalogue_id'], command['occurrenceId'], series['id'], str(command['sessionNumber'])],
+    )
+    for row in matched:
+        stored = v.as_json_value(row.get('settings_json'), {})
+        v.update_authoring_rows(
+            v.AUTHORING_COMPONENTS_TABLE, 'id = %s', [row.get('id')],
+            {'settings_json': v.json_db_value({**(stored if isinstance(stored, dict) else {}), **settings}),
+             'updated_at': now},
+        )
     binding = snapshot.get('occurrences', {}).get(command['occurrenceId'])
     if binding:
         binding.update(eventId=command['eventId'], dates=[command['start'], command['end']])
@@ -298,6 +323,24 @@ def confirm_action(live_id, payload, actor):
         snapshot['management'] = operation
         store_snapshot(live_id, snapshot)
     return continue_action(live_id, operation['id'], send=True)
+
+
+def with_change_notice(live_id, result):
+    """A finished action's signed before/after record, for the optional email.
+
+    Only once every request is confirmed: a partial result is not a change
+    anyone should be told about as done. The id is the operation's own, so a
+    repeated status check hands out the same change, never a second one.
+    """
+    from .teams_schedule_notice import issue_change_notice, schedule_snapshot
+    if result.get('status') != 'done':
+        return result
+    series, rows, saved = load_calendar_state(live_id)
+    operation = saved.get('management') or {}
+    if operation.get('status') != 'done' or 'before' not in operation:
+        return result
+    after = schedule_snapshot(rows) if series.get('status') == 'active' else []
+    return {**result, 'changeNotice': issue_change_notice(live_id, operation['before'], after, notice_id=operation['id'])}
 
 
 def action_result(operation):
@@ -414,11 +457,11 @@ def calendar_action(request, live_session_id):
         if payload.get('stage') == 'review':
             result = action_preview(live_session_id, payload, actor)
         elif payload.get('stage') == 'confirm':
-            result = confirm_action(live_session_id, payload, actor)
+            result = with_change_notice(live_session_id, confirm_action(live_session_id, payload, actor))
         elif payload.get('stage') == 'status':
             _, _, saved = load_calendar_state(live_session_id)
             operation = saved.get('management') or {}
-            result = continue_action(live_session_id, operation.get('id'), send=False) if operation else {'status': 'none', 'message': 'No calendar action is awaiting confirmation.'}
+            result = with_change_notice(live_session_id, continue_action(live_session_id, operation.get('id'), send=False)) if operation else {'status': 'none', 'message': 'No calendar action is awaiting confirmation.'}
         else:
             raise ValueError('Choose review, confirm or status.')
         return JsonResponse(result)

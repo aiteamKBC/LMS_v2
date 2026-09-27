@@ -1424,7 +1424,7 @@ const SESSION_DATE_SETTING_KEYS = [
   'teamsStartDateTimeUtc',
 ] as const;
 
-const TEAMS_MEETING_SETTING_KEYS = [
+export const TEAMS_MEETING_SETTING_KEYS = [
   'teamsLiveSessionId',
   'teamsSessionNumber',
   'teamsEventId',
@@ -1775,16 +1775,23 @@ export async function loadModuleStructure(
  * cause. Asking for them keeps the rail showing the dates the save will store
  * rather than a second schedule worked out in the browser.
  *
+ * Always asked for by `weeks`, never `sessions`: a week is a calendar week
+ * whether or not a live session has been authored into it yet, so a module with
+ * fewer authored live sessions than weeks (a reading-only tail, a copied week
+ * whose session is not booked yet) still gets every week dated. Asking by
+ * `sessions` instead stops the plan dead at the last authored session and
+ * leaves every week after it undated, which is exactly the bug this avoids.
+ *
  * Returns null for a module the backend has never stored (a local draft), where
  * there is no schedule to plan from yet.
  */
-export async function loadModuleWeekSessionPlan(moduleCatalogueId: string, weeks: number, sessions?: number): Promise<ModuleWeekSessionPlan | null> {
+export async function loadModuleWeekSessionPlan(moduleCatalogueId: string, weeks: number): Promise<ModuleWeekSessionPlan | null> {
   const catalogueId = String(moduleCatalogueId || '').trim();
   const count = Math.max(0, Math.round(Number(weeks) || 0));
   if (!catalogueId || !count) return null;
   try {
     return await apiJson<ModuleWeekSessionPlan>(
-      `/curriculum/modules/${encodeURIComponent(catalogueId)}/session-plan/?${sessions ? `sessions=${Math.max(1, Math.round(sessions))}` : `weeks=${count}`}`,
+      `/curriculum/modules/${encodeURIComponent(catalogueId)}/session-plan/?weeks=${count}`,
     );
   } catch (err) {
     // A module with no stored schedule simply has no dates to show. Failing the
@@ -2440,6 +2447,21 @@ export interface TeamsMeetingResult {
     settingsApplied: boolean;
   };
   warnings: string[];
+  /**
+   * The schedule emails the server sent as part of this create, once Microsoft
+   * had verified the calendar and accepted its invitations. Absent when the
+   * server did not send them (an older backend, or a recovered create).
+   */
+  scheduleEmail?: {
+    total?: number;
+    accepted?: number;
+    queued?: number;
+    failed?: number;
+    uncertain?: number;
+    status?: 'complete' | 'pending';
+    error?: string;
+    code?: string;
+  };
 }
 
 export interface TeamsMeetingConfiguration {
@@ -2700,11 +2722,41 @@ export function fetchModuleMeetingInvitees(moduleCatalogueId: string) {
   return apiJson<ModuleMeetingInvitees>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/meeting-invitees/`);
 }
 
-export async function createTeamsMeeting(input: TeamsMeetingInput) {
+/**
+ * Where a module's last Create stands on the server, and the calendar it saved.
+ *
+ * Read after a Create that timed out or was refused as in progress: the server
+ * may well have finished, and asking is the only safe way to find out. Sending
+ * Create again is not -- see `teams_create_guard.py`.
+ */
+export interface TeamsCreateStatus {
+  state: 'none' | 'creating' | 'uncertain' | 'done';
+  claim: { outcomeStatus: number | null; outcomeCode: string; liveSessionId: string; claimedAt: string; leaseUntil: string } | null;
+  calendar: { liveSessionId: string; joinUrl: string; organizerEmail: string; warnings: string[]; settingsApplied: boolean } | null;
+  /** The saved calendar's schedule-email counts; null when unknown or not started. */
+  emails?: { total: number; accepted: number; queued: number; failed: number; uncertain: number } | null;
+}
+
+export function fetchTeamsCreateStatus(moduleCatalogueId: string) {
+  return apiJson<TeamsCreateStatus>(
+    `/curriculum/teams-meetings/create-status/?moduleCatalogueId=${encodeURIComponent(moduleCatalogueId)}`,
+    { timeoutMs: 15000 },
+  );
+}
+
+export async function createTeamsMeeting(
+  input: TeamsMeetingInput,
+  options: { confirmUncertain?: boolean; onSubmitted?: () => void } = {},
+) {
   // Review and send the same snapshot, even if a background refresh changes the form.
   const reviewed: TeamsMeetingInput = JSON.parse(JSON.stringify({ ...input, hideAttendees: true }));
   await reviewCalendar({ ...reviewed, summaryEmail: true }, reviewed.scheduleTimeZone || getCalendarTimeZone());
-  return apiJson<TeamsMeetingResult>('/curriculum/teams-meetings/', {
+  // The author has confirmed the review: from here the create is under way,
+  // and the caller can start showing its progress.
+  options.onSubmitted?.();
+  // `confirmUncertain` only ever comes from a person who was told an earlier
+  // Create did not report back and chose to create again; never from a retry.
+  return apiJson<TeamsMeetingResult>(`/curriculum/teams-meetings/${options.confirmUncertain ? '?confirmUncertain=1' : ''}`, {
     method: 'POST',
     body: JSON.stringify(reviewed),
     timeoutMs: 45000,
@@ -2723,8 +2775,11 @@ export async function createTeamsMeeting(input: TeamsMeetingInput) {
  * `coOrganizers` are optional: omit them to move dates only, pass them to correct
  * who is invited, who presents and who co-runs it without recreating the meeting.
  */
-export async function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & Partial<Pick<TeamsMeetingInput, 'lobbyBypass' | 'recording' | 'spokenLanguage' | 'seriesMode'>> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[]; peopleOnly?: boolean }) {
-  const reviewed = JSON.parse(JSON.stringify(input)) as typeof input;
+export async function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & Partial<Pick<TeamsMeetingInput, 'lobbyBypass' | 'recording' | 'spokenLanguage' | 'seriesMode'>> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[]; peopleOnly?: boolean; settingsOnly?: boolean }) {
+  // `settingsOnly` only labels the review ("meeting settings" rather than
+  // "invitations"); the transport is the same people-only update either way.
+  const { settingsOnly, ...sent } = input;
+  const reviewed = JSON.parse(JSON.stringify(sent)) as typeof sent;
   const { series: rawSeries, occurrences } = await loadTeamsMeetingArtifacts(liveSessionId);
   const series = calendarSeriesForReview(rawSeries);
   if (reviewed.peopleOnly) {
@@ -2738,20 +2793,31 @@ export async function updateTeamsMeetingSchedule(liveSessionId: string, input: P
     reviewed.startDateTimeUtc = reviewed.scheduledOccurrences[0].startDateTimeUtc;
     reviewed.durationMinutes = reviewed.scheduledOccurrences[0].durationMinutes;
   }
-  await reviewCalendar({ ...reviewed, organizerEmail: series.organizer_email, joinUrl: series.join_url,
+  const { notifyAttendees } = await reviewCalendar({ ...reviewed, settingsOnly, organizerEmail: series.organizer_email, joinUrl: series.join_url,
+    // A people-only save moves no date, so there is no "was / now" to tell anyone.
+    offerChangeEmail: !reviewed.peopleOnly,
     attendees: reviewed.attendees ?? series.attendees, presenters: reviewed.presenters ?? series.presenters,
     coOrganizers: reviewed.coOrganizers ?? series.co_organizers,
     recording: reviewed.recording ?? series.recording, lobbyBypass: reviewed.lobbyBypass ?? series.lobby_bypass, spokenLanguage: reviewed.spokenLanguage ?? series.spoken_language,
     calendarSeries: series.calendar_series, previousOccurrences: occurrences,
     seriesMode: series.calendar_series?.length ? 'per_day' : 'shared',
   }, series.timeZoneIana || getCalendarTimeZone());
-  return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting']; warnings?: Array<{ code?: string; message: string; detail?: string }> }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
+  return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting']; warnings?: Array<{ code?: string; message: string; detail?: string }>; changeNotice?: string }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
     method: 'PATCH',
     body: JSON.stringify(reviewed),
-    timeoutMs: 45000,
+    // One update is around ten SERIAL Microsoft Graph round trips -- read the
+    // event, patch it, re-read it, list its instances, verify them, publish the
+    // attendee list, confirm it, verify again -- and every one of them is a call
+    // to Microsoft over the network. A series of eight sessions routinely runs
+    // past 45s on that path, and the browser abandoning it there did not stop
+    // the server: it left the author staring at a timeout for an update that
+    // was still being applied. The budget is the transport's, not Microsoft's.
+    timeoutMs: 120000,
   }).then(result => {
     clearCurriculumGetCache();
-    return result;
+    // The review's choice travels with the result: whoever shows the outcome
+    // sends the change email only when the author ticked it.
+    return { ...result, notifyAttendees: Boolean(notifyAttendees && !reviewed.peopleOnly) };
   });
 }
 

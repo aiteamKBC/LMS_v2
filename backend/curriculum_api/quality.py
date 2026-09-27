@@ -262,10 +262,48 @@ ACTOR_TYPE_LABELS = {
     versioning.ACTOR_JOB: 'Scheduled job',
 }
 
+# What the handler code means, as a phrase that completes "... as part of".
+#
+# `reason` holds the write handler, or the row's own `deleted_by` when the
+# handler said nothing (``versioning.build_revision``). Either way it is the only
+# column that records WHY a record a person never touched went away: a week
+# removed by the orphan sweep and a week removed with its module are both
+# "Deleted", and only this tells them apart. Anything absent keeps the code
+# itself rather than being given an invented meaning.
+REASON_LABELS = {
+    'hard-delete': 'a cleanup sweep',
+    'bulk-delete': 'a bulk delete',
+    'module-save': 'a module save',
+    'component-save': 'a component save',
+    'programme-tree-save': 'a programme tree save',
+    'module-delete': 'its module being deleted',
+    'week-delete': 'its week being deleted',
+    'component-delete': 'its component being deleted',
+    'programme-delete': 'its programme being deleted',
+    'cohort-delete': 'its cohort being deleted',
+    'group-delete': 'its group being deleted',
+    'week-template-delete': 'its week template being deleted',
+    'programme-archive': 'its programme being archived',
+    'ksb-mapping-delete': 'a KSB mapping being removed',
+    'ksb-mapping-patch': 'a KSB mapping update',
+    'component-ksb-sync': 'a KSB sync',
+    'component-ksb-post': 'a KSB update',
+}
+
 
 def source_label(value):
     text = curriculum_views.clean_str(value)
     return SOURCE_LABELS.get(text, text.replace('-', ' ').capitalize() if text else '')
+
+
+def cause_label(reason):
+    """The handler code as the cause phrase a reader can use, or ''.
+
+    Empty for an unmapped code: "as part of ksb-mapping-patch" explains nothing,
+    and the raw handler is still on the event as ``reason`` for anyone auditing
+    it. Saying nothing is better than dressing a code up as an explanation.
+    """
+    return REASON_LABELS.get(curriculum_views.clean_str(reason), '')
 
 
 def field_label(field):
@@ -745,6 +783,7 @@ def revision_event(row):
     if not isinstance(context, dict):
         context = {}
     handler, actor_kind, source, trigger_email, trigger_name = revision_attribution(row)
+    metadata = versioning.as_dict(row.get('metadata'))
     changes = [
         {
             'field': curriculum_views.clean_str(change.get('field')),
@@ -786,8 +825,14 @@ def revision_event(row):
         # Auto-save is a source, not an action: the event is still the edit.
         'source': source,
         'sourceLabel': source_label(source),
-        'metadata': versioning.as_dict(row.get('metadata')),
+        'metadata': metadata,
         'reason': handler,
+        # The handler in words, for the sentence a row leads with. Empty when the
+        # code has no mapped meaning, so a reader is never shown a guess.
+        'causeLabel': cause_label(handler),
+        # The page name recorded with the write. `page_path` is still in
+        # `metadata` for anyone who wants the URL; this is the one to show.
+        'pageLabel': curriculum_views.clean_str(metadata.get('page_label')),
         'changes': changes,
         # A created record's "after" and a deleted record's "before" are the same
         # stored snapshot; which one it is, is the action. Carried inline for

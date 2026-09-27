@@ -114,6 +114,10 @@
 .teams-review-description { padding: 16px; }
 .teams-review-description p { margin-top: 8px; white-space: pre-wrap; }
 .teams-review-content .teams-review-send-note { margin-top: 16px; color: #667085; font-size: 11px; }
+.teams-review-notify { display: flex; align-items: flex-start; gap: 10px; margin-top: 16px; padding: 13px 16px; border: 1px solid #e7def3; border-radius: 10px; background: #f8f5fd; cursor: pointer; text-align: left; }
+.teams-review-notify input { flex: none; width: 17px; height: 17px; margin: 1px 0 0; accent-color: var(--action-primary, #5b21b6); }
+.teams-review-notify strong { display: block; color: #392455; font-size: 12px; font-weight: 700; }
+.teams-review-notify small { display: block; margin-top: 3px; color: #655575; font-size: 11px; line-height: 1.55; }
 
 .teams-calendar-review .teams-calendar-review-consent { flex: none; align-items: flex-start; justify-content: flex-start; gap: 10px; margin: 0; padding: 17px 28px 8px; border-top: 1px solid #e9eaf0; background: #fff; color: #344054; font-size: 12px; line-height: 1.5; text-align: left; }
 .teams-calendar-review .teams-calendar-review-consent input { flex: none; width: 17px; height: 17px; margin: 1px 0 0; accent-color: var(--action-primary, #5b21b6); }

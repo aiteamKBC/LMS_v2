@@ -1495,49 +1495,104 @@ def persist_live_session_occurrences(live_session_id, payload, event, utc_start,
     return rows
 
 
+def occurrence_session_number(row):
+    try:
+        return int((row or {}).get('session_number') or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def pair_planned_occurrences(planned, existing_rows):
+    """Which stored session row each planned session is, paired by DATE first.
+
+    A stored row is a session people were invited to, and its id is what
+    attendance, recordings and join launches point at. So a planned session on
+    the minute a row already runs keeps that row, whatever number either side
+    carries -- adding a session in front of others renumbers them, it does not
+    move them. Only a planned session no row runs on takes the row that shares
+    its number (a genuine move), and failing that it is new.
+
+    Returns ``(pairs, unclaimed)``: ``pairs`` is ``[(item, row or None)]`` in
+    planned order, ``unclaimed`` the stored rows no planned session kept.
+    """
+    remaining = [row for row in existing_rows if clean_str(row.get('id'))]
+    pairs = [None] * len(planned)
+    # Live rows before cancelled ones, so re-adding a date revives nothing while
+    # a live row already runs on it.
+    by_minute = sorted(remaining, key=lambda row: clean_str(row.get('status')) == 'cancelled')
+    for index, item in enumerate(planned):
+        key = teams_calendar_minute_key(item['start'])
+        match = next((row for row in by_minute if row in remaining
+                      and teams_calendar_minute_key(row.get('scheduled_start')) == key), None)
+        if match is not None:
+            remaining.remove(match)
+            pairs[index] = (item, match)
+    for index, item in enumerate(planned):
+        if pairs[index] is not None:
+            continue
+        match = next((row for row in remaining if occurrence_session_number(row) == item['session_number']), None)
+        if match is not None:
+            remaining.remove(match)
+        pairs[index] = (item, match)
+    return pairs, remaining
+
+
 def replace_live_session_occurrences(live_session_id, payload, utc_start, duration, repeat, occurrences, event_id='', join_url=''):
     ensure_live_session_tracking_tables()
     now = datetime.utcnow()
     rows = scheduled_live_session_occurrences(payload, utc_start, duration, repeat, occurrences)
     existing_rows = authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [live_session_id])
-    def occurrence_number(row):
-        try:
-            return int((row or {}).get('session_number') or 0)
-        except (TypeError, ValueError):
-            return 0
-    existing_by_number = {
-        occurrence_number(row): row
-        for row in existing_rows
-        if occurrence_number(row) > 0
-    }
-    active_numbers = set()
-    for item in rows:
-        session_number = item['session_number']
-        active_numbers.add(session_number)
-        existing = existing_by_number.get(session_number) or {}
-        authoring_upsert(LIVE_SESSION_OCCURRENCES_TABLE, ['live_session_id', 'session_number'], {
-            'id': clean_str(existing.get('id')) or f'OCC-{uuid.uuid4().hex.upper()}',
-            'live_session_id': live_session_id,
-            'session_number': session_number,
-            'graph_event_id': clean_str(event_id),
-            'scheduled_start': item['start'],
-            'scheduled_end': item['end'],
-            'join_url': clean_str(join_url),
-            'status': 'completed' if existing.get('status') == 'completed' else 'scheduled',
-            'created_at': existing.get('created_at') or now,
-            'updated_at': now,
-        })
-    if active_numbers:
-        stale_ids = [clean_str(row.get('id')) for row in existing_rows if occurrence_number(row) not in active_numbers]
-        if stale_ids:
-            placeholders = ', '.join(['%s'] * len(stale_ids))
-            update_authoring_rows(
-                LIVE_SESSION_OCCURRENCES_TABLE,
-                f"id in ({placeholders})",
-                stale_ids,
-                {'status': 'cancelled', 'updated_at': now},
-            )
+    pairs, unclaimed = pair_planned_occurrences(rows, existing_rows)
+    wanted_numbers = {item['session_number'] for item in rows}
+    # (live_session_id, session_number) is unique, so a kept row taking a new
+    # number, or an unclaimed row sitting on a number a session now needs, steps
+    # aside first. Parking below zero never collides with a real session number.
+    parked = [row for item, row in pairs if row and occurrence_session_number(row) != item['session_number']]
+    parked += [row for row in unclaimed if occurrence_session_number(row) in wanted_numbers]
+    lowest = min([0, *(occurrence_session_number(row) for row in existing_rows)])
+    with transaction.atomic():
+        for offset, row in enumerate(parked, start=1):
+            update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [clean_str(row.get('id'))],
+                                  {'session_number': lowest - offset})
+        for item, existing in pairs:
+            values = {
+                'live_session_id': live_session_id,
+                'session_number': item['session_number'],
+                'graph_event_id': clean_str(event_id),
+                'scheduled_start': item['start'],
+                'scheduled_end': item['end'],
+                'join_url': clean_str(join_url),
+                'status': 'completed' if (existing or {}).get('status') == 'completed' else 'scheduled',
+                'updated_at': now,
+            }
+            if existing:
+                update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [clean_str(existing.get('id'))], values)
+            else:
+                authoring_upsert(LIVE_SESSION_OCCURRENCES_TABLE, ['live_session_id', 'session_number'],
+                                 {**values, 'id': f'OCC-{uuid.uuid4().hex.upper()}', 'created_at': now})
+        if rows:
+            # A row no planned session kept is cancelled, keeping its number
+            # unless a session now needs it -- then it takes the next free one.
+            taken = wanted_numbers | {occurrence_session_number(row) for row in unclaimed if row not in parked}
+            next_free = max([0, *taken]) + 1
+            for row in unclaimed:
+                values = {'status': 'cancelled', 'updated_at': now}
+                if row in parked:
+                    values['session_number'] = next_free
+                    next_free += 1
+                update_authoring_rows(LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [clean_str(row.get('id'))], values)
     return rows
+
+
+def saved_live_session_occurrences(live_session_id):
+    """The series' live session rows as stored, in session order.
+
+    What the component walk pairs by date and stamps with occurrence ids. The
+    planned items ``replace_live_session_occurrences`` returns carry neither an
+    id nor a stored start, so handing those to the walk matched no component.
+    """
+    return authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, "live_session_id = %s and status <> 'cancelled'",
+                               [live_session_id], 'session_number')
 
 
 def persist_live_session_series(payload, event, warnings, graph_settings, organizer, attendees, presenters, online_meeting_id='', co_organizers=(), *, persist_occurrences=True):
@@ -2077,6 +2132,32 @@ def teams_shifted_occurrence_targets(payload, default_duration):
     return targets
 
 
+def teams_expanded_instances(owner_key, event_key, instance_query, expected, deadline_seconds=15.0):
+    """The series' occurrences, waited for until Microsoft has expanded them.
+
+    Extending a recurrence is not atomic on Microsoft's side. The PATCH that
+    raises a four-session series to ten answers straight away, but the very next
+    read of ``/instances`` can still list only the four that existed before.
+    Reconciling against that answer leaves every added session un-shifted, and
+    the verification that follows then names the first added session as missing
+    -- so an author who adds sessions to a calendar that already exists is told
+    the update failed while Microsoft is still applying it, and the retry runs
+    the whole path again. Re-read until the planned number of occurrences is
+    there. A series that really is short costs the deadline once instead of
+    reporting a mismatch that is not one.
+    """
+    from coach_api.views import microsoft_graph_request
+
+    instances, waited = [], 0.0
+    while True:
+        response = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}/instances?{instance_query}')
+        instances = [graph_event_utc(item) for item in (response.get('value') or [])] if isinstance(response, dict) else []
+        if len(instances) >= expected or waited >= deadline_seconds:
+            return sorted(instances, key=lambda item: clean_str((item.get('start') or {}).get('dateTime')))
+        time.sleep(2.0)
+        waited += 2.0
+
+
 def apply_teams_occurrence_shifts(
     owner_key,
     event_key,
@@ -2102,6 +2183,7 @@ def apply_teams_occurrence_shifts(
     warnings = []
     recreated_details = []
     protected_instances = set()
+    moved_instances = set()
     if not target_occurrences:
         return warnings, recreated_details
 
@@ -2121,9 +2203,7 @@ def apply_teams_occurrence_shifts(
         for target in target_occurrences
     }
     try:
-        instance_response = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}/instances?{instance_query}')
-        instances = [graph_event_utc(item) for item in (instance_response.get('value') or [])] if isinstance(instance_response, dict) else []
-        instances = sorted(instances, key=lambda item: clean_str((item.get('start') or {}).get('dateTime')))
+        instances = teams_expanded_instances(owner_key, event_key, instance_query, len(target_occurrences))
         # Claim instances that already sit on a wanted date before assigning the
         # rest. Pairing purely by position would move an instance that is already
         # correct onto another wanted date and duplicate it, because a shifted
@@ -2184,6 +2264,7 @@ def apply_teams_occurrence_shifts(
                     'start': {'dateTime': target['start'].replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
                     'end': {'dateTime': target['end'].replace(second=0, microsecond=0).isoformat(timespec='seconds'), 'timeZone': 'UTC'},
                 }, extra_headers=GRAPH_SILENT_INVITE_HEADERS)
+                moved_instances.add(instance_id)
             except RuntimeError as exc:
                 protected_instances.add(instance_id)
                 warnings.append({
@@ -2191,6 +2272,12 @@ def apply_teams_occurrence_shifts(
                     'message': 'Microsoft Teams could not move this occurrence, so it was left in the recurring series to preserve the module\'s fixed join URL.',
                     'detail': str(exc),
                 })
+        if not remaining_instances and not moved_instances:
+            # Every occurrence Microsoft listed was already on a wanted date and
+            # none had to move, so nothing can be left over to delete. Re-reading
+            # the series here only spends another round trip on a calendar that
+            # already matches the plan.
+            return warnings, recreated_details
         instance_response = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}/instances?{instance_query}')
         instances = [graph_event_utc(item) for item in (instance_response.get('value') or [])] if isinstance(instance_response, dict) else []
         for instance in instances:
@@ -2198,6 +2285,11 @@ def apply_teams_occurrence_shifts(
             if not instance_id:
                 continue
             current_key = teams_calendar_minute_key((instance.get('start') or {}).get('dateTime'))
+            # An occurrence this run has just moved is never surplus. Microsoft
+            # can still answer with its previous start for a moment, and deleting
+            # it on that reading destroys the session the move had just placed.
+            if instance_id in moved_instances:
+                continue
             if current_key and current_key not in target_by_key and instance_id not in protected_instances:
                 microsoft_graph_request(
                     'DELETE', f'users/{owner_key}/events/{urllib_parse.quote(instance_id, safe="")}',
@@ -2606,8 +2698,11 @@ def curriculum_teams_meeting(request):
     # touching Graph; callers should re-attach or update the active series.
     ensure_live_sessions_table()
     requested_catalogue_id = clean_str(payload.get('moduleCatalogueId'))
+    # The cheap resolver, as the restore endpoint uses: a stored module id is its
+    # own answer in one indexed read, where the general resolver summarises
+    # every module in the database before Microsoft is even called.
     resolved_catalogue_id = (
-        resolve_authoring_catalogue_id(requested_catalogue_id) or requested_catalogue_id
+        resolve_stored_module_catalogue_id(requested_catalogue_id) or requested_catalogue_id
         if requested_catalogue_id
         else ''
     )
@@ -2785,8 +2880,13 @@ def curriculum_teams_meeting(request):
         if resolved_catalogue_id:
             try:
                 saved = authoring_fetch_all(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])[0]
+                # create_missing tops every week up to its delivery days here, in
+                # the same walk. The browser used to follow each create with a
+                # restore request doing exactly that, and waited on its full
+                # module rebuild before it could show the result.
                 attach_teams_meeting_to_module_weeks(
-                    resolved_catalogue_id, saved, live_session_row_to_component_settings(saved), occurrence_rows,
+                    resolved_catalogue_id, saved, live_session_row_to_component_settings(saved),
+                    saved_live_session_occurrences(live_session_id), create_missing=True,
                 )
             except Exception:
                 logger.exception('The Teams calendar was saved but its component links could not be attached.')
@@ -3074,6 +3174,34 @@ def attendance_report_rosters(series, actual_rows, include_absent=False):
     return flattened
 
 
+def held_schedule_snapshot(live_session_id):
+    """The series' live sessions as they are stored right now, for a change notice."""
+    from .teams_schedule_notice import schedule_snapshot
+    return schedule_snapshot(authoring_fetch_all(
+        LIVE_SESSION_OCCURRENCES_TABLE, "live_session_id = %s and status <> 'cancelled'", [live_session_id],
+    ))
+
+
+def with_schedule_change_notice(response, live_session_id, before):
+    """Add a signed before/after record to a successful schedule update.
+
+    The update overwrites the occurrence rows, so this is the last moment the
+    dates learners were told about still exist. The notice is only a record:
+    nothing is emailed unless the author asks for it with this token.
+    """
+    from .teams_schedule_notice import issue_change_notice
+    if getattr(response, 'status_code', 0) != 200:
+        return response
+    try:
+        body = json.loads(response.content)
+    except ValueError:
+        return response
+    if not (isinstance(body, dict) and body.get('updated')):
+        return response
+    body['changeNotice'] = issue_change_notice(live_session_id, before, held_schedule_snapshot(live_session_id))
+    return JsonResponse(body, status=response.status_code)
+
+
 @csrf_exempt
 def curriculum_teams_meeting_schedule(request, live_session_id):
     """Update the calendar-backed Teams event when the module schedule shifts."""
@@ -3092,6 +3220,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     if not isinstance(payload, dict):
         return json_error('A valid JSON body is required.')
     series = series_rows[0]
+    schedule_before = held_schedule_snapshot(live_session_id)
     # Omitted options retain their saved values for schedule-only callers.
     option_fields = {'recording': 'recording', 'lobbyBypass': 'lobby_bypass', 'spokenLanguage': 'spoken_language'}
     option_updates = {column: clean_str(payload[key]) for key, column in option_fields.items() if key in payload}
@@ -3105,7 +3234,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     except (TypeError, ValueError) as exc:
         return json_error(str(exc), status=400)
     if stored_calendar_series(series) or weekday_groups:
-        return save_weekday_calendar(payload, graph_settings, series)
+        return with_schedule_change_notice(save_weekday_calendar(payload, graph_settings, series), live_session_id, schedule_before)
 
     # The stored organizer, never the caller's. This event already exists on one
     # mailbox, and asking Graph for it on another is a 404 that would strand a
@@ -3259,11 +3388,14 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         if warnings or not _applied:
             raise RuntimeError('Microsoft did not accept every calendar or meeting option change.')
         event = verify_calendar(microsoft_graph_request, owner_key, event_id, targets, join_url, repeat != 'none')
-        publish_attendees(microsoft_graph_request, owner_key, event, [
+        # Re-verify only when the invitation list was actually written. Publishing
+        # nothing cannot have revived a deleted slot or changed the shared link,
+        # and this path is already a long line of serial Microsoft round trips.
+        if publish_attendees(microsoft_graph_request, owner_key, event, [
             {'emailAddress': {'address': email, 'name': email.split('@', 1)[0]}, 'type': 'required'}
             for email in invited_people
-        ])
-        event = verify_calendar(microsoft_graph_request, owner_key, event_id, targets, join_url, repeat != 'none')
+        ]):
+            event = verify_calendar(microsoft_graph_request, owner_key, event_id, targets, join_url, repeat != 'none')
     except RuntimeError as exc:
         update_authoring_rows(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id], {
             'warnings': json_db_value([*warnings, {'code': 'teams_calendar_unverified', 'message': str(exc)}]),
@@ -3307,8 +3439,9 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     module_id = clean_str(series.get('module_catalogue_id'))
     if module_id:
         saved = {**series, **series_update}
-        attach_teams_meeting_to_module_weeks(module_id, saved, live_session_row_to_component_settings(saved), occurrence_rows)
-    return JsonResponse({
+        attach_teams_meeting_to_module_weeks(module_id, saved, live_session_row_to_component_settings(saved),
+                                             occurrence_rows if payload.get('peopleOnly') else saved_live_session_occurrences(live_session_id))
+    return with_schedule_change_notice(JsonResponse({
         'updated': True,
         'meeting': {
             'liveSessionId': live_session_id,
@@ -3325,7 +3458,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             'coOrganizers': co_organizers,
         },
         'warnings': warnings,
-    })
+    }), live_session_id, schedule_before)
 
 
 @csrf_exempt
@@ -5047,6 +5180,25 @@ def build_module_session_plan(start_value, number_of_sessions, delivery_days, ho
         'originalEndDate': sessions[-1]['date'] if sessions else '',
         'warnings': warnings,
     }
+
+
+def module_calendar_end_date(start_value, week_count):
+    """The module's End Date field: the calendar span of its authored weeks,
+    counted from the start date.
+
+    Deliberately independent of delivery days, holidays and the generated
+    session plan -- a module authored for N weeks always finishes N weeks
+    after it starts, even when its only live session lands on day one.
+    ``build_module_session_plan``'s ``finalEndDate`` answers a different
+    question (where does the last session land) and must not be read as this
+    field; this is the one server-side callers use whenever a module payload
+    arrives with no explicit ``endDate`` to fall back on.
+    """
+    start = parse_date(start_value)
+    weeks = max(0, parse_int(week_count, 0))
+    if not start or weeks <= 0:
+        return ''
+    return (start + timedelta(days=weeks * 7 - 1)).isoformat()
 
 
 def cohort_delivery_window(cohort):
@@ -9262,6 +9414,48 @@ def build_sessions_basic(training_rows, module_rows, program_configs=None, holid
     return sessions
 
 
+def module_delivery_row(module_row, group_row=None):
+    """A module row that answers with its group's delivery pattern first.
+
+    The group states when its learners meet, so its delivery days and clock
+    govern every module delivered to it -- changing the group moves its modules
+    with it, instead of each module running to a copy of the pattern taken when
+    it was authored. A module's own day, clock and per-weekday slots answer
+    where its group states none: an ungrouped module, or a group that has never
+    been given a slot.
+
+    Returns a copy; nothing is written. Per-date exceptions
+    (``session_overrides``) are untouched -- a session moved to its own date is
+    a decision about that date, not a pattern the group can take back.
+    """
+    module_row = dict(module_row or {})
+    group_row = group_row or {}
+    day = clean_str(group_row.get('session_week_day')) or schedule_day_part(group_row.get('schedule'))
+    start = clean_str(group_row.get('session_start_time')) or schedule_time_parts(group_row.get('schedule'))[0]
+    end = clean_str(group_row.get('session_end_time')) or schedule_time_parts(group_row.get('schedule'))[1]
+    if not (day or start or end):
+        return module_row
+    resolved = {
+        **module_row,
+        'session_week_day': day or clean_str(module_row.get('session_week_day')),
+        'session_start_time': start or clean_str(module_row.get('session_start_time')),
+        'session_end_time': end or clean_str(module_row.get('session_end_time')),
+    }
+    slots = module_weekly_schedule(module_row)
+    if slots:
+        # A per-weekday table is the module's own refinement of its pattern. The
+        # group naming its days replaces it outright -- kept, it would quietly
+        # add back days the group no longer delivers on. The group naming only a
+        # clock keeps the module's days and re-times them.
+        retimed = [] if day else [
+            {**slot, 'startTime': start or slot['startTime'], 'endTime': end or slot['endTime']}
+            for slot in slots
+        ]
+        resolved['weekly_schedule'] = json_db_value(retimed) if retimed else None
+        resolved['weeklySchedule'] = retimed or None
+    return resolved
+
+
 def module_delivery_session_plan(module, session_count, start, holidays=None, week_count=0):
     """The dated plan one module actually runs to, holiday shifts included.
 
@@ -9471,7 +9665,10 @@ def build_sessions_from_authoring_modules(authoring_module_rows, holidays_by_coh
                 # the row the author is looking at.
                 'weekId': clean_str(link.get('weekId')),
                 'componentId': clean_str(link.get('componentId')),
-                'title': f'{title} #{index + 1}',
+                # The live session's own name, as its author typed it on the
+                # component. The module's name and a number are what is left
+                # when a component carries no title of its own.
+                'title': clean_str(link.get('title')) or f'{title} #{index + 1}',
                 'type': 'Live Session',
                 'date': iso_date,
                 'day': session_date.strftime('%A'),
@@ -9841,13 +10038,22 @@ def module_session_clock(module_row, group_row=None, session_date=None):
     exception = override_clock(module_row, session_date)
     if exception:
         return exception
-    start_time = clean_str((module_row or {}).get('session_start_time')) or clean_str((group_row or {}).get('session_start_time')) or DEFAULT_SESSION_START_TIME
-    end_time = clean_str((module_row or {}).get('session_end_time')) or clean_str((group_row or {}).get('session_end_time')) or DEFAULT_SESSION_END_TIME
+    # The group is where its learners are told when they meet, so the clock it
+    # states governs every module delivered to it: move the group and its
+    # modules move with it, rather than each one running to a copy of the clock
+    # taken when it was authored. A module's own clock -- and its per-weekday
+    # table, which is a refinement of that clock -- answers where its group
+    # states none: an ungrouped module, or a group never given a slot.
+    group_start = clean_str((group_row or {}).get('session_start_time'))
+    group_end = clean_str((group_row or {}).get('session_end_time'))
+    start_time = group_start or clean_str((module_row or {}).get('session_start_time')) or DEFAULT_SESSION_START_TIME
+    end_time = group_end or clean_str((module_row or {}).get('session_end_time')) or DEFAULT_SESSION_END_TIME
     day = parse_date(session_date)
-    for slot in module_weekly_schedule(module_row):
-        if day and slot['day'].lower() == day.strftime('%A').lower():
-            start_time, end_time = slot['startTime'], slot['endTime']
-            break
+    if not (group_start or group_end):
+        for slot in module_weekly_schedule(module_row):
+            if day and slot['day'].lower() == day.strftime('%A').lower():
+                start_time, end_time = slot['startTime'], slot['endTime']
+                break
     start_minutes = parse_clock_minutes(start_time)
     end_minutes = parse_clock_minutes(end_time)
     duration = 0
@@ -10078,6 +10284,54 @@ def find_tutor_schedule_conflicts(
                 'dates': dates,
             })
     return sorted(conflicts, key=lambda item: (item['dates'][0], item['moduleName']))
+
+
+def tutor_schedule_conflicts_created(before, candidate, **kwargs):
+    """The clashes a save would CREATE, without the ones it inherited.
+
+    ``module_schedule_assignment_changed`` answers for the whole module: change
+    the tutor, the day, the time, the start date or the number of weeks, and
+    every clash that module is in is reported -- including clashes on dates the
+    edit never touched. Adding one week to a module therefore failed on a clash
+    in its *first* week, one that was there before the edit and is still there
+    after it, and the author was told to change the tutor, the day or the time
+    in order to save a change that moved none of them. There was no way out of
+    that dialog except to fix an unrelated booking first.
+
+    This restores the rule the guard was written for and still documents in
+    ``module_schedule_assignment_changed``: a save may not create or move a
+    booking into a clash, but a module already in one is not frozen.
+
+    ``before`` is the module's stored schedule. A clash on a date that schedule
+    already had is inherited. Everything else is this save's doing -- including
+    every clash of a tutor the save is changing, because that booking is new,
+    and every clash with another module in the same save, which is why the
+    baseline is asked without ``pending``.
+    """
+    conflicts = find_tutor_schedule_conflicts(candidate, **kwargs)
+    if not conflicts:
+        return []
+    baseline = {**(before or {}), 'module_catalogue_id': clean_str(candidate.get('module_catalogue_id'))}
+    # No stored tutor is a booking that did not exist: nothing to inherit.
+    if not staff_assignment_key(baseline.get('tutor_name')):
+        return conflicts
+    if kwargs.get('context') is None:
+        # Both questions read the same stored state, so it is prepared once.
+        kwargs = {**kwargs, 'context': tutor_conflict_context(kwargs.get('module_rows'))}
+        conflicts = find_tutor_schedule_conflicts(candidate, **kwargs)
+        if not conflicts:
+            return []
+    inherited = {
+        (item['moduleCatalogueId'], day)
+        for item in find_tutor_schedule_conflicts(baseline, **{**kwargs, 'pending': ()})
+        for day in item['dates']
+    }
+    created = []
+    for item in conflicts:
+        dates = [day for day in item['dates'] if (item['moduleCatalogueId'], day) not in inherited]
+        if dates:
+            created.append({**item, 'dates': dates})
+    return created
 
 
 def first_tutor_schedule_conflict(candidates, module_rows=None):
@@ -15747,6 +16001,29 @@ def live_session_row_to_component_settings(row):
     }
 
 
+def occurrence_local_start(occurrence, series_settings):
+    """When one booked session starts, read in its own time zone."""
+    start_at = parse_graph_datetime((occurrence or {}).get('scheduled_start'))
+    if not start_at:
+        return None
+    zone = ZoneInfo(clean_str((series_settings or {}).get('sessionTimeZone')) or graph_timezone_iana({}))
+    return start_at.replace(tzinfo=start_at.tzinfo or timezone.utc).astimezone(zone)
+
+
+def occurrence_local_date(occurrence, series_settings):
+    """The calendar date one booked session runs on, in its own time zone.
+
+    The pairing key between a module's live-session components and the sessions
+    Microsoft holds. A date survives what a number does not: cancelling a
+    session leaves its number behind, a week with no live session still consumes
+    a delivery slot number, and the two numbering schemes that produced a series
+    over its lifetime need not agree. The day a session runs on is the same fact
+    on both sides, and it is the one the author reads off the screen.
+    """
+    local_start = occurrence_local_start(occurrence, series_settings)
+    return local_start.date().isoformat() if local_start else ''
+
+
 def live_occurrence_component_settings(occurrence, series_settings):
     """The settings that belong to one session rather than to the whole series.
 
@@ -15775,6 +16052,20 @@ def live_occurrence_component_settings(occurrence, series_settings):
         settings['teamsStartDateTimeUtc'] = start_value
         settings['sessionDateTimeUtc'] = start_value
     start_at = parse_graph_datetime(occurrence.get('scheduled_start'))
+    # The calendar DATE that confirmed instant falls on, in the session's own
+    # time zone -- written here because the instant above is.
+    #
+    # Moving a series through the schedule endpoint rewrites the occurrence, so
+    # `sessionDateTimeUtc` followed Microsoft to the new day while `sessionDate`
+    # stayed on the day the session was first booked on. The two then disagreed
+    # permanently: the component read as still running on its old date, the
+    # Course structure compared that date against the week's plan and reported a
+    # drift that no update could ever clear, because every update moved the
+    # instant and left the date behind. One occurrence, one date.
+    local_start = occurrence_local_start(occurrence, series_settings)
+    if local_start:
+        settings['sessionDate'] = local_start.date().isoformat()
+        settings['sessionDay'] = local_start.strftime('%A')
     end_at = parse_graph_datetime(end_value)
     if start_at and end_at and end_at > start_at:
         minutes = int((end_at - start_at).total_seconds() // 60)
@@ -15851,25 +16142,67 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
     updated = 0
     created = 0
     handled_component_ids = set()
+    claimed_occurrence_ids = set()
 
-    def settings_for_session(slot_index, occurrence_index, existing_settings=None):
-        """Everything that belongs to one live session.
+    def free_occurrence_on(date_value):
+        """The unclaimed session Microsoft holds on one date, if there is one."""
+        if not date_value:
+            return None
+        return next((row for row in occurrence_rows
+                     if clean_str(row.get('id')) not in claimed_occurrence_ids
+                     and occurrence_local_date(row, series_settings) == date_value), None)
 
-        Two indexes, because they count different things and a week with no live
-        session separates them:
+    def occurrence_for_component(existing_settings, slot_index):
+        """Which booked session a live-session component owns.
 
-        * ``slot_index`` is the position in the module's dated plan. A
-          content-only week still occupies one, so week N stays on delivery slot
-          N -- that is what dates a live session nobody has dated by hand.
-        * ``occurrence_index`` is the position in the Teams series, which counts
-          live sessions and nothing else. One live-session component is one
-          occurrence, so a week that delivers none consumes no occurrence.
+        Paired by DATE, never by counting. Session numbers cannot carry this:
+        cancelling a session leaves its number in place, a week with no live
+        session still consumes a delivery slot number, and a series that has
+        been renumbered once holds both schemes at the same time. Counting
+        components against those numbers slid every session after the first gap
+        onto the previous one's meeting, and left the last real booking attached
+        to nothing.
 
-        Counting the Teams occurrence with the slot index put every live session
-        after a content-only week on the previous session's meeting.
+        In order of authority:
+
+        1. The date this component itself currently runs on -- where its own
+           meeting sits, which is what keeps a booked session with its invited
+           attendees while a plan moves around it.
+        2. The date its week is planned for, which is what dates a component
+           that has never been booked, and what re-pairs one whose stored date
+           was left on another session's day.
+        3. For a component with no date at all -- neither its own nor a planned
+           one for its week -- the next unclaimed session in order, which is
+           what fills a freshly created series.
+
+        A component that matches none of these keeps the meeting it already has
+        rather than being handed an unrelated one. A week planned for a day the
+        calendar holds no session on is simply not booked yet: handing it the
+        next free session took the following week's meeting and left that week
+        with none.
         """
         existing_settings = existing_settings if isinstance(existing_settings, dict) else {}
-        occurrence = next((row for row in occurrence_rows if parse_int(row.get('session_number'), 0) == occurrence_index + 1), None)
+        stored_date = clean_str(existing_settings.get('sessionDate'))[:10]
+        found = free_occurrence_on(stored_date)
+        if found:
+            return found
+        planned = session_plan[slot_index] if slot_index < len(session_plan) else {}
+        planned_date = format_date(planned.get('date'))
+        found = free_occurrence_on(planned_date)
+        if found or stored_date or planned_date:
+            return found
+        return next((row for row in occurrence_rows if clean_str(row.get('id')) not in claimed_occurrence_ids), None)
+
+    def settings_for_session(slot_index, occurrence, existing_settings=None):
+        """Everything that belongs to one live session.
+
+        ``slot_index`` is the position in the module's dated plan. A
+        content-only week still occupies one, so week N stays on delivery slot
+        N -- that is what dates a live session nobody has dated by hand.
+        ``occurrence`` is the booked session this component owns, chosen by
+        `occurrence_for_component`.
+        """
+        existing_settings = existing_settings if isinstance(existing_settings, dict) else {}
         if not occurrence and stored_calendar_series(series_row):
             return {key: '' for key in ('teamsMeetingUrl', 'liveSessionUrl', 'teamsEventId', 'teamsOnlineMeetingId', 'teamsOccurrenceId', 'teamsLiveSessionId', 'teamsSessionNumber', 'sessionDateTimeUtc', 'teamsStartDateTimeUtc')}
         session_settings = live_occurrence_component_settings(occurrence, series_settings)
@@ -15914,19 +16247,17 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
         return {**shared_series_settings, **planned_settings, **session_settings}
 
     session_index = 0
-    # The Teams series counts live sessions, not delivery slots. See
-    # `settings_for_session` and `authoring_session_links_by_catalogue`, which
-    # number the occurrences the same way.
-    occurrence_index = 0
     sessions_per_week = delivery_days_per_week(module_row)
     for week_row in week_rows:
         week_id = clean_str(week_row.get('id'))
         live_rows = [row for row in components_by_week.get(week_id, []) if frontend_component_type(row.get('type')) == 'live-session']
         for row in live_rows:
             existing_settings = component_builder_settings(row)
-            settings_for_week = settings_for_session(session_index, occurrence_index, existing_settings)
+            occurrence = occurrence_for_component(existing_settings, session_index)
+            if occurrence:
+                claimed_occurrence_ids.add(clean_str(occurrence.get('id')))
+            settings_for_week = settings_for_session(session_index, occurrence, existing_settings)
             session_index += 1
-            occurrence_index += 1
             handled_component_ids.add(clean_str(row.get('id')))
             if not dry_run:
                 update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [row.get('id')], {
@@ -15943,9 +16274,11 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
             continue
         missing_count = 0 if session_rows else max(0, sessions_per_week - len(live_rows))
         for offset in range(missing_count):
-            settings_for_week = settings_for_session(session_index, occurrence_index)
+            occurrence = occurrence_for_component({}, session_index)
+            if occurrence:
+                claimed_occurrence_ids.add(clean_str(occurrence.get('id')))
+            settings_for_week = settings_for_session(session_index, occurrence)
             session_index += 1
-            occurrence_index += 1
             join_url = clean_str(settings_for_week.get('liveSessionUrl') or settings_for_week.get('teamsMeetingUrl'))
             position = len(components_by_week.get(week_id, [])) + offset
             duration = parse_int(settings_for_week.get('durationMinutes'), session_duration) or session_duration
@@ -16750,8 +17083,12 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
     does not deliver again that week -- and no caller may invent one, because an
     invented date becomes a real calendar entry and a real Teams meeting.
     """
+    # Planned on the group's delivery days and clock, falling back to the
+    # module's own only where the group states none -- so moving the group
+    # re-dates the weeks of every module delivered to it.
+    delivery_module = module_delivery_row(module, group_row)
     session_plan = module_session_plan_for_weeks(
-        module,
+        delivery_module,
         len(weeks),
         holidays=holidays,
     ).get('sessions') or []
@@ -17153,6 +17490,9 @@ def get_authoring_structure_payload(module_catalogue_id, include_archived=False)
     module = module_rows[0]
     group_rows = authoring_fetch_all(GROUPS_TABLE, 'group_id = %s', [module.get('group_id')]) if module.get('group_id') else []
     group_row = group_rows[0] if group_rows else {}
+    # Read through the group's pattern, so every screen shows the days and clock
+    # this module is actually delivered on rather than a stale copy of them.
+    delivery_module = module_delivery_row(module, group_row)
     group_coach_name = clean_str(group_row.get('coach_name'))
     is_programme_deleted = programme_deleted_row(module) or programme_deleted_row(group_row)
     stored_week_rows = authoring_fetch_all(AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], 'display_order, week_number, id')
@@ -17270,12 +17610,14 @@ def get_authoring_structure_payload(module_catalogue_id, include_archived=False)
         'sessionsNumber': parse_int(module.get('sessions_number'), len(weeks)),
         'startDate': format_date(module.get('start_date')),
         'endDate': format_date(module.get('end_date')),
-        'weeklySchedule': module_weekly_schedule(module),
+        'weeklySchedule': module_weekly_schedule(delivery_module),
         'sessionHolidays': parse_json_value(module.get('session_holidays'), []),
         'deliveryWeeks': module_delivery_week_count(module, weeks),
-        'weekDays': module.get('session_week_day') or group_row.get('session_week_day') or schedule_day_part(group_row.get('schedule')) or '',
-        'startTime': module.get('session_start_time') or group_row.get('session_start_time') or schedule_time_parts(group_row.get('schedule'))[0],
-        'endTime': module.get('session_end_time') or group_row.get('session_end_time') or schedule_time_parts(group_row.get('schedule'))[1],
+        # The pattern this module actually runs to: its group's, and its own
+        # only where the group states none.
+        'weekDays': delivery_module.get('session_week_day') or '',
+        'startTime': delivery_module.get('session_start_time') or '',
+        'endTime': delivery_module.get('session_end_time') or '',
         'weeks': module_stored_week_count(module, len(weeks)),
         'weeksNumber': module_stored_week_count(module, len(weeks)),
         'totalOtjh': float(module.get('total_otjh') or 0),
@@ -17479,6 +17821,8 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
             for row in module_components
         ))
         group_row = group_rows_by_id.get(clean_str(module.get('group_id')), {})
+        # The days and clock this module is delivered on: its group's first.
+        delivery_module = module_delivery_row(module, group_row)
         group_coach_name = clean_str(group_row.get('coach_name'))
         is_programme_deleted = programme_deleted_row(module) or programme_deleted_row(group_row)
         if include_extra:
@@ -17518,12 +17862,13 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
             'sessionsNumber': parse_int(module.get('sessions_number'), len(weeks)),
             'startDate': format_date(module.get('start_date')),
             'endDate': format_date(module.get('end_date')),
-            'weeklySchedule': module_weekly_schedule(module),
+            'weeklySchedule': module_weekly_schedule(delivery_module),
             'sessionHolidays': parse_json_value(module.get('session_holidays'), []),
             'deliveryWeeks': module_delivery_week_count(module, weeks),
-            'weekDays': module.get('session_week_day') or group_row.get('session_week_day') or schedule_day_part(group_row.get('schedule')) or '',
-            'startTime': module.get('session_start_time') or group_row.get('session_start_time') or schedule_time_parts(group_row.get('schedule'))[0],
-            'endTime': module.get('session_end_time') or group_row.get('session_end_time') or schedule_time_parts(group_row.get('schedule'))[1],
+            # The group's pattern first; the module's own only where it states none.
+            'weekDays': delivery_module.get('session_week_day') or '',
+            'startTime': delivery_module.get('session_start_time') or '',
+            'endTime': delivery_module.get('session_end_time') or '',
             'weeks': module_stored_week_count(module, len(weeks)),
             'weeksNumber': module_stored_week_count(module, len(weeks)),
             'totalOtjh': module_total_otjh,
@@ -20699,8 +21044,8 @@ def save_tree_group_modules(group, cohort, modules, preserve_missing=False):
         module_schedule = module.get('weekDays') or group.get('weekDays') or group.get('schedule')
         attachment_weeks = attachment_week_structure(module, current_structure, schedule=module_schedule)
         session_count = attachment_session_count(module, attachment_weeks)
-        session_plan = build_module_session_plan(start_date, session_count, module_schedule, module.get('holidays') or module.get('linkedHolidays') or [])
-        end_date = module.get('endDate') or session_plan.get('finalEndDate') or cohort.get('endDate')
+        attachment_weeks_count = parse_int(module.get('weeksNumber') or module.get('weeks'), 0) or len(attachment_weeks)
+        end_date = module.get('endDate') or module_calendar_end_date(start_date, attachment_weeks_count) or cohort.get('endDate')
         # Same cohort window the group-modules endpoint enforces: the tree save
         # writes the same module rows, so it cannot be the way around the rule.
         date_error = module_cohort_date_error(module_name, start_date, end_date, cohort)
@@ -20725,7 +21070,8 @@ def save_tree_group_modules(group, cohort, modules, preserve_missing=False):
         structure_payload['moduleKsbMappings'] = module.get('moduleKsbMappings') or module.get('ksbMappings') or (current_structure or {}).get('moduleKsbMappings') or []
         candidate = module_schedule_view(structure_payload)
         if module_schedule_assignment_changed(module_schedule_view(current_structure or {}), candidate):
-            conflicts = find_tutor_schedule_conflicts(
+            conflicts = tutor_schedule_conflicts_created(
+                module_schedule_view(current_structure or {}),
                 candidate,
                 module_rows=stored_module_rows,
                 exclude_catalogue_ids=[catalogue_id],
@@ -21989,13 +22335,10 @@ def curriculum_module_session_plan(request, module_catalogue_id):
             # with an empty plan would read as "these weeks have no dates".
             return json_error('Module not found.', status=404)
         module_row = module_rows[0]
-        if (module_row.get('group_id') and not module_weekly_schedule(module_row)
-                and not all(module_row.get(key) for key in ('session_start_time', 'session_end_time'))):
-            group_row = fetch_group_row(module_row['group_id']) or {}
-            module_row = {**module_row, **{
-                key: module_row.get(key) or group_row.get(key)
-                for key in ('session_start_time', 'session_end_time')
-            }}
+        if module_row.get('group_id'):
+            # The group's day and clock, which govern every module delivered to
+            # it; the module's own answer only where the group states none.
+            module_row = module_delivery_row(module_row, fetch_group_row(module_row['group_id']) or {})
         requested_sessions = max(0, parse_int(request.GET.get('sessions'), 0))
         requested_weeks = max(0, parse_int(request.GET.get('weeks'), 0))
         if requested_sessions:
@@ -25576,7 +25919,7 @@ def curriculum_module_detail(request, identifier):
             not tutor_conflict_override_requested(payload)
             and module_schedule_assignment_changed(module_schedule_view(existing_authoring), candidate)
         ):
-            conflicts = find_tutor_schedule_conflicts(candidate)
+            conflicts = tutor_schedule_conflicts_created(module_schedule_view(existing_authoring), candidate)
             if conflicts:
                 return tutor_conflict_error(candidate, conflicts)
         result = save_module_authoring_structure(module_catalogue_id, structure_payload)
@@ -26542,9 +26885,10 @@ def resync_group_module_delivery_counts(previous_rows, delivery_updates):
     the old one-day pattern in place, so the generated plan -- and the Teams
     calendar fed from it -- still produced one date per authored week.
 
-    The end date moves with it, off the same plan every dated view of the module
-    runs, so a module whose calendar has just grown does not keep the finish date
-    of the shorter one.
+    The end date is re-derived too, from the start date and the same
+    ``weeks`` this reads -- it is the module's calendar span, not a date the
+    delivery pattern decides, so a delivery-day change never moves it; this
+    only self-heals a stored value that had drifted from that formula.
 
     ``previous_rows`` are the module rows as they stood *before* the new delivery
     days were written. The week count is read from them on purpose: a legacy row
@@ -26560,8 +26904,7 @@ def resync_group_module_delivery_counts(previous_rows, delivery_updates):
             continue
         module_row = {**previous_row, **delivery_updates}
         sessions = weeks * delivery_days_per_week(module_row)
-        plan = module_session_plan_for_count(module_row, sessions)
-        end_date = plan.get('finalEndDate') or format_date(module_row.get('end_date'))
+        end_date = module_calendar_end_date(module_row.get('start_date'), weeks) or format_date(module_row.get('end_date'))
         if (
             sessions == parse_int(previous_row.get('sessions_number'), 0)
             and weeks == parse_int(previous_row.get('weeks_number'), 0)
@@ -27804,8 +28147,8 @@ def curriculum_group_modules(request, identifier):
 
                 delivery_days = ', '.join(slot['day'] for slot in weekly) or item.get('weekDays') or group.get('weekDays') or group.get('schedule')
                 session_count = attachment_session_count(item)
-                session_plan = build_module_session_plan(start_date, session_count, delivery_days, item.get('holidays') or item.get('linkedHolidays') or [])
-                end_date = item.get('endDate') or session_plan.get('finalEndDate') or cohort.get('endDate')
+                item_weeks = parse_int(item.get('weeksNumber') or item.get('weeks'), 0)
+                end_date = item.get('endDate') or module_calendar_end_date(start_date, item_weeks) or cohort.get('endDate')
                 # Checked after the plan is generated, so a start date that sits
                 # inside the cohort but whose sessions run past its end is caught
                 # too -- whether the end date was sent or calculated here.
@@ -27848,7 +28191,8 @@ def curriculum_group_modules(request, identifier):
                 if not allow_tutor_conflict and module_schedule_assignment_changed(
                     module_schedule_view(current_structure or {}), candidate
                 ):
-                    conflicts = find_tutor_schedule_conflicts(
+                    conflicts = tutor_schedule_conflicts_created(
+                        module_schedule_view(current_structure or {}),
                         candidate,
                         module_rows=stored_module_rows,
                         exclude_catalogue_ids=[catalogue_id],
@@ -27902,8 +28246,76 @@ def curriculum_group_modules(request, identifier):
         return exc.as_response()
 
 
+def module_scoped_sessions(module_catalogue_id):
+    """One authoring module's sessions, read fresh, exactly as the overview lists them.
+
+    The overview derives every session in the curriculum at once, and a caller
+    that must see the latest dates (the Teams dialog, before Create) could only
+    get them by forcing that whole build -- about 13s of round trips for the
+    one module it wanted. This feeds the same builder the same inputs the
+    overview would, for this module alone: its row, its cohort's holidays and
+    its group's clock. Returns ``None`` for a module the authoring tables do not
+    hold, whose sessions only the overview's legacy generator knows.
+    """
+    rows = authoring_fetch_all(AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
+    if not rows:
+        return None
+    module = rows[0]
+    # Same visibility as the operational overview: a deleted programme's
+    # modules deliver nothing there, so they deliver nothing here.
+    if programme_deleted_row(module):
+        return []
+    holiday_rows = get_holiday_rows_safe()
+
+    holidays_by_cohort = {}
+    cohort_id = clean_str(module.get('cohort_id'))
+    if cohort_id:
+        cohort_rows = authoring_fetch_all(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id])
+        detail = serialize_cohort_authoring_detail(cohort_rows[0], holiday_rows) if cohort_rows else None
+        # build_cohorts_and_groups leaves deleted and archived cohorts out, and
+        # with them their holidays.
+        if detail and not programme_deleted_row(detail) and not detail_is_archived(detail):
+            holidays_by_cohort = cohort_selected_holidays_by_id([{
+                'id': cohort_id,
+                'startDate': format_date(detail.get('startDate')),
+                'excludedHolidayIds': [clean_str(value) for value in (detail.get('excludedHolidayIds') or []) if clean_str(value)],
+            }], holiday_rows)
+
+    groups_by_id = {}
+    group_id = clean_str(module.get('group_id'))
+    if group_id:
+        group_rows = authoring_fetch_all(GROUPS_TABLE, 'group_id = %s', [group_id])
+        detail = serialize_group_authoring_detail(group_rows[0]) if group_rows else None
+        if detail and not programme_deleted_row(detail) and not detail_is_archived(detail):
+            clock = {'session_start_time': clean_str(detail.get('startTime')), 'session_end_time': clean_str(detail.get('endTime'))}
+        else:
+            # A group the overview rebuilds from its module rows takes the clock
+            # of the first of them, as build_cohorts_and_groups does.
+            siblings = [row for row in authoring_fetch_all(AUTHORING_MODULES_TABLE, 'group_id = %s', [group_id])
+                        if not programme_deleted_row(row)]
+            first = siblings[0] if siblings else {}
+            clock = {'session_start_time': clean_str(first.get('session_start_time')),
+                     'session_end_time': clean_str(first.get('session_end_time'))}
+        groups_by_id = {group_id: clock}
+
+    return build_sessions_from_authoring_modules([module], holidays_by_cohort, groups_by_id=groups_by_id)
+
+
 @require_GET
 def curriculum_sessions(request):
+    requested = clean_str(request.GET.get('module_catalogue_id') or request.GET.get('moduleCatalogueId'))
+    if requested:
+        # Never the cached overview: this read exists for callers that need the
+        # current dates of one module without rebuilding everyone's.
+        scoped = module_scoped_sessions(requested) if curriculum_visibility(request) == 'operational' else None
+        if scoped is not None:
+            return curriculum_results_response(scoped)
+        # Not an authoring module (or an archive view): the overview decides.
+        payload = get_cached_payload(request)
+        return curriculum_results_response([
+            session for session in payload['sessions']
+            if requested in (clean_str(session.get('moduleCatalogueId')), clean_str(session.get('moduleId')))
+        ])
     return curriculum_collection_response(get_cached_payload(request), 'sessions')
 
 
@@ -27951,7 +28363,7 @@ def curriculum_session_detail(request, identifier):
         if not tutor_conflict_override_requested(payload) and module_schedule_assignment_changed(
             module_schedule_view(current), candidate
         ):
-            conflicts = find_tutor_schedule_conflicts(candidate)
+            conflicts = tutor_schedule_conflicts_created(module_schedule_view(current), candidate)
             if conflicts:
                 return tutor_conflict_error(candidate, conflicts)
         authoring_upsert(AUTHORING_MODULES_TABLE, ['module_catalogue_id'], updates)

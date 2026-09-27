@@ -1259,6 +1259,43 @@ export interface FormChainStep {
 }
 
 /**
+ * The receipt for a field two people changed at once.
+ *
+ * By the time this renders the merge has already happened: the colleague's
+ * other changes are in the fields, and the ones this reader had also changed
+ * still hold what they typed. So it never asks a question -- it reports, names
+ * each field, and gets out of the way when dismissed. Every drawer that can be
+ * open on a shared record shows the same one, in the same place, so the sentence
+ * reads the same wherever people meet each other.
+ */
+export function CoEditNotice({ notices, onDismiss }: { notices: { field: string; text: string }[]; onDismiss: () => void }) {
+  if (!notices.length) return null;
+  return (
+    <div
+      data-testid="co-edit-notice"
+      className="flex items-start justify-between gap-3 rounded-xl border border-amber-200/70 bg-amber-50 px-3 py-2 text-[12px] font-medium text-amber-800"
+    >
+      <span className="flex min-w-0 items-start gap-2">
+        <AppIcon className="ri-refresh-line mt-0.5 shrink-0 text-base"></AppIcon>
+        <span className="min-w-0">
+          <span className="block font-bold">Someone else saved this while you were editing. Their changes are on this form; yours are still here.</span>
+          <ul className="mt-1 list-disc space-y-0.5 pl-4">
+            {notices.map(notice => <li key={notice.field}>{notice.text}</li>)}
+          </ul>
+        </span>
+      </span>
+      <button
+        type="button"
+        onClick={onDismiss}
+        className="shrink-0 rounded-lg px-2 py-1 font-bold text-amber-700 hover:bg-amber-100"
+      >
+        Got it
+      </button>
+    </div>
+  );
+}
+
+/**
  * The focused create/edit surface. Simple records are edited here rather than on
  * a page of their own; anything operational (a module's schedule, its Teams
  * series, its components) gets a full workspace instead.

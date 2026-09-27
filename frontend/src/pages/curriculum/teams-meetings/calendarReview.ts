@@ -2,13 +2,23 @@ import Swal from 'sweetalert2';
 import 'sweetalert2/dist/sweetalert2.min.css';
 import './calendarReview.css';
 import type { TeamsMeetingInput } from '../module-builder/moduleAuthoringData';
-import { reviewDateLabel } from './calendarTime';
+import { pairHeldDates, reviewDateLabel } from './calendarTime';
 
 export type ReviewedCalendar = Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'scheduledOccurrences'> &
   Partial<TeamsMeetingInput> & { joinUrl?: string; peopleOnly?: boolean; summaryEmail?: boolean;
     calendarSeries?: Array<{ day: string; joinUrl: string; sessionNumbers: number[] }>;
     previousOccurrences?: Array<{ session_number: number; scheduled_start: string }>;
+    /** A people-only update that changes the meeting's settings and roles, said as such in the review. */
+    settingsOnly?: boolean;
+    /** Offer the optional "was / now" change email. Only for a date change to an existing calendar. */
+    offerChangeEmail?: boolean;
   };
+
+/** What the author chose in the review, beyond confirming it. */
+export interface CalendarReviewChoice {
+  /** Email every learner their own copy of the change, and the organisers theirs. */
+  notifyAttendees: boolean;
+}
 
 export class TeamsReviewCancelled extends Error {
   constructor() { super('Calendar review cancelled.'); }
@@ -55,21 +65,40 @@ export function calendarReviewHtml(input: ReviewedCalendar, zone: string): strin
     previousEnd = start + session.durationMinutes * 60000;
   }
   const separateLinks = (input.calendarSeries?.length || 0) > 1 || input.seriesMode === 'per_day';
-  const rows = ordered.map(session => {
+  // Each session's saved date, paired by date: a session added in front of the
+  // others renumbers them without moving them, so reading by number called
+  // every later session "previously" a week out.
+  const saved = (input.previousOccurrences || []).map(item => item.scheduled_start);
+  const reviewDay = (value: string) => new Intl.DateTimeFormat('en-CA', { timeZone: zone, year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date(value));
+  const pairing = saved.length
+    ? pairHeldDates(ordered.map(session => session.startDateTimeUtc), saved, reviewDay)
+    : { paired: ordered.map(() => ''), extra: [] as string[] };
+  // One clock pair for the whole table, stated in the help line above it. Under
+  // every row it was read as decoration rather than as a fact; a row only has to
+  // speak up where a clock change actually moves it off that pair, which a
+  // series running through late October does.
+  const countryPair = (iso: string) =>
+    `Egypt ${displayDate(iso, 'Africa/Cairo').clock} · England ${displayDate(iso, 'Europe/London').clock}`;
+  const usualCountryPair = countryPair(ordered[0].startDateTimeUtc);
+  const rows = ordered.map((session, index) => {
     const series = input.calendarSeries?.find(item => item.sessionNumbers.includes(session.sessionNumber));
-    const previous = input.previousOccurrences?.find(item => item.session_number === session.sessionNumber)?.scheduled_start;
+    const previous = pairing.paired[index];
+    const change = previous
+      ? (Date.parse(previous) !== Date.parse(session.startDateTimeUtc) ? `<small class="teams-review-previous">Previously saved: ${escapeHtml(reviewDateLabel(previous, zone))}</small>` : '')
+      : saved.length ? '<small class="teams-review-previous">New session — not on the Teams calendar yet</small>' : '';
     const start = displayDate(session.startDateTimeUtc, zone);
     const endIso = new Date(Date.parse(session.startDateTimeUtc) + session.durationMinutes * 60000).toISOString();
     const end = displayDate(endIso, zone);
     const day = series?.day || new Intl.DateTimeFormat('en-GB', { timeZone: zone, weekday: 'long' }).format(new Date(session.startDateTimeUtc));
     return `<tr>
       <td class="teams-review-number"><span>${session.sessionNumber}</span></td>
-      <td class="teams-review-date">${escapeHtml(start.date)}${previous && Date.parse(previous) !== Date.parse(session.startDateTimeUtc) ? `<small class="teams-review-previous">Previously saved: ${escapeHtml(reviewDateLabel(previous, zone))}</small>` : ''}</td>
+      <td class="teams-review-date">${escapeHtml(start.date)}${change}</td>
       <td class="teams-review-time"><time datetime="${escapeHtml(session.startDateTimeUtc)}" aria-label="${escapeHtml(start.full)}">${escapeHtml(start.clock)}</time><span class="teams-review-time-arrow" aria-hidden="true">–</span><time datetime="${endIso}" aria-label="${escapeHtml(end.full)}">${escapeHtml(end.clock)}</time>${start.date !== end.date ? `<small>Ends ${escapeHtml(end.date)}</small>` : ''}</td>
-      <td class="teams-review-duration">${session.durationMinutes} min
-        <small class="block">Egypt: ${escapeHtml(reviewDateLabel(session.startDateTimeUtc, 'Africa/Cairo'))} – ${escapeHtml(reviewDateLabel(endIso, 'Africa/Cairo'))}</small>
-        <small class="block">England: ${escapeHtml(reviewDateLabel(session.startDateTimeUtc, 'Europe/London'))} – ${escapeHtml(reviewDateLabel(endIso, 'Europe/London'))}</small>
-      </td>
+      <td class="teams-review-duration">${session.durationMinutes} min${
+        countryPair(session.startDateTimeUtc) !== usualCountryPair
+          ? `<small class="block">${escapeHtml(countryPair(session.startDateTimeUtc))}</small>`
+          : ''
+      }</td>
       ${separateLinks ? `<td class="teams-review-day">${escapeHtml(day)} series</td>` : ''}
     </tr>`;
   }).join('');
@@ -82,12 +111,13 @@ export function calendarReviewHtml(input: ReviewedCalendar, zone: string): strin
     ? input.calendarSeries.map(series => `<div class="teams-review-link-item"><strong>${escapeHtml(series.day)} series</strong><code>${escapeHtml(series.joinUrl || 'Generated after creation')}</code></div>`).join('')
     : input.joinUrl ? `<code>${escapeHtml(input.joinUrl)}</code>` : '<p class="teams-review-pending">Created after you confirm</p><p>Microsoft will generate the join link. It must pass verification before invitations are sent.</p>';
   return `<div class="teams-review-content">
-    <header class="teams-review-summary"><div><span class="teams-review-eyebrow">${input.peopleOnly ? 'Update invitations' : 'Your calendar'}</span><h3>${escapeHtml(input.title)}</h3></div><div class="teams-review-zone"><span>Time zone</span><strong>${escapeHtml(zone)}</strong></div></header>
+    <header class="teams-review-summary"><div><span class="teams-review-eyebrow">${input.settingsOnly ? 'Update meeting settings' : input.peopleOnly ? 'Update invitations' : 'Your calendar'}</span><h3>${escapeHtml(input.title)}</h3></div><div class="teams-review-zone"><span>Time zone</span><strong>${escapeHtml(zone)}</strong></div></header>
     <div class="teams-review-layout"><div class="teams-review-main">
       <section class="teams-review-card" aria-labelledby="teams-review-schedule-heading">
         <div class="teams-review-card-heading">${icon('calendar')}<h3 id="teams-review-schedule-heading">Session schedule</h3><span class="teams-review-count">${sessions.length} session${sessions.length === 1 ? '' : 's'}</span></div>
-        <p class="teams-review-time-help">Primary times use ${escapeHtml(zone)}. Egypt and England show the same meeting in each country. <strong>12 AM</strong> is midnight; <strong>12 PM</strong> is noon.</p>
+        <p class="teams-review-time-help">Primary times use ${escapeHtml(zone)}. Every session is ${escapeHtml(usualCountryPair)}${ordered.some(item => countryPair(item.startDateTimeUtc) !== usualCountryPair) ? ', except where a clock change moves one — those sessions say so' : ''}. <strong>12 AM</strong> is midnight; <strong>12 PM</strong> is noon.</p>
         <div class="teams-review-schedule-scroll" role="region" aria-label="All session dates" tabindex="0"><table class="teams-review-table" role="table"><caption class="teams-review-sr-only">${sessions.length} reviewed session${sessions.length === 1 ? '' : 's'}</caption><thead><tr><th scope="col">Session</th><th scope="col">Date</th><th scope="col">Time</th><th scope="col">Duration</th>${separateLinks ? '<th scope="col">Meeting</th>' : ''}</tr></thead><tbody>${rows}</tbody></table></div>
+        ${pairing.extra.length ? `<p class="teams-review-previous">Removed from the Teams calendar: ${pairing.extra.map(value => escapeHtml(reviewDateLabel(value, zone))).join('; ')}</p>` : ''}
       </section>
       <section class="teams-review-card teams-review-links" aria-labelledby="teams-review-link-heading"><div class="teams-review-card-heading">${icon('link')}<h3 id="teams-review-link-heading">Meeting link${separateLinks ? 's' : ''}</h3></div><div class="teams-review-card-content"><p class="teams-review-series">${escapeHtml(input.seriesMode === 'per_day' ? 'Separate series and link for each delivery day' : input.seriesMode === 'shared' ? 'One shared series and join link' : 'One shared link when all days have the same time and duration; otherwise a series per day')}</p>${links}</div></section>
       ${input.details ? `<section class="teams-review-card teams-review-description"><h3>Description</h3><p>${escapeHtml(input.details)}</p></section>` : ''}
@@ -99,16 +129,25 @@ export function calendarReviewHtml(input: ReviewedCalendar, zone: string): strin
         <div><dt>Language</dt><dd>${displaySetting(input.spokenLanguage, { 'en-GB': 'English (UK)', 'en-US': 'English (US)', 'ar-EG': 'Arabic (Egypt)', 'fr-FR': 'French' })}</dd></div>
       </dl></section>
     </aside></div>
-    <p class="teams-review-send-note">${input.peopleOnly ? 'Only the invitation list and participant roles will be updated.' : 'These are the dates that will be sent to Microsoft.'} Save and send applies this calendar now and may send meeting invitations or updates.${input.summaryEmail ? ' One separate schedule email will also be submitted for each attendee, with the complete timetable and verified Teams links.' : ''} Checking the box alone does not save or send anything.</p>
+    ${input.offerChangeEmail ? `<label class="teams-review-notify"><input type="checkbox" id="teams-review-notify"><span><strong>Email attendees and organisers about this change</strong>
+      <small>Each learner gets their own email with their previous and new dates only — never anyone else's details. The organiser, co-organisers and presenters get a copy that also lists the invited learners. Leave unticked to send no LMS email; Microsoft still sends its own calendar update.</small></span></label>` : ''}
+    <p class="teams-review-send-note">${input.settingsOnly ? 'Only the recording, lobby, language and meeting roles will be updated. The join link and every session date stay as they are.' : input.peopleOnly ? 'Only the invitation list and participant roles will be updated.' : 'These are the dates that will be sent to Microsoft.'} Save and send applies this calendar now and may send meeting invitations or updates.${input.summaryEmail ? ' One separate schedule email will also be submitted for each learner, with the complete timetable and verified Teams links; the organiser, co-organisers and presenters each receive a copy that also lists the meeting settings and the invited learners.' : ''} Checking the box alone does not save or send anything.</p>
   </div>`;
 }
 
-export async function reviewCalendar(input: ReviewedCalendar, zone: string): Promise<void> {
+export async function reviewCalendar(input: ReviewedCalendar, zone: string): Promise<CalendarReviewChoice> {
   const html = calendarReviewHtml(input, zone);
+  let notifyAttendees = false;
   const result = await Swal.fire({
     title: 'Review Teams calendar', html, width: 1120, input: 'checkbox',
     inputPlaceholder: 'I checked the dates, AM/PM, time zone and invitation list.',
     inputValidator: value => value ? undefined : 'Confirm that you have reviewed this calendar.',
+    // Read as the dialog confirms, from the box itself: unticked unless the author ticked it.
+    preConfirm: () => {
+      notifyAttendees = Boolean(input.offerChangeEmail
+        && (Swal.getPopup()?.querySelector<HTMLInputElement>('#teams-review-notify')?.checked));
+      return true;
+    },
     showCancelButton: true, cancelButtonText: 'Back to editing', confirmButtonText: 'Save and send',
     focusCancel: true, reverseButtons: true, buttonsStyling: false,
     showCloseButton: true, closeButtonAriaLabel: 'Close review',
@@ -119,4 +158,5 @@ export async function reviewCalendar(input: ReviewedCalendar, zone: string): Pro
       confirmButton: 'teams-calendar-review-confirm', cancelButton: 'teams-calendar-review-cancel' },
   });
   if (!result.isConfirmed) throw new TeamsReviewCancelled();
+  return { notifyAttendees };
 }

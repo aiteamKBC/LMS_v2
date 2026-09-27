@@ -1244,6 +1244,8 @@ export interface CurriculumSession {
   legacyModuleId?: string;
   invalidModuleCatalogueId?: string;
   componentId?: string;
+  /** The live-session component's own title, when the caller matched one. Display only. */
+  componentTitle?: string;
   title: string;
   type: string;
   date: string;
@@ -1656,6 +1658,14 @@ export interface CurriculumAuditEvent {
    * person is `actorName`.
    */
   reason: string;
+  /**
+   * `reason` as a phrase that completes "... as part of" ("a cleanup sweep").
+   * Empty when the handler code has no mapped meaning - the row then says only
+   * what it knows, rather than dressing the code up as an explanation.
+   */
+  causeLabel?: string;
+  /** The recorded page's name. Empty when the write had no page. */
+  pageLabel?: string;
   /** Only the fields that actually moved. Empty for a create. */
   changes: CurriculumAuditChange[];
   /**
@@ -2539,23 +2549,31 @@ function notifyRemoteWrite(path: string): void {
 // ---------------------------------------------------------------------------
 
 const EPOCH_PATH = '/curriculum/cache-epoch/';
-// 4s rather than the 10s before it (and the 25s this shipped with). A reader
-// watching a record somebody else is editing waits half the interval on
-// average, so this is ~2s instead of ~5s -- close enough to instant that a
-// second screen no longer reads as stale, which is the whole point of the
-// counter. Tabs of the same browser hear each other through BroadcastChannel
-// and do not wait for this at all.
+// 2s. This interval used to be a freshness setting; now that the curriculum
+// editors merge a write into an open screen rather than announcing it, it is
+// how long a colleague's typing takes to appear in front of somebody else. A
+// reader waits half the interval on average, so this is ~1s -- the point at
+// which two people on one module stop feeling like two people on two copies.
+// Tabs of the same browser hear each other through BroadcastChannel and do not
+// wait for this at all.
 // What it costs is one authenticated request per open tab: the shared epoch
 // read (Redis where it is configured, otherwise the one-row counter table),
 // plus the single indexed LoginSession lookup every request pays. The
 // last_seen_at write is throttled to 5 minutes (login/sessions.py), so polling
-// faster adds reads, never writes. Below ~3s the request rate stops buying
-// perceptible freshness and starts being felt by the database, so this is the
-// floor rather than a number to keep lowering.
+// faster adds reads, never writes.
+//
+// This is the floor. Below it the request rate buys nothing a person can
+// perceive and starts being felt by the database -- and note what it does NOT
+// buy at any speed: the epoch says only that curriculum changed, so a screen
+// still has to read the record to find out what. That read has its own, longer
+// floor per workspace (LIVE_SYNC_MIN_INTERVAL_MS in the module builder), which
+// is what keeps a busy hour elsewhere in the LMS from becoming a rebuild every
+// two seconds. Making co-editing feel faster than this means pushing the
+// change itself, not asking for it more often.
 // Exported so the tests can advance their fake clock by one tick of whatever
 // this is set to, rather than encoding the number and quietly meaning
 // something else the next time it moves.
-export const EPOCH_POLL_INTERVAL_MS = 4_000;
+export const EPOCH_POLL_INTERVAL_MS = 2_000;
 // The endpoint ships with the backend, and the frontend can be deployed ahead of
 // it. Rather than call a missing URL every few seconds for the life of the tab,
 // give up after a few failures and leave the return-to-tab refresh to cover it.
@@ -3438,7 +3456,7 @@ export function liveSessionArtifactPreviewUrl(liveSessionId: string, artifactId:
 
 export function fetchCurriculumSessions(
   signal?: AbortSignal,
-  options: { skipCache?: boolean; revalidate?: boolean } = {},
+  options: { skipCache?: boolean; revalidate?: boolean; moduleCatalogueId?: string } = {},
 ): Promise<CurriculumSession[]> {
   // Sessions live in the 45s "dynamic" cache tier, so a caller that has just
   // scheduled a module (or opens straight after) can otherwise read a stale
@@ -3446,7 +3464,12 @@ export function fetchCurriculumSessions(
   // the current plan instead of waiting out the TTL. `revalidate` is for the
   // background re-read after somebody else's write: past this tab's cache, but
   // answered from the server's.
-  return fetchCollection<CurriculumSession>('/curriculum/sessions/', { signal, skipCache: options.skipCache, revalidate: options.revalidate });
+  //
+  // `moduleCatalogueId` asks for that one module's sessions, which the server
+  // derives fresh from its own rows every time. Without it, current dates for
+  // one module meant skipCache forcing a rebuild of every session there is.
+  const query = options.moduleCatalogueId ? `?module_catalogue_id=${encodeURIComponent(options.moduleCatalogueId)}` : '';
+  return fetchCollection<CurriculumSession>(`/curriculum/sessions/${query}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate });
 }
 
 // 30s, not 15s: a forced rebuild of the curriculum payload takes ~13s, so a 15s

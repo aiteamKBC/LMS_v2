@@ -3,6 +3,7 @@ import { Modal } from '@/pages/users/components/Modal';
 import { naiveLocalFromUtc } from './createCalendarForm';
 import { getCalendarTimeZone, zonedNaiveToUtcIso } from '../module-builder/moduleAuthoringData';
 import { calendarAction, type ActionReview, type ActionResult } from './calendarActions';
+import { submitChangeEmails, type ScheduleEmailStatus } from './scheduleEmail';
 
 export interface CalendarActionTarget {
   liveId: string; moduleId: string; title: string; action: 'cancel' | 'reschedule'; scope: 'series' | 'occurrence';
@@ -31,7 +32,27 @@ export function CalendarActionDialog({ target, onClose, onChanged }: {
   const [busy, setBusy] = useState(false);
   const [attempted, setAttempted] = useState(false);
   const [error, setError] = useState('');
+  // Off unless the author ticks it: the LMS emails nobody about this change by default.
+  const [notify, setNotify] = useState(false);
+  const [email, setEmail] = useState<ScheduleEmailStatus | null>(null);
+  const [emailError, setEmailError] = useState('');
+  const [emailing, setEmailing] = useState(false);
   const cancelling = target.action === 'cancel';
+
+  /**
+   * The optional change email, once Microsoft has confirmed every change.
+   * Learners each get their own copy -- what their sessions were and are now,
+   * nobody else's details -- and the organiser, co-organisers and presenters a copy that
+   * also lists the invited learners. Accepted messages are never sent twice.
+   */
+  const sendEmails = async (outcome: ActionResult, retryFailed = false) => {
+    if (!notify || outcome.status !== 'done' || !outcome.changeNotice) return;
+    setEmailing(true); setEmailError('');
+    try {
+      setEmail(await submitChangeEmails(target.liveId, outcome.changeNotice, { retryFailed, onProgress: setEmail }));
+    } catch (failure) { setEmailError(failure instanceof Error ? failure.message : 'Change emails could not be confirmed.'); }
+    finally { setEmailing(false); }
+  };
 
   const prepare = async () => {
     setBusy(true); setError(''); setChecked(false);
@@ -56,14 +77,17 @@ export function CalendarActionDialog({ target, onClose, onChanged }: {
         : { stage: 'confirm', reviewToken: review!.reviewToken, acknowledgeNotifications: true });
       setResult(value);
       await onChanged();
+      await sendEmails(value);
     } catch (failure) { setError(failure instanceof Error ? failure.message : 'The calendar action could not be confirmed.'); }
     finally { setBusy(false); }
   };
+  const emailIncomplete = Boolean(emailError || email?.failed || email?.queued);
   return (
     <Modal title={`${cancelling ? 'Cancel' : 'Edit'} ${target.scope === 'series' ? 'calendar series' : 'session'}`} onClose={onClose}
-      dismissible={!busy} size="max-w-4xl" scrollResetKey={review ? 'review' : 'edit'} footer={
+      dismissible={!busy && !emailing} size="max-w-4xl" scrollResetKey={review ? 'review' : 'edit'} footer={
         <div className="flex flex-wrap justify-end gap-2">
-          <button type="button" disabled={busy} onClick={onClose} className="rounded-lg border px-4 py-2 text-sm font-semibold">{result?.status === 'done' ? 'Done' : 'Close'}</button>
+          <button type="button" disabled={busy || emailing} onClick={onClose} className="rounded-lg border px-4 py-2 text-sm font-semibold">{result?.status === 'done' ? 'Done' : 'Close'}</button>
+          {result?.status === 'done' && notify && result.changeNotice && emailIncomplete && !emailing && <button type="button" onClick={() => void sendEmails(result, true)} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-bold text-white">Retry pending emails</button>}
           {attempted ? result?.status !== 'done' && <button type="button" disabled={busy} onClick={() => void execute(true)} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-bold text-white">Check action status</button>
             : review ? <>
               <button type="button" disabled={busy} onClick={() => { setReview(null); setChecked(false); }} className="rounded-lg border px-4 py-2 text-sm font-semibold">Back to editing</button>
@@ -80,6 +104,16 @@ export function CalendarActionDialog({ target, onClose, onChanged }: {
         {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
         {result && <p role="status" className={`rounded-lg p-3 text-sm ${result.status === 'done' ? 'bg-emerald-50 text-emerald-800' : 'bg-amber-50 text-amber-900'}`}>
           {result.message}{result.total ? ` (${result.completed}/${result.total} calendar changes confirmed)` : ''}
+        </p>}
+        {attempted && <p role="status" className={`rounded-lg p-3 text-sm ${emailIncomplete || email?.uncertain ? 'bg-amber-50 text-amber-900' : 'bg-background-50 text-foreground-700'}`}>
+          <strong>Change emails: </strong>
+          {!notify ? 'Not sent — you chose not to email.'
+            : emailing ? `Sending… ${email ? `${email.accepted} of ${email.total} submitted to Microsoft` : ''}`
+              : email ? `${email.accepted} of ${email.total} submitted to Microsoft${email.failed ? ` · ${email.failed} failed` : ''}${email.uncertain ? ` · ${email.uncertain} awaiting verification (not sent again automatically)` : ''}`
+                : result?.status === 'done' && !result.changeNotice ? 'Not sent — no session date changed.'
+                  : result?.status === 'done' ? 'Not sent.'
+                    : 'Sent once Microsoft confirms every change.'}
+          {emailError && <span role="alert" className="block text-red-700">{emailError}</span>}
         </p>}
         {!review && !attempted && (cancelling ? <>
           <p>{target.scope === 'series' ? 'The entire calendar series will be cancelled.' : `Only session ${target.occurrences[0].session_number} will be cancelled.`}</p>
@@ -108,6 +142,11 @@ export function CalendarActionDialog({ target, onClose, onChanged }: {
             </table>
           </div>
           <p className="text-xs text-foreground-500">{review.calendarRequests} calendar request{review.calendarRequests === 1 ? '' : 's'}. 12 AM is midnight; 12 PM is noon. Existing meeting links are preserved when moving sessions.</p>
+          {!attempted && <label className="flex items-start gap-2 rounded-lg border border-primary-100 bg-primary-50/40 p-3 text-sm">
+            <input type="checkbox" checked={notify} onChange={event => setNotify(event.target.checked)} className="mt-0.5" />
+            <span><strong className="block">Email attendees and organisers about this {cancelling ? 'cancellation' : 'change'}</strong>
+              <span className="mt-0.5 block text-xs text-foreground-600">Each learner gets their own email with their previous and {cancelling ? 'remaining' : 'new'} dates only — never anyone else&rsquo;s details. The organiser, co-organisers and presenters get a copy that also lists the invited learners. Leave unticked to send no LMS email; Microsoft still sends its own {cancelling ? 'cancellation notice' : 'calendar update'}.</span></span>
+          </label>}
           {!attempted && <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={checked} onChange={event => setChecked(event.target.checked)} />I checked these sessions and understand that Microsoft will notify the affected invitees.</label>}
         </>}
       </div>
