@@ -261,16 +261,17 @@ export default function LearnerOverview() {
   const otjPlannedHours = !metrics.data ? null : metrics.data.migrated
     ? metrics.data.aptem_planned_total ?? null : dashboardPlan.otjh.planned;
   const otjPlannedLoading = metrics.loading || (!metrics.data?.migrated && dashboardPlan.otjh.plannedLoading);
-  // The headline is the canonical whole-programme metric. Monthly-log values
-  // remain available inside Monthly Focus, but must not replace this total.
-  const otjActualHours = metrics.data?.otjh.completed_actual ?? null;
+  // The dashboard headline follows Monthly Logs. This includes retained
+  // historical months and accepted LMS months, using the same total shown in
+  // the Monthly Logs screen rather than the separate metrics roll-up.
+  const otjActualHours = dashboardPlan.otjh.actual;
   const otjPercent = otjActualHours != null && otjPlannedHours != null && otjPlannedHours > 0
     ? Math.round((otjActualHours / otjPlannedHours) * 100)
     : null;
   const otjPlannedValue = otjPlannedHours != null ? `${otjPlannedHours.toFixed(2)} h`
     : otjPlannedLoading ? 'Loading…' : 'Unavailable';
   const otjActualValue = otjActualHours != null ? `${otjActualHours.toFixed(2)} h`
-    : metrics.loading ? 'Loading...' : 'Unavailable';
+    : dashboardPlan.otjh.actualLoading ? 'Loading...' : 'Unavailable';
   const ksb = metrics.data?.ksb;
   const ksbPercent = ksb?.percent ?? null;
   const ksbValue = ksbPercent == null ? EMPTY_VALUE : `${ksbPercent}%`;

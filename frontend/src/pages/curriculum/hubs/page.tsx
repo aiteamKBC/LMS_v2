@@ -238,6 +238,7 @@ function hubCards(kind: HubKind, counts: {
       { title: 'KSB Standards', description: 'Browse the published Skills England standards and their KSBs.', href: '/curriculum/standards', icon: 'ri-node-tree', tone: 'sky' },
       { title: 'KSB Frameworks', description: 'Create and edit the reusable KSB profiles programmes are mapped to.', href: '/curriculum/ksb-frameworks', icon: 'ri-git-branch-line', meta: `${counts.frameworks} profiles`, tone: 'emerald' },
       { title: 'Quiz Workspace', description: 'Create and edit quizzes connected to curriculum components.', href: '/curriculum/quiz-xml', icon: 'ri-question-answer-line', tone: 'amber' },
+      { title: 'Knowledge Base', description: 'Upload programme books once and use them to generate questions from the right chapters.', href: '/curriculum/knowledge-base', icon: 'ri-book-2-line', tone: 'primary' },
       { title: 'Question Bank', description: 'Reuse assessment questions across quizzes and modules.', href: '/curriculum/question-bank', icon: 'ri-questionnaire-line', tone: 'sky' },
     ];
   }

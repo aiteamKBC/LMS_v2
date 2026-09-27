@@ -12,8 +12,8 @@ import {
   formatQuizAttemptScore,
   resolveQuizAttemptModule,
   resolveQuizAttemptTitle,
-  type CaseFileTabProps,
 } from '../data';
+import type { CaseFileTabProps } from '../types';
 
 export default function EvidenceTab({ data }: CaseFileTabProps) {
   const evidence = data.evidence;

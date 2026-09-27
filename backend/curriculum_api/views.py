@@ -1713,10 +1713,19 @@ def link_live_session_series_to_module(module_catalogue_id, payload):
             live_session_id = clean_str(settings_payload.get('teamsLiveSessionId'))
             if live_session_id:
                 live_session_ids.add(live_session_id)
-    delivery_metadata = payload.get('deliveryMetadata') if isinstance(payload.get('deliveryMetadata'), dict) else {}
-    metadata_id = clean_str(delivery_metadata.get('teamsLiveSessionId'))
-    if metadata_id:
-        live_session_ids.add(metadata_id)
+    # A full structure save is authoritative about which components own a
+    # calendar.  Module responses also carry a convenience copy of the calendar
+    # id in deliveryMetadata; accepting that duplicate field here let a newly
+    # duplicated module steal the source module's live_sessions row even though
+    # every copied component had correctly had its booking identity removed.
+    # Keep the metadata fallback only for legacy partial saves that send no
+    # structure at all.
+    has_explicit_structure = 'weekStructure' in payload or 'weeks' in payload
+    if not has_explicit_structure:
+        delivery_metadata = payload.get('deliveryMetadata') if isinstance(payload.get('deliveryMetadata'), dict) else {}
+        metadata_id = clean_str(delivery_metadata.get('teamsLiveSessionId'))
+        if metadata_id:
+            live_session_ids.add(metadata_id)
     for live_session_id in live_session_ids:
         update_authoring_rows(
             LIVE_SESSIONS_TABLE,
@@ -3020,27 +3029,15 @@ def graph_item_with_occurrence_link(item, occurrence, launch=None):
 
 
 def attendance_identity(record):
-    identity = record.get('identity') if isinstance(record.get('identity'), dict) else {}
-    for key in ('user', 'guest', 'phone', 'encrypted'):
-        value = identity.get(key)
-        if isinstance(value, dict):
-            display_name = clean_str(value.get('displayName') or value.get('name'))
-            identity_id = clean_str(value.get('id'))
-            if display_name or identity_id:
-                return display_name, identity_id
-    return '', ''
+    from .session_results_policy import attendance_identity as policy_attendance_identity
+    return policy_attendance_identity(record)
 
 
 def attendance_display_name(record):
-    if not isinstance(record, dict):
-        return ''
-    display_name, _identity_id = attendance_identity(record)
+    from .session_results_policy import attendance_display_name as policy_attendance_display_name
+    display_name = policy_attendance_display_name(record)
     if display_name:
         return display_name
-    for key in ('displayName', 'participantDisplayName', 'name'):
-        display_name = clean_str(record.get(key))
-        if display_name:
-            return display_name
     email = clean_str(record.get('emailAddress') or record.get('email')).lower()
     if email and '@' in email:
         local = email.split('@', 1)[0]

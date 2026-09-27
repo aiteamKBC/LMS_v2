@@ -22,6 +22,7 @@ import {
 } from '@/utils/learnerJourney';
 import { fetchEvidence, getEvidenceDownloadUrl, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
 import { ReflectionWindow, formatClock, formatRecordedClock } from '@/components/feature/ReflectionWindow';
+import { ReflectionChoicePopup } from '@/components/feature/ReflectionChoicePopup';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { rememberLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
@@ -54,7 +55,7 @@ import {
 
 const learnerNav = roleNavMap.learner;
 
-type Phase = 'consume' | 'reflect' | 'confirm';
+type Phase = 'consume' | 'reflection-choice' | 'reflect' | 'confirm';
 type TimeSource = 'timer' | 'input';
 
 interface DoneRecord { activityKey: string; componentId: string; timeTaken: string | null }
@@ -230,7 +231,7 @@ export default function ComponentViewPage() {
   );
   const [manualTimeSeconds, setManualTimeSeconds] = useState<number | null>(null);
   const [timeSource, setTimeSource] = useState<TimeSource>('timer');
-  const [outsideWorkingHoursConfirmed, setOutsideWorkingHoursConfirmed] = useState(false);
+  const [insideWorkingHoursConfirmed, setInsideWorkingHoursConfirmed] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [record, setRecord] = useState<DoneRecord | null>(null);
@@ -245,6 +246,7 @@ export default function ComponentViewPage() {
   const [evidencePreview, setEvidencePreview] = useState<EvidencePreview | null>(null);
   const evidenceInputId = useId();
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const completionInFlightRef = useRef(false);
   const trackingSessionRef = useRef<TimeTrackingSession | null>(null);
   const trackingPromiseRef = useRef<Promise<TimeTrackingSession> | null>(null);
 
@@ -262,7 +264,7 @@ export default function ComponentViewPage() {
     setWallElapsed(readActivityTimer(timerStorageKey)?.elapsedSeconds ?? 0);
     setManualTimeSeconds(null);
     setTimeSource('timer');
-    setOutsideWorkingHoursConfirmed(false);
+    setInsideWorkingHoursConfirmed(false);
     setPendingEvidenceFileName(null);
     setEvidenceFiles([]);
     setEvidencePreview(null);
@@ -271,7 +273,7 @@ export default function ComponentViewPage() {
   }, [timerStorageKey]);
 
   useEffect(() => {
-    if (!componentAccess.outsideWorkingHours) setOutsideWorkingHoursConfirmed(false);
+    if (!componentAccess.outsideWorkingHours) setInsideWorkingHoursConfirmed(false);
   }, [componentAccess.outsideWorkingHours]);
 
   useEffect(() => {
@@ -555,7 +557,7 @@ export default function ComponentViewPage() {
       setPhase('confirm');
       return;
     }
-    setPhase('reflect');
+    setPhase('reflection-choice');
   };
 
   const confirmCompletion = () => {
@@ -569,15 +571,22 @@ export default function ComponentViewPage() {
 
   const finalizeSubmit = async (
     reflection: { ksbs: string[]; feedback: string; reportedTime: string },
-    options: { rethrow?: boolean } = {},
+    options: { rethrow?: boolean; skipReflection?: boolean } = {},
   ) => {
-    if (!component || !componentId || !kind || !id || submitting || !canUseComponent) return;
-    if (componentAccess.outsideWorkingHours && !outsideWorkingHoursConfirmed) {
-      const message = 'Confirm that you completed this activity outside UK working hours before submitting.';
+    if (!component || !componentId || !kind || !id || completionInFlightRef.current || !canUseComponent) return;
+    if (componentAccess.holidayCalendarReady === false) {
+      const message = componentAccess.holidayError || 'Please wait for the holiday calendar before submitting.';
       setSubmitError(message);
       if (options.rethrow) throw new Error(message);
       return;
     }
+    if (componentAccess.outsideWorkingHours && !insideWorkingHoursConfirmed) {
+      const message = 'Confirm that you completed this activity inside UK working hours before submitting.';
+      setSubmitError(message);
+      if (options.rethrow) throw new Error(message);
+      return;
+    }
+    completionInFlightRef.current = true;
     setSubmitting(true);
     setSubmitError(null);
     setRefreshError(null);
@@ -589,9 +598,10 @@ export default function ComponentViewPage() {
           week: weekTitle || null, module: moduleTitle || null,
           startedAt: tracking.startedAt, timeTakenSeconds: submittedTimeSeconds, trackingToken: tracking.trackingToken,
           timeEntrySource: timeSource,
-          outsideWorkingHoursConfirmed,
+          insideWorkingHoursConfirmed,
           videoTitle: meta?.detail || meta?.label || 'Video',
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
+          skipReflection: options.skipReflection === true,
         });
         setRecord({ activityKey: timerStorageKey, componentId, timeTaken: res.record.timeTaken });
       } else {
@@ -599,9 +609,10 @@ export default function ComponentViewPage() {
           week: weekTitle || null, module: moduleTitle || null,
           startedAt: tracking.startedAt, timeTakenSeconds: submittedTimeSeconds, trackingToken: tracking.trackingToken,
           timeEntrySource: timeSource,
-          outsideWorkingHoursConfirmed,
+          insideWorkingHoursConfirmed,
           componentTitle: pageTitle, componentType: component.type || undefined,
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
+          skipReflection: options.skipReflection === true,
         });
         setRecord({ activityKey: timerStorageKey, componentId, timeTaken: res.record.timeTaken });
       }
@@ -622,22 +633,44 @@ export default function ComponentViewPage() {
       setSubmitError(e instanceof Error ? e.message : 'Could not save progress');
       if (options.rethrow) throw e;
     } finally {
+      completionInFlightRef.current = false;
       setSubmitting(false);
     }
   };
 
   const outsideWorkingHoursDeclaration = componentAccess.outsideWorkingHours ? (
-    <label className="flex min-w-0 cursor-pointer items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-semibold leading-5 text-amber-950">
+    <label className="flex min-w-0 cursor-pointer items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-semibold leading-5 text-amber-950">
       <input
         type="checkbox"
-        checked={outsideWorkingHoursConfirmed}
-        onChange={event => setOutsideWorkingHoursConfirmed(event.target.checked)}
-        className="mt-0.5 h-4 w-4 shrink-0 accent-amber-700"
+        checked={insideWorkingHoursConfirmed}
+        onChange={event => setInsideWorkingHoursConfirmed(event.target.checked)}
+        className="m-0 h-4 !min-h-0 w-4 shrink-0 accent-amber-700"
       />
-      <span>I confirm that I completed this activity outside UK working hours.</span>
+      <span>I confirm that I completed this activity inside UK working hours.</span>
     </label>
   ) : null;
-  const showDeclarationInBanner = isAssignment || phase === 'reflect';
+  const showDeclarationInBanner = !isAssignment && phase === 'reflect';
+  const workingHoursNotice = component && canProgress && recordingAttempt && componentAccess.outsideWorkingHours && (
+    <div role="note" className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-4 text-amber-950 shadow-sm sm:px-5">
+      <div className="flex items-start gap-3">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-700">
+          <AppIcon className="ri-time-line text-lg" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-bold">You are accessing this component outside UK working hours</p>
+          <p className="mt-1 text-xs leading-5 text-amber-900/80">
+            Working hours are Monday to Friday, 07:00-19:00 UK time, excluding official bank holidays and college holidays. The current UK time is {componentAccess.currentTimeLabel}.
+            Your activity time will continue to be calculated automatically. {isAssignment
+              ? 'Confirm the declaration at the bottom of the assignment before submitting.'
+              : showDeclarationInBanner
+              ? 'Confirm the declaration below before completing this component.'
+              : 'Confirm the declaration next to Finish before completing this component.'}
+          </p>
+          {showDeclarationInBanner && <div className="mt-3">{outsideWorkingHoursDeclaration}</div>}
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <WorkspaceShell
@@ -658,25 +691,13 @@ export default function ComponentViewPage() {
           Back to training plan
         </button>
 
-        {component && canProgress && recordingAttempt && componentAccess.outsideWorkingHours && (
-          <div role="note" className="mb-5 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-4 text-amber-950 shadow-sm sm:px-5">
-            <div className="flex items-start gap-3">
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-700">
-                <AppIcon className="ri-time-line text-lg" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-bold">You are accessing this component outside UK working hours</p>
-                <p className="mt-1 text-xs leading-5 text-amber-900/80">
-                  Working hours are Monday to Friday, 07:00-19:00 UK time. The current UK time is {componentAccess.currentTimeLabel}.
-                  Your activity time will continue to be calculated automatically. {showDeclarationInBanner
-                    ? 'Confirm the declaration below before completing this component.'
-                    : 'Confirm the declaration next to Finish before completing this component.'}
-                </p>
-                {showDeclarationInBanner && <div className="mt-3">{outsideWorkingHoursDeclaration}</div>}
-              </div>
-            </div>
+        {component && canProgress && recordingAttempt && componentAccess.holidayCalendarReady === false && (
+          <div role={componentAccess.holidayError ? 'alert' : 'status'} className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">
+            {componentAccess.holidayError || 'Checking the holiday calendar…'}
+            {componentAccess.holidayError && <button type="button" onClick={componentAccess.refreshHolidays} className="ml-2 underline">Retry</button>}
           </div>
         )}
+        {workingHoursNotice && phase !== 'reflect' && <div className="mb-5">{workingHoursNotice}</div>}
 
         {loading ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} avatar={false} /></div>
@@ -700,14 +721,13 @@ export default function ComponentViewPage() {
         ) : isVideo && !parsed ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="This video has no playable URL yet." /></div>
         ) : phase === 'reflect' ? (
-          <div className="w-full max-w-5xl mx-auto">
+          <div className="space-y-4">
+            {workingHoursNotice}
             <ReflectionWindow
               noun={noun}
               plannedTimeLabel={plannedTimeLabel}
               plannedHours={plannedHours ?? undefined}
               learnerKsbs={learnerKsbs}
-              // Components carry their own authored KSB mappings, so the learner
-              // is shown what will be credited instead of picking by hand.
               autoKsbs={component.ksbMappings ?? []}
               elapsedSeconds={elapsedSeconds}
               submitting={submitting}
@@ -722,7 +742,7 @@ export default function ComponentViewPage() {
               learnerId={id}
               evidenceSectionRef={componentId}
               reflectionQuestion={component.reflectionQuestion}
-              onClose={() => navigate(backHref)}
+              onClose={() => setPhase('consume')}
             />
           </div>
         ) : (
@@ -857,23 +877,23 @@ export default function ComponentViewPage() {
                     )}
                     <button
                       onClick={finishConsuming}
-                      disabled={(!!criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !outsideWorkingHoursConfirmed)}
+                      disabled={(!!criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !insideWorkingHoursConfirmed)}
                       title={
                         criteria && !criteria.met
                           ? 'Complete the criteria below before finishing.'
                           : manualTimeMissing
                             ? 'Enter the time spent before finishing.'
-                            : componentAccess.outsideWorkingHours && !outsideWorkingHoursConfirmed
+                            : componentAccess.outsideWorkingHours && !insideWorkingHoursConfirmed
                               ? 'Confirm the out-of-hours declaration before finishing.'
                             : undefined
                       }
                       className={`inline-flex shrink-0 items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-xl transition-colors ${
-                        (criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !outsideWorkingHoursConfirmed)
+                        (criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !insideWorkingHoursConfirmed)
                           ? 'bg-background-200 text-foreground-400 cursor-not-allowed'
                           : 'bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer'
                       }`}
                     >
-                      <AppIcon className={(criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !outsideWorkingHoursConfirmed) ? 'ri-lock-line' : 'ri-check-line'} />
+                      <AppIcon className={(criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !insideWorkingHoursConfirmed) ? 'ri-lock-line' : 'ri-check-line'} />
                       Finish
                     </button>
                   </div>
@@ -972,8 +992,9 @@ export default function ComponentViewPage() {
                       <p className="text-xs text-slate-500">The timer runs normally. Only enter a time above if you need to correct it.</p>
                       </div>
                     )}
+                    workingHoursDeclaration={workingHoursNotice ? outsideWorkingHoursDeclaration : null}
                     outsideWorkingHours={componentAccess.outsideWorkingHours}
-                    outsideWorkingHoursConfirmed={outsideWorkingHoursConfirmed}
+                    insideWorkingHoursConfirmed={insideWorkingHoursConfirmed}
                     submittingProgress={submitting}
                     onEvidenceChanged={activityEvidenceContext.onUploaded}
                     onRestoreTime={(seconds, source) => {
@@ -1039,6 +1060,11 @@ export default function ComponentViewPage() {
             noun={noun}
             timerLabel={formatClock(elapsedSeconds)}
             inputLabel={manualTimeSeconds == null ? null : formatClock(manualTimeSeconds)}
+            inputSeconds={manualTimeSeconds}
+            onInputChange={(seconds) => {
+              setManualTimeSeconds(seconds);
+              setTimeSource('input');
+            }}
             selectedSource={timeSource}
             manualTimeOnly={usesManualTimeOnly}
             evidenceFileName={evidenceFileLabel}
@@ -1047,6 +1073,20 @@ export default function ComponentViewPage() {
             onSelectSource={setTimeSource}
             onCancel={() => setPhase('consume')}
             onConfirm={confirmCompletion}
+          />
+        )}
+        {phase === 'reflection-choice' && (
+          <ReflectionChoicePopup
+            noun={noun}
+            submitting={submitting}
+            error={submitError}
+            onCancel={() => setPhase('consume')}
+            onAddReflection={() => setPhase('reflect')}
+            onFinishWithoutReflection={() => void finalizeSubmit({
+              ksbs: (component?.ksbMappings || []).map(mapping => mapping.code),
+              feedback: '',
+              reportedTime: plannedTimeLabel,
+            }, { skipReflection: true })}
           />
         )}
         {evidencePreview && (
@@ -1062,6 +1102,8 @@ function CompletionConfirmPopup({
   noun,
   timerLabel,
   inputLabel,
+  inputSeconds,
+  onInputChange,
   selectedSource,
   manualTimeOnly,
   evidenceFileName,
@@ -1073,6 +1115,7 @@ function CompletionConfirmPopup({
 }: {
   title: string; noun: string; timerLabel: string; inputLabel: string | null; selectedSource: TimeSource; manualTimeOnly: boolean; evidenceFileName?: string | null;
   submitting: boolean; error: string | null;
+  inputSeconds: number | null; onInputChange: (seconds: number | null) => void;
   onSelectSource: (source: TimeSource) => void; onCancel: () => void; onConfirm: () => void;
 }) {
   const selectedTimeLabel = selectedSource === 'input'
@@ -1124,10 +1167,10 @@ function CompletionConfirmPopup({
           )}
           <button
             type="button"
-            onClick={() => inputLabel && onSelectSource('input')}
-            disabled={!inputLabel || submitting}
+            onClick={() => onSelectSource('input')}
+            disabled={submitting}
             className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left transition-colors ${
-              selectedSource === 'input' && inputLabel
+              selectedSource === 'input'
                 ? 'border-primary-300 bg-primary-50 text-primary-800'
                 : 'border-background-300 bg-white text-foreground-700 hover:bg-background-50'
             } disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-white`}
@@ -1138,6 +1181,11 @@ function CompletionConfirmPopup({
             </span>
             <span className="font-mono text-sm font-bold tabular-nums">{inputLabel || '--:--:--'}</span>
           </button>
+          {selectedSource === 'input' && (
+            <fieldset disabled={submitting}>
+              <ActivityTimeSpentInput initialSeconds={inputSeconds} onChange={onInputChange} />
+            </fieldset>
+          )}
         </div>
 
         {error && (
@@ -1158,7 +1206,7 @@ function CompletionConfirmPopup({
           <button
             type="button"
             onClick={onConfirm}
-            disabled={submitting || (manualTimeOnly && !inputLabel)}
+            disabled={submitting || ((manualTimeOnly || selectedSource === 'input') && (inputSeconds == null || inputSeconds <= 0))}
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition-colors hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-60"
           >
             <AppIcon className={submitting ? 'ri-loader-4-line animate-spin' : 'ri-check-line'} />

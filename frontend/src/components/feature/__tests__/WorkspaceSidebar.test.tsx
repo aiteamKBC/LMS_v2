@@ -62,7 +62,7 @@ it('groups learner progress pages in the same menu while keeping direct destinat
   const progressToggle = within(rail).getByRole('button', { name: 'My Progress' });
   const progressWasOpen = progressToggle.getAttribute('aria-expanded') === 'true';
   if (!progressWasOpen) {
-    for (const name of ['Monthly Submission', 'Monthly Logs', 'Monthly Coaching Meeting', 'Reviews']) {
+    for (const name of ['Monthly Submission', 'Monthly Logs', 'Monthly Coaching Meeting', 'Progress Review', 'Reviews']) {
       expect(within(rail).queryByRole('link', { name })).not.toBeInTheDocument();
     }
   }
@@ -76,7 +76,7 @@ it('groups learner progress pages in the same menu while keeping direct destinat
   expect(within(sidebar).getAllByRole('link', { name: 'Dashboard' })).toHaveLength(1);
   expect(within(rail).getByRole('button', { name: 'My Progress' })).toHaveAttribute('aria-expanded', 'true');
   const destinations = within(rail).getAllByRole('link').map(link => link.getAttribute('href'));
-  for (const name of ['Monthly Submission', 'Monthly Logs', 'Monthly Coaching Meeting', 'Reviews', 'Dashboard']) {
+  for (const name of ['Monthly Submission', 'Monthly Logs', 'Monthly Coaching Meeting', 'Progress Review', 'Reviews', 'Dashboard']) {
     const link = within(rail).getByRole('link', { name });
     await act(async () => { fireEvent.click(link); });
     expect(screen.getByTestId('route')).toHaveTextContent(link.getAttribute('href')!);
@@ -142,9 +142,11 @@ it('keeps an administrator in the selected coach workspace', () => {
   viewer.isAdmin = true;
   const { sidebar, rail } = showWorkspace('coach', '/workspace/coach');
   expect(sidebar.closest('.workspace-shell')).toHaveAttribute('data-workspace-role', 'coach');
-  expect(within(rail).getAllByRole('link').slice(0, 3).map(link => link.textContent)).toEqual(['Dashboard', 'Attendance', 'Marking']);
+  expect(within(rail).getAllByRole('link').slice(0, 4).map(link => link.textContent)).toEqual(['Dashboard', 'Notifications', 'Attendance', 'Marking']);
+  expect(within(rail).getByRole('link', { name: 'Notifications' })).toHaveAttribute('href', '/notifications');
   expect(within(rail).getByRole('button', { name: 'Meetings' })).toBeVisible();
   expect(within(rail).getByRole('link', { name: 'Marking' })).toHaveAttribute('href', '/coach/marking-queue');
+  expect(within(rail).getByRole('link', { name: 'Absence Reports' })).toHaveAttribute('href', '/coach/absence-reports');
   expect(within(rail).getByRole('link', { name: 'Marking' }).querySelector('svg')).not.toBeNull();
   expect(within(sidebar).queryByRole('button', { name: 'Open account settings' })).toBeNull();
 });

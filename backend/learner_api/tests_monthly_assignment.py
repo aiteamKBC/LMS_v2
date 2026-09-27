@@ -152,6 +152,11 @@ class MonthlyAssignmentTests(SimpleTestCase):
         self.assertFalse(self.checks(payload)["hours"])
         payload["outsideWorkingHoursConfirmed"] = True
         self.assertTrue(self.checks(payload)["hours"])
+        # New activity submissions declare inside-hours work; the old key is
+        # retained for historical/extra-activity payloads with its old meaning.
+        del payload["outsideWorkingHoursConfirmed"]
+        payload["insideWorkingHoursConfirmed"] = True
+        self.assertTrue(self.checks(payload)["hours"])
 
     def test_hours_reject_zero_negative_nonfinite_or_invalid(self):
         for value in ["0", "-1", "NaN", "Infinity", "bad"]:

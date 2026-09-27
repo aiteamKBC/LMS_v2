@@ -4,7 +4,8 @@ import { MetricCard } from '@/components/ui/MetricCard';
 import { Panel } from '@/components/ui/Panel';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { toneStyle, type StatusTone } from '@/lib/statusTone';
-import { formatDisplayDate, formatPercent, type CaseFileTabProps } from '../data';
+import { formatDisplayDate, formatPercent } from '../data';
+import type { CaseFileTabProps } from '../types';
 
 type KsbCoverageStatus = 'passed-link' | 'attempt-link' | 'unlinked';
 

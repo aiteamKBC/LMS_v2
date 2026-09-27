@@ -1,12 +1,14 @@
 """URLs for the login app, mounted at /login_api/ (see config/urls.py)."""
 from django.urls import path
 from . import safeguarding_sso
+from . import inclusion_sso
 from . import coach_directory
 
 from . import admin_evidence, access_requests, microsoft_sso, platform_admin, views
 from old_otjh.entry import entry_status
 
 urlpatterns = [
+    path("inclusion/authorize/", inclusion_sso.authorize, name="inclusion-authorize"),
     path('public/coaches/<slug:slug>/', coach_directory.public_coach, name='public-coach-booking'),
     path('admin/coach-directory/', coach_directory.directory, name='admin-coach-directory'),
     path('admin/coach-directory/<int:pk>/', coach_directory.directory, name='admin-coach-directory-item'),

@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from unittest.mock import patch
 
 from django.test import SimpleTestCase
 from django.utils.dateparse import parse_datetime
@@ -15,6 +16,9 @@ from .time_tracking import (
 
 class TimeTrackingSessionTests(SimpleTestCase):
     def setUp(self):
+        holiday_patch = patch('learner_api.time_tracking.is_working_hours_holiday', return_value=False)
+        self.holidays = holiday_patch.start()
+        self.addCleanup(holiday_patch.stop)
         self.session = issue_tracking_session(
             activity_kind="video",
             activity_id="COMP-1",
@@ -102,6 +106,11 @@ class TimeTrackingSessionTests(SimpleTestCase):
         self.assertTrue(outside_uk_working_hours(datetime(2026, 7, 15, 5, 59, tzinfo=ZoneInfo("UTC"))))
         self.assertFalse(outside_uk_working_hours(datetime(2026, 7, 15, 6, 0, tzinfo=ZoneInfo("UTC"))))
         self.assertTrue(outside_uk_working_hours(datetime(2026, 7, 18, 12, 0, tzinfo=ZoneInfo("UTC"))))
+
+    def test_weekday_holiday_requires_declaration_during_working_hours(self):
+        self.holidays.return_value = True
+        self.assertTrue(outside_uk_working_hours(datetime(2026, 12, 25, 12, tzinfo=ZoneInfo('UTC'))))
+        self.holidays.assert_called_with(datetime(2026, 12, 25).date())
 
     def test_tracking_can_start_and_submit_outside_the_old_window(self):
         started_at = datetime(2026, 1, 18, 22, 0, tzinfo=ZoneInfo("UTC"))

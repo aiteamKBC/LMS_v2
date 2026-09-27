@@ -190,6 +190,62 @@ class EndpointTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("url", json.loads(response.content))
 
+    def _preview_run(self, mock_runs, mock_storage):
+        mock_runs.get_run.return_value = {"id": "run-1", "generation_status": "completed"}
+        mock_runs.get_pptx_file_for_run.return_value = {
+            "container": "progress-review-decks", "blob_name": "a/b/c.pptx", "original_filename": "deck.pptx",
+        }
+        mock_storage.storage_configured.return_value = True
+
+    @patch("progress_reviews_api.views.pdf_preview.convert_pptx_to_pdf", return_value=b"%PDF-new")
+    @patch("progress_reviews_api.views.storage")
+    @patch("progress_reviews_api.views.runs")
+    def test_preview_converts_once_and_caches_the_pdf(self, mock_runs, mock_storage, mock_convert):
+        self._preview_run(mock_runs, mock_storage)
+        mock_storage.blob_exists.return_value = False
+        mock_storage.download_bytes.return_value = b"PPTX"
+
+        response = self.client.get("/progress_reviews_api/run-1/preview/")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "application/pdf")
+        self.assertEqual(response.content, b"%PDF-new")
+        mock_convert.assert_called_once_with(b"PPTX")
+        self.assertEqual(mock_storage.upload_pdf.call_args[0][1], "a/b/c.pptx.pdf")
+
+    @patch("progress_reviews_api.views.pdf_preview.convert_pptx_to_pdf")
+    @patch("progress_reviews_api.views.storage")
+    @patch("progress_reviews_api.views.runs")
+    def test_preview_serves_the_cached_pdf_without_converting(self, mock_runs, mock_storage, mock_convert):
+        self._preview_run(mock_runs, mock_storage)
+        mock_storage.blob_exists.return_value = True
+        mock_storage.download_bytes.return_value = b"%PDF-cached"
+
+        response = self.client.get("/progress_reviews_api/run-1/preview/")
+
+        self.assertEqual(response.content, b"%PDF-cached")
+        mock_convert.assert_not_called()
+
+    @patch("progress_reviews_api.views.pdf_preview.convert_pptx_to_pdf")
+    @patch("progress_reviews_api.views.storage")
+    @patch("progress_reviews_api.views.runs")
+    def test_preview_reports_a_missing_converter(self, mock_runs, mock_storage, mock_convert):
+        from .pdf_preview import PreviewUnavailable
+
+        self._preview_run(mock_runs, mock_storage)
+        mock_storage.blob_exists.return_value = False
+        mock_convert.side_effect = PreviewUnavailable("PDF preview needs LibreOffice installed on the server.")
+
+        response = self.client.get("/progress_reviews_api/run-1/preview/")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("LibreOffice", json.loads(response.content)["error"])
+
+    @patch("progress_reviews_api.views.runs")
+    def test_preview_404s_for_an_unknown_run(self, mock_runs):
+        mock_runs.get_run.return_value = None
+        self.assertEqual(self.client.get("/progress_reviews_api/nope/preview/").status_code, 404)
+
     @patch("progress_reviews_api.views.runs")
     def test_download_endpoint_404s_for_an_unknown_run(self, mock_runs):
         mock_runs.get_run.return_value = None

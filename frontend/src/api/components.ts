@@ -16,6 +16,8 @@ export interface ComponentProgressSubmission {
   startedAt: string;
   timeTakenSeconds: number;
   timeEntrySource?: 'timer' | 'input';
+  insideWorkingHoursConfirmed?: boolean;
+  insideWorkingHoursConfirmedAt?: string | null;
   outsideWorkingHoursConfirmed?: boolean;
   trackingToken: string;
   componentTitle?: string | null;
@@ -23,6 +25,7 @@ export interface ComponentProgressSubmission {
   ksbs?: string[];
   feedback?: string;
   reportedTime?: string;
+  skipReflection?: boolean;
 }
 
 export interface ComponentProgressRecord {
@@ -33,6 +36,7 @@ export interface ComponentProgressRecord {
   ksbs: string[];
   feedback: string;
   reportedTime: string;
+  reflectionSkipped?: boolean;
   startedAt: string | null;
   submittedAt: string;
   timeTaken: string | null;
@@ -41,6 +45,8 @@ export interface ComponentProgressRecord {
   serverSessionSeconds: number;
   verifiedSeconds: number;
   outsideWorkingHours?: boolean;
+  insideWorkingHoursConfirmed?: boolean;
+  insideWorkingHoursConfirmedAt?: string | null;
   outsideWorkingHoursConfirmed?: boolean;
   outsideWorkingHoursConfirmedAt?: string | null;
 }

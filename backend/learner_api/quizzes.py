@@ -399,6 +399,7 @@ def submit_quiz_attempt(request, quiz_id):
     ksbs = payload.get("ksbs") if isinstance(payload.get("ksbs"), list) else []
     feedback = payload.get("feedback") or ""
     reported_time = payload.get("reportedTime") or ""
+    reflection_skipped = payload.get("skipReflection") is True
 
     try:
         quiz = _fetch_quiz(quiz_id)
@@ -507,6 +508,7 @@ def submit_quiz_attempt(request, quiz_id):
         "ksbs": ksbs,                          # KSB codes the learner selected
         "feedback": feedback,
         "reportedTime": reported_time,
+        "reflectionSkipped": reflection_skipped,
         "questions": stored_questions,         # id-referenced (see above)
         "startedAt": started_at,
         "submittedAt": submitted_at,

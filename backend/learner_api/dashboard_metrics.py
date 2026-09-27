@@ -19,6 +19,7 @@ from .learning_plan import _effective_plan_ids
 from .training_plan_contract import selected_contract
 from .training_plan_dashboard import find_contract, number, rows
 from .otjh_totals import completed_otjh, completed_actual_otjh
+from old_otjh.service import ServiceError
 
 log = logging.getLogger(__name__)
 _MISSING = object()
@@ -83,6 +84,7 @@ def read_accepted_ksb_rows(cursor, source, kind):
     """Read accepted monthly activities using explicit learner/activity identity."""
     cursor.execute('''SELECT r.id, r.group_id, r.activity_id, r.source_ref,
             coalesce(p.component_ref, s.component_ref) AS component_ref,
+            coalesce(nullif(r.title, ''), nullif(a.title, '')) AS activity_title,
             coalesce(j.ksbs, CASE WHEN lk.source_preference='learner' THEN lk.ksbs ELSE ak.ksbs END,
                      a.raw #> '{live_lms_component,ksbs}') AS ksb_mappings
         FROM structured_manual_activities.manual_learner_activities r
@@ -231,6 +233,9 @@ def metrics_from_loaded(source, kind, *, migrated, native, progress,
     activity and export-link reads outside this function lets the Dashboard
     load them once without changing the metric definitions used elsewhere.
     """
+    if kind == 'commercial' and str(source.pk) in {'271', '234'}:
+        from . import canonical_learning
+        return canonical_learning.metrics(source.pk)
     with connections['enrolment'].cursor() as cursor:
         planned_document = (preloaded or {}).get('planned_hours_document', _MISSING)
         planned_contract = (preloaded or {}).get('planned_hours_contract', _MISSING)
@@ -327,6 +332,9 @@ def metrics_from_loaded(source, kind, *, migrated, native, progress,
 
 
 def read_metrics(source, kind, preloaded=None):
+    if kind == 'commercial' and str(source.pk) in {'271', '234'}:
+        from . import canonical_learning
+        return canonical_learning.metrics(source.pk)
     migrated = student_activity_available(source.aptem_id)
     direct_progress = (preloaded or {}).get('direct_progress') if preloaded is not None else None
     if direct_progress is None:
@@ -474,9 +482,11 @@ def learner_metrics(request, kind, pk):
         payload = read_metrics(source, kind)
     except model.DoesNotExist:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
+    except ServiceError as error:
+        return JsonResponse({'error': str(error)}, status=error.status)
     except ValueError as error:
         return JsonResponse({'error': str(error)}, status=409)
-    except DatabaseError as error:
+    except (DatabaseError, psycopg.Error) as error:
         log.warning(
             '[learner_metrics] learner=%s stage=read_metrics failed exception=%s message=%s',
             pk, type(error).__name__, str(error), exc_info=True,
@@ -640,6 +650,7 @@ def load_accepted_ksb_rows_bulk(keys):
         cursor.execute(f'''WITH requested(enrolment_id,aptem_id,learner_kind) AS (VALUES {placeholders})
             SELECT requested.enrolment_id,r.id,r.group_id,r.activity_id,r.source_ref,
                 coalesce(p.component_ref,s.component_ref) AS component_ref,
+                coalesce(nullif(r.title, ''),nullif(a.title, '')) AS activity_title,
                 coalesce(j.ksbs,CASE WHEN lk.source_preference='learner' THEN lk.ksbs ELSE ak.ksbs END,
                          a.raw #> '{{live_lms_component,ksbs}}') AS ksb_mappings
             FROM requested

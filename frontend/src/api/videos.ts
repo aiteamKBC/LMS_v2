@@ -15,12 +15,15 @@ export interface VideoProgressSubmission {
   startedAt: string;
   timeTakenSeconds: number;
   timeEntrySource?: 'timer' | 'input';
+  insideWorkingHoursConfirmed?: boolean;
+  insideWorkingHoursConfirmedAt?: string | null;
   outsideWorkingHoursConfirmed?: boolean;
   trackingToken: string;
   videoTitle?: string | null;
   ksbs?: string[];
   feedback?: string;
   reportedTime?: string;
+  skipReflection?: boolean;
 }
 
 // Slim stored record (references the video by componentId; no name fields).
@@ -31,6 +34,7 @@ export interface VideoProgressRecord {
   ksbs: string[];
   feedback: string;
   reportedTime: string;
+  reflectionSkipped?: boolean;
   startedAt: string | null;
   submittedAt: string;
   timeTaken: string | null;
@@ -39,6 +43,8 @@ export interface VideoProgressRecord {
   serverSessionSeconds: number;
   verifiedSeconds: number;
   outsideWorkingHours?: boolean;
+  insideWorkingHoursConfirmed?: boolean;
+  insideWorkingHoursConfirmedAt?: string | null;
   outsideWorkingHoursConfirmed?: boolean;
   outsideWorkingHoursConfirmedAt?: string | null;
 }

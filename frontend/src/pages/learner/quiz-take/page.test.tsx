@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import QuizTakePage from './page';
 
@@ -20,11 +20,12 @@ vi.mock('@/hooks/useLearnerWorkspaceAccess', () => ({ useLearnerWorkspaceAccess:
 vi.mock('@/hooks/useComponentAccessWindow', () => ({ useComponentAccessWindow: () => ({ open: true }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock('@/components/feature/ReflectionWindow', () => ({
-  ReflectionWindow: () => <div>Reflection form</div>,
+  ReflectionWindow: ({ onSubmit, onClose }: { onSubmit: (value: { ksbs: string[]; feedback: string; reportedTime: string }) => void; onClose?: () => void }) => <div>My Learning Evidence and Reflection<button onClick={onClose}>Close reflection</button><button onClick={() => onSubmit({ ksbs: ['K1'], feedback: 'Reflection', reportedTime: '1' })}>Submit reflection</button></div>,
   formatClock: (seconds: number) => `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`,
 }));
 const detail = { modules: [], week: [], ksbs: [], componentProgress: [], videoProgress: [], quizAttempts: [], components: [{ quizMeta: { quizId: 1 }, reflectionRequired: false }] };
-const renderPage = () => render(<MemoryRouter initialEntries={['/quiz/commercial/501/1']}><Routes><Route path="/quiz/:kind/:id/:quizId" element={<QuizTakePage />} /></Routes></MemoryRouter>);
+function Location() { return <span data-testid="location">{useLocation().pathname}</span>; }
+const renderPage = () => render(<MemoryRouter initialEntries={['/quiz/commercial/501/1']}><Location /><Routes><Route path="/quiz/:kind/:id/:quizId" element={<QuizTakePage />} /></Routes></MemoryRouter>);
 
 describe('quiz requirements loading', () => {
   beforeEach(() => {
@@ -79,6 +80,73 @@ describe('quiz requirements loading', () => {
     expect(screen.queryByRole('button', { name: 'Start Quiz' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry quiz' }));
     expect(await screen.findByRole('button', { name: 'Start Quiz' })).toBeEnabled();
+  });
+
+  it('offers the existing reflection page or a no-reflection quiz submission', async () => {
+    mocks.detail.mockResolvedValue({
+      ...detail,
+      modules: ['Campaigns'],
+      week: [{ module: 'Campaigns', week: 'Week 1' }],
+      components: [
+        { module: 'Campaigns', week: 'Week 1', component: 'Campaign quiz', componentId: 'QUIZ-COMP', type: 'quiz', isQuiz: true, quizMeta: { quizId: 1, questions: 1 }, reflectionRequired: true },
+      ],
+    });
+    mocks.submit.mockResolvedValue({
+      attempt: {
+        kind: 'quiz', quizId: 1, attempt: 1, grade: 1, achievedScore: 1, totalScore: 1,
+        passed: true, questions: [], startedAt: '2026-09-26T12:00:00Z',
+        submittedAt: '2026-09-26T12:01:00Z', timeTaken: '01:00',
+        timeTrackingSource: 'signed', claimedSeconds: 60, serverSessionSeconds: 60, verifiedSeconds: 60,
+      },
+      breakdown: [], earned: 1, possible: 1, grade: 1, achievedScore: 1, totalScore: 1, passed: true,
+    });
+    const firstView = renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    const choiceDialog = await screen.findByRole('dialog', { name: 'Do you want to complete a reflection?' });
+    expect(choiceDialog).toBeVisible();
+    expect(choiceDialog.parentElement).toHaveClass('fixed', 'inset-0', 'z-[100]');
+    expect(choiceDialog.previousElementSibling).toHaveClass('absolute', 'inset-0', 'bg-black/40', 'backdrop-blur-[3px]');
+    expect(screen.getByRole('button', { name: /Measured outcome/ })).toBeVisible();
+    expect(mocks.submit).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Yes, add reflection' }));
+    expect(screen.getByText('My Learning Evidence and Reflection')).toBeVisible();
+    expect(screen.queryByText('Before we finish…')).not.toBeInTheDocument();
+    expect(screen.getByTestId('location')).toHaveTextContent('/quiz/commercial/501/1');
+    fireEvent.click(screen.getByRole('button', { name: 'Close reflection' }));
+    expect(screen.queryByText('My Learning Evidence and Reflection')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Measured outcome/ })).toBeVisible();
+    expect(mocks.submit).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Yes, add reflection' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit reflection' }));
+    expect(mocks.submit).toHaveBeenCalledOnce();
+
+    firstView.unmount();
+    mocks.submit.mockClear();
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'No, finish without reflection' }));
+    expect(mocks.submit).toHaveBeenCalledWith(1, 'commercial', '501', expect.objectContaining({
+      feedback: '', ksbs: [], reportedTime: '', skipReflection: true,
+    }));
+    expect(await screen.findByText(/Quiz Passed/)).toBeVisible();
+  });
+
+  it('keeps reflection optional for tutor-validated quizzes', async () => {
+    mocks.detail.mockResolvedValue({
+      ...detail,
+      components: [{ quizMeta: { quizId: 1 }, reflectionRequired: true, tutorValidationRequired: true }],
+    });
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    expect(await screen.findByRole('dialog', { name: 'Do you want to complete a reflection?' })).toBeVisible();
+    expect(screen.queryByText('Reflection form')).not.toBeInTheDocument();
   });
 
   it('restores the latest saved result and keeps a separate retake action after refresh', async () => {

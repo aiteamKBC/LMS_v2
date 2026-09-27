@@ -4761,9 +4761,10 @@ table tbody td:last-child {
 }
 
 .kbc-workspace-switcher-button {
-  border-color: rgb(255 255 255 / 0.38) !important;
-  background: rgb(255 255 255 / 0.16) !important;
+  border-color: #5125a8 !important;
+  background: #6334bd !important;
   color: white !important;
+  box-shadow: 0 4px 12px rgb(64 35 116 / 0.2) !important;
 }
 
 /* Keep the switcher and account menu grouped at the right edge when the
@@ -4774,8 +4775,8 @@ table tbody td:last-child {
 
 .kbc-workspace-switcher-button:hover,
 .kbc-workspace-switcher-button[aria-expanded="true"] {
-  border-color: rgb(255 255 255 / 0.64) !important;
-  background: rgb(255 255 255 / 0.24) !important;
+  border-color: #3f1c88 !important;
+  background: #5125a8 !important;
 }
 
 .kbc-workspace-switcher-button :is(.text-foreground-400, .text-foreground-700) {
@@ -5157,9 +5158,10 @@ table tbody td:last-child {
 
 /* Keep the workspace switch control consistent in every department header. */
 .dashboard-theme .kbc-workspace-switcher-button {
-  border-color: rgb(255 255 255 / 0.38) !important;
-  background: rgb(255 255 255 / 0.16) !important;
+  border-color: #5125a8 !important;
+  background: #6334bd !important;
   color: #fff !important;
+  box-shadow: 0 4px 12px rgb(64 35 116 / 0.2) !important;
 }
 
 .dashboard-theme .kbc-workspace-switcher-button :is(.text-foreground-400, .text-foreground-700) {
@@ -5173,8 +5175,8 @@ table tbody td:last-child {
 
 .dashboard-theme .kbc-workspace-switcher-button:hover,
 .dashboard-theme .kbc-workspace-switcher-button[aria-expanded="true"] {
-  border-color: rgb(255 255 255 / 0.64) !important;
-  background: rgb(255 255 255 / 0.24) !important;
+  border-color: #3f1c88 !important;
+  background: #5125a8 !important;
 }
 
 .dashboard-theme[data-workspace-role="curriculum"] .kbc-workspace-switcher-button,

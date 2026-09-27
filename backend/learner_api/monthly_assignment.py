@@ -229,7 +229,7 @@ def assignment_checks(payload, *, evidence_ids=None, meeting_booked=None, allowe
         ("ksbs", "Every claimed programme KSB has a 20-word explanation; evidence links are optional and must be valid if selected", bool(claims) and len(set(claimed_codes)) == len(claimed_codes) and set(claimed_codes) <= allowed and all(words(c.get("explanation")) >= 20 and set(str(e) for e in items(c.get("evidenceIds"))) <= linked_ids for c in claims)),
         ("planned", "Planned hours and KSBs reviewed", monthly.get("plannedReviewed") is True),
         ("declarations", "New learning, skills and employer evidence-sharing declarations confirmed", all(monthly.get(k) is True for k in ["newKnowledge", "newSkills", "sharingConsent"])),
-        ("hours", "Record each topic with positive hours (maximum 8 per topic) and a working date in the assignment month (no weekends or bank holidays); confirm any out-of-hours work", math.isfinite(hours) and hours > 0 and valid_time_entries(monthly, hours) and (not payload.get("outsideWorkingHours") or payload.get("outsideWorkingHoursConfirmed") is True)),
+        ("hours", "Record each topic with positive hours (maximum 8 per topic) and a working date in the assignment month (no weekends or bank holidays); confirm the applicable working-hours declaration", math.isfinite(hours) and hours > 0 and valid_time_entries(monthly, hours) and (not payload.get("outsideWorkingHours") or payload.get("insideWorkingHoursConfirmed") is True or payload.get("outsideWorkingHoursConfirmed") is True)),
         ("reflection", "Monthly LMS reflection and integrated understanding: at least 20 words each", all(words(monthly.get(k)) >= 20 for k in ["lmsReflection", "integratedReflection"])),
         ("benefit", "Employer benefit confirmed and measurable outcomes described (20 words)", monthly.get("employerBenefit") is True and words(payload.get("businessImpact")) >= 20),
         ("impact", "Career, job and employer impacts: at least 20 words each", all(words(monthly.get(k)) >= 20 for k in ["careerImpact", "jobImpact", "employerImpact"])),
@@ -339,6 +339,8 @@ def complete_saved_assignment(kind, learner_id, component_id, record, save_progr
             payload.update(submissionMode="submit", qualityScore=100, qualityChecks=checks,
                            otjhConfirmed=True, signedDeclaration=True, dateCompleted=timezone.localdate().isoformat(),
                            outsideWorkingHours=record.get("outsideWorkingHours", False),
+                           insideWorkingHoursConfirmed=record.get("insideWorkingHoursConfirmed", False),
+                           insideWorkingHoursConfirmedAt=record.get("insideWorkingHoursConfirmedAt"),
                            outsideWorkingHoursConfirmed=record.get("outsideWorkingHoursConfirmed", False),
                            outsideWorkingHoursConfirmedAt=record.get("outsideWorkingHoursConfirmedAt"))
             cur.execute(

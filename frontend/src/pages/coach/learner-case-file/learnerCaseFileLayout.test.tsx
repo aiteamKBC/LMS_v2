@@ -1,7 +1,7 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { CaseFileReviewMeeting, CoachLearnerCaseFileData } from './data';
+import type { CaseFileReviewMeeting, CoachLearnerCaseFileData } from './types';
 import LearnerCaseFile from './page';
 
 const mocks = vi.hoisted(() => ({
@@ -9,7 +9,14 @@ const mocks = vi.hoisted(() => ({
   coachFetch: vi.fn(),
   fetchKsbProfile: vi.fn(),
   refresh: vi.fn(),
-  useDashboardPlan: vi.fn(() => ({})),
+  useCaseFileDashboardPlan: vi.fn(() => ({})),
+  attendanceRetry: vi.fn(),
+  useCaseFileAttendance: vi.fn(),
+  reviewsRetry: vi.fn(),
+  useCaseFileReviews: vi.fn(),
+  useCaseFileNextSession: vi.fn(),
+  markingRetry: vi.fn(),
+  useCaseFileMarking: vi.fn(),
 }));
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({
@@ -25,9 +32,14 @@ vi.mock('@/hooks/useCoachIdentity', () => ({
 }));
 vi.mock('@/api/curriculum', () => ({ fetchKsbProfile: mocks.fetchKsbProfile }));
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: mocks.coachFetch }));
-vi.mock('@/pages/workspace/learner/useDashboardPlan', () => ({ useDashboardPlan: mocks.useDashboardPlan }));
+vi.mock('./useCaseFileDashboardPlan', () => ({ useCaseFileDashboardPlan: mocks.useCaseFileDashboardPlan }));
+vi.mock('./useCaseFileAttendance', () => ({ useCaseFileAttendance: mocks.useCaseFileAttendance }));
+vi.mock('./useCaseFileReviews', () => ({ useCaseFileReviews: mocks.useCaseFileReviews }));
+vi.mock('./useCaseFileNextSession', () => ({ useCaseFileNextSession: mocks.useCaseFileNextSession }));
+vi.mock('./useCaseFileMarking', () => ({ useCaseFileMarking: mocks.useCaseFileMarking }));
 vi.mock('@/pages/workspace/learner/DashboardTrainingPlan', () => ({
-  DashboardTrainingPlan: ({ activityOverviewOnly, timelineOnly, showRewards, programmeSnapshot }: { activityOverviewOnly?: boolean; timelineOnly?: boolean; showRewards?: boolean;
+  DashboardTrainingPlan: ({ activityOverviewOnly, timelineOnly, showRewards, programmeSnapshot, plan }: { activityOverviewOnly?: boolean; timelineOnly?: boolean; showRewards?: boolean;
+    plan?: { error?: string };
     programmeSnapshot?: { overall: number | null; otjhActual: number | null; otjhTarget: number | null; ksb: number | null;
       attendancePresent: number | null; attendanceTotal: number | null } }) => <div aria-label="Coach learner activity overview">
     <h2>Weekly learning plan</h2><h2>Monthly study plan</h2>
@@ -36,6 +48,7 @@ vi.mock('@/pages/workspace/learner/DashboardTrainingPlan', () => ({
     <span>{programmeSnapshot && `${programmeSnapshot.overall}% · ${programmeSnapshot.otjhActual}/${programmeSnapshot.otjhTarget} · ${programmeSnapshot.ksb}% · ${programmeSnapshot.attendancePresent}/${programmeSnapshot.attendanceTotal}`}</span>
     <span>{activityOverviewOnly ? 'Activity overview only' : 'Full plan'}</span>
     <span>{showRewards === false ? 'Rewards hidden' : 'Rewards visible'}</span>
+    {plan?.error && <span>{plan.error}</span>}
   </div>,
 }));
 vi.mock('@/pages/learner/reviews/ImportedReviewHistory', () => ({
@@ -123,7 +136,6 @@ const caseFileData = {
   reviewGroups: [],
   reviewGenerationIssues: [],
   reviewsLoading: false,
-  markingSubmissions: [],
 } satisfies CoachLearnerCaseFileData;
 
 function LocationProbe() {
@@ -136,7 +148,24 @@ beforeEach(() => {
   mocks.fetchKsbProfile.mockReset().mockResolvedValue({ knowledge: [], skills: [], behaviours: [] });
   mocks.coachFetch.mockReset();
   mocks.refresh.mockReset();
-  mocks.useDashboardPlan.mockClear();
+  mocks.useCaseFileDashboardPlan.mockReset().mockReturnValue({});
+  mocks.attendanceRetry.mockReset();
+  mocks.useCaseFileAttendance.mockReset().mockReturnValue({
+    data: {
+      learnerEmail: 'aya@example.test', learnerId: 125, learnerName: 'Aya Khater', sessions: 10, present: 7,
+      absent: 3, late: 0, catchup: 0, risk: 'amber', lastSessionDate: '2026-09-20', consecutiveMissed: 0,
+      updatedAt: null, attendanceRate: 70, sessionHistory: [],
+    },
+    loading: false, error: null, retry: mocks.attendanceRetry, invalidate: mocks.attendanceRetry,
+  });
+  mocks.reviewsRetry.mockReset();
+  mocks.useCaseFileReviews.mockReset().mockImplementation(() => ({
+    data: { groups: mocks.data?.reviewGroups || [], issues: mocks.data?.reviewGenerationIssues || [] },
+    loading: Boolean(mocks.data?.reviewsLoading), error: null, retry: mocks.reviewsRetry, invalidate: mocks.reviewsRetry,
+  }));
+  mocks.useCaseFileNextSession.mockReset().mockReturnValue({ data: null, loading: false, error: null, retry: vi.fn(), invalidate: vi.fn() });
+  mocks.markingRetry.mockReset();
+  mocks.useCaseFileMarking.mockReset().mockReturnValue({ data: { items: [], serializedItemCount: 0 }, loading: false, error: null, retry: mocks.markingRetry, invalidate: mocks.markingRetry });
 });
 
 describe('Learner Case File design', () => {
@@ -163,7 +192,7 @@ describe('Learner Case File design', () => {
     expect(screen.getByText('25% · 10/38.5 · 0% · 7/10')).toBeInTheDocument();
     expect(screen.getByText('Activity overview only')).toBeInTheDocument();
     expect(screen.getByText('Rewards hidden')).toBeInTheDocument();
-    expect(mocks.useDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true);
+    expect(mocks.useCaseFileDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true, true);
     // Overview, OTJH & KSB Progress, Attendance, Learning Plan, Reviews, Assignments.
     expect(screen.getAllByRole('tab')).toHaveLength(6);
     expect(screen.getByRole('tab', { name: 'Assignments' })).toBeInTheDocument();
@@ -353,12 +382,23 @@ describe('Learner Case File design', () => {
     expect(screen.getByRole('button', { name: 'Behaviours (4)' })).toBeInTheDocument();
   });
 
-  it('uses the same 58 browser rows for header, totals, remaining and category summaries', () => {
-    const ksbs = [
-      ...Array.from({ length: 18 }, (_, index) => ({ code: `K${index + 1}`, type: 'Knowledge', number: String(index + 1), description: `Knowledge ${index + 1}` })),
-      ...Array.from({ length: 27 }, (_, index) => ({ code: `S${index + 1}`, type: 'Skills', number: String(index + 1), description: `Skill ${index + 1}` })),
-      ...Array.from({ length: 13 }, (_, index) => ({ code: `B${index + 1}`, type: 'Behaviours', number: String(index + 1), description: `Behaviour ${index + 1}` })),
-    ];
+  it('collapses a 58-code profile to the same 16 parent rows across the browser and summaries', () => {
+    const profileShape: Record<string, number> = {
+      B1: 3, B2: 3, B3: 3, B4: 4,
+      K1: 6, K2: 5, K3: 4, K4: 3,
+      S1: 4, S2: 4, S3: 3, S4: 3, S5: 3, S6: 5, S7: 2, S8: 3,
+    };
+    const ksbs = Object.entries(profileShape).flatMap(([parent, count]) => (
+      Array.from({ length: count }, (_, index) => {
+        const code = index === 0 ? parent : `${parent}.${index}`;
+        return {
+          code,
+          type: parent.startsWith('K') ? 'Knowledge' : parent.startsWith('S') ? 'Skills' : 'Behaviours',
+          number: code.slice(1),
+          description: index === 0 ? `${parent} parent title` : `${parent} child ${index}`,
+        };
+      })
+    ));
     mocks.data = {
       ...caseFileData,
       detail: { ...caseFileData.detail, ksbs },
@@ -367,23 +407,24 @@ describe('Learner Case File design', () => {
       ksbEvidencedCount: null,
       ksbTotalCount: null,
       mappedKsbCodes: [],
-      touchedKsbCodes: ksbs.slice(0, 10).map((item) => item.code),
+      touchedKsbCodes: ['K1', 'K2', 'K3', 'K4', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6'],
     };
     render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
 
     const header = screen.getByRole('region', { name: 'Learner profile summary' });
-    expect(within(header).getByText('KSB', { selector: 'span' }).parentElement?.querySelector('strong')).toHaveTextContent('17%');
+    expect(within(header).getByText('KSB', { selector: 'span' }).parentElement?.querySelector('strong')).toHaveTextContent('63%');
     fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
-    expect(screen.getByText('Total KSB points').parentElement).toHaveTextContent('58');
+    expect(screen.getByText('Total KSB points').parentElement).toHaveTextContent('16');
     expect(screen.getByText('Points achieved').parentElement).toHaveTextContent('10');
-    expect(screen.getByText('Points remaining').parentElement).toHaveTextContent('48');
-    expect(screen.getAllByText('Knowledge')[0].parentElement).toHaveTextContent('10 / 18');
-    expect(screen.getAllByText('Skills')[0].parentElement).toHaveTextContent('0 / 27');
-    expect(screen.getAllByText('Behaviours')[0].parentElement).toHaveTextContent('0 / 13');
-    expect(screen.getByRole('button', { name: 'All (58)' })).toBeInTheDocument();
+    expect(screen.getByText('Points remaining').parentElement).toHaveTextContent('6');
+    expect(screen.getAllByText('Knowledge')[0].parentElement).toHaveTextContent('4 / 4');
+    expect(screen.getAllByText('Skills')[0].parentElement).toHaveTextContent('6 / 8');
+    expect(screen.getAllByText('Behaviours')[0].parentElement).toHaveTextContent('0 / 4');
+    expect(screen.getByRole('button', { name: 'All (16)' })).toBeInTheDocument();
+    expect(screen.queryByText('K1.1', { selector: 'strong' })).not.toBeInTheDocument();
   });
 
-  it('uses normalized parent evidence for child KSB rows and deduplicates sources', () => {
+  it('rolls child KSB evidence into the parent row and deduplicates sources', () => {
     mocks.data = {
       ...caseFileData,
       detail: {
@@ -409,17 +450,18 @@ describe('Learner Case File design', () => {
     render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
 
     fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
-    const childRow = screen.getByText('B1.1', { selector: 'strong' }).closest('tr');
-    expect(childRow).not.toBeNull();
-    expect(within(childRow!).getByText('Evidence linked')).toBeInTheDocument();
-    expect(within(childRow!).getByText('1')).toBeInTheDocument();
+    const parentRow = screen.getByText('B1', { selector: 'strong' }).closest('tr');
+    expect(parentRow).not.toBeNull();
+    expect(screen.queryByText('B1.1', { selector: 'strong' })).not.toBeInTheDocument();
+    expect(within(parentRow!).getByText('Evidence linked')).toBeInTheDocument();
+    expect(within(parentRow!).getByText('1')).toBeInTheDocument();
 
-    fireEvent.click(within(childRow!).getByRole('button', { name: 'View' }));
+    fireEvent.click(within(parentRow!).getByRole('button', { name: 'View' }));
     expect(screen.getByText('Accepted journal')).toBeInTheDocument();
     expect(screen.getAllByText('Accepted journal')).toHaveLength(1);
   });
 
-  it('keeps parent and child rows not evidenced when no parent evidence exists', () => {
+  it('keeps the collapsed parent row not evidenced when no parent evidence exists', () => {
     mocks.data = {
       ...caseFileData,
       detail: {
@@ -435,11 +477,10 @@ describe('Learner Case File design', () => {
     };
     render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
     fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
-    for (const code of ['B1', 'B1.1']) {
-      const row = screen.getByText(code, { selector: 'strong' }).closest('tr');
-      expect(within(row!).getByText('Not evidenced')).toBeInTheDocument();
-      expect(within(row!).getByText('0')).toBeInTheDocument();
-    }
+    const row = screen.getByText('B1', { selector: 'strong' }).closest('tr');
+    expect(within(row!).getByText('Not evidenced')).toBeInTheDocument();
+    expect(within(row!).getByText('0')).toBeInTheDocument();
+    expect(screen.queryByText('B1.1', { selector: 'strong' })).not.toBeInTheDocument();
   });
 
   it('shows completed components out of the weekly total and omits recent assessments', () => {
@@ -594,14 +635,17 @@ describe('Learner Case File design', () => {
         consecutiveMissed: 2, hasAttendance: true,
       },
     };
-    mocks.coachFetch.mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        sessions: [
-          { learnerId: '42', learnerName: 'Aya Khater', learnerEmail: 'aya@example.test', sessionId: 'session-2', sessionTitle: 'Recovered session', sessionType: 'live_session', sessionDate: '2026-09-14', sessionDateLabel: '14 Sep 2026', startTime: '11:00', endTime: '12:00', status: 'absent', reason: 'Catch-up completed', catchupCompleted: true },
-          { learnerId: '42', learnerName: 'Aya Khater', learnerEmail: 'aya@example.test', sessionId: 'session-1', sessionTitle: 'Still missed', sessionType: 'live_session', sessionDate: '2026-09-07', sessionDateLabel: '07 Sep 2026', startTime: '11:00', endTime: '12:00', status: 'absent', reason: 'No reason recorded', catchupCompleted: false },
+    mocks.useCaseFileAttendance.mockReturnValue({
+      data: {
+        learnerEmail: 'aya@example.test', learnerId: 125, learnerName: 'Aya Khater', sessions: 4, present: 2,
+        absent: 2, late: 0, catchup: 0, risk: 'amber', lastSessionDate: '2026-09-14', consecutiveMissed: 1,
+        updatedAt: null, attendanceRate: 50,
+        sessionHistory: [
+          { id: 'session-2', date: '2026-09-14', title: 'Attended session', sessionType: 'live_session', status: 'attended', startTime: '11:00', endTime: '12:00', module: '', coach: '' },
+          { id: 'session-1', date: '2026-09-07', title: 'Still missed', sessionType: 'live_session', status: 'missed', startTime: '11:00', endTime: '12:00', module: '', coach: '' },
         ],
-      }),
+      },
+      loading: false, error: null, retry: mocks.attendanceRetry, invalidate: mocks.attendanceRetry,
     });
 
     render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
@@ -610,18 +654,18 @@ describe('Learner Case File design', () => {
     expect(await screen.findByRole('table')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Attendance Breakdown' })).not.toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: 'Missed Sessions' })).not.toBeInTheDocument();
-    expect(screen.getByText('Attendance', { selector: 'p' }).previousElementSibling).toHaveTextContent('1 / 1');
-    expect(screen.getByText('Total Sessions').previousElementSibling).toHaveTextContent('1');
-    expect(screen.getByText('Attended', { selector: 'p' }).previousElementSibling).toHaveTextContent('1');
-    expect(screen.getByText('Outstanding Absences').previousElementSibling).toHaveTextContent('0');
+    expect(screen.getByText('Attendance', { selector: 'p' }).previousElementSibling).toHaveTextContent('2 / 4');
+    expect(screen.getByText('Total Sessions').previousElementSibling).toHaveTextContent('4');
+    expect(screen.getByText('Attended', { selector: 'p' }).previousElementSibling).toHaveTextContent('2');
+    expect(screen.getByText('Outstanding Absences').previousElementSibling).toHaveTextContent('2');
     expect(screen.getByText('2 of 2 sessions')).toBeInTheDocument();
     expect(screen.getByText('Still missed')).toBeInTheDocument();
-    expect(screen.getByText('Recovered session')).toBeInTheDocument();
+    expect(screen.getByText('Attended session')).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('Status'), { target: { value: 'absent' } });
     expect(screen.getByText('1 of 2 sessions')).toBeInTheDocument();
     expect(screen.getByText('Still missed')).toBeInTheDocument();
-    expect(screen.queryByText('Recovered session')).not.toBeInTheDocument();
+    expect(screen.queryByText('Attended session')).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('Search sessions'), { target: { value: 'missing title' } });
     expect(screen.getByText('No sessions match the selected filters.')).toBeInTheDocument();
@@ -674,9 +718,108 @@ describe('Learner Case File design', () => {
     expect(screen.getByRole('tab', { name: 'Assignments' })).toHaveAttribute('aria-selected', 'true');
     // The enrolment id, not the profile id: assignments are read from the learner's own endpoints.
     expect(screen.getByTestId('assignments-tab')).toHaveTextContent('apprenticeship:125');
+    expect(mocks.useCaseFileMarking).toHaveBeenLastCalledWith('125', true);
     unmount();
 
     render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42&tab=assignments']}><LearnerCaseFile /></MemoryRouter>);
     expect(screen.getByTestId('assignments-tab')).toBeInTheDocument();
+    expect(mocks.useCaseFileMarking).toHaveBeenLastCalledWith('125', true);
+  });
+
+  it.each(['attendance', 'reviews', 'assignments'])('does not request the page-level plan on a direct %s route', (tab) => {
+    render(<MemoryRouter initialEntries={[`/coach/learner-case-file?id=42&tab=${tab}`]}><LearnerCaseFile /></MemoryRouter>);
+
+    expect(mocks.useCaseFileDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true, false);
+  });
+
+  it.each(['overview', 'progress', 'attendance', 'support', 'reviews'])('keeps marking idle on the direct %s route', (tab) => {
+    render(<MemoryRouter initialEntries={[`/coach/learner-case-file?id=42&tab=${tab}`]}><LearnerCaseFile /></MemoryRouter>);
+    expect(mocks.useCaseFileMarking).toHaveBeenLastCalledWith('125', false);
+  });
+
+  it('requests the page-level plan on a direct Learning Plan route', () => {
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42&tab=learning-plan']}><LearnerCaseFile /></MemoryRouter>);
+
+    expect(mocks.useCaseFileDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true, true);
+    expect(screen.getByRole('tab', { name: 'Learning Plan' })).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('preserves missing shell metrics as unavailable instead of rendering zero', () => {
+    mocks.data = {
+      ...caseFileData,
+      overallProgress: null,
+      attendancePresentCount: null,
+      attendanceSessionCount: null,
+      otjhCompleted: null,
+      otjhTarget: null,
+      metricsAvailable: false,
+      mappedKsbCodes: [],
+      touchedKsbCodes: [],
+    };
+    mocks.useCaseFileAttendance.mockReturnValue({
+      data: null, loading: false, error: null, retry: mocks.attendanceRetry, invalidate: mocks.attendanceRetry,
+    });
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
+
+    const summary = screen.getByRole('region', { name: 'Learner profile summary' });
+    for (const label of ['Overall', 'OTJH (Actual / Target)', 'KSB', 'Attendance']) {
+      const metric = within(summary).getByText(label, { selector: 'span' }).parentElement;
+      expect(metric?.querySelector('strong')).toHaveTextContent('--');
+      expect(metric?.querySelector('strong')).not.toHaveTextContent('0');
+    }
+  });
+
+  it('reuses canonical attendance after leaving and returning to the Attendance tab', async () => {
+    mocks.data = {
+      ...caseFileData,
+      attendance: {
+        id: '42', learner: 'Aya Khater', initials: 'AK', email: 'aya@example.test', programme: 'Final Test',
+        cohort: 'Final Cohort', group: 'Final Group', attendance: 100, sessions: 1, present: 1, absent: 0,
+        late: 0, catchup: 0, trend: 'stable', risk: 'green', employer: 'Test Employer', overallProgress: 25,
+        otjhCompleted: 10, otjhTarget: 38.5, ksbProgress: 20, lastSession: '--', nextSession: '--',
+        consecutiveMissed: 0, hasAttendance: true,
+      },
+    };
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Attendance' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Reviews' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Attendance' }));
+    expect(mocks.coachFetch).not.toHaveBeenCalled();
+    expect(mocks.useCaseFileAttendance).toHaveBeenCalledWith('apprenticeship', '125', true);
+  });
+
+  it('keeps the learner shell visible when the Attendance tab request fails', async () => {
+    mocks.data = {
+      ...caseFileData,
+      attendance: {
+        id: '42', learner: 'Aya Khater', initials: 'AK', email: 'aya@example.test', programme: 'Final Test',
+        cohort: 'Final Cohort', group: 'Final Group', attendance: 100, sessions: 1, present: 1, absent: 0,
+        late: 0, catchup: 0, trend: 'stable', risk: 'green', employer: 'Test Employer', overallProgress: 25,
+        otjhCompleted: 10, otjhTarget: 38.5, ksbProgress: 20, lastSession: '--', nextSession: '--',
+        consecutiveMissed: 0, hasAttendance: true,
+      },
+    };
+    mocks.useCaseFileAttendance.mockReturnValue({
+      data: null, loading: false, error: 'Attendance details unavailable',
+      retry: mocks.attendanceRetry, invalidate: mocks.attendanceRetry,
+    });
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
+    fireEvent.click(screen.getByRole('tab', { name: 'Attendance' }));
+
+    expect(await screen.findByText('Attendance details unavailable')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Aya Khater', level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Learner profile summary' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry attendance' }));
+    expect(mocks.attendanceRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the learner shell visible when the page-level Learning Plan load fails', () => {
+    mocks.useCaseFileDashboardPlan.mockReturnValue({ error: 'Learning Plan unavailable' });
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42&tab=support']}><LearnerCaseFile /></MemoryRouter>);
+
+    expect(screen.getByText('Learning Plan unavailable')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Aya Khater', level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Learner profile summary' })).toBeInTheDocument();
   });
 });

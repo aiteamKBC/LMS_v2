@@ -185,17 +185,21 @@ def tracking_record(context, payload, activity_id, activity_kind, history):
     if previous:
         return previous, True
     outside = activity_kind != 'quiz' and outside_uk_working_hours(tracking['submittedAt'])
-    if outside and payload.get('outsideWorkingHoursConfirmed') is not True:
-        raise ValueError('Confirm that this activity was completed outside normal working hours.')
+    if outside and payload.get('insideWorkingHoursConfirmed') is not True:
+        raise ValueError('Confirm that this activity was completed inside normal working hours.')
     seconds = tracking['verifiedSeconds']
     return {'kind': activity_kind, 'componentId': str(activity_id), 'timeTrackingSessionId': tracking['sessionId'],
             'startedAt': tracking['startedAt'].isoformat(), 'submittedAt': tracking['submittedAt'].isoformat(),
             'timeTaken': f'{seconds // 60:02d}:{seconds % 60:02d}', 'verifiedSeconds': seconds,
             'claimedSeconds': tracking['claimedSeconds'], 'serverSessionSeconds': tracking['serverSessionSeconds'],
             'timeTrackingSource': tracking['source'], 'feedback': str(payload.get('feedback') or ''),
-            'reportedTime': str(payload.get('reportedTime') or ''), 'ksbs': [], 'passed': True,
-            'outsideWorkingHours': outside, 'outsideWorkingHoursConfirmed': outside,
-            'outsideWorkingHoursConfirmedAt': tracking['submittedAt'].isoformat() if outside else None}, False
+            'reportedTime': str(payload.get('reportedTime') or ''),
+            'reflectionSkipped': payload.get('skipReflection') is True,
+            'ksbs': [], 'passed': True,
+            'outsideWorkingHours': outside, 'outsideWorkingHoursConfirmed': False,
+            'outsideWorkingHoursConfirmedAt': None,
+            'insideWorkingHoursConfirmed': outside,
+            'insideWorkingHoursConfirmedAt': tracking['submittedAt'].isoformat() if outside else None}, False
 
 
 def complete_activity(context, account, detail, activity_id, activity_kind, payload):
@@ -213,7 +217,7 @@ def complete_activity(context, account, detail, activity_id, activity_kind, payl
                 quality_checks = validate_assignment(context, detail, state, saved)
                 record['ksbs'] = [claim['code'] for claim in (saved.get('monthlyAssignment') or {}).get('claims', [])]
             validation = bool(component.get('tutorValidationRequired') or component.get('type') == 'assignment')
-            if (component.get('reflectionRequired') or validation) and not str(payload.get('feedback') or '').strip() and component.get('type') != 'assignment':
+            if (component.get('reflectionRequired') or validation) and payload.get('skipReflection') is not True and not str(payload.get('feedback') or '').strip() and component.get('type') != 'assignment':
                 raise ValueError('Complete the reflection before submitting this activity.')
             record.update({'componentType': component.get('type'), 'moduleId': context['module_id'],
                            'componentTitle': component.get('component'), 'passed': not validation,

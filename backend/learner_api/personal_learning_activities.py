@@ -19,7 +19,7 @@ SUBMISSION_FIELDS = (
     'applicationType', 'applicationText', 'evidenceFiles', 'evidenceConsentConfirmed', 'selectedBenefits',
     'benefitExplanation', 'actualTimeHours', 'completedDuringPaidHours', 'dateCompleted', 'otjhConfirmed',
     'signedDeclaration', 'assignmentAnswer', 'whatYouLearned', 'businessImpact', 'outsideWorkingHours',
-    'outsideWorkingHoursConfirmed', 'monthlyAssignment', 'assignmentTimeSource',
+    'outsideWorkingHoursConfirmed', 'insideWorkingHoursConfirmed', 'monthlyAssignment', 'assignmentTimeSource',
 )
 
 

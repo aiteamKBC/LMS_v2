@@ -70,8 +70,9 @@ export function AssignmentSubmissionWizard({
   timeSeconds,
   timeSource = 'timer',
   timeControl,
+  workingHoursDeclaration,
   outsideWorkingHours,
-  outsideWorkingHoursConfirmed,
+  insideWorkingHoursConfirmed,
   submittingProgress,
   onEvidenceChanged,
   onRestoreTime,
@@ -101,8 +102,9 @@ export function AssignmentSubmissionWizard({
   timeSeconds: number | null;
   timeSource?: 'timer' | 'input';
   timeControl: ReactNode;
+  workingHoursDeclaration?: ReactNode;
   outsideWorkingHours: boolean;
-  outsideWorkingHoursConfirmed: boolean;
+  insideWorkingHoursConfirmed: boolean;
   submittingProgress: boolean;
   onEvidenceChanged: (files: EvidenceRecord[]) => void;
   onRestoreTime: (seconds: number, source: 'timer' | 'input') => void;
@@ -232,7 +234,7 @@ export function AssignmentSubmissionWizard({
     whatYouLearned: answers.whatYouLearned,
     businessImpact: answers.businessImpact,
     outsideWorkingHours,
-    outsideWorkingHoursConfirmed,
+    insideWorkingHoursConfirmed,
     monthlyAssignment: { ...monthly, step },
     assignmentTimeSource: detailedSeconds !== null ? 'input' : timeSource,
   });
@@ -355,7 +357,7 @@ export function AssignmentSubmissionWizard({
     return () => window.clearTimeout(timeout);
     // The identifying fields are stable for the lifetime of this wizard.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [answers, monthly, step, evidenceFiles, Math.floor((timeSeconds || 0) / 30), outsideWorkingHoursConfirmed, locked]);
+  }, [answers, monthly, step, evidenceFiles, Math.floor((timeSeconds || 0) / 30), insideWorkingHoursConfirmed, locked]);
 
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
@@ -416,8 +418,8 @@ export function AssignmentSubmissionWizard({
       setSaveError('Enter the time spent on this assignment before submitting.');
       return;
     }
-    if (outsideWorkingHours && !outsideWorkingHoursConfirmed) {
-      setSaveError('Confirm that you completed this assignment outside UK working hours before submitting.');
+    if (outsideWorkingHours && !insideWorkingHoursConfirmed) {
+      setSaveError('Confirm that you completed this assignment inside UK working hours before submitting.');
       return;
     }
     submittingRef.current = true;
@@ -596,7 +598,7 @@ export function AssignmentSubmissionWizard({
           {!locked && step < 7 && !stepCheck.ready && <div id="assignment-step-required" role="status" aria-live="polite" className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             {stepCheck.pending ? <p>Checking this step's requirements...</p> : stepCheck.error ? <><p>{stepCheck.error}</p><button type="button" className="mt-2 underline" onClick={stepCheck.retry}>Retry step check</button></> : <><p className="font-semibold">Complete the following before selecting Next:</p><ul className="mt-2 list-disc space-y-1 pl-5">{stepCheck.missing.map(check => <li key={check.key}>{check.label}</li>)}</ul></>}
           </div>}
-          <div className="mt-6 flex items-center justify-between gap-3 border-t border-background-200 pt-4">
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-background-200 pt-4">
             <button
               type="button"
               onClick={() => setStep(current => Math.max(0, current - 1))}
@@ -605,33 +607,38 @@ export function AssignmentSubmissionWizard({
             >
               <AppIcon className="ri-arrow-left-line" />Back
             </button>
-            {step < 7 ? (
-              <button
-                type="button"
-                onClick={() => void goNext()}
-                disabled={loadFailed || savingDraft || submittingProgress || !stepCheck.ready}
-                aria-describedby={!locked && !stepCheck.ready ? 'assignment-step-required' : undefined}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                Next<AppIcon className="ri-arrow-right-line" />
-              </button>
-            ) : locked ? (
-              <button type="button" onClick={() => setPreviewOpen(true)} className="inline-flex items-center gap-1.5 rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-bold text-white">
-                <AppIcon className="ri-eye-line" />Preview submission
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => void submit()}
-                aria-describedby={!learningConfirmed ? 'learning-confirmation-required' : undefined}
-                disabled={loadFailed || checking || savingDraft || submittingProgress || !learningConfirmed || checks.length !== 13 || checks.some(check => !check.passed)}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
-              >
-                <AppIcon className={savingDraft || submittingProgress ? 'ri-loader-4-line animate-spin' : 'ri-send-plane-fill'} />
-                {savingDraft || submittingProgress ? 'Submitting…' : 'Submit assignment'}
-              </button>
-            )}
-            {!locked && step === 7 && !learningConfirmed && <p id="learning-confirmation-required" className="text-sm text-amber-800">Confirm all four learning declarations in Step 3 before submitting your assignment.</p>}
+            <div className="flex min-w-0 flex-1 flex-col items-end gap-3 sm:flex-row sm:items-center sm:justify-end">
+              {workingHoursDeclaration && <div className="w-full min-w-0 sm:max-w-md">{workingHoursDeclaration}</div>}
+              <div className="shrink-0">
+                {step < 7 ? (
+                  <button
+                    type="button"
+                    onClick={() => void goNext()}
+                    disabled={loadFailed || savingDraft || submittingProgress || !stepCheck.ready}
+                    aria-describedby={!locked && !stepCheck.ready ? 'assignment-step-required' : undefined}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    Next<AppIcon className="ri-arrow-right-line" />
+                  </button>
+                ) : locked ? (
+                  <button type="button" onClick={() => setPreviewOpen(true)} className="inline-flex items-center gap-1.5 rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-bold text-white">
+                    <AppIcon className="ri-eye-line" />Preview submission
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void submit()}
+                    aria-describedby={!learningConfirmed ? 'learning-confirmation-required' : undefined}
+                    disabled={loadFailed || checking || savingDraft || submittingProgress || !learningConfirmed || checks.length !== 13 || checks.some(check => !check.passed)}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <AppIcon className={savingDraft || submittingProgress ? 'ri-loader-4-line animate-spin' : 'ri-send-plane-fill'} />
+                    {savingDraft || submittingProgress ? 'Submitting…' : 'Submit assignment'}
+                  </button>
+                )}
+              </div>
+            </div>
+            {!locked && step === 7 && !learningConfirmed && <p id="learning-confirmation-required" className="w-full text-sm text-amber-800">Confirm all four learning declarations in Step 3 before submitting your assignment.</p>}
           </div>
         </div>
       </section>

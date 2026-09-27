@@ -181,6 +181,8 @@ const MonthlyCoachingPage = lazyRoute(() => import("../pages/learner/monthly-coa
 const MonthlyCoachingListPage = lazyRoute(() => import("../pages/learner/monthly-coaching/page").then(m => ({ default: m.MonthlyCoachingListPage })));
 const ProgressReviewsPage = lazyRoute(() => import("../pages/learner/progress-reviews/page"));
 const ProgressReviewsListPage = lazyRoute(() => import("../pages/learner/progress-reviews/page").then(m => ({ default: m.ProgressReviewsListPage })));
+const CurriculumReviewsPage = lazyRoute(() => import("../pages/learner/reviews/curriculumReviews").then(m => ({ default: m.CurriculumReviewPage })));
+const CurriculumReviewsListPage = lazyRoute(() => import("../pages/learner/reviews/curriculumReviews").then(m => ({ default: m.CurriculumReviewsListPage })));
 const ManualQuizPage = lazyRoute(() => import("../pages/curriculum/quiz-xml/manual/page"));
 const MessagesPage = lazyRoute(() => import("../pages/learner/messages/page"));
 const MisAttendanceModesPage = lazyRoute(() => import("../pages/mis/attendance-modes/page"));
@@ -236,6 +238,7 @@ const QuestionBankPage = lazyRoute(() => import("../pages/curriculum/question-ba
 const QuizEditPage = lazyRoute(() => import("../pages/curriculum/quiz-xml/edit/page"));
 const QuizTakePage = lazyRoute(() => import("../pages/learner/quiz-take/page"));
 const QuizXmlWorkspace = lazyRoute(() => import("../pages/curriculum/quiz-xml/page"));
+const KnowledgeBasePage = lazyRoute(() => import("../pages/curriculum/knowledge-base/page"));
 const QuizzesPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
 const RecognitionPage = lazyRoute(() => import("../pages/engagement/recognition/page"));
 const ReportAbsencePage = lazyRoute(() => import("../pages/learner/report-absence/page"));
@@ -678,7 +681,7 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/reviews",
-    element: <ProgressReviewsListPage />,
+    element: <CurriculumReviewsListPage />,
   },
   {
     path: "/learner/progress-reviews/:kind/:id",
@@ -686,11 +689,15 @@ const routes: RouteObject[] = [
   },
   {
     path: "/learner/reviews/:kind/:id",
-    element: <ProgressReviewsListPage />,
+    element: <CurriculumReviewsListPage />,
   },
   {
     path: "/learner/progress-reviews/:reviewId",
     element: <ProgressReviewsPage />,
+  },
+  {
+    path: "/learner/reviews/:reviewId",
+    element: <CurriculumReviewsPage />,
   },
   {
     path: "/learner/rewards/badge/:badgeId",
@@ -1002,6 +1009,10 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/quiz-xml",
     element: <QuizXmlWorkspace />,
+  },
+  {
+    path: "/curriculum/knowledge-base",
+    element: <KnowledgeBasePage />,
   },
   {
     path: "/curriculum/quiz-xml/manual",

@@ -8,7 +8,8 @@ from django.db import DatabaseError
 from django.test import SimpleTestCase, RequestFactory
 
 from .dashboard_metrics import (programme_totals, ksb_totals, read_planned_hours,
-                                activity_planned_hours, read_metrics, learner_metrics)
+                                activity_planned_hours, read_metrics, learner_metrics,
+                                metrics_from_loaded)
 from .student_activity import _direct_progress_otjh
 from .attendance import combined_attendance_rows, _summarize_attendance
 
@@ -229,6 +230,40 @@ class DashboardMetricsTests(SimpleTestCase):
                     self.assertEqual(result['otjh'], {'historical': 1171.34, 'new': 0,
                                                      'actual': 1171.34, 'completed_actual': None, 'planned': 867})
             live.assert_not_called()
+
+    def test_accepted_ledger_title_is_used_for_ksb_evidence(self):
+        source = SimpleNamespace(pk=125, aptem_id=92, email='test@example.com')
+        with patch('learner_api.dashboard_metrics.connections'), \
+             patch('learner_api.dashboard_metrics.read_planned_hours', return_value=0):
+            result = metrics_from_loaded(
+                source,
+                'commercial',
+                migrated=True,
+                native=[],
+                progress=[],
+                direct_progress=[],
+                historical=[],
+                attempts=set(),
+                links={},
+                history_ready=True,
+                manual_hours=0,
+                preloaded={
+                    'aptem_planned_total': 0,
+                    'reflection_submissions': [],
+                    'accepted_ksb_rows': [{
+                        'id': 6266,
+                        'source_ref': 'manual:6266',
+                        'activity_id': 81224,
+                        'activity_title': 'P1 - Introduction to Strategic Marketing',
+                        'ksb_mappings': ['B1'],
+                    }],
+                },
+            )
+
+        self.assertEqual(
+            result['_ksb_evidence_sources'][0]['title'],
+            'P1 - Introduction to Strategic Marketing',
+        )
 
     def test_endpoint_scopes_identity_and_returns_retryable_error(self):
         source = SimpleNamespace(pk=125, aptem_id=92, email='test@example.com')
