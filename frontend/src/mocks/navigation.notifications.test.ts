@@ -15,11 +15,8 @@ function findItem(items: SidebarNavItem[], id: string): SidebarNavItem | undefin
 }
 
 describe('role notification navigation', () => {
-  it('gives coaches a direct link to notifications', () => {
-    expect(findItem(coachNavItems, 'coach-notifications')).toMatchObject({
-      label: 'Notifications',
-      href: '/notifications',
-    });
+  it('does not show notifications in coach navigation', () => {
+    expect(findItem(coachNavItems, 'coach-notifications')).toBeUndefined();
   });
 
   it('gives employers a notifications link in their communication section', () => {

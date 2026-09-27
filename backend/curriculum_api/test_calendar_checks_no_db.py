@@ -59,22 +59,31 @@ class CalendarChecksTests(unittest.TestCase):
                               json_body=lambda request: self.payload, ensure_live_sessions_table=lambda: None,
                               ensure_live_session_tracking_tables=lambda: None,
                               resolve_authoring_catalogue_id=lambda value: value, authoring_module_exists=lambda _: True,
+                              resolve_stored_module_catalogue_id=lambda value: value,
                               authoring_fetch_all=self.fetch_rows, has_column=lambda *args: True,
                               calendar_groups=lambda *args: [], stored_calendar_series=lambda _: [],
                               teams_non_delivery_reason=lambda *args, **kwargs: '',
                               truthy=lambda value: str(value).strip().lower() in {'1', 'true', 'yes', 'on'},
                               graph_event_utc=self.utc_event, persist_live_session_series=self.persist_series,
                               replace_live_session_occurrences=self.persist_occurrences,
+                              held_schedule_snapshot=lambda _live_session_id: [],
+                              with_schedule_change_notice=lambda response, _live_session_id, _before: response,
                               update_authoring_rows=self.update_series, json_db_value=lambda value: value,
                               apply_teams_meeting_options=lambda *args, **kwargs: (self.options_ok, {'id': 'online-1'}, []),
                               teams_series_email_list=lambda value: value or [],
-                              persist_recreated_occurrence_details=self.persist_recreated_details)
+                              persist_recreated_occurrence_details=self.persist_recreated_details,
+                              # The instance read waits for Microsoft to finish expanding a
+                              # recurrence. A test double answers at once, so the wait is a
+                              # no-op here rather than real seconds on every short series.
+                              time=types.SimpleNamespace(sleep=lambda _seconds: None))
         names = {'clean_str', 'parse_graph_datetime', 'teams_attendee_emails', 'teams_event_body_html',
                  'teams_event_payload', 'teams_single_occurrence_payload', 'teams_calendar_minute_key',
-                 'teams_shifted_occurrence_targets', 'teams_standalone_occurrence_meeting',
+                 'teams_shifted_occurrence_targets', 'teams_expanded_instances',
+                 'teams_standalone_occurrence_meeting',
                  'apply_teams_occurrence_shifts', 'curriculum_teams_meeting', 'curriculum_teams_meeting_schedule',
                  'verify_teams_calendar_with_standalones', 'publish_teams_calendar_attendees',
-                 'reschedule_single_live_session_occurrence', 'teams_schedule_settings'}
+                 'reschedule_single_live_session_occurrence', 'saved_live_session_occurrences',
+                 'teams_schedule_settings'}
         tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8-sig'))
         for node in tree.body:
             if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == 'GRAPH_SILENT_INVITE_HEADERS' for target in node.targets):
@@ -194,6 +203,8 @@ class CalendarChecksTests(unittest.TestCase):
         result = self.create()
         self.assertEqual(result.status_code, 201, result)
         module_id, saved, settings, occurrences = self.attach.call_args.args
+        # The same walk tops weeks up to their delivery days, so no follow-up restore is needed.
+        self.assertTrue(self.attach.call_args.kwargs.get('create_missing'))
         self.assertEqual(module_id, 'MOD-SYNTHETIC')
         self.assertEqual(saved['id'], 'LIVE-SYNTHETIC')
         self.assertEqual(settings['liveSessionUrl'], result['meeting']['joinUrl'])

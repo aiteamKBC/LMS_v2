@@ -12,7 +12,7 @@ import { fetchCoachCalendarEventsForCoach } from '@/pages/coach/shared/calendarE
 import { updateCurriculumSession } from '@/lib/curriculumApi';
 
 const fixtures = vi.hoisted(() => {
-  const now = new Date();
+  const now = new Date(2026, 8, 23, 9, 0, 0);
   const date = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
   return {
     event: { id: 'meeting-1', eventKey: 'catch-up:1', title: 'Coaching appointment', source: 'catch-up', type: 'coaching',
@@ -40,8 +40,14 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
   fetchCurriculumHolidays: vi.fn(async () => []), updateCurriculumSession: vi.fn(),
 }));
 
-beforeEach(() => { vi.clearAllMocks(); vi.stubGlobal('AppIcon', AppIcon); vi.stubGlobal('React', React); });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+beforeEach(() => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(new Date(2026, 8, 23, 9, 0, 0));
+  vi.clearAllMocks();
+  vi.stubGlobal('AppIcon', AppIcon);
+  vi.stubGlobal('React', React);
+});
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('staff calendar previews', () => {
   it.each(['Month', 'Week', 'Day'])('opens a coach event from %s and exposes its edit action', async view => {

@@ -368,9 +368,11 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
   });
 
   it('keeps every local change when the module was written by somebody else', async () => {
-    // A 409. Re-sending this payload is exactly the destruction the refusal
-    // prevented, so the workspace stops saving by itself and says so — with
-    // everything the reader typed still on screen.
+    // A 409. Re-sending this payload as it stands is exactly the destruction
+    // the refusal prevented -- so it is not re-sent. The stored version is read
+    // and merged into the workspace, and the merged module, which carries both
+    // editors' work, is what goes instead. Reloading by hand is not asked for
+    // any more, and nothing the reader typed is touched.
     saveModuleStructure.mockRejectedValueOnce(new ModuleStructureConflictError(
       'This module changed after you opened it. Your changes have not been overwritten. '
       + 'Reload the latest version before saving again.',
@@ -378,23 +380,24 @@ describe('Module Builder auto-save', { timeout: 25000 }, () => {
       null,
     ));
     const title = await openWorkspaceSaving();
+    // What the other editor stored: the same week, with a summary they wrote.
+    const theirs = storedStructure('rev-99');
+    theirs.weekStructure[0].summary = 'Sara wrote this summary';
+    loadModuleStructure.mockResolvedValue(theirs);
 
     await userEvent.type(title, ' mine');
 
-    // Reloading the page is no longer what the reader is asked for: the refusal
-    // carries the stored revision, so the workspace offers to load that version
-    // instead. What has not changed is that nothing of theirs is touched until
-    // they choose it.
-    await waitFor(() => expect(saveState()).toBe('Conflict - load the saved version to continue'), { timeout: 8000 });
+    await waitFor(() => expect(saveState()).toBe('All changes saved'), { timeout: 8000 });
     expect(title).toHaveValue('Week one mine');
-    expect(await screen.findByText(/changed after you opened it/)).toBeInTheDocument();
-    expect(await screen.findByRole('button', { name: 'Load their version' })).toBeInTheDocument();
-    // Disarmed: typing again must not fire the refused payload at the backend
-    // once per burst for as long as the workspace stays open.
-    await userEvent.type(title, '!');
-    await new Promise(resolve => window.setTimeout(resolve, 2000));
-    expect(saveModuleStructure).toHaveBeenCalledTimes(1);
-    expect(title).toHaveValue('Week one mine!');
+    const retried = saveCalls()[saveCalls().length - 1];
+    // The refusal named rev-99, and that is the version the merged module is
+    // genuinely built on -- it contains their summary.
+    expect(retried[2]?.expectedRevision).toBe('rev-99');
+    expect(retried[1].weekStructure[0].title).toBe('Week one mine');
+    expect((retried[1].weekStructure[0] as { summary?: string }).summary).toBe('Sara wrote this summary');
+    // Nothing tells the reader to reload, because there is nothing for them to
+    // do: the save went through.
+    expect(screen.queryByText(/Reload the latest version/)).not.toBeInTheDocument();
   });
 
   it('sends the edits straight away when Save now is pressed', async () => {

@@ -18,15 +18,9 @@ status, dates and access level are what an audit is for. Their address, phone
 number and national insurance number are not, and an audit log that copied them
 would be a second, less-guarded copy of the very data it exists to protect.
 
-**The Coach workspace is an exception, made deliberately.** Its free text --
-meeting notes, absence reasons, review answers and marking feedback -- is
-recorded in full rather than redacted, because the question that workspace's
-trail exists to answer is what a coach actually wrote before somebody changed
-it, and a digest cannot answer it. The cost is real and belongs here in writing:
-those words are a learner's health, home circumstances and assessed work, and
-they now live in the history table as well as in the record, for as long as the
-history is kept. Reversing it is a one-line change per record type -- name the
-columns in `redact` again.
+Free-text notes and answers about learners are redacted too. The trail records
+that they changed, not their sensitive contents. Operational status, ownership,
+dates, scheduling and scores remain available as before/after values.
 
 Left out of the allowlists entirely, rather than redacted, because they are a
 capability rather than a fact: meeting join links and evidence image URLs. A
@@ -247,13 +241,7 @@ def register_coach_records():
             'notes', 'review_responses',
         ),
         json_columns={'review_responses'},
-        # Recorded in full, by an explicit decision of the project owner: the
-        # Coach trail is meant to answer "what did the coach actually write
-        # here before it was changed", which a digest cannot. That is a
-        # departure from the redaction rule this module otherwise applies, and
-        # it means `notes` and `review_responses` -- a coach's words about a
-        # learner -- now exist in the history table as well as in the record.
-        # Narrowing it again is a one-line change: add them back to `redact`.
+        redact=('notes', 'review_responses'),
     )
 
     register_model(
@@ -284,10 +272,7 @@ def register_coach_records():
             'created_at', 'updated_at',
             'reason', 'evidence_text', 'coach_note',
         ),
-        # Recorded in full, by the same explicit decision as `coach_meeting`
-        # above. Worth knowing what it costs: why somebody was absent is often
-        # a health or home circumstance, so this history now holds that
-        # circumstance in plain text, for as long as the history is kept.
+        redact=('reason', 'evidence_text', 'coach_note'),
     )
 
     # Bulk writes, which no signal sees. A coach meeting reaching
@@ -367,6 +352,7 @@ def register_coach_review_records():
         # Parsed before diffing, so editing one value inside the blob reads as
         # that value moving rather than as "the answer changed".
         json_columns={'answer'},
+        redact=('answer',),
         columns=(
             'id', 'review_instance_id', 'field_id', 'answer',
             'answered_by', 'answered_at',
@@ -411,6 +397,7 @@ def register_coach_review_records():
             'previous_status', 'new_status', 'reason_code', 'note',
             'changed_by', 'changed_at',
         ),
+        redact=('note',),
     )
 
     register(
@@ -431,6 +418,7 @@ def register_coach_review_records():
             'previous_status', 'new_status', 'reason_code', 'note',
             'changed_by', 'changed_at', 'manual_started_at',
         ),
+        redact=('note',),
     )
 
     register(
@@ -440,7 +428,7 @@ def register_coach_review_records():
         label='Extra review for one learner',
         href='/coach/progress-reviews',
         key='id',
-        title='reason',
+        title='reason_code',
         title_fallback='reason_code',
         context=('target_date', 'reason_code', 'created_by'),
         parent='learner_id',
@@ -449,6 +437,7 @@ def register_coach_review_records():
             'target_date', 'reason_code', 'reason',
             'created_by', 'updated_by', 'deleted_at', 'deleted_by',
         ),
+        redact=('reason',),
     )
 
     # One row, two authors: the learner creates it by handing work in and the
@@ -481,9 +470,7 @@ def register_coach_review_records():
         status='status',
         using='enrolment',
         columns=submission_audit_columns(),
-        # `coach_feedback` in full, by the same explicit decision recorded on
-        # `coach_meeting` above: what a learner was told, and what it said
-        # before somebody rewrote it, is the question this is here to answer.
+        redact=('coach_feedback',),
     )
 
 
@@ -586,6 +573,7 @@ def register_enrolment_journey_records():
             'employer_signed_name', 'employer_signed_at', 'employer_signature_required',
             'booked_at', 'cancelled_at',
         ),
+        redact=('notes', 'form_answers'),
     )
 
     # The three detail sheets. Each is one row per review, projected out of
@@ -1085,6 +1073,31 @@ def register_learner_records():
       would report one booking as two events.
     """
     register(
+        # Not a table: the attempt lives inside the learner's progress, with
+        # every answer they gave. The trail records the outcome of the attempt
+        # and none of the answers -- see learner_api.quizzes.record_quiz_attempt.
+        'learner_quiz_attempts',
+        workspace='learner',
+        entity_type='quiz_attempt',
+        label='Quiz attempt',
+        href='/learner',
+        key='id',
+        title=('learner_name', 'quiz_title'),
+        title_join=' — ',
+        title_fallback='quiz_id',
+        context=('module_title', 'week_title', 'attempt', 'result'),
+        parent='learner_id',
+        status='result',
+        using='enrolment',
+        columns=(
+            'id', 'learner_kind', 'learner_id', 'learner_name', 'quiz_id', 'quiz_title',
+            'module_title', 'week_title', 'attempt', 'result', 'score_percent',
+            'correct_answers', 'total_questions', 'time_taken', 'submitted_at',
+            'created_at', 'updated_at',
+        ),
+    )
+
+    register(
         'learner_monthly_reports',
         workspace='learner',
         entity_type='monthly_report',
@@ -1103,13 +1116,12 @@ def register_learner_records():
         columns=(
             'id', 'learner_kind', 'learner_id', 'learner_name', 'programme_name',
             'month_key', 'month_label', 'status',
-            # The learner's own account of the month. Kept in full: a monthly
-            # report is evidence for off-the-job hours, and "what did it say
-            # before it was resubmitted" is a funding question, not a curiosity.
+            # Changes remain visible without copying private learner narratives.
             'learned_summary',
             'summary_metrics', 'selected_ksbs', 'submitted_at',
             'signed_name', 'signed_at',
         ),
+        redact=('learned_summary',),
     )
 
     register(

@@ -145,13 +145,20 @@ def verify_calendar(request, owner, event_id, targets, expected_join_url='', rec
 
 
 def publish_attendees(request, owner, event, attendees):
-    """An attendee-only patch avoids reapplying the recurrence on people saves."""
+    """An attendee-only patch avoids reapplying the recurrence on people saves.
+
+    Returns whether the invitation list was actually written. A caller that
+    re-verifies the calendar afterwards only has to do so when something was
+    sent; an unchanged list leaves the calendar exactly as the verification
+    before this call found it.
+    """
     def addresses(items):
         return {str((item.get('emailAddress') or {}).get('address') or '').strip().lower() for item in items}
     if addresses(event.get('attendees') or []) == addresses(attendees):
-        return
+        return False
     path = f'users/{owner}/events/{quote(event["id"], safe="")}'
     request('PATCH', path, payload={'attendees': attendees})
     confirmed = request('GET', path)
     if addresses(confirmed.get('attendees') or []) != addresses(attendees):
         raise RuntimeError('Microsoft did not confirm the full invitation list. Check the calendar before retrying.')
+    return True

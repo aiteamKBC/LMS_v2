@@ -111,6 +111,10 @@ def assigned_curriculum_module_ids(learner):
 # coach see the same official calendar row.
 BOOKABLE_TYPES = ("catch-up", "student-support", "first-session", "mcr", "progress-review", "review", "gateway", "other")
 
+# Catch-ups use the learner-selected slot immediately. These are the session
+# types whose learner-created bookings remain requests for coach placement.
+COACH_APPROVAL_TYPES = frozenset(("student-support", "gateway", "other"))
+
 # The Microsoft Graph invite subject uses the same wording as the page — see
 # coach_api.BOOKED_EVENT_TITLES, which mirrors EVENT_TITLES above.
 
@@ -1007,7 +1011,10 @@ def _learner_visible_review_definition(definition):
 @learner_self_or_staff(kwarg="pk")
 def learner_calendar_event_review_pdf(request, kind, pk, event_key):
     """Download the signed MCM PDF for a learner-visible calendar review."""
-    response = learner_calendar_event_review(request, kind, pk, event_key)
+    # The review view has its own learner_self_or_staff decorator, which reads
+    # ``pk`` from keyword arguments. Preserve that contract when delegating so
+    # the nested authorization gate can identify the learner as well.
+    response = learner_calendar_event_review(request, kind=kind, pk=pk, event_key=event_key)
     if getattr(response, "status_code", 500) != 200:
         return response
     try:
@@ -1450,9 +1457,8 @@ def learner_calendar_book(request, kind, pk):
     assignment_booking = _s(payload.get("bookingContext")) == "monthly-assignment"
     if assignment_booking and (session_type != "mcr" or not assignment_month or _s(payload.get("reviewId"))):
         return _error("Monthly assignment bookings require an MCM, an assignment month, and no imported review.", 400)
-    # Requests opened from the generic learner modal go to the coach for
-    # approval. Programme-cycle rows opened from an official calendar card
-    # retain their existing direct scheduling flow.
+    # Generic MCM/PR requests still resolve to an official Curriculum
+    # occurrence before they use the direct scheduling flow below.
     direct_cycle_request = session_type in {"mcr", "progress-review"} and not _s(payload.get("eventKey")) and not assignment_month
     if direct_cycle_request:
         # A generic MCM/PR request must still resolve to an official Curriculum
@@ -1468,11 +1474,7 @@ def learner_calendar_book(request, kind, pk):
             message, status_code = resolution_error
             return _error(message, status_code)
         payload = {**payload, "eventKey": resolved_event_key}
-        direct_cycle_request = False
-    requires_coach_approval = (
-        session_type in {"student-support", "gateway", "other"}
-        or direct_cycle_request
-    ) and not is_onboarding_review
+    requires_coach_approval = session_type in COACH_APPROVAL_TYPES and not is_onboarding_review
     calendar_learner_id = int(mirror.id) if mirror is not None and not is_onboarding_review else pk
 
     if assignment_month:

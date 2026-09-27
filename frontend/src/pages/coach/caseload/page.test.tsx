@@ -51,13 +51,13 @@ describe('Coach caseload loading', () => {
     });
   });
 
-  it('loads the embedded dashboard table from the paginated caseload endpoint', async () => {
+  it('uses dashboard-owned learners without loading detailed endpoints', async () => {
     render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={[learner]} /></MemoryRouter>);
 
     expect(await screen.findByText('Final Learner')).toBeInTheDocument();
     expect(screen.getByText('19 Sep 2026')).toBeInTheDocument();
     expect(screen.queryByText('Loading learners')).not.toBeInTheDocument();
-    expect(coachFetch).toHaveBeenCalledWith(expect.stringContaining('/coach_api/coach/caseload?page=1&page_size=10'), expect.anything());
+    expect(coachFetch).not.toHaveBeenCalled();
     expect(fetchCoachCalendarEvents).not.toHaveBeenCalled();
     expect(screen.getByRole('heading', { name: 'All Learners' })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'OTJH caseload summary' })).not.toBeInTheDocument();
