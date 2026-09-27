@@ -170,6 +170,7 @@ class OccurrenceReplacementTests(unittest.TestCase):
             'update_authoring_rows': update,
             'authoring_upsert': upsert,
             'LIVE_SESSION_OCCURRENCES_TABLE': 'occurrences',
+            'transaction': SimpleNamespace(atomic=lambda function: function),
         }
         tree = ast.parse(Path(__file__).with_name('views.py').read_text(encoding='utf-8-sig'))
         node = next(node for node in tree.body
@@ -188,6 +189,50 @@ class OccurrenceReplacementTests(unittest.TestCase):
         self.assertEqual(by_id['OCC-DEC18']['status'], 'cancelled')
         added = next(row for row in rows if row['scheduled_start'] == '2026-09-25T08:00:00Z')
         self.assertEqual((added['session_number'], added['status']), (2, 'scheduled'))
+
+    def test_cancelled_positive_number_is_released_before_reusing_it(self):
+        rows = [{
+            'id': 'OCC-CANCELLED-DEC17', 'session_number': 12,
+            'scheduled_start': '2026-12-17T12:00:00Z',
+            'scheduled_end': '2026-12-17T14:00:00Z',
+            'status': 'cancelled', 'created_at': 'old',
+        }]
+        targets = [{
+            'session_number': 12, 'start': '2026-12-10T12:00:00Z',
+            'end': '2026-12-10T14:00:00Z',
+        }]
+
+        def update(_table, _where, values, payload):
+            row = next(item for item in rows if item['id'] == values[0])
+            row.update(copy.deepcopy(payload))
+
+        namespace = {
+            'datetime': datetime,
+            'uuid': uuid,
+            'ensure_live_session_tracking_tables': lambda: None,
+            'scheduled_live_session_occurrences': lambda *args: copy.deepcopy(targets),
+            'authoring_fetch_all': lambda *args: rows,
+            'clean_str': lambda value: str(value or '').strip(),
+            'teams_calendar_minute_key': lambda value: str(value or '').replace('.000Z', 'Z'),
+            'update_authoring_rows': update,
+            'authoring_upsert': lambda _table, _keys, payload: rows.append(copy.deepcopy(payload)),
+            'LIVE_SESSION_OCCURRENCES_TABLE': 'occurrences',
+            'transaction': SimpleNamespace(atomic=lambda function: function),
+        }
+        tree = ast.parse(Path(__file__).with_name('views.py').read_text(encoding='utf-8-sig'))
+        node = next(node for node in tree.body
+                    if isinstance(node, ast.FunctionDef) and node.name == 'replace_live_session_occurrences')
+        exec(compile(ast.Module(body=[node], type_ignores=[]), 'occurrence-replacement', 'exec'), namespace)
+
+        namespace['replace_live_session_occurrences'](
+            'LIVE-1', {}, None, 120, 'weekly', 1,
+            event_id='EVENT-SERIES', join_url='https://teams.microsoft.com/meet/series',
+        )
+
+        historical = next(row for row in rows if row['id'] == 'OCC-CANCELLED-DEC17')
+        active = next(row for row in rows if row['scheduled_start'] == '2026-12-10T12:00:00Z')
+        self.assertLess(historical['session_number'], 0)
+        self.assertEqual((active['session_number'], active['status']), (12, 'scheduled'))
 
 
 if __name__ == '__main__':
