@@ -144,6 +144,30 @@ def form_dict(form, *, include_structure=False):
     return data
 
 
+def _form_version_dict(form):
+    """Return counts owned by this immutable version, not its template family."""
+    assignments = list(FeedbackAssignment.objects.filter(form=form))
+    manual_count = (
+        EnrolmentUser.all_learners.count()
+        if any(item.target_type == 'all_learners' for item in assignments)
+        else len({item.target_id for item in assignments if item.target_type == 'learner'})
+    )
+    delivery_count = FeedbackDelivery.objects.filter(form=form).count()
+    assigned_count = manual_count + FeedbackDeliveryRecipient.objects.filter(
+        delivery__form=form, revoked_at__isnull=True,
+    ).count()
+    responses = FeedbackResponse.objects.filter(form=form)
+    return {
+        'id': form.id, 'title': form.title, 'version': form.version,
+        'isCurrent': form.is_current, 'previousVersionId': form.previous_version_id,
+        'status': form.status, 'createdAt': _iso(form.created_at),
+        'updatedAt': _iso(form.updated_at), 'publishedAt': _iso(form.published_at),
+        'deliveryCount': delivery_count, 'assignedCount': assigned_count,
+        'startedCount': responses.count(),
+        'responseCount': responses.filter(status='completed').count(),
+    }
+
+
 def _forms_queryset(*, current_only=False):
     queryset = FeedbackForm.objects.prefetch_related(
         'assignments', 'responses', 'sections__questions',
@@ -516,6 +540,18 @@ def form_detail(request, pk):
         return json_error(str(exc))
     except CurriculumScopeUnavailable:
         return json_error('Curriculum options are temporarily unavailable.', status=503)
+
+
+@require_staff
+def form_versions(request, pk):
+    if request.method != 'GET':
+        return json_error('Method not allowed.', status=405)
+    try:
+        form = FeedbackForm.objects.get(pk=pk)
+    except FeedbackForm.DoesNotExist:
+        return json_error('Feedback form not found.', status=404)
+    versions = FeedbackForm.objects.filter(template_key=form.template_key).order_by('-version', '-id')
+    return JsonResponse({'versions': [_form_version_dict(item) for item in versions]})
 
 
 @require_staff

@@ -9,6 +9,7 @@ urlpatterns = [
     path('feedback/curriculum-options/', feedback.curriculum_scope_options, name='feedback-curriculum-options'),
     path('feedback/forms/', feedback.forms_collection, name='feedback-forms'),
     path('feedback/forms/<int:pk>/', feedback.form_detail, name='feedback-form-detail'),
+    path('feedback/forms/<int:pk>/versions/', feedback.form_versions, name='feedback-form-versions'),
     path('feedback/forms/<int:pk>/status/', feedback.form_status, name='feedback-form-status'),
     path('feedback/forms/<int:pk>/duplicate/', feedback.form_duplicate, name='feedback-form-duplicate'),
     path('feedback/forms/<int:pk>/assignments/', feedback.form_assignments, name='feedback-form-assignments'),

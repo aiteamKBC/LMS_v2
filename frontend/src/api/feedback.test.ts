@@ -41,6 +41,21 @@ describe('feedback API write protection', () => {
     );
   });
 
+  it('loads the complete version history for a form', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ versions: [{ id: 20, version: 2 }, { id: 19, version: 1 }] }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await feedbackApi.versions(20);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/engagement_api/feedback/forms/20/versions/',
+      expect.objectContaining({ credentials: 'include' }),
+    );
+  });
+
   it('scopes staff learner-feedback preview reads to the selected learner', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ forms: [] }) });
     vi.stubGlobal('fetch', fetchMock);

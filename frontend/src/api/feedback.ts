@@ -57,6 +57,22 @@ export interface FeedbackForm {
   delivery?: { id: number; occurrenceKey: string; sessionTitle: string; startsAt: string | null; endsAt: string | null } | null;
 }
 
+export interface FeedbackFormVersion {
+  id: number;
+  title: string;
+  version: number;
+  isCurrent: boolean;
+  previousVersionId: number | null;
+  status: FeedbackFormStatus;
+  createdAt: string;
+  updatedAt: string;
+  publishedAt: string | null;
+  deliveryCount: number;
+  assignedCount: number;
+  startedCount: number;
+  responseCount: number;
+}
+
 export interface FeedbackFormInput {
   title: string;
   formType: FeedbackFormType;
@@ -167,6 +183,7 @@ export const feedbackApi = {
   curriculumOptions: () => request<FeedbackCurriculumOptions>('/curriculum-options/', undefined, 15000),
   listForms: () => request<{ forms: FeedbackForm[]; summary: { totalForms: number; publishedForms: number; draftForms: number; totalResponses: number } }>('/forms/'),
   getForm: (id: number) => request<{ form: FeedbackForm }>(`/forms/${id}/`),
+  versions: (id: number) => request<{ versions: FeedbackFormVersion[] }>(`/forms/${id}/versions/`),
   createForm: (input: FeedbackFormInput) => request<{ form: FeedbackForm }>('/forms/', { method: 'POST', body: JSON.stringify(input) }),
   updateForm: (id: number, input: Partial<FeedbackFormInput>) => request<{ form: FeedbackForm }>(`/forms/${id}/`, { method: 'PATCH', body: JSON.stringify(input) }),
   deleteForm: (id: number) => request<{ ok: true }>(`/forms/${id}/`, { method: 'DELETE' }),

@@ -341,6 +341,31 @@ class FeedbackValidationTests(SimpleTestCase):
             response = feedback.form_recipients(RequestFactory().get('/'), pk=19)
         self.assertEqual(response.status_code, 403)
 
+    def test_staff_can_list_all_versions_newest_first(self):
+        current = SimpleNamespace(id=20, template_key='template-1')
+        historical = SimpleNamespace(id=19)
+        versions_query = mock.MagicMock()
+        versions_query.order_by.return_value = [current, historical]
+        with (
+            _patched(_account(role='staff')),
+            mock.patch.object(feedback.FeedbackForm.objects, 'get', return_value=current),
+            mock.patch.object(feedback.FeedbackForm.objects, 'filter', return_value=versions_query) as filtered,
+            mock.patch.object(feedback, '_form_version_dict', side_effect=[{'id': 20, 'version': 2}, {'id': 19, 'version': 1}]),
+        ):
+            response = feedback.form_versions(RequestFactory().get('/'), pk=20)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content)['versions'], [
+            {'id': 20, 'version': 2}, {'id': 19, 'version': 1},
+        ])
+        filtered.assert_called_once_with(template_key='template-1')
+        versions_query.order_by.assert_called_once_with('-version', '-id')
+
+    def test_learner_cannot_view_form_versions(self):
+        with _patched(_account(role='learner')):
+            response = feedback.form_versions(RequestFactory().get('/'), pk=20)
+        self.assertEqual(response.status_code, 403)
+
     def test_staff_view_as_sees_attendance_recipient_delivery(self):
         form = SimpleNamespace(
             id=19, title='Lecture feedback', description='Tell us about the lecture',
