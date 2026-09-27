@@ -16,6 +16,8 @@ export interface LearnerCalendarEvent {
   id: string;
   /** Server-derived once the booked time has passed: learner attended (completed) or not (ended). */
   meetingOutcome?: 'ended' | 'completed' | null;
+  /** Live session the learner missed but then watched in full as a recording. */
+  watchedRecording?: boolean;
   eventKey: string;
   title: string;
   source: 'mcr' | 'progress-review' | string;

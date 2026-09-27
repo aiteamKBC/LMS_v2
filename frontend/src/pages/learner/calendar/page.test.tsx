@@ -95,6 +95,15 @@ describe('calendar event previews', () => {
     expect(within(dialog).queryByRole('link', { name: 'Join Meeting' })).not.toBeInTheDocument();
   });
 
+  it('marks a missed live session completed once its whole recording was watched', async () => {
+    setup([event({ id: 'live-1', eventKey: 'live-session-1-1', source: 'live-session', type: 'live-session',
+      title: 'Marketing lecture', meetingOutcome: 'completed', watchedRecording: true })]);
+    fireEvent.click((await screen.findAllByRole('button', { name: /Marketing lecture/ }))[0]);
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Completed')).toBeInTheDocument();
+    expect(within(dialog).getByText('Watched the full recording')).toBeInTheDocument();
+  });
+
   it('shows an elapsed meeting the learner attended as Completed', async () => {
     setup([event({ status: 'in-progress', meetingOutcome: 'completed' })]);
     const statusBadges = await screen.findAllByLabelText('Completed status');

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { loadTranscriptCues, sessionFileUrl, type SessionFile, type SessionLearner, type TranscriptCue, type TranscriptLink } from '@/api/sessionResults';
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
+import { loadRecordingWatch, loadTranscriptCues, recordRecordingWatch, sessionFileUrl, type SessionFile, type SessionLearner, type TranscriptCue, type TranscriptLink } from '@/api/sessionResults';
 
 function cueTime(seconds: number) {
   const value = Math.max(0, Math.floor(seconds));
@@ -7,10 +7,78 @@ function cueTime(seconds: number) {
   return `${hours ? `${hours}:` : ''}${String(Math.floor(value / 60) % 60).padStart(2, '0')}:${String(value % 60).padStart(2, '0')}`;
 }
 
-export function SessionRecordingPlayer({ seriesId, file, transcripts, learner, label }: {
-  seriesId: string; file: SessionFile; transcripts: SessionFile[]; learner?: SessionLearner; label: string;
+const WATCH_REPORT_MS = 30000;
+
+function watchedText({ watchedSeconds, durationSeconds }: { watchedSeconds: number; durationSeconds: number }) {
+  const minutes = (seconds: number) => Math.max(1, Math.round(seconds / 60));
+  if (watchedSeconds < 60) return 'Viewing time saved: under 1 min';
+  const seen = durationSeconds > 0 ? Math.min(watchedSeconds, durationSeconds) : watchedSeconds;
+  return durationSeconds > 0 ? `Watched ${minutes(seen)} of ${minutes(durationSeconds)} min` : `Watched ${minutes(seen)} min`;
+}
+// A larger jump between two time updates is a seek, not viewing.
+const MAX_PLAYED_STEP_SECONDS = 2;
+
+/** Adds up the seconds the learner actually plays and reports them about every 30 seconds. */
+function useWatchTracking(video: RefObject<HTMLVideoElement | null>, seriesId: string, file: SessionFile,
+  learner: SessionLearner | undefined, enabled: boolean) {
+  const pending = useRef(0);
+  const lastPosition = useRef<number | null>(null);
+  const [saved, setSaved] = useState<{ watchedSeconds: number; durationSeconds: number } | null>(null);
+  const [saveError, setSaveError] = useState('');
+  const csrfToken = useRef('');
+  const fileId = file.id, kind = learner?.kind, learnerId = learner?.id;
+  useEffect(() => {
+    if (!enabled || !kind || !learnerId) return;
+    const controller = new AbortController();
+    void loadRecordingWatch(seriesId, file, { kind, id: learnerId }, controller.signal).then(state => {
+      csrfToken.current = state.csrfToken || '';
+      if (state.watchedSeconds > 0) setSaved(state);
+    }).catch(reason => { if (!controller.signal.aborted) setSaveError(reason instanceof Error ? reason.message : 'Viewing time is unavailable.'); });
+    return () => controller.abort();
+    // `file` is identified by its id; a refreshed object for the same recording must not reload.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enabled, seriesId, fileId, kind, learnerId]);
+  const report = useRef<(keepalive?: boolean) => void>(() => undefined);
+  report.current = (keepalive = false) => {
+    const seconds = Math.floor(pending.current);
+    // Without a token the seconds stay pending and go out with the next report.
+    if (!enabled || !learner || seconds < 1 || !csrfToken.current) return;
+    pending.current -= seconds;
+    const element = video.current;
+    void recordRecordingWatch(seriesId, file, learner, {
+      watchedSeconds: seconds,
+      position: Math.floor(element?.currentTime || 0),
+      duration: Number.isFinite(element?.duration) ? Math.floor(element?.duration || 0) : 0,
+    }, csrfToken.current, keepalive).then(result => { setSaved(result); setSaveError(''); })
+      // Viewing time is informational: never interrupt playback, but say it was not saved.
+      .catch(reason => setSaveError(reason instanceof Error ? reason.message : 'Viewing time could not be saved.'));
+  };
+  useEffect(() => {
+    if (!enabled) return;
+    const timer = window.setInterval(() => report.current(), WATCH_REPORT_MS);
+    const leave = () => report.current(true);
+    window.addEventListener('pagehide', leave);
+    return () => { window.clearInterval(timer); window.removeEventListener('pagehide', leave); report.current(true); };
+  }, [enabled]);
+  return {
+    saved, saveError,
+    onPlayedTime: () => {
+      const element = video.current;
+      if (!enabled || !element) return;
+      const step = element.currentTime - (lastPosition.current ?? element.currentTime);
+      if (!element.paused && !element.seeking && step > 0 && step <= MAX_PLAYED_STEP_SECONDS) pending.current += step;
+      lastPosition.current = element.currentTime;
+    },
+    onSeeked: () => { lastPosition.current = video.current?.currentTime ?? null; },
+    onStop: () => report.current(),
+  };
+}
+
+export function SessionRecordingPlayer({ seriesId, file, transcripts, learner, label, trackWatch = false }: {
+  seriesId: string; file: SessionFile; transcripts: SessionFile[]; learner?: SessionLearner; label: string; trackWatch?: boolean;
 }) {
   const video = useRef<HTMLVideoElement>(null);
+  const watch = useWatchTracking(video, seriesId, file, learner, trackWatch);
   const panel = useRef<HTMLDivElement>(null);
   const [cues, setCues] = useState<TranscriptCue[]>([]);
   const [time, setTime] = useState(0);
@@ -67,7 +135,11 @@ export function SessionRecordingPlayer({ seriesId, file, transcripts, learner, l
   return <div className="space-y-3">
     <video ref={video} controls playsInline preload="none" className="aspect-video w-full rounded-xl bg-black"
       src={sessionFileUrl(seriesId, file, learner)} aria-label={label}
-      onTimeUpdate={readTime} onSeeked={readTime} onLoadedMetadata={readTime} onPause={readTime} />
+      onTimeUpdate={() => { readTime(); watch.onPlayedTime(); }} onSeeked={() => { readTime(); watch.onSeeked(); }}
+      onLoadedMetadata={readTime} onPause={() => { readTime(); watch.onStop(); }} onEnded={watch.onStop} />
+    {trackWatch && (watch.saveError
+      ? <p role="status" className="text-xs text-amber-800">{watch.saveError}</p>
+      : watch.saved && <p role="status" className="text-xs font-semibold text-primary-700">{watchedText(watch.saved)}</p>)}
     <section className="rounded-xl border bg-background-50" aria-label={`${label} transcript`}>
       <header className="flex items-center justify-between gap-3 border-b p-3"><h4 className="text-sm font-semibold">Transcript</h4>
         {visibleCues.length > 0 && <button type="button" aria-pressed={follow} onClick={() => setFollow(value => !value)} className="rounded-lg border bg-white px-3 py-1 text-xs font-semibold">Follow video</button>}
