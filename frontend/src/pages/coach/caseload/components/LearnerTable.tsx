@@ -11,6 +11,7 @@ function percent(value: number | null | undefined, available = true) {
 }
 
 function componentPercent(learner: Learner) {
+  if (learner.activityProgressAvailable) return percent(learner.activityProgress, true);
   const total = learner.componentsPlanned ?? 0;
   return total > 0 ? percent(((learner.componentsCompleted ?? 0) / total) * 100) : null;
 }

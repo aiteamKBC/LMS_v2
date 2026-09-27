@@ -30,7 +30,6 @@ import type { EmbeddedCaseloadLearner } from '@/pages/coach/caseload/types';
 import { LearnerAvatar } from '@/pages/coach/shared/LearnerIdentity';
 import {
   type CoachCalendarEvent,
-  fetchCoachCalendarEvents,
   reviewScheduleAvailable,
   eventDisplayDate,
   eventTargetDate,
@@ -118,6 +117,11 @@ interface CoachLearner {
   overallProgressAvailable?: boolean;
   attendanceRate: number;
   attendanceRateAvailable?: boolean;
+  attendanceAvailable?: boolean;
+  activityProgress?: number | null;
+  activityProgressAvailable?: boolean;
+  componentsCompleted?: number | null;
+  componentsPlanned?: number | null;
   attendanceLastSession?: string | null;
   attendanceLastSessionDate?: string | null;
   otjhCompleted: number;
@@ -191,12 +195,12 @@ interface CoachDashboardApiResponse extends CaseloadApiResponse {
   reviewHistory?: {
     learners?: ReviewHistoryApiLearner[];
   };
-  timetable?: {
+  meetings?: {
     events?: CoachCalendarEvent[];
     summary?: { progressReviewRows?: number; mcrRows?: number; learnersWithDates?: number; reviewAnchorSkipped?: number; reviewAnchorSkipReasons?: Record<string, number> };
     reviewGenerationIssues?: Array<{ learnerId?: string; code?: string }>;
   };
-  evidence?: MarkingQueueResponse;
+  marking?: MarkingQueueResponse;
   assignedGroups?: CoachAssignedGroup[];
   errors?: Record<string, string>;
 }
@@ -362,8 +366,13 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     overallProgressAvailable: learner.overallProgressAvailable,
     // The backend already joined this by stable learner id -- read it
     // as-is rather than re-deriving it from a separate dataset.
-    attendanceRate: learner.attendanceRateAvailable ? clampPercent(learner.attendanceRate) : 0,
-    attendanceRateAvailable: Boolean(learner.attendanceRateAvailable),
+    attendanceRate: (learner.attendanceAvailable ?? learner.attendanceRateAvailable) ? clampPercent(learner.attendanceRate) : 0,
+    attendanceRateAvailable: Boolean(learner.attendanceAvailable ?? learner.attendanceRateAvailable),
+    attendanceAvailable: Boolean(learner.attendanceAvailable ?? learner.attendanceRateAvailable),
+    activityProgress: learner.activityProgress == null ? null : clampPercent(learner.activityProgress),
+    activityProgressAvailable: Boolean(learner.activityProgressAvailable),
+    componentsCompleted: learner.componentsCompleted ?? null,
+    componentsPlanned: learner.componentsPlanned ?? null,
     attendanceLastSession: learner.attendanceLastSession ?? null,
     attendanceLastSessionDate: learner.attendanceLastSessionDate ?? null,
     otjhCompleted: toNumber(learner.otjhCompleted),
@@ -384,6 +393,8 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     lastActivity: displayValue(learner.lastActivity),
     lastActivityDate: learner.lastActivityDate || null,
     lastActivityLabel: displayValue(learner.lastActivityLabel),
+    lastMcm: learner.lastMcm || undefined,
+    lastPr: learner.lastPr || undefined,
     recentFlag,
     email: learner.email || null,
     rawProgramStatus: learner.rawProgramStatus || null,
@@ -424,7 +435,7 @@ function formatCompletedSessionDate(value?: string | null) {
   const date = parseLocalDate(value);
   return date
     ? new Intl.DateTimeFormat('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).format(date)
-    : EMPTY_VALUE;
+    : displayValue(value);
 }
 
 function mergeAttendanceRates(
@@ -543,23 +554,6 @@ function eventMatchesLearner(event: CoachCalendarEvent, learner: CoachLearner) {
   const eventLearnerId = displayValue(event.learnerId);
   const learnerId = displayValue(learner.id);
   return eventLearnerId !== EMPTY_VALUE && learnerId !== EMPTY_VALUE && eventLearnerId === learnerId;
-}
-
-async function fetchAllPendingMarking(signal: AbortSignal): Promise<MarkingQueueResponse> {
-  const items: Partial<EvidenceQueueLearner>[] = [];
-  let page = 1;
-  let summary: MarkingQueueResponse['summary'];
-  while (true) {
-    const response = await fetchSharedJsonGet<MarkingQueueResponse & { pagination?: { hasNext?: boolean } }>(
-      withCoachViewAs(`/coach_api/coach/marking-queue?status=pending&page=${page}&page_size=100`),
-      { signal, credentials: 'include' },
-    );
-    summary = response.summary;
-    items.push(...(response.items || []));
-    if (!response.pagination?.hasNext) break;
-    page += 1;
-  }
-  return { items, summary };
 }
 
 function groupPendingMarkingByLearner(items: EvidenceQueueLearner[]): EvidenceQueueLearner[] {
@@ -1266,17 +1260,16 @@ export default function CoachDashboard() {
       }
 
       try {
-        const [dashboard, markingQueue, completedSessionHistory] = await Promise.all([
-          fetchCoachDashboardWithRetry(
-            controller.signal,
-            withCoachViewAs(coachDashboardEndpoint()),
-          ),
-          fetchAllPendingMarking(controller.signal).catch(() => null),
-          // Use the same full calendar history as My Learners. The dashboard
-          // payload is intentionally limited to today + 90 days for previews.
-          fetchCoachCalendarEvents(controller.signal).catch(() => ({ events: [] })),
-        ]);
+        // Data ownership: this page makes one domain request. Detailed
+        // timetable, caseload and marking endpoints belong to their dedicated
+        // routes and must never be fetched to assemble dashboard cards.
+        const dashboard = await fetchCoachDashboardWithRetry(
+          controller.signal,
+          withCoachViewAs(coachDashboardEndpoint()),
+        );
         if (controller.signal.aborted) return;
+
+        const markingQueue = dashboard.marking;
 
         const seenSubmissionIds = new Set<string>();
         const queueItems = groupPendingMarkingByLearner(
@@ -1291,8 +1284,8 @@ export default function CoachDashboard() {
         );
         const normalizedLearners = (dashboard.learners || []).map(normalizeLearner);
         const reviewHistoryLearners = dashboard.reviewHistory?.learners || [];
-        const events = sortEvents(dashboard.timetable?.events || []);
-        const completedHistoryEvents = completedSessionHistory.events || [];
+        const events = sortEvents(dashboard.meetings?.events || []);
+        const completedHistoryEvents = events;
         const nonLiveEvents = events.filter(event => event.source !== 'live-session');
 
         setOwnerName(displayValue(dashboard.owner?.name) === EMPTY_VALUE ? authenticatedCoachName : String(dashboard.owner?.name));
@@ -1310,20 +1303,20 @@ export default function CoachDashboard() {
             ? undefined
             : toNumber(markingQueue.summary.pendingItems),
         );
-        const reviewSummary = dashboard.timetable?.summary;
+        const reviewSummary = dashboard.meetings?.summary;
         // Review-source failures are per learner. A native learner with an
         // unavailable Curriculum schedule must not hide valid Aptem reviews
         // belonging to the rest of the caseload.
         setReviewGenerationAvailable(reviewScheduleAvailable(
           reviewSummary,
           nonLiveEvents,
-          dashboard.timetable?.reviewGenerationIssues || [],
+          dashboard.meetings?.reviewGenerationIssues || [],
         ));
         setCalendarEvents(nonLiveEvents);
         setCalendarPreviewEvents(nonLiveEvents.filter(isWithinNextWorkWeek));
         setLiveSessionEvents(events.filter(event => event.source === 'live-session'));
-        setCalendarError(dashboard.errors?.timetable || null);
-        setLiveSessionsError(dashboard.errors?.timetable || null);
+        setCalendarError(dashboard.errors?.meetings || null);
+        setLiveSessionsError(dashboard.errors?.meetings || null);
         setCalendarLoading(false);
         setLiveSessionsLoading(false);
         setLoading(false);
@@ -1562,7 +1555,7 @@ export default function CoachDashboard() {
         </section>
 
         <div id="learner-caseload" className={styles.fullWidthCaseload}>
-          <CoachCaseloadContent embedded />
+          <CoachCaseloadContent embedded embeddedLearners={enrichedLearners} />
         </div>
 
         <Panel className={styles.panel}>

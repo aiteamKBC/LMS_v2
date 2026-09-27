@@ -71,8 +71,11 @@ export interface Learner {
   /** Component completion percentage. Misleadingly named on the wire. */
   attendanceRate: number;
   attendanceRateAvailable?: boolean;
-  componentsCompleted?: number;
-  componentsPlanned?: number;
+  attendanceAvailable?: boolean;
+  activityProgress?: number | null;
+  activityProgressAvailable?: boolean;
+  componentsCompleted?: number | null;
+  componentsPlanned?: number | null;
 
   otjhCompleted: number;
   /** Cumulative planned hours up to and including the current week. */

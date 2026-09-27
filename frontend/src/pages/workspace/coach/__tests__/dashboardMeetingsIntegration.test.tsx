@@ -49,7 +49,7 @@ beforeEach(() => {
       { month: '2026-04', label: 'Apr', count: 3 }, { month: '2026-05', label: 'May', count: 2 },
       { month: '2026-06', label: 'Jun', count: 4 }, { month: '2026-07', label: 'Jul', count: 1 },
       { month: '2026-08', label: 'Aug', count: 2 }, { month: '2026-09', label: 'Sep', count: 1 },
-    ], attendance: { learners: [{ id: '2', learner: 'Attention Only Learner', attendance: 50 }] }, evidence: { items: [] }, timetable: { events: [meeting,
+    ], attendance: { learners: [{ id: '2', learner: 'Attention Only Learner', attendance: 50 }] }, marking: { items: [] }, meetings: { events: [meeting,
       { ...meeting, id: 'live-1', eventKey: 'live-1', source: 'live-session', title: 'Example Lesson' }] } });
 });
 afterEach(() => { cleanup(); vi.useRealTimers(); });
@@ -84,7 +84,7 @@ it('shows only dashboard skeletons while the initial request is pending', async 
   expect(screen.queryByText('No learners assigned to you yet')).not.toBeInTheDocument();
   expect(screen.queryByText('Data not available')).not.toBeInTheDocument();
   expect(screen.queryByText('--')).not.toBeInTheDocument();
-  finishLoads.forEach(resolve => resolve({ owner: { name: 'Example Coach' }, learners: [], timetable: { events: [] } }));
+  finishLoads.forEach(resolve => resolve({ owner: { name: 'Example Coach' }, learners: [], meetings: { events: [] } }));
   expect(await screen.findByText('No learners assigned to you yet')).toBeVisible();
 });
 
@@ -98,13 +98,42 @@ it('shows the learner table only after a successful response', async () => {
   expect(document.querySelectorAll('[data-skeleton]')).toHaveLength(0);
   expect(screen.getByRole('region', { name: 'Coach dashboard metrics' })).toBeVisible();
   expect(screen.getByRole('region', { name: 'Learner risk insights' })).toBeVisible();
+  expect(mocks.load).toHaveBeenCalledTimes(1);
+  expect(mocks.load).toHaveBeenCalledWith('/coach_api/coach/dashboard', expect.objectContaining({ credentials: 'include' }));
+  expect(mocks.calendar).not.toHaveBeenCalled();
+  expect(mocks.coachFetch).not.toHaveBeenCalled();
+});
+
+it('renders dashboard-owned KSB, activity, and attendance metrics without a caseload request', async () => {
+  vi.useRealTimers();
+  mocks.load.mockResolvedValue({
+    owner: { name: 'Example Coach' },
+    learners: [{
+      id: '1', name: 'Metric Learner', learnerType: 'commercial', rawProgramStatus: 'active',
+      otjhStatus: 'on-track', otjhCompleted: 20, otjhTarget: 40,
+      ksbProgress: 25, ksbProgressAvailable: true, ksbCompleted: 3, ksbTarget: 12,
+      activityProgress: 40, activityProgressAvailable: true, componentsCompleted: 8, componentsPlanned: 20,
+      attendanceRate: 80, attendanceAvailable: true, attendancePresent: 8, attendanceSessions: 10,
+    }],
+    monthlyRisk: [], marking: { items: [] }, meetings: { events: [] },
+  });
+
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  const region = await screen.findByRole('region', { name: 'Coach learner caseload' });
+  const row = (await within(region).findByText('Metric Learner')).closest('tr');
+  expect(row).not.toBeNull();
+  expect(within(row!).getByText('25%')).toBeVisible();
+  expect(within(row!).getByText('40%')).toBeVisible();
+  expect(within(row!).getByText('80%')).toBeVisible();
+  expect(mocks.load).toHaveBeenCalledTimes(1);
+  expect(mocks.coachFetch).not.toHaveBeenCalled();
 });
 
 it('shows the learner empty state only after an empty response finishes', async () => {
   vi.useRealTimers();
   mocks.coachFetch.mockResolvedValue(new Response(JSON.stringify({ results: [], pagination: { page: 1, pageSize: 10, total: 0, totalPages: 0 } })));
   mocks.load.mockImplementation((url: string) => Promise.resolve(
-    url.includes('/marking-queue') ? { summary: { pendingItems: 0 } } : { owner: { name: 'Example Coach' }, learners: [], timetable: { events: [] } },
+    url.includes('/marking-queue') ? { summary: { pendingItems: 0 } } : { owner: { name: 'Example Coach' }, learners: [], meetings: { events: [] } },
   ));
   render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
   expect(screen.queryByText('No learners assigned to you yet')).not.toBeInTheDocument();
@@ -132,7 +161,7 @@ it('returns immediately to skeletons when the selected coach changes', async () 
   expectStructuredSkeleton();
   expect(screen.queryByText('Example Learner')).not.toBeInTheDocument();
   expect(screen.queryByText('No learners assigned to you yet')).not.toBeInTheDocument();
-  finishLoads.forEach(resolve => resolve({ owner: { name: 'Next Coach' }, learners: [], timetable: { events: [] } }));
+  finishLoads.forEach(resolve => resolve({ owner: { name: 'Next Coach' }, learners: [], meetings: { events: [] } }));
   expect(await screen.findByText('No learners assigned to you yet')).toBeVisible();
 });
 
@@ -159,8 +188,8 @@ it('shows serialized latest completed MCM and PR and ignores future or cancelled
             lastMcm: '12 Sept 2026', lastPr: '15 Sept 2026',
           }],
           attendance: { learners: [{ id: '1', learner: 'Example Learner', attendance: 90, lastSession: '10 Sep 2026', lastSessionDate: '2026-09-10' }] },
-          evidence: { items: [] },
-          timetable: { events: [] },
+          marking: { items: [] },
+          meetings: { events: [] },
         },
   ));
 
@@ -235,8 +264,8 @@ it('does not show the caseload owner name as learner session activity', async ()
             id: '1', learner: 'Example Learner', attendance: 90,
             lastSession: '12 Sep 2026', lastSessionDate: '2026-09-12',
           }] },
-          evidence: { items: [] },
-          timetable: { events: [] },
+          marking: { items: [] },
+          meetings: { events: [] },
         },
   ));
 
@@ -269,7 +298,7 @@ it('shows the six requested workload cards using the current week and marking qu
   mocks.load.mockImplementation((url: string) => Promise.resolve(
     url.includes('/marking-queue')
       ? { summary: { pendingItems: 6 } }
-      : { owner: { name: 'Example Coach' }, learners: [{ id: '1', name: 'Example Learner', rawProgramStatus: 'active', enrollmentStatus: 'active', status: 'at-risk', otjhStatus: 'at-risk', otjhCompleted: 0, otjhTarget: 100 }], timetable: { events: dashboardEvents } },
+      : { owner: { name: 'Example Coach' }, learners: [{ id: '1', name: 'Example Learner', rawProgramStatus: 'active', enrollmentStatus: 'active', status: 'at-risk', otjhStatus: 'at-risk', otjhCompleted: 0, otjhTarget: 100 }], marking: { summary: { pendingItems: 6 }, items: [] }, meetings: { events: dashboardEvents } },
   ));
 
   render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
@@ -321,7 +350,7 @@ it('uses the current work week for KPI cards and only the next work week for upc
       : {
           owner: { name: 'Example Coach' },
           learners: [{ id: '1', name: 'Example Learner', rawProgramStatus: 'active', otjhStatus: 'on-track' }],
-          timetable: { events: dashboardEvents },
+          meetings: { events: dashboardEvents },
         },
   ));
 
@@ -370,7 +399,7 @@ it('shows resolved Aptem weekly counts when the 119-event payload also has a gen
       : {
           owner: { name: 'Example Coach' },
           learners: [{ id: '1', name: 'Example Learner', rawProgramStatus: 'active', otjhStatus: 'on-track' }],
-          timetable: {
+          meetings: {
             events: [...progressReviews, ...monthlyCoaching],
             summary: { totalEvents: 119, progressReviewRows: 26, mcrRows: 93, learnersWithDates: 31, aptemReviewRows: 119, aptemLearners: 32, curriculumLearners: 0 },
             reviewGenerationIssues: [{ learnerId: 'unrelated-native-learner', code: 'review_schedule_unavailable' }],
@@ -395,7 +424,7 @@ it('shows review cards as unavailable when generation failed without usable revi
       : {
           owner: { name: 'Example Coach' },
           learners: [{ id: '1', name: 'Example Learner', rawProgramStatus: 'active', otjhStatus: 'on-track' }],
-          timetable: {
+          meetings: {
             events: [],
             summary: { progressReviewRows: 0, mcrRows: 0, learnersWithDates: 0 },
             reviewGenerationIssues: [{ learnerId: '1', code: 'review_schedule_unavailable' }],
@@ -421,7 +450,7 @@ it('counts delivery learners with active learners on the coach dashboard', async
             { id: '1', name: 'Active Learner', rawProgramStatus: 'active', otjhStatus: 'on-track' },
             { id: '2', name: 'Delivery Learner', rawProgramStatus: 'delivery', otjhStatus: 'on-track' },
           ],
-          timetable: { events: [] },
+          meetings: { events: [] },
         },
   ));
 
@@ -445,8 +474,8 @@ it('opens a detail popup and full-page link from every workload card', async () 
       : {
           owner: { name: 'Example Coach' },
           learners: [{ id: '1', name: 'Example Learner', rawProgramStatus: 'active', otjhStatus: 'at-risk' }],
-          evidence: { items: [{ id: 'evidence-1', learnerId: '1', learner: 'Example Learner', pendingEvidence: 2, totalEvidence: 2 }] },
-          timetable: { events: dashboardEvents },
+          marking: { items: [{ id: 'evidence-1', learnerId: '1', learner: 'Example Learner', pendingEvidence: 2, totalEvidence: 2 }] },
+          meetings: { events: dashboardEvents },
         },
   ));
 
