@@ -12,6 +12,7 @@ from audit_api.last_audit_ledger_views import _is_completed
 from .builder_activity_dates import read_builder_activity_dates
 from .dashboard_metrics import metrics_from_loaded, point_codes, ratio
 from .progress_rules import progress_counts_as_achieved
+from old_otjh.service import ServiceError
 from .learner_detail import SOURCE_MODELS
 from .student_activity import CURRENT_SUBJECTS_SQL, _direct_progress_records, _direct_progress_otjh
 from .student_activity_access import student_activity_available
@@ -375,7 +376,6 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None):
     return result
 
 
-
 @require_GET
 @learner_self_or_staff(kwarg='pk')
 def overview_week(request, kind, pk):
@@ -395,6 +395,8 @@ def overview_week(request, kind, pk):
             source, dashboard_kind=kind if section == 'dashboard' else None)
     except model.DoesNotExist:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
+    except ServiceError as error:
+        return JsonResponse({'error': str(error)}, status=error.status)
     except LookupError as error:
         return JsonResponse({'error': str(error)}, status=409)
     except DatabaseError:

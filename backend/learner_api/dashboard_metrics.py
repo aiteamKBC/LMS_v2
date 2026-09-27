@@ -20,6 +20,7 @@ from .training_plan_contract import selected_contract
 from .training_plan_dashboard import find_contract, number, rows
 from .otjh_totals import completed_otjh, completed_actual_otjh
 from old_otjh.service import ServiceError
+from . import canonical_learning
 
 log = logging.getLogger(__name__)
 _MISSING = object()
@@ -233,8 +234,7 @@ def metrics_from_loaded(source, kind, *, migrated, native, progress,
     activity and export-link reads outside this function lets the Dashboard
     load them once without changing the metric definitions used elsewhere.
     """
-    if kind == 'commercial' and str(source.pk) in {'271', '234'}:
-        from . import canonical_learning
+    if canonical_learning.enabled(source.pk):
         return canonical_learning.metrics(source.pk)
     with connections['enrolment'].cursor() as cursor:
         planned_document = (preloaded or {}).get('planned_hours_document', _MISSING)
@@ -332,8 +332,7 @@ def metrics_from_loaded(source, kind, *, migrated, native, progress,
 
 
 def read_metrics(source, kind, preloaded=None):
-    if kind == 'commercial' and str(source.pk) in {'271', '234'}:
-        from . import canonical_learning
+    if canonical_learning.enabled(source.pk):
         return canonical_learning.metrics(source.pk)
     migrated = student_activity_available(source.aptem_id)
     direct_progress = (preloaded or {}).get('direct_progress') if preloaded is not None else None

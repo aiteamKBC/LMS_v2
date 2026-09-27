@@ -41,8 +41,8 @@ def learners(email, search):
     return query('''SELECT u.id, u."Username" AS name, u."Programme" AS programme
         FROM enrolment."Created_users" u
         LEFT JOIN "Learner".learners p ON p.enrolment_id=u.id
-        LEFT JOIN "Last_audit".learners h ON h.aptem_id::text=ltrim(btrim(u.aptem_id),'0')
-        WHERE (%s='' OR lower(btrim(coalesce(nullif(p.coach_email,''),h.coach_email)))=%s)
+        WHERE p.id IS NOT NULL
+          AND (%s='' OR lower(btrim(p.coach_email))=%s)
           AND (%s='' OR u."Username" ILIKE %s OR u."Email" ILIKE %s)
         ORDER BY u."Username", u.id''', [email, email, search, f'%{search}%', f'%{search}%'])
 

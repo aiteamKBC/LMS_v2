@@ -16,10 +16,15 @@ from . import monthly_logs as logs, monthly_log_sources as sources
 
 class MonthlyLogsTests(SimpleTestCase):
     def setUp(self):
+        # These cases exercise the retained path for a learner with no canonical
+        # identity. Canonical behavior has its own isolated regression suite.
+        profile = patch.object(logs.canonical, 'profile', return_value=None)
+        profile.start()
+        self.addCleanup(profile.stop)
         today = patch.object(logs.timezone, 'localdate', return_value=date(2026, 10, 1))
         today.start()
         self.addCleanup(today.stop)
-        self.account = SimpleNamespace(id=1, role='learner', subject_type='learner', subject_id=7,
+        self.account = SimpleNamespace(id=1, role='learner', subject_type='learner', subject_id=7, is_active=True,
                                        display_name='Learner', email='learner@example.test')
         self.learner = {'id': 7, 'aptem_id': 42, 'name': 'Learner', 'programme': 'Programme',
                         'email': 'learner@example.test', 'coach_email': 'coach@example.test',
