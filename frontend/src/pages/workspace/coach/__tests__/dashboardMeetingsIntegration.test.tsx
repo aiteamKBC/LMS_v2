@@ -14,6 +14,12 @@ vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ isInitialized: true, auth:
 vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => mocks.coach }));
 vi.mock('@/lib/sharedGetJson', () => ({ fetchSharedJsonGet: mocks.load }));
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: mocks.coachFetch }));
+vi.mock('@/lib/coachViewAs', () => ({
+  setCoachViewAs: vi.fn(),
+  withCoachViewAs: (url: string) => mocks.coach.isViewingAsCoach
+    ? `${url}?viewAsCoach=${encodeURIComponent(mocks.coach.email)}`
+    : url,
+}));
 vi.mock('@/pages/coach/shared/calendarEvents', async original => ({
   ...await original<typeof import('@/pages/coach/shared/calendarEvents')>(),
   scheduleCoachCalendarEvent: mocks.schedule,
@@ -104,6 +110,74 @@ it('shows the learner table only after a successful response', async () => {
   expect(mocks.coachFetch).not.toHaveBeenCalled();
 });
 
+it('characterizes the initial dashboard request as one aggregate request with no child requests', async () => {
+  vi.useRealTimers();
+  const requestOrder: string[] = [];
+  mocks.load.mockImplementation(async (url: string) => {
+    requestOrder.push(url);
+    return { owner: { name: 'Example Coach' }, learners: [], meetings: { events: [] } };
+  });
+
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  expect(await screen.findByText('No learners assigned to you yet')).toBeVisible();
+
+  expect(requestOrder).toEqual(['/coach_api/coach/dashboard']);
+  expect(mocks.calendar).not.toHaveBeenCalled();
+  expect(mocks.coachFetch).not.toHaveBeenCalled();
+});
+
+it('adds the effective coach once when an administrator views a coach dashboard', async () => {
+  vi.useRealTimers();
+  Object.assign(mocks.coach, {
+    email: 'selected.coach@example.invalid', name: 'Selected Coach', isViewingAsCoach: true,
+  });
+
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  expect(await screen.findByRole('region', { name: 'Coach learner caseload' })).toBeVisible();
+
+  expect(mocks.load).toHaveBeenCalledTimes(1);
+  expect(mocks.load).toHaveBeenCalledWith(
+    '/coach_api/coach/dashboard?viewAsCoach=selected.coach%40example.invalid',
+    expect.objectContaining({ credentials: 'include' }),
+  );
+});
+
+it('retries the aggregate request once after a transient failure', async () => {
+  useDashboardDate();
+  mocks.load
+    .mockRejectedValueOnce(new Error('Temporary failure'))
+    .mockResolvedValueOnce({ owner: { name: 'Example Coach' }, learners: [], meetings: { events: [] } });
+
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  await act(async () => { await vi.advanceTimersByTimeAsync(250); });
+  expect(await screen.findByText('No learners assigned to you yet')).toBeVisible();
+
+  expect(mocks.load).toHaveBeenCalledTimes(2);
+  expect(mocks.load.mock.calls.map(([url]) => url)).toEqual([
+    '/coach_api/coach/dashboard', '/coach_api/coach/dashboard',
+  ]);
+});
+
+it('aborts the previous aggregate request when the effective coach changes', async () => {
+  vi.useRealTimers();
+  const signals: AbortSignal[] = [];
+  mocks.load.mockImplementation((_: string, options: { signal: AbortSignal }) => {
+    signals.push(options.signal);
+    if (signals.length === 1) return new Promise(() => undefined);
+    return Promise.resolve({ owner: { name: 'Next Coach' }, learners: [], meetings: { events: [] } });
+  });
+
+  const { rerender } = render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  expect(signals).toHaveLength(1);
+  Object.assign(mocks.coach, { email: 'next-coach@example.invalid', name: 'Next Coach' });
+  rerender(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  expect(await screen.findByText('No learners assigned to you yet')).toBeVisible();
+
+  expect(signals).toHaveLength(2);
+  expect(signals[0].aborted).toBe(true);
+  expect(signals[1].aborted).toBe(false);
+});
+
 it('renders dashboard-owned KSB, activity, and attendance metrics without a caseload request', async () => {
   vi.useRealTimers();
   mocks.load.mockResolvedValue({
@@ -130,6 +204,49 @@ it('renders dashboard-owned KSB, activity, and attendance metrics without a case
   expect(within(row!).getByText('8 / 10')).toBeVisible();
   expect(mocks.load).toHaveBeenCalledTimes(1);
   expect(mocks.coachFetch).not.toHaveBeenCalled();
+});
+
+it('preserves zero values while rendering unavailable dashboard metrics distinctly', async () => {
+  vi.useRealTimers();
+  mocks.load.mockResolvedValue({
+    owner: { name: 'Example Coach' }, monthlyRisk: [], marking: { items: [] }, meetings: { events: [] },
+    learners: [
+      {
+        id: 'zero', name: 'Zero Learner', rawProgramStatus: 'active', otjhStatus: 'at-risk',
+        otjhCompleted: 0, otjhTarget: 40, ksbProgress: 0, ksbProgressAvailable: true,
+        ksbCompleted: 0, ksbTarget: 12, activityProgress: 0, activityProgressAvailable: true,
+        componentsCompleted: 0, componentsPlanned: 20, attendanceRate: 0,
+        attendanceRateAvailable: true, attendanceAvailable: true, attendancePresent: 0, attendanceSessions: 10,
+        lastActivity: '18 Sep 2026', lastActivityLabel: 'Quiz submitted', lastPr: '12 Sep 2026', lastMcm: '14 Sep 2026',
+      },
+      {
+        id: 'missing', name: 'Unavailable Learner', rawProgramStatus: 'active', otjhStatus: 'unknown',
+        otjhCompleted: 0, otjhTarget: 0, ksbProgress: null, ksbProgressAvailable: false,
+        activityProgress: null, activityProgressAvailable: false, attendanceRate: null,
+        attendanceRateAvailable: false, attendanceAvailable: false,
+      },
+    ],
+  });
+
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  const region = await screen.findByRole('region', { name: 'Coach learner caseload' });
+  const zeroRow = (await within(region).findByText('Zero Learner')).closest('tr')!;
+  expect(within(zeroRow).getByLabelText('OTJH: 0%')).toBeVisible();
+  expect(within(zeroRow).getByLabelText('KSBs: 0%')).toBeVisible();
+  expect(within(zeroRow).getByLabelText('Activities: 0%')).toBeVisible();
+  expect(within(zeroRow).getByLabelText('Attendance: 0%')).toBeVisible();
+  expect(within(zeroRow).getByText('18 Sep 2026')).toBeVisible();
+  expect(within(zeroRow).getByText('12 Sep 2026')).toBeVisible();
+  expect(within(zeroRow).getByText('14 Sep 2026')).toBeVisible();
+
+  const unavailableRow = (await within(region).findByText('Unavailable Learner')).closest('tr')!;
+  expect(within(unavailableRow).getByLabelText('OTJH: not available')).toBeVisible();
+  expect(within(unavailableRow).getByLabelText('KSBs: not available')).toBeVisible();
+  expect(within(unavailableRow).getByLabelText('Activities: not available')).toBeVisible();
+  expect(within(unavailableRow).getByLabelText('Attendance: not available')).toBeVisible();
+  expect(within(unavailableRow).getByText('No activity yet')).toBeVisible();
+  expect(within(unavailableRow).getByText('No PR yet')).toBeVisible();
+  expect(within(unavailableRow).getByText('No MCM yet')).toBeVisible();
 });
 
 it('shows the learner empty state only after an empty response finishes', async () => {

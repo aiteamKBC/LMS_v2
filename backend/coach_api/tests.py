@@ -1,17 +1,19 @@
 import json
+from time import perf_counter
 from datetime import date, time, timedelta
 from decimal import Decimal
 from inspect import unwrap
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from django.db import DatabaseError
+from django.db import DatabaseError, connection
 from django.core.cache import cache
 from django.db.utils import ConnectionDoesNotExist
-from django.test import RequestFactory, SimpleTestCase, override_settings
+from django.test import RequestFactory, SimpleTestCase, TestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
-from coach_api.models import CoachAbsenceReport, CoachCalendarEvent
+from coach_api.models import CoachAbsenceReport, CoachCalendarEvent, CoachDashboardSnapshot
 from coach_api.views import (
     build_generated_calendar_event,
     build_graph_event_payload,
@@ -1029,6 +1031,41 @@ class CoachDashboardViewTests(SimpleTestCase):
         caseload.assert_not_called()
         marking.assert_not_called()
 
+    @patch("coach_api.dashboard_service.CoachDashboardService.build")
+    def test_dashboard_response_contract_is_the_service_contract(self, build):
+        cache.clear()
+        payload = {
+            "owner": {"name": "Example Coach", "email": "coach@example.com"},
+            "learners": [{
+                "id": "7", "learnerType": "commercial", "otjhCompleted": 0,
+                "otjhTarget": 40, "ksbProgress": None, "ksbProgressAvailable": False,
+                "activityProgress": 0, "activityProgressAvailable": True,
+                "attendanceRate": None, "attendanceRateAvailable": False,
+                "lastActivity": "--", "lastActivityDate": None,
+                "lastPr": None, "lastMcm": None,
+            }],
+            "monthlyRisk": [{"month": "2026-09", "label": "Sep", "count": 0}],
+            "assignedGroups": [],
+            "meetings": {
+                "events": [], "summary": {"progressReviewRows": 0, "mcrRows": 0},
+                "reviewGenerationIssues": [],
+            },
+            "marking": {"summary": {"pendingItems": 0}, "items": []},
+            "errors": {},
+        }
+        build.return_value = payload
+
+        response = call_coach_view(
+            coach_dashboard, RequestFactory().get("/coach_api/coach/dashboard"),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content), payload)
+        self.assertEqual(
+            set(json.loads(response.content)),
+            {"owner", "learners", "monthlyRisk", "assignedGroups", "meetings", "marking", "errors"},
+        )
+
     @patch("coach_api.dashboard_cache.get_cached_coach_dashboard")
     def test_dashboard_cache_key_is_scoped_per_coach(self, get_cached):
         """Rapid coach switching must never read another coach's cached payload."""
@@ -1197,6 +1234,66 @@ class CoachDashboardReadModelTests(SimpleTestCase):
         objects.filter.return_value.only.assert_called_once_with("payload", "refreshed_at")
         objects.filter.return_value.only.return_value.first.assert_called_once_with()
         build_live.assert_not_called()
+
+
+@override_settings(COACH_DASHBOARD_CACHE_TTL=90)
+class CoachDashboardSnapshotPerformanceBaselineTests(TestCase):
+    databases = {"default"}
+
+    def setUp(self):
+        cache.clear()
+        self.payload = {
+            "owner": {"name": "Baseline Coach", "email": "baseline@example.com"},
+            "learners": [{
+                "id": str(index), "name": f"Learner {index}",
+                "learnerType": "commercial" if index % 2 else "apprenticeship",
+                "otjhCompleted": 0, "otjhTarget": 40,
+                "ksbProgress": None, "ksbProgressAvailable": False,
+                "activityProgress": 0, "activityProgressAvailable": True,
+                "attendanceRate": None, "attendanceRateAvailable": False,
+                "lastActivity": "--", "lastPr": None, "lastMcm": None,
+            } for index in range(1, 11)],
+            "monthlyRisk": [], "assignedGroups": [],
+            "meetings": {"events": [], "summary": {}, "reviewGenerationIssues": []},
+            "marking": {"summary": {"pendingItems": 0}, "items": []}, "errors": {},
+        }
+        CoachDashboardSnapshot.objects.create(
+            owner_email="baseline@example.com", payload=self.payload, schema_version=3,
+        )
+
+    def request(self):
+        request = RequestFactory().get("/coach_api/coach/dashboard")
+        request.coach_email = "baseline@example.com"
+        return unwrap(coach_dashboard)(request)
+
+    def test_snapshot_cache_miss_and_hit_query_baseline(self):
+        with CaptureQueriesContext(connection) as miss_queries:
+            miss_started = perf_counter()
+            miss = self.request()
+            miss_ms = (perf_counter() - miss_started) * 1000
+        with CaptureQueriesContext(connection) as hit_queries:
+            hit_started = perf_counter()
+            hit = self.request()
+            hit_ms = (perf_counter() - hit_started) * 1000
+
+        self.assertEqual(miss.status_code, 200)
+        self.assertEqual(hit.status_code, 200)
+        self.assertEqual(json.loads(miss.content)["learners"], self.payload["learners"])
+        self.assertEqual(len(miss_queries), 1)
+        self.assertEqual(len(hit_queries), 0)
+        print(json.dumps({
+            "dashboardBaseline": {
+                "database": "Django isolated test database",
+                "learners": 10,
+                "cacheMissQueries": len(miss_queries),
+                "cacheHitQueries": len(hit_queries),
+                "cacheMissMs": round(miss_ms, 3),
+                "cacheHitMs": round(hit_ms, 3),
+                "dbTimeMs": round(sum(float(query.get("time", 0)) for query in miss_queries) * 1000, 3),
+                "payloadBytes": len(miss.content),
+                "slowestSqlFingerprint": "coach_dashboard_snapshot owner_email/schema_version lookup",
+            }
+        }, sort_keys=True))
 
 
 class MonthlyRiskHistoryTests(SimpleTestCase):
