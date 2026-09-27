@@ -9,11 +9,12 @@ import { readLearnerJson } from './learnerRead';
 import type { EnrolmentBoard, IlrForm, WizardDraft } from '@/pages/users/types';
 import { primeKsbProfile, type KsbProfileResponse } from './curriculum';
 import { createCachedResource } from './cachedRequest';
+import type { LearnerKind } from './learnerDetail';
+
+export type { LearnerKind } from './learnerDetail';
 
 const BASE = '/enrolment_api/extended-ilr';
 const BOOTSTRAP_BASE = '/enrolment_api/wizard-bootstrap';
-
-export type LearnerKind = 'apprenticeship' | 'commercial';
 
 /** Every wizard step except the ILR, which travels in `answers`. */
 export type WizardDraftRest = Omit<WizardDraft, 'ilr'>;

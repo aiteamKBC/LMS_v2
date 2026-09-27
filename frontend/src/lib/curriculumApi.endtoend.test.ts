@@ -3,7 +3,7 @@
  * Tests that errors are properly classified and retry logic works correctly.
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { isRetryableError } from './curriculumApi';
 
 describe('End-to-End Error Handling', () => {

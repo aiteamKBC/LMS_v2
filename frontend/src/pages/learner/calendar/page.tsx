@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { CalendarFilterScrollRow } from '@/components/feature/CalendarFilterScrollRow';
@@ -9,7 +9,7 @@ import { type CalendarEvent } from '@/pages/learner/clubs/data';
 import { downloadICS, downloadAllICS, createPublicFeedBlob, type ICSEvent } from '@/utils/ics-generator';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
-import { fetchReviewHistory, type ImportedReview } from '@/api/reviewHistory';
+import { fetchReviewHistory } from '@/api/reviewHistory';
 import { buildSourceFilters, countBySource, filterBySource, learnerEventSource, learnerSourceMeta, type LearnerSourceFilter } from './reviewTypeFilters';
 import { moveCalendarDate } from './navigation';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
@@ -462,17 +462,6 @@ function calendarWeekKey(isoDate: string): string | null {
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
 }
 
-function describeCalendarEventSlot(event: CalendarEvent): string {
-  if (!event.isoDate) return `${event.date} at ${event.time}`;
-  const [year, month, day] = event.isoDate.split('-').map(Number);
-  const value = new Date(year, month - 1, day);
-  if (Number.isNaN(value.getTime())) return `${event.date} at ${event.time}`;
-  const dateLabel = new Intl.DateTimeFormat('en-GB', {
-    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-  }).format(value);
-  return `${dateLabel} at ${event.time}`;
-}
-
 function isProgrammeCycleSessionType(value?: CalendarEvent['bookingSessionType']): boolean {
   return value ? PROGRAMME_CYCLE_SESSION_TYPES.has(value) : false;
 }
@@ -525,19 +514,6 @@ function shouldShowMeetingArtifacts(event: CalendarEvent): boolean {
     && event.meetingLink
     && ['mcr', 'catch-up', 'progress-review', 'student-support'].includes(event.source || '')
     && ['completed', 'awaiting-signature'].includes(event.bookingStatus || '')
-  );
-}
-
-function DonutRing({ pct, size = 64, stroke = 6, color, trackClass = 'text-background-200' }: { pct: number; size?: number; stroke?: number; color: string; trackClass?: string }) {
-  const r = (size - stroke) / 2;
-  const circ = 2 * Math.PI * r;
-  const offset = circ - (Math.min(pct, 100) / 100) * circ;
-  const colorMap: Record<string, string> = { primary: 'stroke-primary-500', accent: 'stroke-accent-500', secondary: 'stroke-secondary-500', emerald: 'stroke-emerald-500', amber: 'stroke-amber-500' };
-  return (
-    <svg width={size} height={size} className="shrink-0 -rotate-90">
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" className={trackClass} strokeWidth={stroke} />
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" className={`${colorMap[color] || colorMap.primary} transition-all duration-700 ease-out`} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={offset} />
-    </svg>
   );
 }
 
@@ -937,10 +913,6 @@ function LearnerCalendarBody() {
       setShowEventDetails(event);
     }
   }, [location.search, myEvents, calendarLoading, calendarError, importedBooking.target, openBookSession, openRescheduleSession]);
-  const confirmedCount = myEvents.filter((ev) => ev.status === 'confirmed').length;
-  const pendingCount = myEvents.filter((ev) => ev.status === 'pending').length;
-  const totalPoints = myEvents.filter((ev) => ev.status === 'confirmed').reduce((s, ev) => s + ev.points, 0);
-
   useEffect(() => {
     if ('Notification' in window) { setNotificationPermission(Notification.permission); restoreNotifications(); }
   }, []);
@@ -1229,19 +1201,6 @@ function LearnerCalendarBody() {
   const handleNext = () => movePeriod(1);
   const handleToday = () => { setShowDayDrawer(false); setViewYear(today.getFullYear()); setViewMonth(today.getMonth()); setSelectedDay(today.getDate()); };
 
-  const handleAddToCalendar = (event: CalendarEvent) => {
-    const alreadyIn = myEvents.some((e) => e.id === event.id);
-    if (alreadyIn) { setAddToCalendarToast(`${event.title} is already in your calendar`); }
-    else {
-      const newEvent: CalendarEvent = { ...event, status: 'confirmed' as const };
-      const conflict = hasConflict(myEvents, newEvent);
-      if (conflict) { setConflictEvent(conflict); return; }
-      setMyEvents((prev) => [...prev, newEvent]);
-      setAddToCalendarToast(`"${event.title}" added to your calendar!`);
-    }
-    setTimeout(() => setAddToCalendarToast(null), 2500);
-  };
-
   const handleRemoveFromCalendar = (eventId: string) => {
     const ev = myEvents.find((e) => e.id === eventId);
     setMyEvents((prev) => prev.filter((e) => e.id !== eventId));
@@ -1309,15 +1268,12 @@ function LearnerCalendarBody() {
   };
 
   const handleEnableNotifications = async () => { const result = await requestNotificationPermission(); setNotificationPermission(result); if (result === 'granted') { setAddToCalendarToast('Push notifications enabled!'); setTimeout(() => setAddToCalendarToast(null), 2500); } };
-  const handleTestNotification = () => { if (Notification.permission === 'granted') { showNotification('Test Reminder', 'Test notification for event reminder.'); setAddToCalendarToast('Test notification sent!'); } else { setAddToCalendarToast('Enable notifications first.'); } setTimeout(() => setAddToCalendarToast(null), 3000); };
   const handleGeneratePublicFeed = () => { const confirmedEvents = myEvents.filter((ev) => ev.status === 'confirmed'); const icsEvents: ICSEvent[] = confirmedEvents.map((ev) => ({ title: ev.title, description: ev.description, date: ev.date, time: ev.time, location: ev.location })); const url = createPublicFeedBlob(icsEvents); setPublicFeedUrl(url); };
   const handleCopyFeedUrl = () => { if (publicFeedUrl) { navigator.clipboard.writeText(publicFeedUrl); setFeedCopied(true); setTimeout(() => setFeedCopied(false), 2000); } };
 
   const statusConfig: Record<string, { label: string; cls: string }> = { confirmed: { label: 'Confirmed', cls: 'bg-emerald-100 text-emerald-700' }, pending: { label: 'Pending', cls: 'bg-amber-100 text-amber-700' } };
   const now = today;
   const currentHour = now.getHours();
-
-  const attPct = ((p.attendanceRate || 86) / 100);
 
   return (
     <>

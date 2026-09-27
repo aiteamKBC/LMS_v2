@@ -181,7 +181,6 @@ const ProgressReviewsListPage = lazyRoute(() => import("../pages/learner/progres
 const CurriculumReviewsPage = lazyRoute(() => import("../pages/learner/reviews/curriculumReviews").then(m => ({ default: m.CurriculumReviewPage })));
 const CurriculumReviewsListPage = lazyRoute(() => import("../pages/learner/reviews/curriculumReviews").then(m => ({ default: m.CurriculumReviewsListPage })));
 const ManualQuizPage = lazyRoute(() => import("../pages/curriculum/quiz-xml/manual/page"));
-const MessagesPage = lazyRoute(() => import("../pages/learner/messages/page"));
 const MisAttendanceModesPage = lazyRoute(() => import("../pages/mis/attendance-modes/page"));
 const MisCalendarPage = lazyRoute(() => import("../pages/mis/calendar/page"));
 const MisCoachAssignmentPage = lazyRoute(() => import("../pages/mis/coach-assignment/page"));

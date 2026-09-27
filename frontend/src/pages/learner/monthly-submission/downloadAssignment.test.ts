@@ -46,6 +46,12 @@ it('creates a PDF with only this assignment attachments', async () => {
   expect(attachment).toHaveBeenCalledWith('answer.txt', bytes, 'text/plain');
   expect(createAssignmentPdf).toHaveBeenCalledWith(expect.stringContaining('Full feedback'));
 });
+it('replaces filesystem punctuation and control characters in the PDF filename', async () => {
+  vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({ ...submission, activityTitle: 'Assignment:\u0000Draft' });
+  vi.mocked(fetchEvidence).mockResolvedValue([]);
+  const result = await buildAssignmentReport('commercial', '12', 'A5', '2026-09');
+  expect(result.filename).toBe('Assignment__Draft - September 2026.pdf');
+});
 it('does not create an incomplete report when a file fails', async () => {
   vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }));
   await expect(buildAssignmentReport('commercial', '12', 'A5')).rejects.toThrow('Could not download answer.txt');
