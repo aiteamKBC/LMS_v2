@@ -28,9 +28,11 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 import threading
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
+from urllib.parse import urlsplit
 
 from django.db import DEFAULT_DB_ALIAS, DatabaseError, connection, transaction
 
@@ -203,6 +205,51 @@ IGNORED_SETTING_KEYS = {'updatedAt', 'lastEdited'}
 # in the snapshot; the diff only has to say *that* it changed and roughly how.
 DIFF_VALUE_LIMIT = 200
 
+# ------------------------------------------------------ what the log keeps
+#
+# The log answers "who changed what". It is not a second copy of the records,
+# so each rule below removes something that answered nothing.
+
+#: Identifiers and links Teams hands back after a push. The system fills them
+#: in and nobody edits them, and a join link is a way into a meeting. The log
+#: keeps one fact in their place: whether the component is linked to Teams.
+TEAMS_SYSTEM_SETTING_KEYS = frozenset({
+    'teamsEventId', 'teamsOnlineMeetingId', 'teamsLiveSessionId', 'teamsOccurrenceId',
+    'teamsMeetingUrl', 'teamsMeetingOptionsUrl', 'teamsWebLink', 'teamsProvider',
+    'teamsForBusiness', 'teamsCalendarSeries', 'teamsCalendarsToUpdate',
+    'liveSessionId', 'liveSessionIds', 'liveSessionUrl',
+})
+TEAMS_LINK_KEYS = ('teamsEventId', 'teamsLiveSessionId', 'liveSessionId', 'teamsOnlineMeetingId')
+TEAMS_LINK_MARKER = 'teamsMeeting'
+TEAMS_LINKED = 'Linked'
+
+#: Microsoft's own identifiers on a stored calendar, left out on the same rule.
+SYSTEM_COLUMNS = {'live_session': frozenset({'graph_event_id', 'online_meeting_id'})}
+
+#: Invite lists: a count and what moved, not every address on the list.
+PEOPLE_LIST_FIELDS = frozenset({'settings.teamsAttendees', 'attendees'})
+
+#: Free text. The log records that it changed, never what it said: the record
+#: itself holds the words, and a copy of every draft is what made rows heavy.
+TEXT_COLUMNS = frozenset({
+    'description', 'summary', 'notes', 'Reflection_Question', 'background',
+    'epa_requirements', 'professional_qualification_outcomes', 'intent',
+    'learner_benefit', 'employer_benefit', 'sequence_purpose', 'additional_notes',
+})
+TEXT_SETTING_PATTERN = re.compile(r'(html|content|text|instructions?|description|body|prompt|summary|notes?|question)$', re.I)
+TEXT_CHANGED = 'Text changed'
+
+#: One person's saves to one record inside this window are one line.
+MERGE_WINDOW = timedelta(minutes=10)
+MERGEABLE_ACTIONS = frozenset({'updated'})
+
+#: What an older revision keeps once a newer one exists: where it sat, so the
+#: trail can still scope and label it. Created and deleted revisions keep their
+#: whole copy (the trail shows it), and so does any revision a named version
+#: points at, because comparing and restoring versions reads it.
+SLIM_SNAPSHOT_KEYS = ('_context', 'programme_id', 'cohort_id', 'group_id', 'module_catalogue_id', 'week_id')
+FULL_SNAPSHOT_ACTIONS = ('created', 'deleted')
+
 _local = threading.local()
 
 
@@ -240,7 +287,8 @@ class ActorMiddleware:
         set_actor(account)
         set_source(request_source(request))
         try:
-            return self.get_response(request)
+            with audit_context(metadata=request_metadata(request)):
+                return self.get_response(request)
         finally:
             set_actor(None)
             discard_context()
@@ -258,6 +306,35 @@ def request_source(request):
     if declared in ALLOWED_SOURCES:
         return declared
     return ''
+
+
+def request_metadata(request):
+    """Request location, never a request body or a URL's query credentials.
+
+    The browser path is descriptive client context, not evidence of permission.
+    The actor and the persisted changes still come exclusively from the server.
+    """
+    from system_audit import pages
+
+    metadata = {'request_path': request.path, 'request_method': request.method}
+    path = clean(request.headers.get('X-Audit-Page'))
+    origin = 'browser'
+    if not path:
+        referer = clean(request.headers.get('Referer'))
+        try:
+            parsed = urlsplit(referer)
+            if parsed.netloc == request.get_host():
+                path = parsed.path
+                origin = 'referer'
+        except ValueError:
+            pass
+    if path.startswith('/') and not path.startswith('//') and '\\' not in path:
+        path = pages.clean_path(path)
+        if not pages.excluded(path) or path.startswith(('/learner/', '/old-otjh')):
+            page = pages.resolve(path)
+            metadata.update(page_path=path, page_label=page['pageLabel'],
+                            page_workspace=page['workspace'], page_source=origin)
+    return safe_metadata(metadata)
 
 
 # Every source label the system may record. Stable machine-readable
@@ -470,6 +547,9 @@ METADATA_KEYS = {
     'import_type', 'import_batch_id', 'filename', 'row_count', 'reason_code',
     'file_name', 'file_type', 'file_size', 'previous_file_name',
     'recalculated_from', 'command', 'job', 'occurrences', 'note',
+    'page_path', 'page_label', 'page_workspace', 'page_source',
+    'request_path', 'request_method',
+    'merged_saves', 'last_saved_at',
 }
 
 METADATA_VALUE_LIMIT = 200
@@ -676,6 +756,13 @@ def redacted(value):
     return REDACTED_PREFIX + hashlib.sha256(text.encode('utf-8')).hexdigest()[:16]
 
 
+def audit_display_value(entity_type, field, value):
+    """Apply today's privacy policy to old plaintext history on read as well."""
+    if field.split('.', 1)[0] in REDACTED_COLUMNS.get(entity_type, ()):
+        return None if value is None or value == '' else REDACTED_PREFIX + 'hidden'
+    return strip_credentials(value)
+
+
 def build_snapshot(entity_type, row):
     """The saved record as history will hold it, in a shape both write paths share.
 
@@ -685,18 +772,49 @@ def build_snapshot(entity_type, row):
     """
     row = row or {}
     hidden = REDACTED_COLUMNS.get(entity_type) or frozenset()
+    skipped = SYSTEM_COLUMNS.get(entity_type) or frozenset()
     snapshot = {}
     for column in SNAPSHOT_COLUMNS.get(entity_type, ()):
+        if column in skipped:
+            continue
         value = row.get(column)
         if column in hidden:
             snapshot[column] = redacted(value)
             continue
         if column in JSON_SNAPSHOT_COLUMNS:
             parsed = parse_json_column(value)
+            if column == 'settings_json':
+                parsed = logged_settings(parsed)
             snapshot[column] = strip_credentials(jsonable(parsed)) if parsed is not None else None
             continue
         snapshot[column] = strip_credentials(jsonable(value))
     return snapshot
+
+
+def logged_settings(settings):
+    """Settings as the log keeps them: the Teams ids and links become one flag."""
+    if not isinstance(settings, dict):
+        return settings
+    kept = {key: value for key, value in settings.items() if key not in TEAMS_SYSTEM_SETTING_KEYS}
+    if any(settings.get(key) for key in TEAMS_LINK_KEYS):
+        kept[TEAMS_LINK_MARKER] = TEAMS_LINKED
+    return kept
+
+
+def logged_view(entity_type, snapshot):
+    """An older stored snapshot put in today's shape before it is compared.
+
+    Rows written before these rules still carry the Teams ids and Microsoft's
+    calendar ids. Comparing them as they are would report every one of those
+    keys as removed on the next save.
+    """
+    if not snapshot:
+        return snapshot
+    skipped = SYSTEM_COLUMNS.get(entity_type) or frozenset()
+    view = {key: value for key, value in snapshot.items() if key not in skipped}
+    if isinstance(view.get('settings_json'), dict):
+        view['settings_json'] = logged_settings(view['settings_json'])
+    return view
 
 
 def short(value):
@@ -735,10 +853,68 @@ def diff_snapshots(previous, current):
                 after if isinstance(after, dict) else {},
             ))
             continue
-        from_text, from_cut = short(before)
-        to_text, to_cut = short(after)
-        changes.append({'field': key, 'from': from_text, 'to': to_text, 'truncated': from_cut or to_cut})
+        changes.append(change_entry(key, before, after))
     return changes
+
+
+def people_in(value):
+    if isinstance(value, str):
+        value = parse_json_column(value) if value.strip().startswith('[') else value.split(',')
+    if not isinstance(value, list):
+        return set()
+    return {clean(item).lower() for item in value if clean(item)}
+
+
+def is_text_field(field, before, after):
+    name = field.split('.', 1)[1] if field.startswith('settings.') else field
+    if field.startswith('settings.'):
+        if TEXT_SETTING_PATTERN.search(name):
+            return isinstance(before, (str, type(None))) and isinstance(after, (str, type(None)))
+    elif name in TEXT_COLUMNS:
+        return True
+    # Anything too long to show whole is prose, not a setting.
+    return any(isinstance(value, str) and len(value) > DIFF_VALUE_LIMIT for value in (before, after))
+
+
+def change_entry(field, before, after):
+    """One changed field as the log keeps it."""
+    if field in PEOPLE_LIST_FIELDS:
+        was, now = people_in(before), people_in(after)
+        added, removed = len(now - was), len(was - now)
+        return {
+            'field': field, 'from': f'{len(was)} invited',
+            'to': f'{len(now)} invited (+{added}, -{removed})', 'truncated': False,
+        }
+    if is_text_field(field, before, after):
+        return {'field': field, 'from': '', 'to': TEXT_CHANGED, 'truncated': False, 'text': True}
+    from_text, from_cut = short(before)
+    to_text, to_cut = short(after)
+    return {'field': field, 'from': from_text, 'to': to_text, 'truncated': from_cut or to_cut}
+
+
+def merge_changes(earlier, later):
+    """Two diffs of one record as one: each field from its first value to its last.
+
+    A field put back where it started drops out; text keeps its "changed" line,
+    since the log never held the words to compare.
+    """
+    merged = {}
+    for change in list(earlier or ()) + list(later or ()):
+        field = clean(change.get('field'))
+        if not field:
+            continue
+        if field in merged:
+            first = merged[field]
+            combined = dict(change)
+            combined['from'] = first.get('from')
+            combined['truncated'] = bool(first.get('truncated') or change.get('truncated'))
+            combined['text'] = bool(first.get('text') or change.get('text'))
+            if not combined['text']:
+                combined.pop('text')
+            merged[field] = combined
+        else:
+            merged[field] = dict(change)
+    return [change for change in merged.values() if change.get('text') or change.get('from') != change.get('to')]
 
 
 def diff_settings(previous, current):
@@ -750,9 +926,7 @@ def diff_settings(previous, current):
         after = current.get(key)
         if before == after:
             continue
-        from_text, from_cut = short(before)
-        to_text, to_cut = short(after)
-        changes.append({'field': f'settings.{key}', 'from': from_text, 'to': to_text, 'truncated': from_cut or to_cut})
+        changes.append(change_entry(f'settings.{key}', before, after))
     return changes
 
 
@@ -1054,7 +1228,9 @@ def latest_revisions(entity_type, entity_ids):
     if not ids:
         return {}
     placeholders = ', '.join(['%s'] * len(ids))
-    columns_sql = 'entity_id, id, revision_no, snapshot, version_label, content_status'
+    columns_sql = 'entity_id, id, revision_no, snapshot, version_label, content_status, action, actor_email, created_at, changed_fields'
+    if metadata_columns_available():
+        columns_sql += ', metadata'
     if connection.vendor == 'postgresql':
         query = (
             f'select distinct on (entity_id) {columns_sql} '
@@ -1086,7 +1262,7 @@ def latest_revisions(entity_type, entity_ids):
     return result
 
 
-def record_rows(table, rows, *, reason='', deleted=False, using=None):
+def record_rows(table, rows, *, reason='', deleted=False, using=None, before_rows=None):
     """Note what a write left behind, to be recorded when it commits. Never raises.
 
     Callers pass the rows their write returned, so this costs no extra read of
@@ -1115,6 +1291,10 @@ def record_rows(table, rows, *, reason='', deleted=False, using=None):
     try:
         entity_type = config['entity_type']
         key_column = config['key']
+        before_by_id = {
+            clean(row.get(key_column)): build_snapshot(entity_type, row)
+            for row in (before_rows or [])
+        }
         alias = using or config.get('using') or DEFAULT_DB_ALIAS
         buffer = pending_buffer(alias)
         # Taken here, not at flush time. The flush can run after the request has
@@ -1136,6 +1316,7 @@ def record_rows(table, rows, *, reason='', deleted=False, using=None):
             entity_id = clean(row.get(key_column))
             if not entity_id:
                 continue
+            prior_buffer = buffer.get((entity_type, entity_id), {})
             buffer[(entity_type, entity_id)] = {
                 'entity_type': entity_type,
                 'entity_id': entity_id,
@@ -1152,6 +1333,8 @@ def record_rows(table, rows, *, reason='', deleted=False, using=None):
                 'triggered_by': triggered_by,
                 'metadata': metadata,
                 'action_override': action_override,
+                # Keep the first actual database state of a multi-write save.
+                'before_snapshot': prior_buffer.get('before_snapshot', before_by_id.get(entity_id)),
             }
         arm_flush(alias)
     except Exception:
@@ -1275,7 +1458,13 @@ def _flush(items):
     if not pending:
         return
 
+    merged = merge_bursts(pending)
+    pending = [item for item in pending if id(item) not in merged]
+    if not pending:
+        return
+
     inserted = insert_revisions(pending)
+    trim_superseded(pending, inserted)
     for entity_type in by_type:
         rows = [item for item in pending if item['entity_type'] == entity_type]
         if rows:
@@ -1289,7 +1478,11 @@ def build_revision(entity_type, item, previous_by_id, ancestry):
     entity_id = item['entity_id']
     snapshot = dict(item['snapshot'])
     previous = previous_by_id.get(entity_id)
-    previous_snapshot = (previous or {}).get('snapshot') or {}
+    actual_before = item.get('before_snapshot')
+    previous_snapshot = logged_view(
+        entity_type, actual_before if actual_before is not None else (previous or {}).get('snapshot') or {},
+    )
+    has_before = actual_before is not None or previous is not None
     context = context_for(entity_type, snapshot, ancestry)
     if context:
         snapshot[CONTEXT_KEY] = context
@@ -1302,14 +1495,14 @@ def build_revision(entity_type, item, previous_by_id, ancestry):
         changes = diff_snapshots(previous_snapshot, snapshot) if previous else []
         action = 'deleted'
     else:
-        if previous is not None and strip_context(previous_snapshot) == strip_context(snapshot):
+        if has_before and strip_context(previous_snapshot) == strip_context(snapshot):
             return None  # nothing actually changed
         # A create has no "before", so it has no changed fields. Diffing the new
         # record against nothing listed every column it happens to hold as having
         # moved from empty, which reads as fourteen edits to a record that was
         # simply made. The snapshot is the whole answer to what was created.
-        changes = diff_snapshots(previous_snapshot, snapshot) if previous is not None else []
-        action = resolve_action(entity_type, snapshot, previous, changes)
+        changes = diff_snapshots(previous_snapshot, snapshot) if has_before else []
+        action = resolve_action(entity_type, snapshot, previous or ({'snapshot': previous_snapshot} if has_before else None), changes)
         # A record that existed before history did must not be reported as
         # having been created now. Its first revision says so honestly: this is
         # the state it was found in, not the moment it came into being. The row
@@ -1326,6 +1519,9 @@ def build_revision(entity_type, item, previous_by_id, ancestry):
         declared = clean(item.get('action_override'))
         if declared in DECLARABLE_ACTIONS and action == 'updated':
             action = declared
+        # Only ignored keys moved (an edit stamp, a Teams id): nothing to say.
+        if action == 'updated' and not changes:
+            return None
 
     reason = clean(item['reason'] or snapshot.get('deleted_by'))
     source = clean(item['source'])
@@ -1367,6 +1563,113 @@ def build_revision(entity_type, item, previous_by_id, ancestry):
         'actor': actor,
         **entity_facts(entity_type, snapshot),
     }
+
+
+def _aware(stamp):
+    if not isinstance(stamp, datetime):
+        return None
+    return stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+
+
+def burst_target(entry, now):
+    """The revision this save extends, when it is the same person editing on."""
+    previous = entry.get('previous')
+    if not previous or entry.get('action') not in MERGEABLE_ACTIONS:
+        return None
+    if clean(previous.get('action')) not in MERGEABLE_ACTIONS:
+        return None
+    email = clean(entry.get('actor_email')).lower()
+    if not email or email != clean(previous.get('actor_email')).lower():
+        return None
+    stamp = _aware(previous.get('created_at'))
+    if stamp is None or not timedelta(0) <= now - stamp <= MERGE_WINDOW:
+        return None
+    # A save that names a new version is a line of its own.
+    if version_label_for(entry['entity_type'], entry):
+        return None
+    return previous
+
+
+def merge_bursts(pending):
+    """Fold saves into the revision they continue. Returns the folded entries' ids.
+
+    Never raises: a save that cannot be folded is simply inserted as its own line.
+    """
+    now = datetime.now(timezone.utc)
+    candidates = [(entry, burst_target(entry, now)) for entry in pending]
+    candidates = [(entry, previous) for entry, previous in candidates if previous is not None]
+    if not candidates:
+        return set()
+    folded = set()
+    try:
+        with transaction.atomic():
+            ids = [previous['id'] for _, previous in candidates]
+            with connection.cursor() as cursor:
+                # A revision a named version points at is frozen.
+                cursor.execute(
+                    f'select revision_id from {qualified(VERSIONS_TABLE)} '
+                    f'where revision_id in ({", ".join(["%s"] * len(ids))})',
+                    ids,
+                )
+                pinned = {row[0] for row in cursor.fetchall()}
+                with_metadata = metadata_columns_available()
+                for entry, previous in candidates:
+                    if previous['id'] in pinned:
+                        continue
+                    changes = merge_changes(as_list(previous.get('changed_fields')), entry['changed_fields'])
+                    sets = ['snapshot = %s', 'changed_fields = %s', 'title = %s', 'content_status = %s']
+                    params = [
+                        json.dumps(entry['snapshot'], ensure_ascii=False),
+                        json.dumps(changes, ensure_ascii=False),
+                        entry.get('title'), entry.get('content_status'),
+                    ]
+                    if with_metadata:
+                        earlier = as_dict(previous.get('metadata'))
+                        metadata = safe_metadata({
+                            **entry.get('metadata', {}), **earlier,
+                            'merged_saves': int(earlier.get('merged_saves') or 1) + 1,
+                            'last_saved_at': now.isoformat(),
+                        })
+                        sets.append('metadata = %s')
+                        params.append(json.dumps(metadata, ensure_ascii=False))
+                    cursor.execute(
+                        f'update {qualified(REVISIONS_TABLE)} set {", ".join(sets)} where id = %s',
+                        [*params, previous['id']],
+                    )
+                    if cursor.rowcount:
+                        folded.add(id(entry))
+    except Exception:
+        logger.warning('Could not fold a burst of saves into one revision.', exc_info=True)
+        return set()
+    return folded
+
+
+def trim_superseded(pending, inserted):
+    """Keep one full copy per record: the newest. Never raises.
+
+    The copy before it is only ever read to work out the next diff, which now
+    reads the new row instead. What stays on it is where the record sat.
+    """
+    if connection.vendor != 'postgresql' or not inserted:
+        return
+    ids = [
+        entry['previous']['id'] for entry in pending
+        if entry.get('previous') and (entry['entity_type'], entry['entity_id']) in inserted
+    ]
+    if not ids:
+        return
+    try:
+        with transaction.atomic(), connection.cursor() as cursor:
+            cursor.execute(
+                f'update {qualified(REVISIONS_TABLE)} r set snapshot = coalesce(('
+                'select jsonb_object_agg(key, value) from jsonb_each(r.snapshot) where key = any(%s)'
+                "), '{}'::jsonb) "
+                'where r.id = any(%s) and r.action <> all(%s) '
+                f'and not exists (select 1 from {qualified(VERSIONS_TABLE)} v where v.revision_id = r.id)',
+                [list(SLIM_SNAPSHOT_KEYS), ids, list(FULL_SNAPSHOT_ACTIONS)],
+            )
+    except Exception:
+        logger.warning('Could not trim superseded revision snapshots.', exc_info=True)
 
 
 def looks_newly_created(item):

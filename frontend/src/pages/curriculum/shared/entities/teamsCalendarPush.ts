@@ -16,6 +16,7 @@
 // ============================================================================
 
 import { fetchModuleSessionPlan, updateTeamsMeetingSchedule, zonedNaiveToUtcIso } from '../../module-builder/moduleAuthoringData';
+import type { TeamsUpdateOutcome, UpdatedCalendar } from '../../teams-meetings/creationResult';
 import { fetchCurriculumTeamsMeetingSummaries } from '@/lib/curriculumApi';
 import { normalizedClock } from '../../teams-meetings/calendarTime';
 
@@ -36,6 +37,10 @@ export interface TeamsCalendarPushResult {
   sessionCount: number;
   /** Graph's own complaint, when it took the series but not every instance. */
   warning: string;
+  /** The update as the server returned it, with the review's email choice. */
+  outcome: TeamsUpdateOutcome;
+  /** What was sent, for the result dialog that may email about it. */
+  sent: UpdatedCalendar;
 }
 
 /**
@@ -87,8 +92,9 @@ export async function pushModulePlanToTeams({
     durationMinutes: session.durationMinutes || minutesBetween(session.startTime || time, session.endTime || '') || duration,
   }));
 
+  const title = String(moduleName || summary.moduleTitle || '').trim() || 'Live session';
   const result = await updateTeamsMeetingSchedule(summary.liveSessionId, {
-    title: String(moduleName || summary.moduleTitle || '').trim() || 'Live session',
+    title,
     organizerEmail: summary.organizerEmail,
     eventId: summary.eventId,
     localStartDateTime: `${planned[0].date}T${normalizedClock(planned[0].startTime || time)}`,
@@ -102,5 +108,7 @@ export async function pushModulePlanToTeams({
   return {
     sessionCount: occurrences.length,
     warning: String(result?.warnings?.[0]?.message || '').trim(),
+    outcome: result,
+    sent: { title, scheduledOccurrences: occurrences, scheduleTimeZone: summary.timeZone },
   };
 }

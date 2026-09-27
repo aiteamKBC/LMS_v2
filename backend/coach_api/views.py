@@ -4,12 +4,13 @@ from time import perf_counter
 import os
 import re
 import hashlib
+import threading
 from html import escape
 from collections import defaultdict
 from dataclasses import dataclass
 # `time` below is datetime.time, so the sleep function is imported under its own
 # name to avoid shadowing it.
-from time import perf_counter, sleep as _sleep
+from time import monotonic, perf_counter, sleep as _sleep
 from calendar import monthrange
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
@@ -855,11 +856,39 @@ def has_graph_credentials() -> bool:
     return all(settings[key] for key in ("tenant_id", "client_id", "client_secret", "scope", "base_url"))
 
 
+# App-only Graph token, cached until shortly before it expires. Fetching one per
+# call doubled every Graph round trip: a single Teams calendar create makes
+# fifteen or more calls, and each one first paid a full trip to the token
+# endpoint. Keyed on the credentials, so a rotated secret is never served a
+# token issued for the old one. Locked because requests share worker threads.
+_GRAPH_TOKEN_LOCK = threading.Lock()
+_GRAPH_TOKEN_CACHE: dict = {"key": None, "value": None, "expires_at": 0.0}
+#: Refresh this many seconds before the token actually expires.
+_GRAPH_TOKEN_SKEW = 120
+
+
+def forget_microsoft_graph_token() -> None:
+    """Drop the cached token, so the next call asks Microsoft for a fresh one."""
+    with _GRAPH_TOKEN_LOCK:
+        _GRAPH_TOKEN_CACHE.update(key=None, value=None, expires_at=0.0)
+
+
 def microsoft_graph_token() -> str:
     settings = get_graph_settings()
     if not has_graph_credentials():
         raise RuntimeError("Microsoft Graph credentials are not configured.")
 
+    cache_key = hashlib.sha256(
+        "\n".join(settings[name] for name in ("tenant_id", "client_id", "client_secret", "scope")).encode("utf-8")
+    ).hexdigest()
+    with _GRAPH_TOKEN_LOCK:
+        if (_GRAPH_TOKEN_CACHE["key"] == cache_key and _GRAPH_TOKEN_CACHE["value"]
+                and _GRAPH_TOKEN_CACHE["expires_at"] > monotonic()):
+            return _GRAPH_TOKEN_CACHE["value"]
+        return _fetch_microsoft_graph_token(settings, cache_key)
+
+
+def _fetch_microsoft_graph_token(settings: dict, cache_key: str) -> str:
     token_url = f"https://login.microsoftonline.com/{settings['tenant_id']}/oauth2/v2.0/token"
     payload = urllib_parse.urlencode(
         {
@@ -898,6 +927,14 @@ def microsoft_graph_token() -> str:
     access_token = data.get("access_token")
     if not access_token:
         raise RuntimeError("Microsoft token response did not include access_token.")
+    try:
+        lifetime = int(data.get("expires_in", 3600))
+    except (TypeError, ValueError):
+        lifetime = 3600
+    _GRAPH_TOKEN_CACHE.update(
+        key=cache_key, value=access_token,
+        expires_at=monotonic() + max(lifetime - _GRAPH_TOKEN_SKEW, 60),
+    )
     return access_token
 
 
@@ -950,6 +987,10 @@ def microsoft_graph_request(
             graph_status=f"http_{exc.code}",
             latency_ms=round((perf_counter() - started) * 1000, 1),
         )
+        if exc.code == 401:
+            # A revoked or expired token must not stay cached for the next call.
+            # This call is not retried: it is reported exactly as before.
+            forget_microsoft_graph_token()
         detail = exc.read().decode("utf-8", errors="ignore")
         graph_code = ""
         graph_message = ""

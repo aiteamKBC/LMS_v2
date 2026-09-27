@@ -36,7 +36,7 @@ import {
 } from '../shared/entities/archive';
 import { duplicateGroupWithModules } from '../shared/entities/cloneStructure';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
-import { ArchiveNotice, ArchiveToggleButton, useCurriculumArchive } from '../shared/entities/archiveView';
+import { ArchiveNotice, useCurriculumArchive } from '../shared/entities/archiveView';
 import { CurriculumStructureWizard, withoutDiscardedRecords, type StructureWizardCreated } from '../shared/entities/structureWizard';
 import {
   EntityEmptyState,
@@ -305,11 +305,6 @@ export default function CurriculumGroupsPage() {
                 icon="ri-route-line"
                 label="Group + module"
                 onClick={() => setWizardOpen(true)}
-              />
-              <ArchiveToggleButton
-                active={showArchived}
-                count={archived.loaded ? archived.records.length : null}
-                onToggle={() => setShowArchived(previous => !previous)}
               />
             </>
           )}
