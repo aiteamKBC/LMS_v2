@@ -28,6 +28,7 @@ urlpatterns = [
     # URL for compatibility and expose the transport below a forwarded prefix.
     path('coach_api/_batch/', api_get_batch, name='api-get-batch-proxied'),
     path('django_admin/', admin.site.urls),
+    path('curriculum_api/knowledge-base/', include('knowledge_base.urls')),
     path('curriculum_api/', include('curriculum_api.urls')),
     path('coach_api/', include('coach_api.urls')),
     path('quiz_api/', include('quiz_api.urls')),

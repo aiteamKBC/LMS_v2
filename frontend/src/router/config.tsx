@@ -233,6 +233,7 @@ const QuestionBankPage = lazyRoute(() => import("../pages/curriculum/question-ba
 const QuizEditPage = lazyRoute(() => import("../pages/curriculum/quiz-xml/edit/page"));
 const QuizTakePage = lazyRoute(() => import("../pages/learner/quiz-take/page"));
 const QuizXmlWorkspace = lazyRoute(() => import("../pages/curriculum/quiz-xml/page"));
+const KnowledgeBasePage = lazyRoute(() => import("../pages/curriculum/knowledge-base/page"));
 const QuizzesPage = lazyRoute(() => import("../pages/learner/my-learning/page"));
 const RecognitionPage = lazyRoute(() => import("../pages/engagement/recognition/page"));
 const ReportAbsencePage = lazyRoute(() => import("../pages/learner/report-absence/page"));
@@ -995,6 +996,10 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/quiz-xml",
     element: <QuizXmlWorkspace />,
+  },
+  {
+    path: "/curriculum/knowledge-base",
+    element: <KnowledgeBasePage />,
   },
   {
     path: "/curriculum/quiz-xml/manual",
