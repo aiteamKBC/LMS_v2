@@ -9235,7 +9235,10 @@ def fetch_aptem_review_events(
             "aptemReviewId": aptem_review_id,
             "reviewerName": clean_text(review.get("reviewerName")) or None,
             "reviewCompletedAt": completed_date.isoformat() if completed_date else None,
-            "hasReviewForm": bool(row.get("review_data")) or bool(row.get("has_review_sections")),
+            "hasReviewForm": _imported_review_has_usable_form(
+                review,
+                has_normalized_sections=bool(row.get("has_review_sections")),
+            ),
             "sequence": 1,
             "title": clean_text(review.get("name")) or review_type or EVENT_TYPE_FALLBACK_TITLES.get(event_type, "Review"),
             "type": "coaching" if event_type == "mcr" else "review",
@@ -13282,17 +13285,29 @@ def _imported_review_field(field, *, section_id, index):
     }
 
 
+def _imported_review_has_usable_form(review: dict, *, has_normalized_sections: bool = False) -> bool:
+    """Return whether an import contains a real form rather than metadata only."""
+    if has_normalized_sections:
+        return True
+    return any(
+        bool(section.get("fields") or section.get("tables") or clean_text(section.get("rawText")))
+        for section in review.get("sections") or []
+        if isinstance(section, dict)
+    )
+
+
 def _imported_review_definition(owner_email: str, event_key: str) -> dict | None:
     """Adapt one owned Aptem review to the native form-definition contract.
 
-    The source remains read-only and is never copied into Curriculum tables.
+    Summary-only imports remain read-only. Imports with a real form can store
+    LMS-local answers without changing the original Aptem data.
     ``event_key`` is the same stable identity used by the timetable row.
     """
     prefix = "imported-review:"
     if not event_key.startswith(prefix):
         return None
-    requested_review_id = clean_text(event_key[len(prefix):])
-    if not requested_review_id:
+    aptem_review_id = clean_text(event_key[len(prefix):])
+    if not aptem_review_id:
         return None
 
     learners = fetch_caseload_dashboard_profiles(owner_email)
@@ -13309,26 +13324,15 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
                reviewer_name, learner_name, planned_scheduled_date,
                completed_date, status, review_data, extraction_status, last_error
         FROM "Learner".reviews
-        WHERE learner_id = ANY(%s)
-          AND (
-              aptem_review_id = %s
-              OR id = CASE WHEN %s ~ '^[0-9]+$' THEN %s::bigint ELSE NULL END
-          )
+        WHERE learner_id = ANY(%s) AND aptem_review_id = %s
         ORDER BY id
+        LIMIT 2
     '''
     connection = connections[get_learner_db_alias()]
     with connection.cursor() as cursor:
-        cursor.execute(query, [eligible_ids, requested_review_id, requested_review_id, requested_review_id])
+        cursor.execute(query, [eligible_ids, aptem_review_id])
         columns = [column[0] for column in cursor.description]
-        matching_rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
-        # A numeric Aptem id can coincidentally equal another imported row's
-        # database id. Prefer the canonical Aptem identity when it exists;
-        # only fall back to the row id for old history links.
-        canonical_rows = [
-            row for row in matching_rows
-            if clean_text(row.get("aptem_review_id")) == requested_review_id
-        ]
-        rows = canonical_rows or matching_rows
+        rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
         if len(rows) != 1:
             return None
         row = rows[0]
@@ -13338,21 +13342,29 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
         sections = _sections_by_review(cursor, [row["id"]])
 
     review = _serialize_review(row, sections)
-    if not review.get("detailsAvailable"):
-        return None
     learner = next((item for item in learners if int(item.id) == profile_id), None)
     if learner is None:
         return None
 
-    canonical_event_key = f"{prefix}{clean_text(row.get('aptem_review_id')) or row['id']}"
-    saved_instance = ImportedReviewInstance.objects.filter(
-        owner_email__iexact=owner_email,
-        event_key=canonical_event_key,
-    ).first()
+    normalized_sections = sections.get(row["id"]) or []
+    form_available = _imported_review_has_usable_form(
+        review,
+        has_normalized_sections=bool(normalized_sections),
+    )
+    summary_only = not form_available
+    canonical_event_key = f"{prefix}{aptem_review_id}"
+    saved_instance = (
+        ImportedReviewInstance.objects.filter(
+            owner_email__iexact=owner_email,
+            event_key=canonical_event_key,
+        ).first()
+        if form_available
+        else None
+    )
     saved_answers = saved_instance.answers if saved_instance and isinstance(saved_instance.answers, dict) else {}
 
     adapted_sections = []
-    for section_index, section in enumerate(review.get("sections") or []):
+    for section_index, section in enumerate((review.get("sections") or []) if form_available else []):
         section_id = str(section.get("id") or f"{row['id']}:{section_index}")
         fields = [
             _imported_review_field(field, section_id=section_id, index=index)
@@ -13411,9 +13423,21 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
         role: {"required": False, "signed": False, "signedBy": None, "signedName": None, "signedAt": None, "signature": None}
         for role in curriculum_review_instances.SIGNATURE_ROLES
     }
+    instance_status = (
+        clean_text(review.get("status")) or CoachCalendarEvent.STATUS_NOT_SCHEDULED
+        if summary_only
+        else saved_instance.status if saved_instance else ImportedReviewInstance.STATUS_IN_PROGRESS
+    )
+    instance_completed_at = (
+        review.get("completedDate")
+        if summary_only
+        else saved_instance.completed_at.isoformat() if saved_instance and saved_instance.completed_at else None
+    )
     return {
-        "readOnly": False,
+        "readOnly": summary_only,
         "source": "aptem",
+        "formAvailable": form_available,
+        "summaryOnly": summary_only,
         "instance": {
             "id": canonical_event_key,
             "reviewTemplateId": "",
@@ -13421,9 +13445,9 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
             "programmeId": clean_text(getattr(learner, "programme_id", None)),
             "occurrenceNumber": 1,
             "targetDate": target_date,
-            "status": saved_instance.status if saved_instance else ImportedReviewInstance.STATUS_IN_PROGRESS,
+            "status": instance_status,
             "startedAt": None,
-            "completedAt": saved_instance.completed_at.isoformat() if saved_instance and saved_instance.completed_at else None,
+            "completedAt": instance_completed_at,
         },
         "template": {
             "id": "",
@@ -13707,6 +13731,8 @@ def coach_review_instance_answers(request, instance_id):
         definition = _imported_review_definition(owner_email, instance_id)
         if not definition:
             return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
+        if definition.get("summaryOnly"):
+            return JsonResponse({"detail": "This imported review has summary information only and cannot be edited."}, status=409)
         try:
             payload = parse_json_body(request)
         except ValidationError as exc:
@@ -13960,6 +13986,8 @@ def coach_review_instance_complete(request, instance_id):
         definition = _imported_review_definition(owner_email, instance_id)
         if not definition:
             return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
+        if definition.get("summaryOnly"):
+            return JsonResponse({"detail": "This imported review has summary information only and cannot be completed."}, status=409)
         payload = {}
         if request.body:
             try:

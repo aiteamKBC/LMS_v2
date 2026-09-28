@@ -36,11 +36,13 @@ export function importedReviewEvents(
   learners: CoachImportedReviewLearner[],
   category: 'mcm' | 'reviews',
 ): CoachCalendarEvent[] {
-  return learners.flatMap((learner) => (category === 'mcm' ? learner.mcm : learner.reviews).map((review) => {
+  return learners.flatMap((learner) => (category === 'mcm' ? learner.mcm : learner.reviews).flatMap((review) => {
+    const canonicalReviewId = review.aptemReviewId?.trim();
+    if (!canonicalReviewId) return [];
     const reviewDate = review.completedDate || review.plannedDate || undefined;
-    return {
-      id: `imported-review:${review.id}`,
-      eventKey: `imported-review:${review.id}`,
+    return [{
+      id: `imported-review:${canonicalReviewId}`,
+      eventKey: `imported-review:${canonicalReviewId}`,
       title: review.name || review.type || 'Imported review',
       type: category === 'mcm' ? 'coaching' : 'review',
       source: category === 'mcm' ? 'mcr' : 'progress-review',
@@ -55,7 +57,9 @@ export function importedReviewEvents(
       learnerType: learner.learnerType,
       enrolmentId: learner.enrolmentId,
       notes: review.reviewerName ? `Reviewer: ${review.reviewerName}` : undefined,
-    };
+      aptemReviewId: canonicalReviewId,
+      hasReviewForm: review.detailsAvailable,
+    }];
   }));
 }
 

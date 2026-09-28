@@ -84,6 +84,8 @@ describe('review reopen flow', () => {
       ...definition('in-progress'),
       readOnly: false,
       source: 'aptem',
+      formAvailable: true,
+      summaryOnly: false,
       instance: { ...definition('in-progress').instance, id: 'imported-review:A-1', reviewTemplateId: '' },
       template: { ...definition('in-progress').template, id: '', name: 'Imported progress review', reviewTypeCode: 'aptem_progress_review' },
       signatures: {
@@ -107,6 +109,38 @@ describe('review reopen flow', () => {
     ));
     expect(screen.getByRole('button', { name: 'Complete review' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+  });
+
+  it('shows an owned summary-only import without edit or completion actions', async () => {
+    const summaryOnlyDefinition: ReviewInstanceFormDefinition = {
+      ...definition('not-scheduled'),
+      readOnly: true,
+      source: 'aptem',
+      formAvailable: false,
+      summaryOnly: true,
+      instance: {
+        ...definition('not-scheduled').instance,
+        id: 'imported-review:14010',
+        reviewTemplateId: '',
+      },
+      template: {
+        ...definition('not-scheduled').template,
+        id: '',
+        name: 'Imported monthly coaching review',
+        reviewTypeCode: 'aptem_mcm',
+      },
+      sections: [],
+    };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(summaryOnlyDefinition);
+
+    mount();
+
+    expect(await screen.findByText('This review has a summary only; no section details were imported.')).toBeVisible();
+    expect(screen.getByText(/there is no form to edit or complete/i)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Save draft' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Complete review' })).not.toBeInTheDocument();
+    expect(saveReviewInstanceAnswers).not.toHaveBeenCalled();
+    expect(completeReviewInstance).not.toHaveBeenCalled();
   });
 
   it('reopens a completed review with a reason and returns it to editing', async () => {
