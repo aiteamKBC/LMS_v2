@@ -31,5 +31,33 @@ class CurriculumApiConfig(AppConfig):
         # parent would only warm a cache it never reads from.
         if command == 'runserver' and os.environ.get('RUN_MAIN') != 'true':
             return
+        self.log_cache_backend()
         from .views import schedule_curriculum_warm
         schedule_curriculum_warm()
+
+    def log_cache_backend(self):
+        """Say once, per worker, whether the payload cache is shared.
+
+        `cached_curriculum_value` stores every built payload in Django's cache as
+        well as in process memory, so that the other workers can read what one of
+        them built. Without a `CACHE_URL` that cache is LocMemCache, which is
+        private to the process -- so under nine two-worker services each of the
+        eighteen builds its own copy and a reader keeps landing on a cold one.
+
+        Nothing here changes that; it is a `.env` line and a Redis instance. What
+        this does is make which one is running a fact in the log rather than an
+        assumption, because the two are indistinguishable from the outside except
+        by how often the page is slow.
+        """
+        import logging
+
+        from django.conf import settings
+
+        backend = (settings.CACHES.get('default') or {}).get('BACKEND', '')
+        shared = 'redis' in backend.lower()
+        logging.getLogger('curriculum_api.views').info(
+            'Curriculum payload cache: %s (%s). %s',
+            backend.rsplit('.', 1)[-1] or 'unknown',
+            'shared between workers' if shared else 'process-local',
+            '' if shared else 'Set CACHE_URL to share built payloads across workers.',
+        )
