@@ -136,3 +136,34 @@
   .document { grid-template-columns: minmax(0, 1fr); }
   .activityTrigger, .documentActions > :is(button, a) { min-height: 40px; }
 }
+
+/* Record tables are shared with coach views; only the learner dark workspace
+   follows Attendance's navy cards. */
+:global(html[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] .workspace-main) :is(table.activityTable, table.signTable) {
+  background: #182d48 !important;
+  color: #f6f8fb;
+}
+:global(html[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] .workspace-main) :is(table.activityTable, table.signTable) > thead > tr > th,
+:global(html[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] .workspace-main) table.activityTable > tbody > .groupRow > th {
+  background: #24405d !important;
+  color: #dce7f4 !important;
+  border-color: #3b526c !important;
+}
+:global(html[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] .workspace-main) :is(table.activityTable, table.signTable) > tbody > tr {
+  background: #182d48 !important;
+}
+:global(html[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] .workspace-main) :is(table.activityTable, table.signTable) > tbody > tr:nth-child(even) {
+  background: #1e344d !important;
+}
+:global(html[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] .workspace-main) table.activityTable > tbody > tr.activityRow:hover {
+  background: #24405d !important;
+}
+:global(html[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] .workspace-main) :is(table.activityTable, table.signTable) > tbody > tr > td {
+  border-color: #3b526c !important;
+  color: #f6f8fb;
+}
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) :is(.ksbBadge, .detailBadge) {
+  background: #24405d;
+  border-color: #3b526c;
+  color: #dce7f4;
+}

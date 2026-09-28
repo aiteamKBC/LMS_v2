@@ -154,3 +154,15 @@
 @media (prefers-reduced-motion:reduce) { .root * { transition:none !important; } }
 .months .selectedMonth { background:var(--learner-accent-soft); }
 .months .selectedMonth span { color:var(--kbc-muted); }
+
+:global([data-theme='dark']) .root {
+  --purple: #d7c4f4;
+  --ink: #f6f8fb;
+  --muted: #b6c4d5;
+}
+:global([data-theme='dark']) .next .primary { background: #5e378d; color: #fff; }
+:global([data-theme='dark']) .moduleHeading span { background: #302748; color: #d7c4f4; }
+:global([data-theme='dark']) .selectedMonth { color: #f6f8fb; }
+:global([data-theme='dark']) .moduleBar:hover,
+:global([data-theme='dark']) .moduleBar[aria-pressed='true'] { box-shadow: 0 0 0 2px #182d48, 0 0 0 3px var(--bar-color); }
+:global([data-theme='dark']) .readingBadge { color: #101e30; }

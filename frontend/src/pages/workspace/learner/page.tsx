@@ -412,7 +412,7 @@ export default function LearnerOverview() {
       userName={heroFullName}
       userRole={heroProgramme ? `${heroProgramme} Learner` : 'Learner'}
     >
-      <PageContainer className={overviewStyles.overview}>
+      <PageContainer className={`${overviewStyles.overview} learner-dashboard`}>
         {loadError && <LearnerLoadError error={loadError} onRetry={refresh} />}
         {startDatePending && (
           <div role="status" className="rounded-xl border border-primary-200 bg-primary-50 px-4 py-3 text-sm text-foreground-700">

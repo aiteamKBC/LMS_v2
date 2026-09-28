@@ -113,6 +113,7 @@
 .skeleton span:nth-child(2) { height: 140px; max-width: 100%; }
 :global(:is(.dark, [data-theme="dark"])) .home { color: #e3eaf5; }
 :global(:is(.dark, [data-theme="dark"])) .current, :global(:is(.dark, [data-theme="dark"])) .archive, :global(:is(.dark, [data-theme="dark"])) .lastMeeting, :global(:is(.dark, [data-theme="dark"])) .secondaryButton, :global(:is(.dark, [data-theme="dark"])) .optionPanel, :global(:is(.dark, [data-theme="dark"])) .pagination button, :global(:is(.dark, [data-theme="dark"])) .skeleton { background: #192a40; border-color: #35465f; color: #e3eaf5; }
+:global([data-theme="dark"]) .skeleton span { background: #2b4562; }
 :global(:is(.dark, [data-theme="dark"])) .preparation, :global(:is(.dark, [data-theme="dark"])) .archiveHint { background: #213049; border-color: #35465f; }
 :global(:is(.dark, [data-theme="dark"])) .intro, :global(:is(.dark, [data-theme="dark"])) .nextStep, :global(:is(.dark, [data-theme="dark"])) .preparation p, :global(:is(.dark, [data-theme="dark"])) .listIdentity p, :global(:is(.dark, [data-theme="dark"])) .archiveHint, :global(:is(.dark, [data-theme="dark"])) .coach small, :global(:is(.dark, [data-theme="dark"])) .coach .provider, :global(:is(.dark, [data-theme="dark"])) .empty p, :global(:is(.dark, [data-theme="dark"])) .appointment span:not(.dateIcon) { color: #b0bdd0; }
 :global(:is(.dark, [data-theme="dark"])) .appointment .timeZone { color: #a9b8ce !important; }
