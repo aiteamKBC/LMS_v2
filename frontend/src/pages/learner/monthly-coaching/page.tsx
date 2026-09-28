@@ -52,9 +52,10 @@ function monthlyCoachingTitle(session?: LearnerCalendarEvent | null): string {
   if (session?.importedReview) {
     return session.importedReview.name || session.title || 'Monthly Coaching Meeting';
   }
-  if (session?.reviewTemplateId) return `${session.title} #${session.occurrenceNumber || session.sequence}`;
+  const occurrence = session?.occurrenceNumber ?? session?.sequence;
+  if (session?.reviewTemplateId) return `${session.title}${occurrence != null ? ` #${occurrence}` : ' — Manual Review'}`;
   const month = monthLabel(dateOf(session));
-  return `Monthly Coaching Meeting${month ? ` — ${month}` : ''}${session?.sequence ? ` #${session.sequence}` : ''}`;
+  return `Monthly Coaching Meeting${month ? ` — ${month}` : ''}${occurrence != null ? ` #${occurrence}` : ''}`;
 }
 
 function shouldShowLearnerMeetingRecording(session?: LearnerCalendarEvent | null): boolean {
