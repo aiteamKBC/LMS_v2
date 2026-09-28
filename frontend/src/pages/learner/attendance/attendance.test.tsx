@@ -6,6 +6,8 @@ import AttendancePage, { lectureCounts } from './page';
 import AbsenceReportForm from './components/AbsenceReportForm';
 import { AppIcon } from '@/components/feature/AppIcon';
 import type { AttendanceLecture, AttendanceWorkspace } from '@/api/attendanceLectures';
+import type { LearningSchedule } from '@/api/learnerOverview';
+import type { PlanModule } from '@/api/trainingPlanDashboard';
 import { clearAllCachedResources } from '@/api/cachedRequest';
 
 vi.mock('@/hooks/useMyLearner', () => ({ useMyLearner: () => ({ kind: 'apprenticeship', id: '12' }) }));
@@ -19,7 +21,11 @@ const lecture = (overrides: Partial<AttendanceLecture> = {}): AttendanceLecture 
   catchupStatus: null, updatedAt: null, canReportAbsence: false, absenceReport: null, ...overrides,
 });
 let payload: AttendanceWorkspace;
+let schedulePayload: LearningSchedule;
 let posts: { url: string; body: unknown }[];
+const planModule = (id: string, title: string, overrides: Partial<PlanModule> = {}): PlanModule => ({
+  id, title, description: '', start_date: '2020-01-01', end_date: '2099-12-31', tutor_name: '', coach_name: '', ...overrides,
+});
 beforeEach(() => {
   clearAllCachedResources(); posts = [];
   Object.defineProperties(HTMLDialogElement.prototype, {
@@ -37,6 +43,7 @@ beforeEach(() => {
     summary: null, recentActivity: [],
     mode: { available: true, mode: 'live', requestedMode: null, status: 'active', emailSent: false, managerAvailable: true, remindersEnabled: true, updatedAt: null },
   };
+  schedulePayload = { modules: [], moduleLinks: {}, generatedAt: '2026-09-01T00:00:00Z' };
   vi.stubGlobal('fetch', vi.fn(async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
     const url = String(input);
     if (init?.method === 'POST') {
@@ -53,6 +60,7 @@ beforeEach(() => {
       return new Response(JSON.stringify({ id: 1, sessionTitle: 'Future lecture', sessionDate: '2026-10-01', reference: 'AR-0001', status: 'pending' }), { status: 201 });
     }
     if (url.includes('/calendar/')) return new Response(JSON.stringify({ events: [] }));
+    if (url.includes('/training-plan-dashboard/')) return new Response(JSON.stringify(schedulePayload));
     if (url.includes('/absence-reports/')) return new Response(JSON.stringify({ results: [], missedSessions: [
       { id: 'future', sessionId: 'teams:future', reportId: '8000000000000000013', title: 'Future lecture', dateIso: '2026-10-01',
         startTime: '10:00', endTime: '11:00', module: 'New module', sessionType: 'live_session', coach: '', status: 'upcoming' },
@@ -276,6 +284,40 @@ describe('Attendance lecture workspace', () => {
     expect(screen.getByText('No completed attendance records yet')).toBeInTheDocument();
   });
 
+  it('opens on the current teaching module and lets the learner choose all modules', async () => {
+    schedulePayload.modules = [
+      planModule('old', 'Old module', { start_date: '2019-01-01', end_date: '2019-12-31' }),
+      planModule('new', 'New module'),
+    ];
+    mount();
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Module' })).toHaveValue('native:new'));
+    expect(screen.getByRole('option', { name: 'New module' })).toBeInTheDocument();
+    expect(screen.getByRole('article', { name: 'Future lecture' })).toBeInTheDocument();
+    expect(screen.queryByRole('article', { name: 'First lecture' })).not.toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Module' }), { target: { value: 'all' } });
+    expect(screen.getByRole('combobox', { name: 'Module' })).toHaveValue('all');
+    expect(screen.getByRole('article', { name: 'First lecture' })).toBeInTheDocument();
+  });
+
+  it('lists the current module even before any of its lectures appear', async () => {
+    schedulePayload.modules = [planModule('assigned', 'Assigned module', {
+      end_date: '2021-01-01', effectiveEndDate: '2099-12-31',
+    })];
+    mount();
+    await waitFor(() => expect(screen.getByRole('combobox', { name: 'Module' })).toHaveValue('native:assigned'));
+    expect(screen.getByRole('option', { name: 'Assigned module' })).toBeInTheDocument();
+    expect(screen.getByText('No lectures match this filter')).toBeInTheDocument();
+  });
+
+  it('keeps all modules selected when the plan has no current teaching module', async () => {
+    schedulePayload.modules = [planModule('future-module', 'Future module', {
+      start_date: '2099-01-01', end_date: '2099-12-31',
+    })];
+    mount();
+    await screen.findByRole('article', { name: 'First lecture' });
+    expect(screen.getByRole('combobox', { name: 'Module' })).toHaveValue('all');
+  });
+
   it('shows 67 percent when two of three finalised lectures were attended', () => {
     const lectures = [lecture({ id: 'first' }), lecture({ id: 'second' }),
       lecture({ id: 'missed', status: 'absent' })];
@@ -365,7 +407,7 @@ describe('Attendance lecture workspace', () => {
       window.dispatchEvent(new Event('focus'));
       document.dispatchEvent(new Event('visibilitychange'));
     });
-    expect(fetch).toHaveBeenCalledTimes(initialRequests + 1);
+    expect(fetch).toHaveBeenCalledTimes(initialRequests + 2);
     expect(screen.getByText('First lecture')).toBeInTheDocument();
     await act(async () => {
       finishRefresh(new Response(JSON.stringify({ ...payload, lectures: [lecture({ title: 'Updated lecture' })] })));
@@ -390,7 +432,7 @@ describe('Attendance lecture workspace', () => {
     visibility.mockReturnValue('visible');
     await act(async () => { document.dispatchEvent(new Event('visibilitychange')); });
     expect(await screen.findByText('Updated lecture')).toBeInTheDocument();
-    expect(fetch).toHaveBeenCalledTimes(initialRequests + 1);
+    expect(fetch).toHaveBeenCalledTimes(initialRequests + 2);
     expect(posts).toEqual([]);
   });
 

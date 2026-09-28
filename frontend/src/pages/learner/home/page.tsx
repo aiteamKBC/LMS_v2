@@ -9,6 +9,7 @@ import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { overviewSchedule, overviewHome } from '@/api/learnerOverview';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
+import { learnerHref } from '@/lib/learnerRoutes';
 import { homeActions, greeting, upcomingEvents } from './homeData';
 import { ReferenceIcon } from './ReferenceIcon';
 import { ProgressCard } from './ProgressCard';
@@ -72,7 +73,7 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
   const now = new Date();
   const account = auth.account!;
   const homeHref = preview && kind && id ? `/workspace/learner/${kind}/${id}` : '/workspace/learner';
-  const dashboardHref = `${homeHref}/dashboard`;
+  const dashboardHref = learnerHref('dashboard', kind, id);
   const profile = useLearnerSummaryParam(kind, id);
   const ready = !!profile.real && !profile.loadError;
   // The landing page remains the entry at every programme stage. Existing
