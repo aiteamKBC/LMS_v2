@@ -184,6 +184,32 @@ interface CoachDashboardApiResponse extends CaseloadApiResponse {
   errors?: Record<string, string>;
 }
 
+interface CachedCoachDashboard {
+  ownerName: string;
+  learners: CoachLearner[];
+  monthlyRisk: MonthlyRiskPoint[] | null;
+  calendarEvents: CoachCalendarEvent[];
+  calendarPreviewEvents: CoachCalendarEvent[];
+  liveSessionEvents: CoachCalendarEvent[];
+  evidenceQueue: EvidenceQueueLearner[];
+  markingThisWeek: number | undefined;
+  reviewGenerationAvailable: boolean;
+  calendarError: string | null;
+}
+
+// Keep the last successful dashboard per signed-in account and effective coach.
+// Route changes unmount this page, so component state alone would otherwise
+// replace useful data with the full-page skeleton every time the coach returns.
+const dashboardSessionCache = new Map<string, CachedCoachDashboard>();
+
+function dashboardCacheKey(accountEmail: string, coachEmail: string) {
+  return `${accountEmail.trim().toLowerCase()}::${coachEmail.trim().toLowerCase()}`;
+}
+
+export function clearCoachDashboardSessionCache() {
+  dashboardSessionCache.clear();
+}
+
 interface ReviewHistoryApiLearner {
   id: string;
   aptemId?: string | null;
@@ -1103,25 +1129,27 @@ export default function CoachDashboard() {
   const authenticatedCoachEmail = coach.email;
   const authenticatedCoachName = coach.name;
   const adminEmail = auth.account?.email || '';
+  const cacheKey = dashboardCacheKey(adminEmail, authenticatedCoachEmail);
+  const initialDashboard = dashboardSessionCache.get(cacheKey);
   // KPI cards open a quick drill-down first. The modal can still apply the
   // same filter to the caseload list when the coach wants to keep working there.
   const [kpiFilter, setKpiFilter] = useState<DashboardKpi | null>(null);
   const [selectedKpi, setSelectedKpi] = useState<DashboardKpi | null>(null);
-  const [ownerName, setOwnerName] = useState('Coach');
-  const [learners, setLearners] = useState<CoachLearner[]>([]);
-  const [monthlyRisk, setMonthlyRisk] = useState<MonthlyRiskPoint[] | null>(null);
-  const [calendarEvents, setCalendarEvents] = useState<CoachCalendarEvent[]>([]);
-  const [calendarPreviewEvents, setCalendarPreviewEvents] = useState<CoachCalendarEvent[]>([]);
-  const [liveSessionEvents, setLiveSessionEvents] = useState<CoachCalendarEvent[]>([]);
-  const [evidenceQueue, setEvidenceQueue] = useState<EvidenceQueueLearner[]>([]);
-  const [markingThisWeek, setMarkingThisWeek] = useState<number | undefined>();
-  const [reviewGenerationAvailable, setReviewGenerationAvailable] = useState(true);
-  const [loading, setLoading] = useState(true);
+  const [ownerName, setOwnerName] = useState(() => initialDashboard?.ownerName || 'Coach');
+  const [learners, setLearners] = useState<CoachLearner[]>(() => initialDashboard?.learners || []);
+  const [monthlyRisk, setMonthlyRisk] = useState<MonthlyRiskPoint[] | null>(() => initialDashboard?.monthlyRisk || null);
+  const [calendarEvents, setCalendarEvents] = useState<CoachCalendarEvent[]>(() => initialDashboard?.calendarEvents || []);
+  const [calendarPreviewEvents, setCalendarPreviewEvents] = useState<CoachCalendarEvent[]>(() => initialDashboard?.calendarPreviewEvents || []);
+  const [liveSessionEvents, setLiveSessionEvents] = useState<CoachCalendarEvent[]>(() => initialDashboard?.liveSessionEvents || []);
+  const [evidenceQueue, setEvidenceQueue] = useState<EvidenceQueueLearner[]>(() => initialDashboard?.evidenceQueue || []);
+  const [markingThisWeek, setMarkingThisWeek] = useState<number | undefined>(() => initialDashboard?.markingThisWeek);
+  const [reviewGenerationAvailable, setReviewGenerationAvailable] = useState(() => initialDashboard?.reviewGenerationAvailable ?? true);
+  const [loading, setLoading] = useState(() => !initialDashboard);
   const [loadWarning, setLoadWarning] = useState<string | null>(null);
-  const [loadedCoachEmail, setLoadedCoachEmail] = useState<string | null>(null);
-  const [calendarLoading, setCalendarLoading] = useState(true);
-  const [calendarError, setCalendarError] = useState<string | null>(null);
-  const [liveSessionsLoading, setLiveSessionsLoading] = useState(true);
+  const [loadedCoachEmail, setLoadedCoachEmail] = useState<string | null>(() => initialDashboard ? authenticatedCoachEmail : null);
+  const [calendarLoading, setCalendarLoading] = useState(() => !initialDashboard);
+  const [calendarError, setCalendarError] = useState<string | null>(() => initialDashboard?.calendarError || null);
+  const [liveSessionsLoading, setLiveSessionsLoading] = useState(() => !initialDashboard);
   const [scheduleExpanded, setScheduleExpanded] = useState(true);
   const [scheduleNotice, setScheduleNotice] = useState('');
   const [directoryCoaches, setDirectoryCoaches] = useState<DirectoryCoach[]>([]);
@@ -1179,11 +1207,29 @@ export default function CoachDashboard() {
     const controller = new AbortController();
 
     async function loadDashboard() {
-      setLoading(true);
+      const cachedDashboard = dashboardSessionCache.get(cacheKey);
+      if (cachedDashboard) {
+        setOwnerName(cachedDashboard.ownerName);
+        setLearners(cachedDashboard.learners);
+        setMonthlyRisk(cachedDashboard.monthlyRisk);
+        setCalendarEvents(cachedDashboard.calendarEvents);
+        setCalendarPreviewEvents(cachedDashboard.calendarPreviewEvents);
+        setLiveSessionEvents(cachedDashboard.liveSessionEvents);
+        setEvidenceQueue(cachedDashboard.evidenceQueue);
+        setMarkingThisWeek(cachedDashboard.markingThisWeek);
+        setReviewGenerationAvailable(cachedDashboard.reviewGenerationAvailable);
+        setCalendarError(cachedDashboard.calendarError);
+        setCalendarLoading(false);
+        setLiveSessionsLoading(false);
+        setLoading(false);
+        setLoadedCoachEmail(authenticatedCoachEmail);
+      } else {
+        setLoading(true);
+        setCalendarLoading(true);
+        setLiveSessionsLoading(true);
+      }
       setLoadWarning(null);
-      setCalendarLoading(true);
-      setCalendarError(null);
-      setLiveSessionsLoading(true);
+      if (!cachedDashboard) setCalendarError(null);
 
       if (!authenticatedCoachEmail) {
         setOwnerName(authenticatedCoachName);
@@ -1231,40 +1277,59 @@ export default function CoachDashboard() {
         const completedHistoryEvents = events;
         const nonLiveEvents = events.filter(event => event.source !== 'live-session');
 
-        setOwnerName(displayValue(dashboard.owner?.name) === EMPTY_VALUE ? authenticatedCoachName : String(dashboard.owner?.name));
-        setLearners(mergeEvidenceQueueIntoLearners(
+        const nextOwnerName = displayValue(dashboard.owner?.name) === EMPTY_VALUE ? authenticatedCoachName : String(dashboard.owner?.name);
+        const nextLearners = mergeEvidenceQueueIntoLearners(
           mergeReviewHistory(
             mergeAttendanceRates(normalizedLearners, completedHistoryEvents),
             reviewHistoryLearners,
           ),
           queueItems,
-        ));
-        setMonthlyRisk(normalizeMonthlyRisk(dashboard.monthlyRisk));
-        setEvidenceQueue(queueItems);
-        setMarkingThisWeek(
+        );
+        const nextMonthlyRisk = normalizeMonthlyRisk(dashboard.monthlyRisk);
+        const nextMarkingThisWeek = (
           markingQueue?.summary?.pendingItems === undefined
             ? undefined
-            : toNumber(markingQueue.summary.pendingItems),
+            : toNumber(markingQueue.summary.pendingItems)
         );
         const reviewSummary = dashboard.meetings?.summary;
         // Review-source failures are per learner. A native learner with an
         // unavailable Curriculum schedule must not hide valid Aptem reviews
         // belonging to the rest of the caseload.
-        setReviewGenerationAvailable(reviewScheduleAvailable(
+        const nextReviewGenerationAvailable = reviewScheduleAvailable(
           reviewSummary,
           nonLiveEvents,
           dashboard.meetings?.reviewGenerationIssues || [],
-        ));
+        );
+        const nextCalendarError = dashboard.errors?.meetings || null;
+        dashboardSessionCache.set(cacheKey, {
+          ownerName: nextOwnerName,
+          learners: nextLearners,
+          monthlyRisk: nextMonthlyRisk,
+          calendarEvents: nonLiveEvents,
+          calendarPreviewEvents: nonLiveEvents.filter(isWithinNextWorkWeek),
+          liveSessionEvents: events.filter(event => event.source === 'live-session'),
+          evidenceQueue: queueItems,
+          markingThisWeek: nextMarkingThisWeek,
+          reviewGenerationAvailable: nextReviewGenerationAvailable,
+          calendarError: nextCalendarError,
+        });
+        setOwnerName(nextOwnerName);
+        setLearners(nextLearners);
+        setMonthlyRisk(nextMonthlyRisk);
+        setEvidenceQueue(queueItems);
+        setMarkingThisWeek(nextMarkingThisWeek);
+        setReviewGenerationAvailable(nextReviewGenerationAvailable);
         setCalendarEvents(nonLiveEvents);
         setCalendarPreviewEvents(nonLiveEvents.filter(isWithinNextWorkWeek));
         setLiveSessionEvents(events.filter(event => event.source === 'live-session'));
-        setCalendarError(dashboard.errors?.meetings || null);
+        setCalendarError(nextCalendarError);
         setCalendarLoading(false);
         setLiveSessionsLoading(false);
         setLoading(false);
         setLoadedCoachEmail(authenticatedCoachEmail);
       } catch (error) {
         if (controller.signal.aborted) return;
+        if (cachedDashboard) return;
         setLearners([]);
         setMonthlyRisk(null);
         setCalendarEvents([]);
@@ -1284,7 +1349,7 @@ export default function CoachDashboard() {
     return () => {
       controller.abort();
     };
-  }, [authenticatedCoachEmail, authenticatedCoachName, coach.canChooseCoach, isInitialized]);
+  }, [authenticatedCoachEmail, authenticatedCoachName, cacheKey, coach.canChooseCoach, isInitialized]);
 
   useEffect(() => {
     if (!selectedKpi) return;
