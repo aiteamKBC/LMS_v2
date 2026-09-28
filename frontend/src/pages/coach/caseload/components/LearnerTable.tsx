@@ -5,20 +5,21 @@ import type { InsightMap } from '../lib/attention';
 import type { Learner, SortDirection, SortKey } from '../types';
 import styles from '../caseload.module.css';
 
-function percent(value: number | null | undefined, available = true) {
+function percent(value: number | null | undefined, available = true, preservePrecision = false) {
   if (!available || value === null || value === undefined || !Number.isFinite(value)) return null;
-  return Math.max(0, Math.min(100, Math.round(value)));
+  const bounded = Math.max(0, Math.min(100, value));
+  return preservePrecision ? bounded : Math.round(bounded);
 }
 
 function componentPercent(learner: Learner) {
-  if (learner.activityProgressAvailable) return percent(learner.activityProgress, true);
+  if (learner.activityProgressAvailable) return percent(learner.activityProgress, true, true);
   const total = learner.componentsPlanned ?? 0;
   return total > 0 ? percent(((learner.componentsCompleted ?? 0) / total) * 100) : null;
 }
 
 function compactNumber(value: number | null | undefined) {
   if (value === null || value === undefined || !Number.isFinite(value)) return null;
-  return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, '');
+  return Number.isInteger(value) ? String(value) : value.toFixed(2).replace(/0+$/, '').replace(/\.$/, '');
 }
 
 function ratio(completed: number | null | undefined, total: number | null | undefined, suffix = '') {
@@ -27,6 +28,13 @@ function ratio(completed: number | null | undefined, total: number | null | unde
   return completedLabel !== null && totalLabel !== null && Number(total) > 0
     ? `${completedLabel}${suffix} / ${totalLabel}${suffix}`
     : null;
+}
+
+function otjhRatio(completed: number | null | undefined, total: number | null | undefined) {
+  const completedLabel = compactNumber(completed);
+  if (completedLabel === null) return null;
+  const totalLabel = compactNumber(total);
+  return `${completedLabel}h / ${totalLabel !== null && Number(total) > 0 ? `${totalLabel}h` : EMPTY_VALUE}`;
 }
 
 function attendanceRatio(learner: Learner) {
@@ -114,10 +122,10 @@ export function LearnerTable({ learners, insights, sortKey, sortDirection, onSor
         return <tr key={learner.id}>
           {selectionMode ? <td><input type="checkbox" aria-label={`Select ${learner.name}`} checked={selectedLearnerIds.has(learner.id)} onChange={() => onToggleSelect(learner.id)} /></td> : null}
           <td><div className={styles.learner}><span className={styles.avatar}>{learner.initials}</span><span><strong>{learner.name}</strong><small>{displayValue(learner.programmeName || learner.cohortName)}</small></span></div></td>
-          <td className={styles.progressCell}><Progress label="OTJH" metric="otjh" tone={otjhTone(learner)} value={getOtjhGapStatus(learner.otjhCompleted, learner.otjhTarget).available ? percent(((learner.otjhCompleted / learner.otjhTarget) * 100)) : null} detail={ratio(learner.otjhCompleted, learner.otjhTarget, 'h')} /></td>
-          <td className={styles.progressCell}><Progress label="KSBs" metric="ksbs" value={percent(learner.ksbProgress, learner.ksbProgressAvailable)} detail={ratio(learner.ksbCompleted, learner.ksbTarget)} /></td>
+          <td className={styles.progressCell}><Progress label="OTJH" metric="otjh" tone={otjhTone(learner)} value={getOtjhGapStatus(learner.otjhCompleted, learner.otjhTarget).available ? percent(((learner.otjhCompleted / learner.otjhTarget) * 100)) : null} detail={otjhRatio(learner.otjhCompleted, learner.otjhTarget)} /></td>
+          <td className={styles.progressCell}><Progress label="KSBs" metric="ksbs" value={percent(learner.ksbProgress, learner.ksbProgressAvailable, true)} detail={ratio(learner.ksbCompleted, learner.ksbTarget)} /></td>
           <td className={styles.progressCell}><Progress label="Activities" metric="activities" value={componentPercent(learner)} detail={ratio(learner.componentsCompleted, learner.componentsPlanned)} /></td>
-          <td className={styles.progressCell}><Progress label="Attendance" metric="attendance" value={percent(learner.liveAttendanceRate, learner.liveAttendanceRateAvailable)} detail={attendanceRatio(learner)} /></td>
+          <td className={styles.progressCell}><Progress label="Attendance" metric="attendance" value={percent(learner.liveAttendanceRate, learner.liveAttendanceRateAvailable, true)} detail={attendanceRatio(learner)} /></td>
           <td><DateMetric value={activity} emptyLabel="No activity yet" detail={insight?.lastActivityDaysAgo !== null && insight?.lastActivityDaysAgo !== undefined ? `${insight.lastActivityDaysAgo} days ago` : displayValue(learner.lastActivityLabel) !== EMPTY_VALUE ? displayValue(learner.lastActivityLabel) : 'Latest activity'} /></td>
           <td><DateMetric value={learner.lastProgressReview} emptyLabel="No PR yet" detail="Latest completed" /></td>
           <td><DateMetric value={learner.lastReview} emptyLabel="No MCM yet" detail="Latest completed" /></td>

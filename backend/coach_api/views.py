@@ -12,7 +12,7 @@ from dataclasses import dataclass
 # name to avoid shadowing it.
 from time import monotonic, perf_counter, sleep as _sleep
 from calendar import monthrange
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone as datetime_timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from types import SimpleNamespace
@@ -102,11 +102,13 @@ from learner_api.ksb_codes import extract_ksb_codes, normalize_ksb_parent_code
 from learner_api.progress_rules import progress_record_counts_as_achieved
 from audit_api.last_audit_ledger_views import _connection as audit_connection
 from learner_api.student_activity_access import student_activity_available
+from learner_api import canonical_learning
 from learner_api.student_activity_data import read_audit_hour_totals_bulk, read_evidenced_ksb_counts_bulk
 from learner_api.attendance import (
     _summarize_attendance,
     combined_attendance_rows,
     fetch_kbc_attendance_rates,
+    fetch_kbc_attendance_rows_bulk,
     fetch_recent_kbc_attendance_rows,
 )
 from learner_api.review_history import REVIEW_TYPES, _sections_by_review, _serialize_review
@@ -2497,7 +2499,34 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
     if not work:
         return {}
 
-    enrolment_ids = [int(source.pk) for _, source, _ in work]
+    aptem_work = [item for item in work if student_activity_available(getattr(item[1], "aptem_id", None))]
+    aptem_by_enrolment = {
+        int(source.pk): int(str(source.aptem_id).strip())
+        for _, source, _ in aptem_work
+    }
+    learner_metrics_by_enrolment = canonical_learning.metrics_bulk(aptem_by_enrolment)
+    unavailable_metrics = {
+        "migrated": True, "aptem_planned_total": None,
+        "programme": {"completed": 0, "total": 0, "percent": None, "status": "unavailable"},
+        "otjh": {"historical": None, "new": 0, "actual": None, "completed_actual": None, "planned": None},
+        "ksb": {"completed": 0, "total": 0, "percent": None, "status": "unavailable", "codes": []},
+        "_ksb_evidence_sources": [],
+    }
+    aptem_metrics = {}
+    for profile_id, source, _ in aptem_work:
+        metrics = learner_metrics_by_enrolment.get(int(source.pk))
+        if metrics is None:
+            logger.warning(
+                "canonical_learner_mapping_missing learner_profile_id=%s",
+                profile_id,
+            )
+        aptem_metrics[profile_id] = metrics or unavailable_metrics
+    legacy_work = [item for item in work if item not in aptem_work]
+    if not legacy_work:
+        _coach_perf("dashboard", "canonical_metrics", perf_started, learner_count=len(work))
+        return aptem_metrics
+
+    enrolment_ids = [int(source.pk) for _, source, _ in legacy_work]
     direct_progress = load_direct_progress_records_bulk(enrolment_ids)
     # ``source.pk`` is the canonical internal enrolment identity. ``aptem_id``
     # is only an optional bridge to retained Aptem/audit data: native learners
@@ -2505,31 +2534,31 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
     # once so no Aptem-dependent preload invents an identity or coerces NULL.
     aptem_by_enrolment = {
         int(source.pk): int(str(source.aptem_id).strip())
-        for _, source, _ in work
+        for _, source, _ in legacy_work
         if student_activity_available(getattr(source, 'aptem_id', None))
     }
     attempt_keys = list(aptem_by_enrolment.items())
     subject_attempts = load_subject_attempts_bulk(attempt_keys)
     manual_hours = load_manual_hours_bulk([aptem for _, aptem in attempt_keys])
-    reflection_keys = [(kind, int(source.pk)) for _, source, kind in work]
+    reflection_keys = [(kind, int(source.pk)) for _, source, kind in legacy_work]
     reflection_submissions = load_reflection_submissions_bulk(reflection_keys)
     audit_inputs = load_audit_inputs_bulk([aptem for _, aptem in attempt_keys])
     native_progress = load_native_progress_bulk(enrolment_ids)
     preset_cache = {}
     plan_ids_by_enrolment = {
         int(source.pk): _effective_plan_ids(source, preset_cache)
-        for _, source, _ in work
+        for _, source, _ in legacy_work
     }
     component_by_module = load_native_components_bulk(
         [module_id for ids in plan_ids_by_enrolment.values() for module_id in ids]
     )
     planned_documents = load_planned_hours_documents_bulk([
-        (int(source.pk), kind) for _, source, kind in work
+        (int(source.pk), kind) for _, source, kind in legacy_work
     ])
     contracts = load_contracts_bulk([aptem for _, aptem in attempt_keys])
     accepted_ksb_rows = load_accepted_ksb_rows_bulk([
         (int(source.pk), aptem_by_enrolment[int(source.pk)], kind)
-        for _, source, kind in work
+        for _, source, kind in legacy_work
         if int(source.pk) in aptem_by_enrolment
     ])
     audit_groups = {
@@ -2635,8 +2664,9 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
                 # discard metrics already loaded for the rest of the caseload.
         return loaded
 
-    results = load_metrics_inputs(work)
-    result = {profile_id: metrics for profile_id, metrics in results if metrics is not None}
+    results = load_metrics_inputs(legacy_work)
+    result = dict(aptem_metrics)
+    result.update({profile_id: metrics for profile_id, metrics in results if metrics is not None})
     _coach_perf("dashboard", "canonical_metrics", perf_started, learner_count=len(work))
     return result
 
@@ -2652,6 +2682,46 @@ def caseload_canonical_attendance(rows) -> dict[int, dict]:
         return {}
     from learner_api.attendance_lectures import _merge_register_duplicates
 
+    aptem_work = [
+        (profile_id, source) for profile_id, source in work
+        if student_activity_available(getattr(source, "aptem_id", None))
+    ]
+    result = {}
+    if aptem_work:
+        identities = [
+            {"aptem_id": source.aptem_id, "learner_id": source.id,
+             "learner_name": getattr(source, "username", "") or "",
+             "learner_email": getattr(source, "email", "") or ""}
+            for _, source in aptem_work
+        ]
+        kbc_rows = fetch_kbc_attendance_rows_bulk(identities)
+        emails = [item["learner_email"] for item in identities if item["learner_email"]]
+        teams_rows = fetch_verified_teams_attendance_rows(learner_emails=emails) if emails else []
+        profile_by_enrolment = {int(source.id): profile_id for profile_id, source in aptem_work}
+        combined_by_profile = {profile_id: [] for profile_id, _ in aptem_work}
+        for item in kbc_rows:
+            profile_id = profile_by_enrolment.get(int(item["learner_id"]))
+            if profile_id is not None:
+                combined_by_profile[profile_id].append({**item, "source": "kbc-attendance"})
+        for item in teams_rows:
+            enrolment_id = to_int(item.get("enrolment_id"))
+            profile_id = profile_by_enrolment.get(enrolment_id) if enrolment_id is not None else None
+            if profile_id is not None:
+                combined_by_profile[profile_id].append({**item, "source": "microsoft-teams"})
+        for profile_id, items in combined_by_profile.items():
+            unique = {}
+            for item in items:
+                updated_at = item.get("updated_at")
+                if updated_at and timezone.is_naive(updated_at):
+                    item = {**item, "updated_at": timezone.make_aware(updated_at, datetime_timezone.utc)}
+                key = (item.get("source"), str(item.get("occurrence_id") or item.get("session_id")), item.get("session_date"))
+                previous = unique.get(key)
+                if previous is None or item.get("attendance_status") in {"present", "late"}:
+                    unique[key] = item
+            summary = _summarize_attendance(_merge_register_duplicates(list(unique.values())))
+            if summary is not None:
+                result[profile_id] = summary
+
     def load(item):
         profile_id, source = item
         try:
@@ -2663,8 +2733,9 @@ def caseload_canonical_attendance(rows) -> dict[int, dict]:
         finally:
             close_old_connections()
 
-    results = [load(item) for item in work]
-    return {profile_id: summary for profile_id, summary in results if summary is not None}
+    other_results = [load(item) for item in work if item not in aptem_work]
+    result.update({profile_id: summary for profile_id, summary in other_results if summary is not None})
+    return result
 
 
 def caseload_kbc_attendance_rates(rows) -> tuple[dict[int, int], dict[int, dict]]:
@@ -2716,13 +2787,20 @@ def apply_canonical_learner_metrics(payload: dict, metrics: dict | None) -> dict
     old_plan = to_number(payload.get("otjhPlanned"))
     old_target = to_number(payload.get("otjhTarget"))
     canonical_plan = otjh.get("planned")
-    if canonical_plan is not None:
+    if metrics.get("migrated"):
+        # Aptem learners mirror the Learner Dashboard contract exactly,
+        # including an unavailable/null planned-hours value.
+        payload["otjhTarget"] = canonical_plan
+        payload["otjhPlanned"] = canonical_plan
+    elif canonical_plan is not None:
         ratio = old_target / old_plan if old_plan > 0 else 0
         if old_target > 1 and 0 < ratio <= 1:
             payload["otjhTarget"] = max(round(to_number(canonical_plan) * ratio, 2), 1)
         payload["otjhPlanned"] = to_number(canonical_plan)
-    if otjh.get("actual") is not None:
-        payload["otjhCompleted"] = to_number(otjh["actual"])
+    completed_actual = otjh.get("completed_actual", otjh.get("actual"))
+    if completed_actual is not None:
+        payload["otjhCompleted"] = to_number(completed_actual)
+    payload["otjhActual"] = otjh.get("actual")
 
     payload["programmeCompleted"] = programme.get("completed")
     payload["programmeTarget"] = programme.get("total")
@@ -2746,8 +2824,12 @@ def apply_canonical_learner_metrics(payload: dict, metrics: dict | None) -> dict
     actual = to_number(payload.get("otjhCompleted"))
     hours_available = target > 0
     hours_progress = percentage(actual, target) if hours_available else 0
-    payload["overallProgress"] = hours_progress
-    payload["overallProgressAvailable"] = hours_available
+    if metrics.get("migrated"):
+        payload["overallProgress"] = programme.get("percent")
+        payload["overallProgressAvailable"] = programme.get("status") == "ready"
+    else:
+        payload["overallProgress"] = hours_progress
+        payload["overallProgressAvailable"] = hours_available
     progress_variance = clean_text(payload.get("progressVariance"))
     payload["otjhStatus"] = otjh_status_from_variance(
         actual - target if target > 0 else None
@@ -2770,6 +2852,9 @@ def apply_canonical_learner_metrics(payload: dict, metrics: dict | None) -> dict
         component_progress=component_progress, component_available=component_available,
     )
     payload["metricsSource"] = "learner-dashboard"
+    if metrics.get("migrated"):
+        payload["ksbSource"] = "learner-dashboard"
+        payload["otjhSource"] = "learner-dashboard"
     return payload
 
 
@@ -10954,23 +11039,16 @@ def dashboard_attendance_rows(
     *,
     aptem_by_profile: dict[int, int] | None = None,
 ) -> list[dict]:
-    """Dashboard attendance: KBC by Aptem ID, existing register for other learners."""
+    """Dashboard attendance from the same register used by learner pages."""
     if not learners:
         return []
     aptem_by_profile = aptem_by_profile if aptem_by_profile is not None else caseload_aptem_ids(rows)
-    other_rows = [row for row in rows if int(row.id) not in aptem_by_profile]
-    summaries = caseload_canonical_attendance(other_rows)
-    try:
-        kbc_rates = fetch_kbc_attendance_rates(aptem_by_profile.values())
-    except Exception:
-        logger.warning("Could not load KBC attendance for the coach dashboard", exc_info=True)
-        kbc_rates = {}
+    summaries = caseload_canonical_attendance(rows)
 
     payload = []
     for learner in learners:
         learner_id = to_int(learner.get("id"))
-        aptem_id = aptem_by_profile.get(learner_id)
-        metrics = kbc_rates.get(str(aptem_id)) if aptem_id is not None else summaries.get(learner_id)
+        metrics = summaries.get(learner_id)
         # A row with no register behind it carries nothing the client can
         # use -- `mergeAttendanceRates` would read it as "no attendance"
         # either way -- so it is left out rather than padding the payload.

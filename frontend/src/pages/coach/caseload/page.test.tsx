@@ -71,6 +71,30 @@ describe('Coach caseload loading', () => {
     expect(screen.queryByRole('button', { name: /Sort direction:/ })).not.toBeInTheDocument();
   });
 
+  it('filters dashboard-owned learners locally and paginates after fifteen rows', async () => {
+    const learners = Array.from({ length: 16 }, (_, index) => ({
+      ...learner,
+      id: String(index + 1),
+      name: index === 15 ? 'Abigail Reece' : `Aaa Learner ${String(index + 1).padStart(2, '0')}`,
+      initials: index === 15 ? 'AR' : 'LR',
+    } satisfies CaseloadApiLearner));
+    render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={learners} /></MemoryRouter>);
+
+    expect(await screen.findByText('Aaa Learner 01')).toBeInTheDocument();
+    expect(screen.queryByText('Abigail Reece')).not.toBeInTheDocument();
+    expect(screen.getByText(/1.15/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    expect((await screen.findAllByText('Abigail Reece')).length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText('Aaa Learner 01')).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Abigail Reece' } });
+    expect((await screen.findAllByText('Abigail Reece')).length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText('Aaa Learner 02')).not.toBeInTheDocument();
+    expect(screen.getByText(/1.1/)).toBeInTheDocument();
+    expect(coachFetch).not.toHaveBeenCalled();
+  });
+
   it('resets to page one when a backend filter changes', async () => {
     const atRiskLearner = { ...learner, id: '43', name: 'At Risk Learner', initials: 'AR', status: 'at-risk' } satisfies CaseloadApiLearner;
     coachFetch.mockResolvedValue({ ok: true, json: async () => ({ results: [learner, atRiskLearner], pagination: { page: 1, pageSize: 10, total: 32, totalPages: 4 }, filterOptions: { cohort: [], group: [], programStatus: [], employer: [] } }) });

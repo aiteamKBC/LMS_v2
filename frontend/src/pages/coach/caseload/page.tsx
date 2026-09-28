@@ -51,6 +51,7 @@ import styles from './caseload.module.css';
 const CASELOAD_ENDPOINT = '/coach_api/coach/caseload';
 
 const PAGE_SIZE = 10;
+const EMBEDDED_PAGE_SIZE = 15;
 const QUERY_DEFAULTS = {
   search: '', cohort: 'all', group: 'all', programmeStatus: 'all', employer: 'all',
   view: 'all', sort: 'risk', direction: 'desc', page: 1,
@@ -107,6 +108,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
   const sortKey = String(query.sort) as SortKey;
   const sortDirection = String(query.direction) as SortDirection;
   const currentPage = Number(query.page);
+  const usesDashboardLearners = embedded && Array.isArray(embeddedLearners);
 
   const [quickView, setQuickView] = useState<{ learnerId: string; tab: QuickViewTab } | null>(null);
 
@@ -204,7 +206,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
 
     loadCaseload();
     return () => controller.abort();
-  }, [authenticatedCoachEmail, authenticatedCoachName, caseloadUrl, embedded, embeddedLearners, isInitialized, reloadToken]);
+  }, [auth.account, authenticatedCoachEmail, authenticatedCoachName, caseloadUrl, embedded, embeddedLearners, isInitialized, reloadToken]);
 
   // --- derived data ---------------------------------------------------------
 
@@ -252,12 +254,24 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
           break;
       }
 
-      // Search and stable placement filters have already been applied by the server.
+      // The standalone/paginated endpoint applies these filters server-side.
+      // Dashboard-owned learners never make that request, so apply the same
+      // contract locally instead of only reflecting the values in the URL.
+      if (usesDashboardLearners) {
+        const search = filters.search.trim().toLocaleLowerCase();
+        if (search && ![learner.name, learner.email, learner.programmeName]
+          .some((value) => displayValue(value).toLocaleLowerCase().includes(search))) return false;
+        if (filters.cohort !== 'all' && learner.cohortId !== filters.cohort
+          && displayValue(learner.cohortName) !== filters.cohort) return false;
+        if (filters.group !== 'all' && displayValue(learner.group) !== filters.group) return false;
+        if (filters.programStatus !== 'all'
+          && displayValue(learner.rawProgramStatus).toLocaleLowerCase() !== filters.programStatus.toLocaleLowerCase()) return false;
+      }
       if (filters.employer !== 'all' && displayValue(learner.employer) !== filters.employer) return false;
 
       return true;
     });
-  }, [learners, insights, statusFilter, filters]);
+  }, [learners, insights, statusFilter, filters, usesDashboardLearners]);
 
   const sorted = useMemo(() => {
     const numeric = (value: number | null | undefined, available = true) => available && Number.isFinite(value) ? Number(value) : null;
@@ -300,9 +314,15 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
     }, { resetPage: true });
   }, [setQueryValues, sortDirection, sortKey]);
 
-  const totalPages = Math.max(1, serverTotalPages);
+  const effectivePageSize = usesDashboardLearners ? EMBEDDED_PAGE_SIZE : PAGE_SIZE;
+  const effectiveTotal = usesDashboardLearners ? sorted.length : serverTotal;
+  const totalPages = Math.max(1, usesDashboardLearners
+    ? Math.ceil(effectiveTotal / effectivePageSize)
+    : serverTotalPages);
   const safePage = Math.min(currentPage, totalPages);
-  const paginated = sorted;
+  const paginated = usesDashboardLearners
+    ? sorted.slice((safePage - 1) * effectivePageSize, safePage * effectivePageSize)
+    : sorted;
 
   const matchedIdKey = useMemo(() => sorted.map((learner) => learner.id).join(','), [sorted]);
 
@@ -533,8 +553,8 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
             <Pagination
               page={safePage}
               totalPages={totalPages}
-              total={serverTotal}
-              pageSize={PAGE_SIZE}
+              total={effectiveTotal}
+              pageSize={effectivePageSize}
               onPageChange={(nextPage) => setQueryValues({ page: nextPage }, { replace: false })}
             />
           ) : null}
@@ -542,7 +562,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
 
         {hasFiltersApplied && !loading && !error && sorted.length > 0 ? (
           <p className={styles.footerNote}>
-            Showing {sorted.length} learners on this page from {serverTotal} matching learners.
+            Showing {paginated.length} learners on this page from {effectiveTotal} matching learners.
           </p>
         ) : null}
       </section>
