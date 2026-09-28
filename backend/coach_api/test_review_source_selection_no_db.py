@@ -269,6 +269,18 @@ class DashboardCompletedReviewHistoryTests(SimpleTestCase):
 
 
 class AptemEventVerificationTests(SimpleTestCase):
+    def test_embedded_section_requires_usable_content_before_form_is_available(self):
+        self.assertFalse(views._imported_review_has_usable_form({
+            "sections": [{"id": "empty", "fields": [], "tables": [], "rawText": ""}],
+        }))
+        self.assertTrue(views._imported_review_has_usable_form({
+            "sections": [{"id": "answer", "fields": [{"label": "Progress", "value": "Good"}]}],
+        }))
+        self.assertTrue(views._imported_review_has_usable_form(
+            {"sections": []},
+            has_normalized_sections=True,
+        ))
+
     def test_missing_calendar_overlay_preserves_each_aptem_lifecycle_status(self):
         for status in ("not-scheduled", "scheduled", "in-progress", "awaiting-signature", "completed"):
             with self.subTest(status=status):
@@ -363,6 +375,29 @@ class AptemEventVerificationTests(SimpleTestCase):
         self.assertNotIn("reviewInstanceId", events[0])
         self.assertNotIn("reviewTemplateId", events[0])
 
+    @patch("coach_api.views.connections")
+    def test_metadata_only_import_does_not_claim_to_have_a_review_form(self, connections):
+        cursor = connections["default"].cursor.return_value.__enter__.return_value
+        columns = [
+            "learner_id", "id", "aptem_review_id", "review_name", "review_type",
+            "reviewer_name", "learner_name", "planned_scheduled_date", "completed_date",
+            "status", "review_data", "extraction_status", "last_error", "has_review_sections", "source_learner_id",
+        ]
+        cursor.description = [(column,) for column in columns]
+        cursor.fetchall.return_value = [(
+            1, 15, "R-SUMMARY", "MCM", "MCM", "Coach", "Learner 1",
+            date(2026, 9, 25), None, "Planned",
+            {"source_metadata": {"Status": "Planned"}, "sections": []},
+            "partial", None, False, "101",
+        )]
+
+        events, _contributors = views.fetch_aptem_review_events(
+            [learner(1)], {1: 101}, owner_email="coach@example.invalid", owner_name="Coach",
+        )
+
+        self.assertEqual(events[0]["eventKey"], "imported-review:R-SUMMARY")
+        self.assertFalse(events[0]["hasReviewForm"])
+
     @patch("coach_api.views.ImportedReviewInstance.objects.filter")
     @patch("coach_api.views._sections_by_review")
     @patch("coach_api.views.connections")
@@ -390,18 +425,105 @@ class AptemEventVerificationTests(SimpleTestCase):
         }]}
 
         definition = views._imported_review_definition(
-            "coach@example.invalid", "imported-review:11",
+            "coach@example.invalid", "imported-review:R-1",
         )
 
         self.assertFalse(definition["readOnly"])
         self.assertEqual(definition["source"], "aptem")
-        # Old history links use the import row id. The returned identity is
-        # canonical so every later save/open path reaches the same draft.
         self.assertEqual(definition["instance"]["id"], "imported-review:R-1")
+        self.assertTrue(definition["formAvailable"])
+        self.assertFalse(definition["summaryOnly"])
         self.assertEqual(definition["instance"]["status"], "in-progress")
         self.assertEqual(definition["instance"]["reviewTemplateId"], "")
         self.assertEqual(definition["sections"][0]["displayOrder"], 2)
         self.assertEqual(definition["sections"][0]["fields"][0]["answer"], "Good progress")
+
+    @patch("coach_api.views.ImportedReviewInstance.objects.filter")
+    @patch("coach_api.views._sections_by_review", return_value={})
+    @patch("coach_api.views.connections")
+    @patch("coach_api.views.fetch_caseload_dashboard_profiles")
+    def test_owned_summary_only_import_returns_explicit_read_only_definition(
+        self, fetch_profiles, connections, _sections, imported_instances,
+    ):
+        fetch_profiles.return_value = [learner(1, aptem_id=101, source_aptem_id=101)]
+        cursor = connections["default"].cursor.return_value.__enter__.return_value
+        columns = [
+            "id", "learner_id", "aptem_review_id", "review_name", "review_type",
+            "reviewer_name", "learner_name", "planned_scheduled_date", "completed_date",
+            "status", "review_data", "extraction_status", "last_error",
+        ]
+        cursor.description = [(column,) for column in columns]
+        cursor.fetchall.return_value = [(
+            15, 1, "R-SUMMARY", "MCM", "MCM", "Coach", "Learner 1",
+            date(2026, 9, 25), None, "Not Scheduled",
+            {"source_metadata": {"Status": "Not Scheduled"}, "sections": []},
+            "partial", None,
+        )]
+
+        definition = views._imported_review_definition(
+            "coach@example.invalid", "imported-review:R-SUMMARY",
+        )
+
+        self.assertTrue(definition["summaryOnly"])
+        self.assertFalse(definition["formAvailable"])
+        self.assertTrue(definition["readOnly"])
+        self.assertEqual(definition["sections"], [])
+        self.assertEqual(definition["instance"]["id"], "imported-review:R-SUMMARY")
+        imported_instances.assert_not_called()
+
+    @patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[])
+    def test_imported_definition_does_not_expose_review_outside_current_coach_caseload(self, _profiles):
+        self.assertIsNone(views._imported_review_definition(
+            "unrelated-coach@example.invalid", "imported-review:R-1",
+        ))
+
+    @patch("coach_api.views.authenticated_coach_email", return_value="selected-coach@example.invalid")
+    @patch("coach_api.views._imported_review_definition")
+    def test_detail_uses_effective_view_as_coach_and_returns_summary_only_200(
+        self, imported_definition, _coach_email,
+    ):
+        imported_definition.return_value = {
+            "summaryOnly": True, "formAvailable": False, "readOnly": True,
+            "source": "aptem", "sections": [],
+        }
+        request = RequestFactory().get(
+            "/coach_api/coach/reviews/imported-review%3AR-SUMMARY",
+            {"viewAsCoach": "selected-coach@example.invalid"},
+        )
+
+        response = unwrap(views.coach_review_instance_detail)(request, "imported-review:R-SUMMARY")
+
+        self.assertEqual(response.status_code, 200)
+        imported_definition.assert_called_once_with(
+            "selected-coach@example.invalid", "imported-review:R-SUMMARY",
+        )
+
+    @patch("coach_api.views.authenticated_coach_email", return_value="coach@example.invalid")
+    @patch("coach_api.views._imported_review_definition")
+    def test_owned_import_with_form_remains_editable_and_returns_200(
+        self, imported_definition, _coach_email,
+    ):
+        imported_definition.return_value = {
+            "summaryOnly": False, "formAvailable": True, "readOnly": False,
+            "source": "aptem", "sections": [{"id": "section-1", "fields": []}],
+        }
+        request = RequestFactory().get("/coach_api/coach/reviews/imported-review%3AR-1")
+
+        response = unwrap(views.coach_review_instance_detail)(request, "imported-review:R-1")
+
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.content)
+        self.assertFalse(payload["readOnly"])
+        self.assertTrue(payload["formAvailable"])
+
+    @patch("coach_api.views.authenticated_coach_email", return_value="coach@example.invalid")
+    @patch("coach_api.views._imported_review_definition", return_value=None)
+    def test_missing_imported_review_remains_404(self, _definition, _coach_email):
+        request = RequestFactory().get("/coach_api/coach/reviews/imported-review%3AMISSING")
+
+        response = unwrap(views.coach_review_instance_detail)(request, "imported-review:MISSING")
+
+        self.assertEqual(response.status_code, 404)
 
 
 class ImportedReviewWriteTests(SimpleTestCase):
@@ -470,6 +592,46 @@ class ImportedReviewWriteTests(SimpleTestCase):
         imported.save.assert_called_once_with(
             update_fields=["answers", "status", "completed_at", "updated_at"],
         )
+
+    @patch("coach_api.views.authenticated_coach_email", return_value="coach@example.invalid")
+    @patch("coach_api.views._imported_review_definition")
+    def test_summary_only_import_rejects_answer_writes(self, imported_definition, _coach_email):
+        imported_definition.return_value = {
+            **self.definition,
+            "readOnly": True,
+            "formAvailable": False,
+            "summaryOnly": True,
+            "sections": [],
+        }
+        request = self.factory.post(
+            "/coach/reviews/imported-review%3AR-SUMMARY/answers",
+            data=json.dumps({"answers": {}}),
+            content_type="application/json",
+        )
+
+        response = unwrap(views.coach_review_instance_answers)(request, "imported-review:R-SUMMARY")
+
+        self.assertEqual(response.status_code, 409)
+
+    @patch("coach_api.views.authenticated_coach_email", return_value="coach@example.invalid")
+    @patch("coach_api.views._imported_review_definition")
+    def test_summary_only_import_rejects_completion(self, imported_definition, _coach_email):
+        imported_definition.return_value = {
+            **self.definition,
+            "readOnly": True,
+            "formAvailable": False,
+            "summaryOnly": True,
+            "sections": [],
+        }
+        request = self.factory.post(
+            "/coach/reviews/imported-review%3AR-SUMMARY/complete",
+            data=json.dumps({"answers": {}}),
+            content_type="application/json",
+        )
+
+        response = unwrap(views.coach_review_instance_complete)(request, "imported-review:R-SUMMARY")
+
+        self.assertEqual(response.status_code, 409)
 
 
 class TimetableResolvedReviewStreamTests(SimpleTestCase):
