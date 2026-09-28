@@ -1855,6 +1855,32 @@ def fetch_caseload_dashboard_profiles(owner_email: str) -> list[LearnerProfile]:
     return rows
 
 
+def fetch_caseload_timetable_profiles(owner_email: str) -> list[LearnerProfile]:
+    """Load only identity and review-schedule fields needed by the timetable.
+
+    The dashboard loader also prefetches KSB evidence, quiz answers and learner
+    activity. Reusing it here made every meetings page pay for those unrelated
+    datasets and could exceed the database statement timeout before a single
+    review event was returned.
+    """
+    requested_owner = normalize_email(owner_email)
+    queryset = (
+        LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
+        .filter(coach_email_key=requested_owner)
+        .only(
+            "id", "full_name", "email", "programme", "programme_id",
+            "programme_status", "cohort", "cohort_id", "group_name", "group_id",
+            "lifecycle_status", "coach_name", "coach_email", "start_date", "end_date",
+            "gateway_review_date", "learner_type", "enrolment_id", "aptem_id",
+        )
+        .prefetch_related("plan_modules__weeks__components")
+        .order_by("full_name", "id")
+    )
+    rows = [row for row in queryset if clean_text(row.username)]
+    attach_caseload_source_rows(rows)
+    return rows
+
+
 def caseload_dashboard_progress_projections(rows) -> dict[int, dict]:
     """Project established KSB fallback and activity metadata in bulk.
 
@@ -9232,7 +9258,16 @@ def fetch_aptem_review_events(
         return [], set()
 
     profile_ids = sorted(int(row.id) for row in profiles_by_aptem.values())
-    query = """
+    date_filters = []
+    query_params: list = [profile_ids]
+    if start_date:
+        date_filters.append("COALESCE(lr.completed_date, lr.planned_scheduled_date) >= %s")
+        query_params.append(start_date)
+    if end_date:
+        date_filters.append("COALESCE(lr.completed_date, lr.planned_scheduled_date) <= %s")
+        query_params.append(end_date)
+    date_sql = "" if not date_filters else " AND " + " AND ".join(date_filters)
+    query = f"""
         SELECT lr.learner_id, lr.id, lr.aptem_review_id, lr.review_name,
                lr.review_type, lr.reviewer_name, lr.learner_name,
                lr.planned_scheduled_date, lr.completed_date, lr.status,
@@ -9247,11 +9282,12 @@ def fetch_aptem_review_events(
         WHERE lr.learner_id = ANY(%s)
           AND NULLIF(BTRIM(lr.aptem_review_id), '') IS NOT NULL
           AND NULLIF(BTRIM(lr.review_type), '') IS NOT NULL
+          {date_sql}
         ORDER BY COALESCE(lr.completed_date, lr.planned_scheduled_date), lr.id
     """
     connection = connections[get_learner_db_alias()]
     with connection.cursor() as cursor:
-        cursor.execute(query, [profile_ids])
+        cursor.execute(query, query_params)
         columns = [column[0] for column in cursor.description]
         rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
 
@@ -9363,6 +9399,32 @@ def fetch_aptem_review_events(
     return events, contributing_profiles
 
 
+def fetch_aptem_mcm_profile_ids(aptem_by_profile: dict[int, int]) -> set[int]:
+    """Profiles with any verified Aptem MCM, without loading full review history."""
+    if not aptem_by_profile:
+        return set()
+    monthly_types = sorted({clean_text(value).casefold() for value in REVIEW_TYPES["monthly-coaching"]})
+    query = """
+        SELECT DISTINCT lr.learner_id,
+               lr.review_data ->> 'aptem_learner_id' AS source_learner_id
+        FROM "Learner".reviews lr
+        WHERE lr.learner_id = ANY(%s)
+          AND LOWER(BTRIM(lr.review_type)) = ANY(%s)
+          AND NULLIF(BTRIM(lr.aptem_review_id), '') IS NOT NULL
+    """
+    with connections[get_learner_db_alias()].cursor() as cursor:
+        cursor.execute(query, [sorted(aptem_by_profile), monthly_types])
+        rows = cursor.fetchall()
+    matches = set()
+    for profile_id, source_learner_id in rows:
+        profile_id = int(profile_id)
+        effective_aptem_id = aptem_by_profile.get(profile_id)
+        source_id = clean_text(source_learner_id)
+        if effective_aptem_id and (not source_id or source_id == str(effective_aptem_id)):
+            matches.add(profile_id)
+    return matches
+
+
 def resolve_coach_review_events(
     owner_email: str,
     owner_name: str,
@@ -9377,14 +9439,23 @@ def resolve_coach_review_events(
     Curriculum MCM occurrences (never Curriculum Progress Reviews).
     """
     aptem_by_profile, identity_conflicts = resolve_effective_aptem_ids(learners)
-    aptem_events, aptem_contributors = fetch_aptem_review_events(
-        learners,
-        aptem_by_profile,
-        owner_email=owner_email,
-        owner_name=owner_name,
-        start_date=start_date,
-        end_date=end_date,
-    )
+    aptem_reviews_available = True
+    try:
+        aptem_events, aptem_contributors = fetch_aptem_review_events(
+            learners,
+            aptem_by_profile,
+            owner_email=owner_email,
+            owner_name=owner_name,
+            start_date=start_date,
+            end_date=end_date,
+        )
+    except DatabaseError as exc:
+        # Imported reviews are one source in a mixed timetable. A slow or
+        # temporarily unavailable Aptem mirror must not turn Curriculum reviews,
+        # catch-ups and the rest of the coach calendar into a 503.
+        logger.warning("Could not load Aptem reviews for coach timetable: %s", exc)
+        aptem_reviews_available = False
+        aptem_events, aptem_contributors = [], set()
     commercial_rows, enrolment_rows = fetch_source_schedule_rows(learners)
     native_learners = [
         learner for learner in learners
@@ -9392,19 +9463,19 @@ def resolve_coach_review_events(
     ]
     # An Aptem-linked learner with no imported Aptem MCM still has monthly
     # coaching due, so their MCMs come from Curriculum like a native learner's.
-    # Progress Reviews stay Aptem-only. Decided on the unbounded Aptem history,
-    # so a date-windowed timetable never disagrees with the booking lookup.
-    aptem_mcm_events = aptem_events
-    if aptem_by_profile and (start_date or end_date):
-        aptem_mcm_events, _contributors = fetch_aptem_review_events(
-            learners,
-            aptem_by_profile,
-            owner_email=owner_email,
-            owner_name=owner_name,
-        )
+    # Progress Reviews stay Aptem-only. A lightweight all-history MCM identity
+    # lookup keeps a date-windowed timetable consistent without loading every
+    # historical review row and its form sections.
     aptem_mcm_profiles = {
-        int(event["learnerId"]) for event in aptem_mcm_events if event.get("source") == "mcr"
+        int(event["learnerId"]) for event in aptem_events if event.get("source") == "mcr"
     }
+    if aptem_reviews_available and aptem_by_profile and (start_date or end_date):
+        try:
+            aptem_mcm_profiles = fetch_aptem_mcm_profile_ids(aptem_by_profile)
+        except DatabaseError as exc:
+            logger.warning("Could not load Aptem MCM history for coach timetable: %s", exc)
+            aptem_reviews_available = False
+            aptem_mcm_profiles = set()
     mcm_fallback_learners = [
         learner for learner in learners
         if int(learner.id) in aptem_by_profile and int(learner.id) not in aptem_mcm_profiles
@@ -9414,6 +9485,11 @@ def resolve_coach_review_events(
         {"learnerId": str(profile_id), "code": "aptem_identity_conflict"}
         for profile_id in sorted(identity_conflicts)
     ]
+    if not aptem_reviews_available:
+        issues.extend(
+            {"learnerId": str(profile_id), "code": "aptem_reviews_unavailable"}
+            for profile_id in sorted(aptem_by_profile)
+        )
     counts = {
         "progressReviewRows": sum(1 for event in aptem_events if event["source"] == "progress-review"),
         "mcrRows": sum(1 for event in aptem_events if event["source"] == "mcr"),
@@ -9538,7 +9614,7 @@ def collect_generated_timetable(
     include_scheduler_queues: bool = True,
 ) -> dict:
     active_rows = fetch_owner_active_learner_profiles(owner_email)
-    review_rows = fetch_caseload_dashboard_profiles(owner_email)
+    review_rows = fetch_caseload_timetable_profiles(owner_email)
     learner_profile_map = build_learner_profile_map(review_rows)
     staff_owner_name = coach_staff_display_name(owner_email)
     owner_name = staff_owner_name or next(
