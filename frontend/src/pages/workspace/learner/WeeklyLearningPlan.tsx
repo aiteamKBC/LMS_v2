@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { BookOpen, CalendarDays, CalendarOff, ChevronLeft, ChevronRight, Clock3, ExternalLink, Search, Users, Video } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
@@ -292,7 +292,19 @@ function ReadingWeekPanel({ week }: { week: ReadingWeekRow }) {
   </div>;
 }
 
-function KsbChips({ codes }: { codes: string[] }) {
+function KsbChip({ code }: { code: string }) {
+  const type = ksbTypeCode(undefined, code);
+  const tone = type === 'K' ? 'border-primary-200 bg-primary-50 text-primary-700'
+    : type === 'S' ? 'border-accent-200 bg-accent-50 text-accent-700'
+      : type === 'B' ? 'border-secondary-200 bg-secondary-100 text-foreground-800'
+        : 'border-foreground-200 bg-background-100 text-foreground-600';
+  return <span className={cn('rounded-full border px-2 py-0.5 text-[11px] font-semibold', tone)}>{code}</span>;
+}
+
+export function KsbChips({ codes }: { codes: string[] }) {
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const headingId = useId();
   if (!codes.length) {
     return (
       <span className="inline-flex whitespace-nowrap rounded-full bg-background-100 px-2 py-1 text-[10px] font-medium text-foreground-400">
@@ -300,15 +312,26 @@ function KsbChips({ codes }: { codes: string[] }) {
       </span>
     );
   }
-  return <div className="flex flex-wrap gap-1">
-    {codes.map(code => {
-      const type = ksbTypeCode(undefined, code);
-      const tone = type === 'K' ? 'border-primary-200 bg-primary-50 text-primary-700'
-        : type === 'S' ? 'border-accent-200 bg-accent-50 text-accent-700'
-          : type === 'B' ? 'border-secondary-200 bg-secondary-100 text-foreground-800'
-            : 'border-foreground-200 bg-background-100 text-foreground-600';
-      return <span key={code} className={cn('rounded-full border px-2 py-0.5 text-[11px] font-semibold', tone)}>{code}</span>;
-    })}
+  const remaining = codes.slice(2);
+  return <div className="flex flex-nowrap items-center gap-1 whitespace-nowrap">
+    {codes.slice(0, 2).map(code => <KsbChip key={code} code={code} />)}
+    {remaining.length > 0 && <>
+      <button ref={triggerRef} type="button" aria-label={`Show ${remaining.length} more KSBs`}
+        onClick={() => dialogRef.current?.showModal()}
+        className="shrink-0 border-0 bg-transparent p-0 text-[11px] font-semibold text-primary-700 hover:underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary-600">
+        +{remaining.length}
+      </button>
+      <dialog ref={dialogRef} aria-labelledby={headingId} onClose={() => triggerRef.current?.focus()}
+        onClick={event => { if (event.target === event.currentTarget) dialogRef.current?.close(); }}
+        className="w-[min(90vw,360px)] rounded-xl border border-foreground-200 bg-background-50 p-5 text-left text-foreground-900 shadow-xl backdrop:bg-foreground-950/50">
+        <div className="flex items-center justify-between gap-4">
+          <h3 id={headingId} className="text-base font-bold">More KSBs</h3>
+          <button type="button" onClick={() => dialogRef.current?.close()}
+            className="rounded-lg border border-foreground-200 px-2.5 py-1.5 text-xs font-semibold text-foreground-700 hover:bg-background-100">Close</button>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">{remaining.map(code => <KsbChip key={code} code={code} />)}</div>
+      </dialog>
+    </>}
   </div>;
 }
 
@@ -373,9 +396,9 @@ function ActivitiesTableModern({ components, completedIds, kind, learnerId, week
     <ActivitiesHeading count={components.length} controls={controls} />
     {!filteredComponents.length ? <EmptyState size="sm" title="No matching activities" description="Try changing your search or filters." className="m-4" /> : <>
     <div className="max-w-full" style={{ overflowX: 'auto' }}>
-      <table className="w-full min-w-[620px] table-fixed text-left text-[10px]">
+      <table className="w-full min-w-[660px] table-fixed text-left text-[10px]">
         <caption className="sr-only">This week's learning activities</caption>
-        <colgroup><col className="w-9" /><col className="w-24" /><col /><col className="w-24" /><col className="w-24" /><col className="w-24" /><col className="w-24" /></colgroup>
+        <colgroup><col className="w-9" /><col className="w-24" /><col /><col className="w-24" /><col className="w-32" /><col className="w-24" /><col className="w-24" /></colgroup>
         <thead className="bg-background-100/90">
           <tr>
             {['#', 'Type', 'Title', 'Expected time', 'KSB mapping', 'Status', 'Action'].map(label => (

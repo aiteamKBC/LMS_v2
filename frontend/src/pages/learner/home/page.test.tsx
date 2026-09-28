@@ -80,7 +80,7 @@ describe('connected student home', () => {
   });
   it.each([
     ['Monthly Submission', '/learner/monthly-submission'],
-    ['Dashboard', '/workspace/learner/dashboard'], ['Attend or Report Absence', '/learner/attendance'],
+    ['Dashboard', '/workspace/learner/dashboard/apprenticeship/71'], ['Attend or Report Absence', '/learner/attendance'],
     ['Book for Monthly Coaching Session', '/learner/monthly-coaching'],
   ])('connects %s to its existing LMS route', (label, href) => {
     page();
@@ -100,7 +100,7 @@ describe('connected student home', () => {
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
     expect(screen.queryByRole('search')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('link', { name: 'Dashboard' }));
-    expect(screen.getByTestId('destination')).toHaveTextContent('/workspace/learner/dashboard');
+    expect(screen.getByTestId('destination')).toHaveTextContent('/workspace/learner/dashboard/apprenticeship/71');
   });
   it('continues the signed-in learner’s current module, ignoring an identity supplied in the URL', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -121,10 +121,11 @@ describe('connected student home', () => {
     workspace(path);
     expect(await screen.findByRole('heading', { name: 'Alex' })).toBeVisible();
     expect(screen.queryByRole('complementary', { name: 'Learner sidebar' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'View all progress' })).toHaveAttribute('href', '/workspace/learner/dashboard/apprenticeship/71');
     fireEvent.click(screen.getByRole('link', { name: 'Dashboard' }));
     expect(await screen.findByRole('heading', { name: 'Dashboard console' })).toBeVisible();
     expect(screen.getByRole('complementary', { name: 'Learner sidebar' })).toBeVisible();
-    expect(screen.getByTestId('destination')).toHaveTextContent('/workspace/learner/dashboard');
+    expect(screen.getByTestId('destination')).toHaveTextContent('/workspace/learner/dashboard/apprenticeship/71');
     fireEvent.click(screen.getByRole('link', { name: 'Return home' }));
     expect(await screen.findByRole('heading', { name: 'Alex' })).toBeVisible();
   });
@@ -164,7 +165,8 @@ describe('connected student home', () => {
     workspace('/workspace/learner/commercial/502');
     expect(await screen.findByRole('heading', { name: 'Alex' })).toBeVisible();
     expect(useLearnerSummaryParam).toHaveBeenCalledWith('commercial', '502');
-    expect(screen.getByRole('link', { name: 'Dashboard' })).toHaveAttribute('href', '/workspace/learner/commercial/502/dashboard');
+    expect(screen.getByRole('link', { name: 'Dashboard' })).toHaveAttribute('href', '/workspace/learner/dashboard/commercial/502');
+    expect(screen.getByRole('link', { name: 'View all progress' })).toHaveAttribute('href', '/workspace/learner/dashboard/commercial/502');
     fireEvent.click(screen.getByRole('link', { name: 'Dashboard' }));
     expect(await screen.findByRole('heading', { name: 'Dashboard console' })).toBeVisible();
     fireEvent.click(screen.getByRole('link', { name: 'Return home' }));
