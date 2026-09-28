@@ -13,7 +13,7 @@ from types import SimpleNamespace
 
 from django.db import DatabaseError, transaction
 from django.conf import settings
-from django.http import HttpResponse, JsonResponse
+from django.http import HttpResponse, JsonResponse, HttpResponseRedirect
 from django.utils.http import content_disposition_header
 from django.utils import timezone
 from django.middleware.csrf import get_token
@@ -25,6 +25,8 @@ from old_otjh.views import public_detail, public_state
 from . import monthly_log_sources as sources
 from . import monthly_log_history as history
 from . import canonical_learning as canonical
+from .journal_sources import learner_journal_view
+from . import journal_sources
 from .subject_content import ContentUnavailable
 
 logger = logging.getLogger(__name__)
@@ -39,7 +41,7 @@ def endpoint(*methods):
             try:
                 if request.method not in methods:
                     raise old.ServiceError('Method not allowed.', 'method_not_allowed', 405)
-                response = view(request, *args, **kwargs)
+                response = learner_journal_view(view)(request, *args, **kwargs)
             except old.ServiceError as error:
                 response = JsonResponse({'error': str(error), 'code': error.code}, status=error.status)
             except DatabaseError:
@@ -304,7 +306,7 @@ def summary_data(learner, *, include_open=False):
     signs = signatures(learner)
     months = [{**m, 'source': 'legacy'} for m in retained['months']]
     targets = canonical.targets(learner['id']) if canonical.enabled(learner['id']) else None
-    months.extend(month_state(month, rows, signs, targets.get(month) if targets is not None else sources.monthly_target(learner, month), learner_id=learner['id'])
+    months.extend(month_state(month, rows, signs, targets.get(month, 0 if journal_sources.enabled() else None) if targets is not None else sources.monthly_target(learner, month), learner_id=learner['id'])
                   for month, rows in current_months(learner, signs, include_open=include_open).items())
     months.sort(key=lambda m: m['month'])
     profile = learner.get('_profile') or {}
@@ -341,7 +343,7 @@ def detail_data(learner, month, *, include_open=False, demo=False):
     report_profile = old_repo.report_profile(learner) if learner.get('aptem_id') and not consolidated else {
         'start_date': profile.get('start_date'), 'planned_end_date': profile.get('end_date'),
         'first_evidence_date': None if consolidated else sources.first_evidence_date(learner['id'])}
-    target = canonical.targets(learner['id']).get(month) if consolidated else sources.monthly_target(learner, month)
+    target = canonical.targets(learner['id']).get(month, 0 if journal_sources.enabled() else None) if consolidated else sources.monthly_target(learner, month)
     return {**month_state(month, rows, signs, target, learner_id=learner['id']), 'rows': rows,
             'profile': report_profile}
 
@@ -440,14 +442,22 @@ def detail(request, learner_id, month):
 @endpoint('GET')
 def content(request, learner_id, month, row_id):
     learner, _ = scope(request, learner_id)
+    if canonical.enabled(learner_id):
+        valid_month(month)
+        row, record = canonical.content_row(learner['_profile'], month, row_id)
+        payload = canonical.content(row, learner['_profile'], record)
+        for part in payload['parts']:
+            if part.get('url'):
+                part['url'] = f'/learner_api/monthly-logs/{learner_id}/{month}/activities/{row_id}/materials/{part["id"]}/'
+        response = JsonResponse(payload)
+        response['Cache-Control'] = 'private, no-store'
+        return response
     report = detail_data(learner, month, include_open=True)
     if report['source'] == 'legacy':
         return JsonResponse(old.activity_content({**learner, '_read_only': True}, month, row_id))
     row = next((r for r in report['rows'] if r['id'] == row_id), None)
     if row is None:
         raise old.ServiceError('Activity not found.', 'not_found', 404)
-    if canonical.enabled(learner_id):
-        return JsonResponse(canonical.content(row))
     if row.get('_audit_row_id'):
         original = old_repo.activity_row(learner, month, row['_audit_row_id'])
         if original is None:
@@ -462,6 +472,23 @@ def content(request, learner_id, month, row_id):
         if resolved is not None:
             return JsonResponse({'id': row_id, 'parts': resolved['parts']})
     return JsonResponse(sources.activity_content(learner, row))
+
+
+@endpoint('GET')
+def canonical_material(request, learner_id, month, row_id, material_id):
+    learner, _ = scope(request, learner_id)
+    if not canonical.enabled(learner_id):
+        raise old.ServiceError('Material not found.', 'not_found', 404)
+    valid_month(month)
+    row, record = canonical.content_row(learner['_profile'], month, row_id)
+    part = next((p for p in canonical.material_parts(row, learner['_profile'], record)
+                 if p['id'] == material_id and p.get('url')), None)
+    if part is None:
+        raise old.ServiceError('Material is not available for this activity.', 'not_found', 404)
+    response = HttpResponseRedirect(part['url'])
+    response['Cache-Control'] = 'private, no-store'
+    response['Referrer-Policy'] = 'no-referrer'
+    return response
 
 
 @endpoint('GET')

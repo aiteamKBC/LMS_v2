@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import logging
 import math
 
+from . import journal_sources
 from django.db import DatabaseError, connections
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
@@ -218,12 +219,19 @@ def contract_plan(source, contract):
         except Exception:
             log.warning('Training-plan contract could not be read for enrolment %s', source.pk)
             status = 'unavailable'
-    return {'months': months, 'contractStatus': status,
+    journal = {}
+    if journal_sources.enabled():
+        from . import canonical_learning
+        if canonical_learning.enabled(source.pk):
+            journal['journalTargets'] = canonical_learning.targets(source.pk)
+    return {**journal, 'months': months, 'contractStatus': status,
             'programmeStartDate': date_only(contract.get('program_start_date')) if contract else None,
             'programmeEndDate': date_only(contract.get('planned_end_date')) if contract else None}
 
 
 def read_dashboard(source, section=None):
+    from . import canonical_learning
+    use_journal = journal_sources.enabled() and canonical_learning.enabled(source.pk)
     aptem_id = valid_aptem_id(source.aptem_id)
     email = str(source.email or '').strip().casefold()
     actual, modules, sessions = [], [], []
@@ -244,8 +252,8 @@ def read_dashboard(source, section=None):
         if section == 'contract':
             return contract_plan(source, contract)
         if aptem_id and section != 'learning':
-            cur.execute('''SELECT month,group_id,sum(actual_hours) AS hours,count(*) AS activity_count
-                FROM structured_manual_activities.manual_learner_activities
+            cur.execute(f'''SELECT month,group_id,sum(actual_hours) AS hours,count(*) AS activity_count
+                FROM {journal_sources.table('manual_learner_activities')}
                 WHERE aptem_id=%s AND accepted IS TRUE AND deleted_at IS NULL
                 GROUP BY month,group_id ORDER BY month,group_id''', [aptem_id])
             actual = [{'month': row['month'], 'groupId': str(row['group_id']) if row['group_id'] is not None else None,
@@ -364,13 +372,29 @@ def read_dashboard(source, section=None):
     phone = coach_phone(coach_email)
     if phone:
         coach['phone'] = phone
-    return {**contract_data, 'actual': actual, 'actualAvailable': bool(aptem_id), 'modules': modules, 'moduleLinks': links,
+    if use_journal:
+        grouped = {}
+        for record in canonical_learning.entries(source.pk):
+            if record.get('accepted') is not True:
+                continue
+            groups = {str(route['group_id']) for route in record.get('journal_routes', []) if route.get('group_id') is not None}
+            group = next(iter(groups)) if len(groups) == 1 else None
+            for part in canonical_learning.allocations(record):
+                month = part.get('reporting_month')
+                if not month:
+                    continue
+                item = grouped.setdefault((month, group), {'month': month, 'groupId': group, 'hours': 0.0, 'count': 0})
+                item['hours'] += canonical_learning.number(part.get('actual_seconds')) / 3600
+                item['count'] += 1
+        actual = [{**item, 'hours': round(item['hours'], 4)} for item in grouped.values()]
+    return {**contract_data, 'actual': actual, 'actualAvailable': use_journal or bool(aptem_id), 'modules': modules, 'moduleLinks': links,
             'sessions': sessions, 'reviews': reviews, 'coach': coach,
             'generatedAt': datetime.now(timezone.utc).isoformat()}
 
 
 @require_GET
 @learner_self_or_staff(kwarg='pk')
+@journal_sources.learner_journal_view
 def training_plan_dashboard(request, kind, pk):
     model = SOURCE_MODELS.get(kind)
     if model is None:

@@ -7,6 +7,7 @@ import logging
 from math import isfinite
 
 import psycopg
+from . import journal_sources
 from django.db import DatabaseError, connections
 
 from .active_users import completed_hours_value_from_progress
@@ -142,10 +143,10 @@ def read_home_progress(source, kind, activities, native, progress, assigned, end
             ORDER BY submitted_at NULLS FIRST,id''', [kind, str(source.pk)])
         submissions = rows(cur)
         historical_hours = 0
-        if student_activity_available(source.aptem_id):
+        if not journal_sources.enabled() and student_activity_available(source.aptem_id):
             # read_week has already verified the Aptem/email identity.
-            cur.execute('''SELECT coalesce(sum(actual_hours),0)
-                FROM structured_manual_activities.manual_learner_activities
+            cur.execute(f'''SELECT coalesce(sum(actual_hours),0)
+                FROM {journal_sources.table('manual_learner_activities')}
                 WHERE aptem_id=%s AND accepted IS TRUE AND deleted_at IS NULL''', [source.aptem_id])
             historical_hours = cur.fetchone()[0]
     try:
@@ -153,4 +154,20 @@ def read_home_progress(source, kind, activities, native, progress, assigned, end
     except (DatabaseError, psycopg.Error):
         log.warning('Home attendance unavailable for enrolment %s', source.pk, exc_info=True)
         lectures = None
-    return summarise_home(activities, native, progress, submissions, assigned, start, end, lectures, historical_hours)
+    result = summarise_home(activities, native, progress, submissions, assigned, start, end, lectures, historical_hours)
+    if journal_sources.enabled():
+        from . import canonical_learning
+        if not canonical_learning.enabled(source.pk):
+            return result
+        records = canonical_learning.entries(source.pk)
+        targets = canonical_learning.targets(source.pk)
+        actual = round(sum(canonical_learning.recorded_seconds(r) for r in records
+                           if r.get('accepted') is True) / 3600, 4)
+        submitted = round(sum(canonical_learning.recorded_seconds(r) for r in records
+                              if r.get('accepted') is not True
+                              and str(r.get('activity_status') or '').lower() in SUBMITTED) / 3600, 4)
+        planned = round(sum(targets.values()), 4)
+        result['otjh'] = {'actual': actual, 'submitted': submitted, 'planned': planned,
+            'percent': round(actual / planned * 100, 2) if planned else None,
+            'missingPlannedActivities': 0}
+    return result

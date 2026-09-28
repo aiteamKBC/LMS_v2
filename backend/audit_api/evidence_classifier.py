@@ -7,8 +7,7 @@ model) and the note body. The component name is passed to the model only as a
 hint, and a ``mismatch`` flag records when the content contradicts the slot it
 was uploaded into — the "misfiled evidence" report.
 
-Results land in our own table (``structured_manual_activities.
-evidence_content_classification``) — the fetch service's tables are never
+Results land in our own table (``Learner.evidence_content_classification``) — the fetch service's tables are never
 written to. Run via::
 
     python manage.py classify_evidence --limit 20
@@ -29,7 +28,7 @@ from learner_api import evidence_storage
 from .last_audit_ledger_views import _connection, _dict_rows
 
 EVIDENCE_ITEMS = '"fetching_evidence"."evidence_items"'
-CLASSIFICATIONS = '"structured_manual_activities"."evidence_content_classification"'
+CLASSIFICATIONS = '"Learner"."evidence_content_classification"'
 EVIDENCE_CONTAINER = "fetch-aptem-evidences"
 
 CATEGORIES = (
