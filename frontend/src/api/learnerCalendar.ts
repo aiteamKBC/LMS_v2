@@ -110,6 +110,9 @@ export function fetchLearnerCalendarEvents(kind: LearnerKind, id: string, option
 export type LearnerReviewDefinition = Omit<ReviewInstanceFormDefinition, 'instance'> & {
   instance: ReviewInstanceFormDefinition['instance'] | null;
   occurrenceNumber?: number;
+  /** Reusable learner signature from enrolment.Created_users, when present. */
+  savedSignature?: string;
+  savedSignatureName?: string;
 };
 
 export function fetchLearnerEventReviewInstance(
@@ -152,17 +155,20 @@ export function learnerMeetingArtifactContentUrl(kind: LearnerKind, learnerId: s
   return options.preview ? `${base}?preview=1` : base;
 }
 
-export async function signLearnerProgressReview(kind: LearnerKind, learnerId: string, eventKey: string, input: { name: string; signature: string }): Promise<{ event: LearnerCalendarEvent }> {
+export async function signLearnerProgressReview(kind: LearnerKind, learnerId: string, eventKey: string, input: { name: string; signature: string }): Promise<{ event: LearnerCalendarEvent; monthlyLogSync?: { status: string; month?: string; message?: string } | null }> {
   const response = await fetch(`${BASE}/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/sign/`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   });
-  const data = await response.json().catch(() => ({})) as { event?: LearnerCalendarEvent; error?: string };
+  const data = await response.json().catch(() => ({})) as { event?: LearnerCalendarEvent; error?: string; monthlyLogSync?: { status: string; month?: string; message?: string } | null };
   if (!response.ok || !data.event) throw new Error(data.error || `Could not sign the review (${response.status}).`);
   invalidateLearnerCalendarCache(kind, learnerId);
-  return { event: data.event };
+  if (data.monthlyLogSync?.status === 'failed') {
+    throw new Error(data.monthlyLogSync.message || 'The MCM was signed, but the monthly log could not be updated. Please try again.');
+  }
+  return { event: data.event, monthlyLogSync: data.monthlyLogSync };
 }
 
 export type BookableSessionType =
