@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCoachIdentity } from '@/hooks/useCoachIdentity';
+import { coachSessionKey, readCoachSessionCache, writeCoachSessionCache } from '@/features/coach/shared/coachSessionCache';
 import { fetchMarkingQueue } from '../api/markingApi';
 import type { MarkingQueuePagination, MarkingQueueRequest, MarkingQueueSummary, MarkingSubmission } from '../types/marking.types';
 
@@ -11,28 +13,42 @@ export const EMPTY_MARKING_PAGINATION: MarkingQueuePagination = {
 };
 
 export function useMarkingQueue(request: MarkingQueueRequest, enabled: boolean) {
-  const [items, setItems] = useState<MarkingSubmission[]>([]);
-  const [summary, setSummary] = useState(EMPTY_MARKING_SUMMARY);
-  const [pagination, setPagination] = useState(EMPTY_MARKING_PAGINATION);
-  const [loading, setLoading] = useState(true);
+  const coach = useCoachIdentity();
+  const cacheKey = coachSessionKey('marking', coach.email, request.scope, request.status, request.kind, request.page, request.pageSize);
+  const initialCache = readCoachSessionCache<{ items: MarkingSubmission[]; summary: MarkingQueueSummary; pagination: MarkingQueuePagination }>(cacheKey);
+  const [items, setItems] = useState<MarkingSubmission[]>(() => initialCache?.items || []);
+  const [summary, setSummary] = useState(() => initialCache?.summary || EMPTY_MARKING_SUMMARY);
+  const [pagination, setPagination] = useState(() => initialCache?.pagination || EMPTY_MARKING_PAGINATION);
+  const [loading, setLoading] = useState(() => !initialCache);
   const [error, setError] = useState('');
   const sequence = useRef(0);
   const load = useCallback(async () => {
     const current = ++sequence.current;
     if (!enabled) return;
-    setLoading(true); setError('');
+    const cached = readCoachSessionCache<{ items: MarkingSubmission[]; summary: MarkingQueueSummary; pagination: MarkingQueuePagination }>(cacheKey);
+    if (cached) {
+      setItems(cached.items); setSummary(cached.summary); setPagination(cached.pagination); setLoading(false);
+    } else setLoading(true);
+    setError('');
     try {
       const data = await fetchMarkingQueue(request);
       if (current !== sequence.current) return;
-      setItems(data.items || []);
-      setSummary(data.summary || EMPTY_MARKING_SUMMARY);
-      setPagination(data.pagination || EMPTY_MARKING_PAGINATION);
+      const next = {
+        items: data.items || [],
+        summary: data.summary || EMPTY_MARKING_SUMMARY,
+        pagination: data.pagination || EMPTY_MARKING_PAGINATION,
+      };
+      writeCoachSessionCache(cacheKey, next);
+      setItems(next.items);
+      setSummary(next.summary);
+      setPagination(next.pagination);
     } catch (reason) {
       if (current !== sequence.current) return;
+      if (cached) return;
       setItems([]);
       setError(reason instanceof Error ? reason.message : 'Unable to load the marking queue.');
     } finally { if (current === sequence.current) setLoading(false); }
-  }, [enabled, request.kind, request.page, request.pageSize, request.scope, request.status]);
+  }, [cacheKey, enabled, request.kind, request.page, request.pageSize, request.scope, request.status]);
   useEffect(() => { void load(); return () => { ++sequence.current; }; }, [load]);
   return { items, summary, pagination, loading, error, refresh: load };
 }
