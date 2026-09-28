@@ -218,7 +218,6 @@ export default function TrainingPlanPage() {
 
     load();
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId, kind]);
 
   // ---- cascade reactions ----

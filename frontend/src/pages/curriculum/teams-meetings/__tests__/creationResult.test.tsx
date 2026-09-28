@@ -19,6 +19,7 @@ it('keeps the saved result open until Done, which makes no further request', asy
   await waitFor(() => expect(screen.getByRole('button', { name: 'Done' })).toBeVisible());
   expect(screen.getByText('1 session saved')).toBeVisible();
   expect(screen.getByText('2 of 2 submitted to Microsoft')).toBeVisible();
+  expect(screen.getByText(/the organiser, co-organisers and presenters receive a copy that also lists the meeting settings and the invited learners/)).toBeVisible();
   expect(Swal.getTimerLeft()).toBeUndefined();
   expect(closed).toBe(false);
   await userEvent.click(screen.getByRole('button', { name: 'Done' }));
@@ -54,6 +55,48 @@ it('does not send summaries for a calendar whose verification is incomplete', as
   await waitFor(() => expect(screen.getByText('Calendar dates need review.')).toBeVisible());
   expect(sendScheduleEmailBatch).not.toHaveBeenCalled();
   expect(screen.queryByRole('button', { name: 'Retry pending emails' })).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+  await pending;
+});
+
+it('shows the emails the server already sent with the create, and sends nothing from the browser', async () => {
+  const pending = finishTeamsCreation({ ...result, scheduleEmail: complete }, input);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Done' })).toBeVisible());
+  expect(screen.getByText('Teams calendar created · emails sent')).toBeVisible();
+  expect(screen.getByText('Sent by Microsoft')).toBeVisible();
+  expect(screen.getByText('2 of 2 submitted to Microsoft')).toBeVisible();
+  expect(sendScheduleEmailBatch).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+  await pending;
+  expect(sendScheduleEmailBatch).not.toHaveBeenCalled();
+});
+
+it('continues only the emails the server left queued', async () => {
+  const pending = finishTeamsCreation({ ...result, scheduleEmail: { ...complete, total: 6, accepted: 4, queued: 2, status: 'pending' } }, input);
+  await waitFor(() => expect(screen.getByText('2 of 2 submitted to Microsoft')).toBeVisible());
+  expect(sendScheduleEmailBatch).toHaveBeenCalledTimes(1);
+  expect(sendScheduleEmailBatch).toHaveBeenCalledWith('LIVE-ONE', false);
+  await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+  await pending;
+});
+
+it('reports a server email error beside the saved calendar and retries only when asked', async () => {
+  const pending = finishTeamsCreation({ ...result, scheduleEmail: { error: 'Schedule emails are not configured.', code: 'schedule_email_not_configured' } }, input);
+  await waitFor(() => expect(screen.getByText('Schedule emails are not configured.')).toBeVisible());
+  expect(screen.getByText('1 session saved')).toBeVisible();
+  expect(sendScheduleEmailBatch).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('button', { name: 'Retry pending emails' }));
+  await waitFor(() => expect(screen.getByText('2 of 2 submitted to Microsoft')).toBeVisible());
+  expect(sendScheduleEmailBatch).toHaveBeenCalledWith('LIVE-ONE', true);
+  await userEvent.click(screen.getByRole('button', { name: 'Done' }));
+  await pending;
+});
+
+it('never takes a server email count for a calendar whose verification is incomplete', async () => {
+  const pending = finishTeamsCreation({ ...result, warnings: ['Calendar dates need review.'], scheduleEmail: complete }, input);
+  await waitFor(() => expect(screen.getByText('Calendar dates need review.')).toBeVisible());
+  expect(screen.getByText('Not submitted')).toBeVisible();
+  expect(sendScheduleEmailBatch).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole('button', { name: 'Done' }));
   await pending;
 });

@@ -1,5 +1,5 @@
 """Live lecture workspace. Reads source records; never imports or provisions them."""
-from datetime import datetime, timezone as datetime_timezone
+from datetime import datetime, timedelta, timezone as datetime_timezone
 from html import unescape
 import logging
 import re
@@ -577,25 +577,106 @@ def lecture_totals(lectures):
             'attendanceRate': round(100 * attended / (attended + absent)) if attended + absent else None}
 
 
-def _attach_recovery(lectures, reported):
-    """Tell the learner how each reported absence is being made up, and when."""
-    catchup_keys = {
-        report['catchup_event_key'] for report in reported.values()
-        if report.get('recovery_method') == 'catch-up' and report.get('catchup_event_key')
-    }
-    dates = {}
-    if catchup_keys:
+def _attach_recovery(lectures, reported, now=None):
+    """Tell the learner how each reported absence is being made up, when, and where to go."""
+    keys = {_plan_event_key(report) for report in reported.values()} - {None}
+    events = {}
+    if keys:
         from coach_api.models import CoachCalendarEvent
-        dates = dict(CoachCalendarEvent.objects.filter(event_key__in=list(catchup_keys))
-                     .values_list('event_key', 'scheduled_date'))
+        events = {row['event_key']: row for row in CoachCalendarEvent.objects.filter(event_key__in=list(keys)).values(
+            'event_key', 'scheduled_date', 'scheduled_time', 'duration_minutes', 'meeting_link', 'status')}
     for lecture in lectures:
         report = reported.get(lecture['reportId'])
         method = (report or {}).get('recovery_method') or ''
         if not method:
             lecture['recovery'] = None
-            continue
-        day = dates.get(report.get('catchup_event_key')) if method == 'catch-up' else None
-        lecture['recovery'] = {'method': method, 'date': day.isoformat() if day else None}
+        elif method == 'alternative':
+            lecture['recovery'] = _alternative_recovery(report, now)
+        else:
+            key = _plan_event_key(report)
+            lecture['recovery'] = _booked_recovery(method, key, events.get(key), now)
+
+
+RECOVERY_JOIN_EARLY_MINUTES = 10
+
+
+def _occurrence_id(lecture):
+    """A Teams lecture's occurrence id (session_key namespaces it as 'teams:<id>')."""
+    return str(lecture['sessionId']).removeprefix('teams:')
+
+
+def _attach_recording_views(lectures, kind, learner_id):
+    """Show how much of the lecture recording the learner watched, for a recording plan."""
+    planned = [lecture for lecture in lectures if (lecture.get('recovery') or {}).get('method') == 'recorded'
+               and lecture.get('source') == 'microsoft-teams']
+    if not planned:
+        return
+    from curriculum_api.recording_views import watched_by_occurrence
+    try:
+        watched = watched_by_occurrence(kind, learner_id, [_occurrence_id(lecture) for lecture in planned])
+    except DatabaseError:
+        log.warning('Could not read recording views for learner %s.', learner_id, exc_info=True)
+        return
+    for lecture in planned:
+        seconds, duration = watched.get(_occurrence_id(lecture), (0, 0))
+        lecture['recovery'].update({'watchedSeconds': seconds, 'recordingSeconds': duration})
+
+
+def _plan_event_key(report):
+    """Calendar event holding a catch-up booking or a planned recording watch."""
+    method = report.get('recovery_method')
+    if method == 'catch-up':
+        return report.get('catchup_event_key') or None
+    if method == 'recorded':
+        # Created with the report (absence_reports._recording_recovery_event).
+        return f"absence-recording:{report['id']}"
+    return None
+
+
+def _timing(recovery, day, start_time, end_time, join_url, now):
+    """Add ended/joinUrl: joinable from shortly before the start until the end, in business (London) time."""
+    try:
+        start = datetime.fromisoformat(f"{day}T{start_time}")
+        end = datetime.fromisoformat(f"{day}T{end_time}") if end_time else start
+    except (TypeError, ValueError):
+        return recovery
+    now_local = timezone.localtime(now).replace(tzinfo=None)
+    recovery['ended'] = now_local > end
+    if join_url and start - timedelta(minutes=RECOVERY_JOIN_EARLY_MINUTES) <= now_local <= end:
+        recovery['joinUrl'] = join_url
+    return recovery
+
+
+def _booked_recovery(method, key, event, now=None):
+    """A catch-up booking or planned recording watch, and the calendar entry to open."""
+    recovery = {'method': method, 'date': None}
+    if not event or not event.get('scheduled_date'):
+        return recovery
+    day = event['scheduled_date'].isoformat()
+    recovery.update({'date': day, 'calendarKey': key})
+    if not event.get('scheduled_time'):
+        return recovery
+    start = datetime.combine(event['scheduled_date'], event['scheduled_time'])
+    end = start + timedelta(minutes=event.get('duration_minutes') or 30)
+    recovery.update({'startTime': start.strftime('%H:%M'), 'endTime': end.strftime('%H:%M')})
+    # Only a live catch-up meeting has a Teams link to join.
+    join_url = event.get('meeting_link') if method == 'catch-up' and event.get('status') != 'cancelled' else ''
+    return _timing(recovery, day, recovery['startTime'], recovery['endTime'], join_url, now)
+
+
+def _alternative_recovery(report, now=None):
+    """Where and when the learner makes up this lecture in another group's session."""
+    from .alternative_recovery import alternative_target_details
+    recovery = {'method': 'alternative', 'date': None,
+                # The learner calendar lists the alternative under this key (alternative_recovery_events_for_learner).
+                'calendarKey': f"absence-alternative:{report['id']}"}
+    target = alternative_target_details(report.get('catchup_event_key'), include_join_url=True)
+    if not target:
+        return recovery
+    recovery.update({'date': target['dateIso'], 'startTime': target['startTime'],
+                     'endTime': target.get('endTime') or '', 'group': target.get('group') or '',
+                     'title': target.get('title') or ''})
+    return _timing(recovery, target['dateIso'], target['startTime'], target.get('endTime'), target.get('joinUrl'), now)
 
 
 def _mark_missed_catchups(lectures, reported):
@@ -664,6 +745,7 @@ def read_workspace(source, kind):
         if lecture['status'] in {'completed', 'late'} and lecture['updatedAt']:
             recent.append({'id': lecture['id'], 'title': f"{lecture['title']} attended", 'at': lecture['updatedAt'], 'type': 'attendance'})
     _attach_recovery(lectures, reported)
+    _attach_recording_views(lectures, kind, source.id)
     _mark_missed_catchups(lectures, reported)
     for report in reports:
         recent.append({'id': f"report:{report['id']}", 'title': f"Absence report: {report['session_title']} ({report['status']})",

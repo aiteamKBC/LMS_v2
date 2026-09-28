@@ -13,7 +13,7 @@
 // values for them.
 // ============================================================================
 
-export type PerformanceStatus = 'at-risk' | 'on-track' | 'high' | 'new-starter';
+export type PerformanceStatus = 'at-risk' | 'on-track' | 'high' | 'new-starter' | 'unavailable';
 export type EnrollmentStatus = 'all' | 'active' | 'break' | 'withdrawn' | 'ready-to-enrol' | 'unknown';
 export type AttendanceRisk = 'green' | 'amber' | 'red';
 
@@ -71,8 +71,11 @@ export interface Learner {
   /** Component completion percentage. Misleadingly named on the wire. */
   attendanceRate: number;
   attendanceRateAvailable?: boolean;
-  componentsCompleted?: number;
-  componentsPlanned?: number;
+  attendanceAvailable?: boolean;
+  activityProgress?: number | null;
+  activityProgressAvailable?: boolean;
+  componentsCompleted?: number | null;
+  componentsPlanned?: number | null;
 
   otjhCompleted: number;
   /** Cumulative planned hours up to and including the current week. */
@@ -88,10 +91,10 @@ export interface Learner {
    *  rather than the training-plan reflection totals. */
   otjhSource?: 'audit';
 
-  ksbCompleted?: number;
-  ksbTarget?: number;
+  ksbCompleted?: number | null;
+  ksbTarget?: number | null;
   ksbStatus?: string;
-  ksbProgress: number;
+  ksbProgress: number | null;
   ksbProgressAvailable?: boolean;
   knowledgeCompleted?: number;
   knowledgeTarget?: number;

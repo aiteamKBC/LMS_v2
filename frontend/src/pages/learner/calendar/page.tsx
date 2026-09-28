@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { CalendarFilterScrollRow } from '@/components/feature/CalendarFilterScrollRow';
@@ -9,7 +9,7 @@ import { type CalendarEvent } from '@/pages/learner/clubs/data';
 import { downloadICS, downloadAllICS, createPublicFeedBlob, type ICSEvent } from '@/utils/ics-generator';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
-import { fetchReviewHistory, type ImportedReview } from '@/api/reviewHistory';
+import { fetchReviewHistory } from '@/api/reviewHistory';
 import { buildSourceFilters, countBySource, filterBySource, learnerEventSource, learnerSourceMeta, type LearnerSourceFilter } from './reviewTypeFilters';
 import { moveCalendarDate } from './navigation';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
@@ -41,6 +41,7 @@ import { useImportedMeetingBooking } from '../reviews/useImportedMeetingBooking'
 import { importedReviewsToEvents, mergeCompletedReviewHistory } from '../reviews/useReviewSessions';
 import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/LearnerReviewInstanceForm';
 import { firstAvailableBookingDate } from '../reviews/bookingDates';
+import CoachSessionTypePicker, { COACH_APPROVAL_SESSION_TYPES } from './CoachSessionTypePicker';
 
 /** The header's secondary-actions menu — everything that isn't booking a
  * coach session (the primary action) moves in here so the toolbar stays a
@@ -218,6 +219,7 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
     durationMinutes: ev.durationMinutes || 60,
     bookingStatus: ev.status,
     meetingOutcome: ev.meetingOutcome ?? null,
+    watchedRecording: Boolean(ev.watchedRecording),
     bookingSessionType: BOOKABLE_COACH_SESSION_TYPES.has(ev.source as BookableSessionType)
       ? ev.source as CalendarEvent['bookingSessionType']
       : undefined,
@@ -462,17 +464,6 @@ function calendarWeekKey(isoDate: string): string | null {
   return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
 }
 
-function describeCalendarEventSlot(event: CalendarEvent): string {
-  if (!event.isoDate) return `${event.date} at ${event.time}`;
-  const [year, month, day] = event.isoDate.split('-').map(Number);
-  const value = new Date(year, month - 1, day);
-  if (Number.isNaN(value.getTime())) return `${event.date} at ${event.time}`;
-  const dateLabel = new Intl.DateTimeFormat('en-GB', {
-    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-  }).format(value);
-  return `${dateLabel} at ${event.time}`;
-}
-
 function isProgrammeCycleSessionType(value?: CalendarEvent['bookingSessionType']): boolean {
   return value ? PROGRAMME_CYCLE_SESSION_TYPES.has(value) : false;
 }
@@ -525,19 +516,6 @@ function shouldShowMeetingArtifacts(event: CalendarEvent): boolean {
     && event.meetingLink
     && ['mcr', 'catch-up', 'progress-review', 'student-support'].includes(event.source || '')
     && ['completed', 'awaiting-signature'].includes(event.bookingStatus || '')
-  );
-}
-
-function DonutRing({ pct, size = 64, stroke = 6, color, trackClass = 'text-background-200' }: { pct: number; size?: number; stroke?: number; color: string; trackClass?: string }) {
-  const r = (size - stroke) / 2;
-  const circ = 2 * Math.PI * r;
-  const offset = circ - (Math.min(pct, 100) / 100) * circ;
-  const colorMap: Record<string, string> = { primary: 'stroke-primary-500', accent: 'stroke-accent-500', secondary: 'stroke-secondary-500', emerald: 'stroke-emerald-500', amber: 'stroke-amber-500' };
-  return (
-    <svg width={size} height={size} className="shrink-0 -rotate-90">
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" className={trackClass} strokeWidth={stroke} />
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" className={`${colorMap[color] || colorMap.primary} transition-all duration-700 ease-out`} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={offset} />
-    </svg>
   );
 }
 
@@ -937,10 +915,6 @@ function LearnerCalendarBody() {
       setShowEventDetails(event);
     }
   }, [location.search, myEvents, calendarLoading, calendarError, importedBooking.target, openBookSession, openRescheduleSession]);
-  const confirmedCount = myEvents.filter((ev) => ev.status === 'confirmed').length;
-  const pendingCount = myEvents.filter((ev) => ev.status === 'pending').length;
-  const totalPoints = myEvents.filter((ev) => ev.status === 'confirmed').reduce((s, ev) => s + ev.points, 0);
-
   useEffect(() => {
     if ('Notification' in window) { setNotificationPermission(Notification.permission); restoreNotifications(); }
   }, []);
@@ -1229,19 +1203,6 @@ function LearnerCalendarBody() {
   const handleNext = () => movePeriod(1);
   const handleToday = () => { setShowDayDrawer(false); setViewYear(today.getFullYear()); setViewMonth(today.getMonth()); setSelectedDay(today.getDate()); };
 
-  const handleAddToCalendar = (event: CalendarEvent) => {
-    const alreadyIn = myEvents.some((e) => e.id === event.id);
-    if (alreadyIn) { setAddToCalendarToast(`${event.title} is already in your calendar`); }
-    else {
-      const newEvent: CalendarEvent = { ...event, status: 'confirmed' as const };
-      const conflict = hasConflict(myEvents, newEvent);
-      if (conflict) { setConflictEvent(conflict); return; }
-      setMyEvents((prev) => [...prev, newEvent]);
-      setAddToCalendarToast(`"${event.title}" added to your calendar!`);
-    }
-    setTimeout(() => setAddToCalendarToast(null), 2500);
-  };
-
   const handleRemoveFromCalendar = (eventId: string) => {
     const ev = myEvents.find((e) => e.id === eventId);
     setMyEvents((prev) => prev.filter((e) => e.id !== eventId));
@@ -1309,7 +1270,6 @@ function LearnerCalendarBody() {
   };
 
   const handleEnableNotifications = async () => { const result = await requestNotificationPermission(); setNotificationPermission(result); if (result === 'granted') { setAddToCalendarToast('Push notifications enabled!'); setTimeout(() => setAddToCalendarToast(null), 2500); } };
-  const handleTestNotification = () => { if (Notification.permission === 'granted') { showNotification('Test Reminder', 'Test notification for event reminder.'); setAddToCalendarToast('Test notification sent!'); } else { setAddToCalendarToast('Enable notifications first.'); } setTimeout(() => setAddToCalendarToast(null), 3000); };
   const handleGeneratePublicFeed = () => { const confirmedEvents = myEvents.filter((ev) => ev.status === 'confirmed'); const icsEvents: ICSEvent[] = confirmedEvents.map((ev) => ({ title: ev.title, description: ev.description, date: ev.date, time: ev.time, location: ev.location })); const url = createPublicFeedBlob(icsEvents); setPublicFeedUrl(url); };
   const handleCopyFeedUrl = () => { if (publicFeedUrl) { navigator.clipboard.writeText(publicFeedUrl); setFeedCopied(true); setTimeout(() => setFeedCopied(false), 2000); } };
 
@@ -1317,7 +1277,7 @@ function LearnerCalendarBody() {
   const now = today;
   const currentHour = now.getHours();
 
-  const attPct = ((p.attendanceRate || 86) / 100);
+  const genericBookingNeedsApproval = !rescheduleEvent && !bookingSourceEvent && COACH_APPROVAL_SESSION_TYPES.has(bookType);
 
   return (
     <>
@@ -1393,7 +1353,7 @@ function LearnerCalendarBody() {
                 : bookingSourceEvent
                   ? <>Choose a date and time for <strong className="text-foreground-700">{bookingSourceEvent.title}</strong>. This will book the official {sessionTypeLabel(bookingSourceEvent.bookingSessionType)} session for you and your coach.</>
                 : coach
-                  ? <>Choose the support you need. Catch-up and Student Support requests go to <strong className="text-foreground-700">{coach.name}</strong> for approval. Monthly Coaching Meeting and Progress Review sessions are scheduled from their calendar cards.</>
+                  ? <>Choose the support you need. Catch-up bookings are scheduled immediately with <strong className="text-foreground-700">{coach.name}</strong>. Student Support, Gateway, and Other requests need coach approval. Monthly Coaching Meeting and Progress Review sessions use their official curriculum calendar cards.</>
                   : 'No coach has been assigned to you yet — please contact your programme team.'}
             </p>
             <div className="space-y-4">
@@ -1406,32 +1366,13 @@ function LearnerCalendarBody() {
               )}
               {!rescheduleEvent && !bookingSourceEvent && <div>
                 <label className="text-xs font-semibold text-foreground-500 mb-1.5 block">Session Type <span className="text-red-400">*</span></label>
-                <div className="grid grid-cols-2 gap-3">
-                  {([
-                    { value: 'catch-up' as BookableSessionType, label: 'Catch-up', icon: 'ri-chat-3-line', desc: 'Quick check-in on your progress' },
-                    { value: 'student-support' as BookableSessionType, label: 'Student Support', icon: 'ri-heart-2-line', desc: 'Help with challenges or wellbeing' },
-                    // No First Session tile: it is booked with the case owner
-                    // when the learner is enrolled, before they can sign in, so
-                    // there is nothing here for a learner to request. Existing
-                    // first sessions still display, reschedule and cancel — only
-                    // the way to ask for a new one has moved.
-                    { value: 'progress-review' as BookableSessionType, label: 'PR', icon: 'ri-line-chart-line', desc: 'Progress Review' },
-                    { value: 'mcr' as BookableSessionType, label: 'MCM', icon: 'ri-calendar-check-line', desc: 'Monthly Coaching Meeting' },
-                    { value: 'gateway' as BookableSessionType, label: 'Gateway', icon: 'ri-flag-line', desc: 'Gateway review or assessment' },
-                    { value: 'other' as BookableSessionType, label: 'Other', icon: 'ri-more-line', desc: 'Request another session type' },
-                  ]).map((t, index, list) => (
-                    <button key={t.value} type="button" onClick={() => {
-                      setBookType(t.value);
-                      setBookError(null);
-                    }}
-                      /* A lone trailing tile leaves a visible gap, so let it span the row. */
-                      className={`p-3 rounded-xl border-2 text-left transition-all cursor-pointer ${index === list.length - 1 && list.length % 2 === 1 ? 'col-span-2' : ''} ${bookType === t.value ? 'border-primary-400 bg-primary-50/40' : 'border-background-300 hover:border-background-400'}`}>
-                      <span className={`w-8 h-8 rounded-lg flex items-center justify-center mb-2 ${bookType === t.value ? 'bg-primary-100 text-primary-600' : 'bg-background-100 text-foreground-500'}`}><AppIcon className={t.icon}></AppIcon></span>
-                      <p className="text-sm font-semibold text-foreground-900">{t.label}</p>
-                      <p className="text-xs text-foreground-400 mt-0.5">{t.desc}</p>
-                    </button>
-                  ))}
-                </div>
+                <CoachSessionTypePicker
+                  value={bookType}
+                  onChange={(value) => {
+                    setBookType(value);
+                    setBookError(null);
+                  }}
+                />
                 {bookType === 'other' && <div className="mt-3"><label htmlFor="other-session-type" className="text-xs font-semibold text-foreground-500">Other <span className="text-red-400">*</span></label><input id="other-session-type" type="text" value={otherSessionType} onChange={(e) => { setOtherSessionType(e.target.value); setBookError(null); }} maxLength={100} placeholder="Write the session type you need" className="mt-1.5 w-full bg-background-100 border border-background-300 rounded-lg px-3 py-2 text-sm text-foreground-800 placeholder:text-foreground-400 focus:outline-none focus:ring-1 focus:ring-primary-400/40 focus:border-primary-300/50 transition-all" /></div>}
               </div>}
               <div className="grid grid-cols-2 gap-3">
@@ -1527,7 +1468,7 @@ function LearnerCalendarBody() {
             <div className="flex gap-2 mt-5">
               <button onClick={() => setShowBookModal(false)} className="flex-1 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap">Cancel</button>
               <button onClick={handleBookSession} disabled={bookSubmitting || availabilityLoading || selectedSlotConflicts || Boolean(sameWeekSession) || Boolean(selectedLmsConflict) || Boolean(bookDateRestriction) || !bookDate || !bookTime} className="flex-1 px-4 py-2.5 rounded-xl bg-primary-500 text-white text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap disabled:opacity-50 disabled:cursor-not-allowed">
-                {bookSubmitting ? <><AppIcon className="ri-loader-4-line animate-spin mr-1"></AppIcon>{rescheduleEvent ? 'Rescheduling...' : bookingSourceEvent ? 'Booking...' : 'Sending...'}</> : <><AppIcon className={rescheduleEvent || bookingSourceEvent ? 'ri-calendar-check-line mr-1' : 'ri-check-line mr-1'}></AppIcon>{rescheduleEvent ? 'Save New Time' : bookingSourceEvent ? 'Book Session' : 'Send Request'}</>}
+                {bookSubmitting ? <><AppIcon className="ri-loader-4-line animate-spin mr-1"></AppIcon>{rescheduleEvent ? 'Rescheduling...' : bookingSourceEvent || !genericBookingNeedsApproval ? 'Booking...' : 'Sending...'}</> : <><AppIcon className={rescheduleEvent || bookingSourceEvent ? 'ri-calendar-check-line mr-1' : 'ri-check-line mr-1'}></AppIcon>{rescheduleEvent ? 'Save New Time' : bookingSourceEvent || !genericBookingNeedsApproval ? 'Book Session' : 'Send Request'}</>}
               </button>
             </div>
           </div>
@@ -1572,6 +1513,8 @@ function LearnerCalendarBody() {
               <span className={`h-1.5 w-1.5 rounded-full ${LEARNER_STATUS_META[learnerEventStatus(showEventDetails)].dot}`}></span>
               {LEARNER_STATUS_META[learnerEventStatus(showEventDetails)].label}
             </span>
+            {showEventDetails.watchedRecording && <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-emerald-800 ring-1 ring-inset ring-emerald-200">
+              <AppIcon className="ri-play-circle-line" />Watched the full recording</span>}
           </>}
           actions={<>
 
@@ -1627,7 +1570,11 @@ function LearnerCalendarBody() {
             {!showEventDetails.timeToBeConfirmed && !showEventDetails.meetingLink && !showEventDetails.syncWarning && showEventDetails.club !== 'Personal' && (
               <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-amber-800">
                 <AppIcon className="ri-error-warning-line mt-0.5 shrink-0" />
-                <p className="text-xs font-semibold">{showEventDetails.bookingStatus === 'not-scheduled' ? 'Your preferred time has been sent to your coach. A Teams link will be created after coach approval.' : 'The meeting time is scheduled, but the Teams link is not available yet. Please contact your coach.'}</p>
+                <p className="text-xs font-semibold">{showEventDetails.bookingStatus === 'not-scheduled'
+                  ? showEventDetails.source === 'catch-up'
+                    ? 'Choose a date and time to schedule this catch-up.'
+                    : 'Your preferred time has been sent to your coach. A Teams link will be created after coach approval.'
+                  : 'The meeting time is scheduled, but the Teams link is not available yet. Please contact your coach.'}</p>
               </div>
             )}
         </CalendarEventDialog>

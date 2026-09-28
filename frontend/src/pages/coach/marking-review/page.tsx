@@ -10,6 +10,7 @@ import styles from './markingReview.module.css';
 
 import { AssignmentAttemptHistory } from '@/components/feature/AssignmentAttemptHistory';
 import type { SubmissionAttempt } from '@/api/assignmentAttempts';
+import { fetchMarkingDetail, fetchMarkingSidebarQueue } from '@/features/coach/marking/api/markingApi';
 
 const coachNav = roleNavMap.coach;
 async function personalEvidence(submissionId: string, fileId?: string) {
@@ -143,21 +144,14 @@ export default function CoachMarkingReviewPage() {
     }
 
     try {
-      const detailResponse = await coachFetch(`${apiEndpoint}/${submissionId}`);
-      const detailText = await detailResponse.text();
-      const detailData = detailText ? JSON.parse(detailText) : {};
+      const detailItem = await fetchMarkingDetail<Submission>(personal ? 'personal' : 'official', submissionId || '');
       if (sequence !== loadSequence.current) return;
-      if (!detailResponse.ok) throw new Error(detailData.detail || 'Unable to load this submission.');
-      setSelected(detailData.item || null);
+      setSelected(detailItem);
 
       try {
-        const queueResponse = await coachFetch(`${apiEndpoint}?status=all&page=1&page_size=25`);
-        const queueText = await queueResponse.text();
-        const queueData = queueText ? JSON.parse(queueText) : {};
-        if (queueResponse.ok) {
-          setQueueItems(queueData.items || []);
-          setQueueSummary(queueData.summary || { pendingItems: 0, overdueItems: 0, acceptedItems: 0, referredItems: 0 });
-        }
+        const queueData = await fetchMarkingSidebarQueue<Submission>(personal ? 'personal' : 'official');
+        setQueueItems(queueData.items || []);
+        setQueueSummary({ pendingItems: 0, overdueItems: 0, acceptedItems: 0, referredItems: 0, ...queueData.summary });
       } catch {
         setQueueItems([]);
       }

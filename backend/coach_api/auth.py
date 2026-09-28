@@ -74,6 +74,18 @@ _VIEW_AS_KEYS = ("viewAsCoach", "view_as_coach")
 _LEGACY_OWNER_KEYS = ("owner_email", "ownerEmail")
 
 
+def _invalidate_dashboard_after_mutation(view, request, response, coach_identity: str):
+    """One post-success invalidation hook for every Coach workspace write."""
+    if (
+        request.method not in _SAFE_METHODS
+        and not getattr(view, "coach_view_as_safe", False)
+        and getattr(response, "status_code", 500) < 400
+    ):
+        from .dashboard_cache import invalidate_coach_dashboard_cache
+        invalidate_coach_dashboard_cache(coach_identity)
+    return response
+
+
 def _forbidden(*, code: str = "forbidden", message: str | None = None):
     return JsonResponse(
         {
@@ -268,7 +280,9 @@ def coach_access_required(view):
                 coach.id,
                 request.path,
             )
-            return view(request, *args, **kwargs)
+            return _invalidate_dashboard_after_mutation(
+                view, request, view(request, *args, **kwargs), canonical_email,
+            )
 
         if access != ACCESS_COACH:
             return _forbidden()
@@ -292,7 +306,9 @@ def coach_access_required(view):
 
         request.coach_staff = staff
         request.coach_email = canonical_email
-        return view(request, *args, **kwargs)
+        return _invalidate_dashboard_after_mutation(
+            view, request, view(request, *args, **kwargs), canonical_email,
+        )
 
     return require_access(ACCESS_COACH)(scoped)
 

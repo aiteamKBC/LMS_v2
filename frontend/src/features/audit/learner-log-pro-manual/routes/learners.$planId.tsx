@@ -19,7 +19,7 @@ import {
   Table, TableBody, TableCell, TableHeader, TableRow,
 } from "@/features/audit/learner-log-pro-manual/components/ui/table";
 import {
-  addPlanActivities, archivePlanGroup, excludePlanActivity,
+  addPlanActivities, archivePlanGroup, clearPlanProgress, excludePlanActivity,
   getPlanGroup, getPlanMatrix, patchPlanActivity, pickAssignmentEvidence,
   pickAssignments, pickAttendanceGrid, pickKsbs, pickLmsCourseMaterials,
   pickLmsCourses, savePlanProgress, updatePlanMonths,
@@ -282,7 +282,6 @@ function PlanBody({ data, member, activeMonth, onMonth, refresh }: {
     if (!action) return;
     try {
       if (action === "clear") {
-        const { clearPlanProgress } = await import("@/features/audit/learner-log-pro-manual/lib/plan-api");
         await clearPlanProgress(member.aptem_id, activity.activity_key);
       } else if (isAttendance) {
         const result = await savePlanProgress({

@@ -4,12 +4,13 @@ from time import perf_counter
 import os
 import re
 import hashlib
+import threading
 from html import escape
 from collections import defaultdict
 from dataclasses import dataclass
 # `time` below is datetime.time, so the sleep function is imported under its own
 # name to avoid shadowing it.
-from time import perf_counter, sleep as _sleep
+from time import monotonic, perf_counter, sleep as _sleep
 from calendar import monthrange
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
@@ -39,7 +40,9 @@ from coach_api.auth import (
     is_coach_view_as,
 )
 from coach_api.errors import coach_error
-from coach_api.models import CoachAbsenceReport, CoachCalendarEvent, CoachCalendarSequence
+from coach_api.cache.learners import coach_caseload_cache_key, coach_caseload_lock_key
+from coach_api.models import CoachAbsenceReport, CoachCalendarEvent, CoachCalendarSequence, ImportedReviewInstance
+from coach_api.services.learners.context import CaseloadRequestContext
 from coach_api.validation import (
     ObjectValidator,
     ValidationError,
@@ -148,6 +151,11 @@ from learner_api.review_progress_snapshot import (
 
 
 logger = logging.getLogger(__name__)
+
+# Compatibility export for established imports. URL routing uses the thin
+# Dashboard HTTP module directly; canonical rebuild helpers remain below until
+# their cross-schema behavior can be split independently.
+from .dashboard_view import coach_dashboard
 
 
 def _coach_perf(endpoint, stage, started, *, learner_count=None, **extra):
@@ -855,11 +863,39 @@ def has_graph_credentials() -> bool:
     return all(settings[key] for key in ("tenant_id", "client_id", "client_secret", "scope", "base_url"))
 
 
+# App-only Graph token, cached until shortly before it expires. Fetching one per
+# call doubled every Graph round trip: a single Teams calendar create makes
+# fifteen or more calls, and each one first paid a full trip to the token
+# endpoint. Keyed on the credentials, so a rotated secret is never served a
+# token issued for the old one. Locked because requests share worker threads.
+_GRAPH_TOKEN_LOCK = threading.Lock()
+_GRAPH_TOKEN_CACHE: dict = {"key": None, "value": None, "expires_at": 0.0}
+#: Refresh this many seconds before the token actually expires.
+_GRAPH_TOKEN_SKEW = 120
+
+
+def forget_microsoft_graph_token() -> None:
+    """Drop the cached token, so the next call asks Microsoft for a fresh one."""
+    with _GRAPH_TOKEN_LOCK:
+        _GRAPH_TOKEN_CACHE.update(key=None, value=None, expires_at=0.0)
+
+
 def microsoft_graph_token() -> str:
     settings = get_graph_settings()
     if not has_graph_credentials():
         raise RuntimeError("Microsoft Graph credentials are not configured.")
 
+    cache_key = hashlib.sha256(
+        "\n".join(settings[name] for name in ("tenant_id", "client_id", "client_secret", "scope")).encode("utf-8")
+    ).hexdigest()
+    with _GRAPH_TOKEN_LOCK:
+        if (_GRAPH_TOKEN_CACHE["key"] == cache_key and _GRAPH_TOKEN_CACHE["value"]
+                and _GRAPH_TOKEN_CACHE["expires_at"] > monotonic()):
+            return _GRAPH_TOKEN_CACHE["value"]
+        return _fetch_microsoft_graph_token(settings, cache_key)
+
+
+def _fetch_microsoft_graph_token(settings: dict, cache_key: str) -> str:
     token_url = f"https://login.microsoftonline.com/{settings['tenant_id']}/oauth2/v2.0/token"
     payload = urllib_parse.urlencode(
         {
@@ -898,6 +934,14 @@ def microsoft_graph_token() -> str:
     access_token = data.get("access_token")
     if not access_token:
         raise RuntimeError("Microsoft token response did not include access_token.")
+    try:
+        lifetime = int(data.get("expires_in", 3600))
+    except (TypeError, ValueError):
+        lifetime = 3600
+    _GRAPH_TOKEN_CACHE.update(
+        key=cache_key, value=access_token,
+        expires_at=monotonic() + max(lifetime - _GRAPH_TOKEN_SKEW, 60),
+    )
     return access_token
 
 
@@ -950,6 +994,10 @@ def microsoft_graph_request(
             graph_status=f"http_{exc.code}",
             latency_ms=round((perf_counter() - started) * 1000, 1),
         )
+        if exc.code == 401:
+            # A revoked or expired token must not stay cached for the next call.
+            # This call is not retried: it is reported exactly as before.
+            forget_microsoft_graph_token()
         detail = exc.read().decode("utf-8", errors="ignore")
         graph_code = ""
         graph_message = ""
@@ -1742,6 +1790,18 @@ def fetch_all_learner_profiles(programme: str | None = None, cohort: str | None 
 def fetch_caseload_dashboard_profiles(owner_email: str) -> list[LearnerProfile]:
     """Return a lean learner snapshot for the coach dashboard first paint."""
     requested_owner = normalize_email(owner_email)
+    learner_alias = get_learner_db_alias()
+    progress_prefetches = [
+        "ksb_assignment__profile_version__definitions",
+        "plan_modules__weeks__components",
+        "progress_entries__ksb_links",
+        "progress_entries__quiz_answers__correct_answers",
+        "progress_entries__quiz_answers__chosen_answers",
+    ]
+    if learner_ksbs_relation_exists(learner_alias):
+        progress_prefetches.insert(0, "assigned_ksbs")
+    if learner_activity_events_relation_exists(learner_alias):
+        progress_prefetches.append("activity_events")
     queryset = (
         LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
         .filter(coach_email_key=requested_owner)
@@ -1777,12 +1837,46 @@ def fetch_caseload_dashboard_profiles(owner_email: str) -> list[LearnerProfile]:
         # For current_week_label(): a few extra batched queries (one per
         # related table, not one per learner) rather than a lazy per-row
         # fetch the first time each learner's .training_plan is touched.
-        .prefetch_related("plan_modules__weeks__components")
+        .prefetch_related(*progress_prefetches)
         .order_by("full_name", "id")
     )
     rows = [row for row in queryset if clean_text(row.username)]
     attach_caseload_source_rows(rows)
     return rows
+
+
+def caseload_dashboard_progress_projections(rows) -> dict[int, dict]:
+    """Project established KSB fallback and activity metadata in bulk.
+
+    Programme metrics belong exclusively to ``caseload_canonical_metrics``.
+    KSB target-code counts remain the established Caseload fallback when the
+    activity-point metric is unavailable; a ready canonical KSB metric overlays
+    them later. Training-plan activity counts must never be copied here because
+    they would overwrite the historical + native population with differently-
+    scoped values such as 158 / 133.
+    """
+    projections = {}
+    for row in rows or []:
+        learner = serialize_caseload_learner(
+            row,
+            refresh_live_snapshots=False,
+            # The summary does not expose OTJH entry details. Supplying an
+            # empty, already-resolved lookup prevents that detail-only builder
+            # from querying curriculum once per learner.
+            expected_otjh_by_component_id={},
+            curriculum_ksbs=row.ksbs,
+        )
+        projections[int(row.id)] = {
+            "ksbCompleted": learner.get("ksbCompleted"),
+            "ksbTarget": learner.get("ksbTarget"),
+            "ksbStatus": learner.get("ksbStatus") or "",
+            "ksbProgress": learner.get("ksbProgress") if learner.get("ksbProgress") is not None else 0,
+            "ksbProgressAvailable": bool(learner.get("ksbProgressAvailable")),
+            "lastActivity": learner.get("lastActivity"),
+            "lastActivityDate": learner.get("lastActivityDate"),
+            "lastActivityLabel": learner.get("lastActivityLabel"),
+        }
+    return projections
 
 
 def fetch_case_file_shell(owner_email: str, learner_id: int):
@@ -1816,42 +1910,15 @@ def fetch_case_file_shell(owner_email: str, learner_id: int):
 
 
 def serialize_case_file_shell(profile, source) -> dict:
-    def optional_date(value):
-        return format_date(value) if value else None
-
-    source_aptem = getattr(source, "aptem_id", None)
-    profile_aptem = getattr(profile, "aptem_id", None)
-    source_aptem_id = int(str(source_aptem).strip()) if student_activity_available(source_aptem) else None
-    profile_aptem_id = int(str(profile_aptem).strip()) if student_activity_available(profile_aptem) else None
-    identity_conflict = bool(source_aptem_id and profile_aptem_id and source_aptem_id != profile_aptem_id)
-    aptem_id = None if identity_conflict else source_aptem_id or profile_aptem_id
-    raw_kind = clean_text(getattr(source, "learner_type", None) or getattr(profile, "learner_type", None)).casefold()
-    kind = "commercial" if raw_kind == "commercial" else "apprenticeship"
-    return {
-        "identity": {
-            "learnerId": str(profile.id),
-            "enrolmentId": str(profile.enrolment_id) if profile.enrolment_id else None,
-            "aptemId": str(aptem_id) if aptem_id else None,
-            "kind": kind,
-            "source": "conflict" if identity_conflict else ("aptem" if aptem_id else "native"),
-            "identityConflict": identity_conflict,
-        },
-        "profile": {
-            "name": clean_text(getattr(profile, "full_name", None) or getattr(source, "username", None)) or None,
-            "email": clean_text(getattr(profile, "email", None) or getattr(source, "email", None)) or None,
-            "programme": clean_text(getattr(profile, "programme", None) or getattr(source, "programme", None)) or None,
-            "cohort": clean_text(getattr(profile, "cohort", None) or getattr(source, "cohort", None)) or None,
-            "group": clean_text(getattr(profile, "group_name", None) or getattr(source, "group", None)) or None,
-            "employer": clean_text(getattr(source, "employer", None)) or None,
-            "coachName": clean_text(getattr(profile, "coach_name", None) or getattr(source, "coach_name", None)) or None,
-            "coachEmail": clean_text(getattr(profile, "coach_email", None) or getattr(source, "coach_email", None)) or None,
-            "status": clean_text(getattr(profile, "programme_status", None) or getattr(source, "programme_status", None)) or None,
-            "startDate": optional_date(getattr(profile, "start_date", None) or getattr(source, "start_date", None)),
-            "plannedEndDate": optional_date(getattr(profile, "end_date", None) or getattr(source, "end_date", None)),
-            "gatewayReviewDate": optional_date(getattr(profile, "gateway_review_date", None)),
-            "coachRag": format_coach_rag_value(getattr(profile, "coach_rag", None)) or None,
-        },
-    }
+    from .serializers.learner_profile import serialize_learner_profile_shell
+    return serialize_learner_profile_shell(
+        profile,
+        source,
+        clean_text=clean_text,
+        format_date=format_date,
+        student_activity_available=student_activity_available,
+        format_coach_rag_value=format_coach_rag_value,
+    )
 
 
 def fetch_attendance_caseload_rows(owner_email: str) -> list[LearnerProfile]:
@@ -2424,11 +2491,16 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
 
     enrolment_ids = [int(source.pk) for _, source, _ in work]
     direct_progress = load_direct_progress_records_bulk(enrolment_ids)
-    attempt_keys = [
-        (int(source.pk), int(source.aptem_id))
+    # ``source.pk`` is the canonical internal enrolment identity. ``aptem_id``
+    # is only an optional bridge to retained Aptem/audit data: native learners
+    # created in this LMS legitimately have no value.  Normalize that bridge
+    # once so no Aptem-dependent preload invents an identity or coerces NULL.
+    aptem_by_enrolment = {
+        int(source.pk): int(str(source.aptem_id).strip())
         for _, source, _ in work
-        if getattr(source, 'aptem_id', None) not in (None, '')
-    ]
+        if student_activity_available(getattr(source, 'aptem_id', None))
+    }
+    attempt_keys = list(aptem_by_enrolment.items())
     subject_attempts = load_subject_attempts_bulk(attempt_keys)
     manual_hours = load_manual_hours_bulk([aptem for _, aptem in attempt_keys])
     reflection_keys = [(kind, int(source.pk)) for _, source, kind in work]
@@ -2448,9 +2520,9 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
     ])
     contracts = load_contracts_bulk([aptem for _, aptem in attempt_keys])
     accepted_ksb_rows = load_accepted_ksb_rows_bulk([
-        (int(source.pk), int(source.aptem_id), kind)
+        (int(source.pk), aptem_by_enrolment[int(source.pk)], kind)
         for _, source, kind in work
-        if getattr(source, 'aptem_id', None) not in (None, '')
+        if int(source.pk) in aptem_by_enrolment
     ])
     audit_groups = {
         int(item['group_id'])
@@ -2471,31 +2543,34 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
         loaded = []
         for item in items:
             profile_id, source, kind = item
+            enrolment_id = int(source.pk)
+            aptem_id = aptem_by_enrolment.get(enrolment_id)
+            audit_input = audit_inputs.get(aptem_id) if aptem_id is not None else None
             try:
                 loaded.append((profile_id, read_metrics(
                     source, kind,
                     preloaded={
-                        'direct_progress': direct_progress.get(int(source.pk), []),
-                        'subject_attempts': subject_attempts.get((int(source.pk), int(source.aptem_id)), set()),
-                        'manual_hours': manual_hours.get(int(source.aptem_id)),
+                        'direct_progress': direct_progress.get(enrolment_id, []),
+                        'subject_attempts': subject_attempts.get((enrolment_id, aptem_id), set()) if aptem_id is not None else set(),
+                        'manual_hours': manual_hours.get(aptem_id) if aptem_id is not None else None,
                         'reflection_submissions': reflection_submissions.get((kind, str(source.pk)), []),
-                        'audit_inputs': audit_inputs.get(int(source.aptem_id)),
+                        'audit_inputs': audit_input,
                         'historical_metadata_loaded': True,
-                        'native_progress': native_progress.get(int(source.pk), []),
-                        'effective_plan_ids': plan_ids_by_enrolment.get(int(source.pk), []),
+                        'native_progress': native_progress.get(enrolment_id, []),
+                        'effective_plan_ids': plan_ids_by_enrolment.get(enrolment_id, []),
                         'native_components': [
-                            item for module_id in plan_ids_by_enrolment.get(int(source.pk), [])
+                            item for module_id in plan_ids_by_enrolment.get(enrolment_id, [])
                             for item in component_by_module.get(str(module_id), [])
                         ],
-                        'planned_hours_document': planned_documents.get((int(source.pk), kind)),
-                        'planned_hours_contract': contracts.get(int(source.aptem_id)),
-                        'aptem_planned_total': (audit_inputs.get(int(source.aptem_id)) or {}).get('aptem_planned_total'),
-                        'accepted_ksb_rows': accepted_ksb_rows.get(int(source.pk), []),
+                        'planned_hours_document': planned_documents.get((enrolment_id, kind)),
+                        'planned_hours_contract': contracts.get(aptem_id) if aptem_id is not None else None,
+                        'aptem_planned_total': (audit_input or {}).get('aptem_planned_total'),
+                        'accepted_ksb_rows': accepted_ksb_rows.get(enrolment_id, []),
                         'export_links': [
                             row
                             for group_id in {
                                 int(item['group_id'])
-                                for item in (audit_inputs.get(int(source.aptem_id)) or {}).get('historical', [])
+                                for item in (audit_input or {}).get('historical', [])
                                 if item.get('group_id') is not None
                             }
                             for row in export_links.get(group_id, [])
@@ -2512,7 +2587,7 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
                             for component in component_by_module.get(str(module_id), [])
                         ],
                         'native_progress': native_progress.get(int(source.pk), []),
-                        'audit_inputs': audit_inputs.get(int(source.aptem_id)) if getattr(source, 'aptem_id', None) not in (None, '') else None,
+                        'audit_inputs': audit_input,
                     }
                     native_components = preloaded['native_components']
                     audit_input = preloaded['audit_inputs'] or {}
@@ -2647,10 +2722,11 @@ def apply_canonical_learner_metrics(payload: dict, metrics: dict | None) -> dict
     payload["programmeProgressAvailable"] = programme.get("status") == "ready"
     payload["componentsCompleted"] = programme.get("completed")
     payload["componentsPlanned"] = programme.get("total")
-    # The canonical metrics reader can report ``unavailable`` when one of the
-    # activity KSB mappings is incomplete. Keep the caseload snapshot in that
-    # case instead of replacing known values with ``None`` and rendering ``--``
-    # for every learner.
+    payload["activityProgress"] = programme.get("percent")
+    payload["activityProgressAvailable"] = programme.get("status") == "ready"
+    # Preserve the established fallback when the canonical reader cannot
+    # produce a complete KSB population. Dashboard payloads start unavailable,
+    # so no ratio is invented here.
     if ksb.get("status") == "ready":
         payload["ksbCompleted"] = ksb.get("completed")
         payload["ksbTarget"] = ksb.get("total")
@@ -9073,10 +9149,8 @@ def fetch_aptem_review_events(
                    FROM "Learner".review_sections section
                    WHERE section.review_id = lr.id
                ) AS has_review_sections,
-               source.learner_id AS source_learner_id
+               lr.review_data ->> 'aptem_learner_id' AS source_learner_id
         FROM "Learner".reviews lr
-        LEFT JOIN kbc_coaching_reporting.reviews source
-          ON source.aptem_review_id = lr.aptem_review_id
         WHERE lr.learner_id = ANY(%s)
           AND NULLIF(BTRIM(lr.aptem_review_id), '') IS NOT NULL
           AND NULLIF(BTRIM(lr.review_type), '') IS NOT NULL
@@ -9161,7 +9235,10 @@ def fetch_aptem_review_events(
             "aptemReviewId": aptem_review_id,
             "reviewerName": clean_text(review.get("reviewerName")) or None,
             "reviewCompletedAt": completed_date.isoformat() if completed_date else None,
-            "hasReviewForm": bool(row.get("review_data")) or bool(row.get("has_review_sections")),
+            "hasReviewForm": _imported_review_has_usable_form(
+                review,
+                has_normalized_sections=bool(row.get("has_review_sections")),
+            ),
             "sequence": 1,
             "title": clean_text(review.get("name")) or review_type or EVENT_TYPE_FALLBACK_TITLES.get(event_type, "Review"),
             "type": "coaching" if event_type == "mcr" else "review",
@@ -11504,183 +11581,6 @@ def coach_directory(request):
 
 @coach_access_required
 @require_GET
-def coach_dashboard(request):
-    """Return every data set needed by the coach workspace in one request."""
-    endpoint_started = perf_counter()
-    owner_email = authenticated_coach_email(request)
-    # The dashboard is read-only and expensive to assemble (caseload metrics,
-    # audit mirror and timetable).  Reuse the complete payload briefly so a
-    # browser refresh or React remount does not repeat all remote queries.
-    dashboard_cache_key = f"coach-dashboard:v4:{normalize_email(owner_email)}"
-    cached_dashboard = cache.get(dashboard_cache_key)
-    if cached_dashboard is not None:
-        return JsonResponse(cached_dashboard)
-    today = date.today()
-    calendar_end = today + timedelta(days=90)
-
-    def load_dashboard_learners():
-        try:
-            rows = fetch_caseload_dashboard_profiles(owner_email)
-            learners = [serialize_caseload_dashboard_learner(row) for row in rows]
-            review_dates = dashboard_latest_completed_review_dates(
-                rows,
-                owner_email=owner_email,
-                owner_name="Coach",
-            )
-            for row, learner in zip(rows, learners):
-                learner.update(review_dates.get(int(row.id), {}))
-            # These are independent read-only enrichments.  Running them in
-            # series made the dashboard wait for every remote/local query in
-            # turn (most noticeably the audit mirror).  Keep the same payload
-            # but overlap their latency so first paint is bounded by the
-            # slowest enrichment rather than their sum.
-            def run_enrichment(fn):
-                try:
-                    return fn(rows)
-                except Exception:
-                    # Metrics/attendance mirrors are optional dashboard
-                    # enrichments.  A transient remote DB failure must not
-                    # turn the whole coach dashboard into a 503.
-                    logger.warning("coach_dashboard_enrichment_failed", exc_info=True)
-                    return {}
-                finally:
-                    close_old_connections()
-
-            # Keep concurrency bounded: canonical metrics may fan out its own
-            # read-only workers, so a large outer pool can exhaust the DB pool
-            # during concurrent refreshes.
-            latest_activities = run_enrichment(caseload_latest_learning_activities)
-            audit_totals = run_enrichment(caseload_audit_hour_totals)
-            ksb_counts = run_enrichment(caseload_evidenced_ksb_counts)
-            canonical_metrics = run_enrichment(caseload_canonical_metrics)
-            aptem_by_profile = caseload_aptem_ids(rows)
-            for row, learner in zip(rows, learners):
-                apply_latest_learning_activity(learner, latest_activities.get(int(row.id)))
-                apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
-                apply_evidenced_ksb_count(learner, ksb_counts.get(int(row.id)))
-                apply_canonical_learner_metrics(learner, canonical_metrics.get(int(row.id)))
-                apply_aptem_variance_status(learner, aptem_by_profile.get(int(row.id)))
-            monthly_risk = dashboard_monthly_risk_history(rows, today=timezone.localdate())
-            # The profile rows carry the `_caseload_source` bridge to Aptem,
-            # which the attendance lookup below needs and the serialized
-            # payload does not expose.
-            return rows, learners, monthly_risk
-        finally:
-            close_old_connections()
-
-    def load_dashboard_timetable():
-        cache_key = f"coach-dashboard-timetable:v3:{normalize_email(owner_email)}:{today.isoformat()}"
-        cached = cache.get(cache_key)
-        if cached is not None:
-            return cached
-        try:
-            payload = collect_generated_timetable(
-                owner_email,
-                start_date=today,
-                end_date=calendar_end,
-                include_live_sessions=False,
-                include_scheduler_queues=False,
-            )
-            live_events = collect_tracked_live_session_events(
-                owner_email,
-                payload.get("owner_name") or "Med Maher",
-                start_date=today,
-                end_date=calendar_end,
-            )
-            payload["events"] = sorted(
-                [*payload.get("events", []), *live_events],
-                key=lambda event: (event.get("date") or "", event.get("startHour") or 0),
-            )
-            payload.setdefault("summary", {})["liveSessionRows"] = len(live_events)
-            cache.set(cache_key, payload, 60)
-            return payload
-        finally:
-            close_old_connections()
-
-    def load_assigned_groups():
-        try:
-            return fetch_official_assigned_groups(owner_email)
-        finally:
-            close_old_connections()
-
-    try:
-        # These sections use independent read-only connections. Running them
-        # together makes initial page latency the duration of the slowest query
-        # instead of the sum of both remote-database round trips.
-        dashboard_rows, learners, monthly_risk = load_dashboard_learners()
-        timetable_payload = load_dashboard_timetable()
-        assigned_groups = load_assigned_groups()
-        # Depends on the learner list, so it follows the pool rather than
-        # joining it.
-        try:
-            aptem_by_profile = caseload_aptem_ids(dashboard_rows)
-            try:
-                attendance_rows = dashboard_attendance_rows(
-                    dashboard_rows, learners, aptem_by_profile=aptem_by_profile,
-                )
-            except Exception:
-                # Attendance is an optional dashboard enrichment. A malformed
-                # source row or an unavailable side database must not turn an
-                # otherwise valid caseload into a 503.
-                logger.warning("Could not load dashboard attendance", exc_info=True)
-                attendance_rows = []
-        finally:
-            close_old_connections()
-        # dashboard_attendance_rows is the one canonical attendance source:
-        # overlay it onto each learner here, by the same stable id every other
-        # enrichment above joins on, so the response never carries a second,
-        # independently-mergeable attendance dataset for the frontend to
-        # reconcile by email/name.
-        attendance_by_id = {
-            to_int(entry.get("id")): entry
-            for entry in attendance_rows
-            if to_int(entry.get("id")) is not None
-        }
-        for learner in learners:
-            apply_attendance_summary(learner, attendance_by_id.get(to_int(learner.get("id"))))
-        owner_name = coach_staff_display_name(owner_email) or next(
-            (clean_text(getattr(row, "coach_name", None)) for row in dashboard_rows if clean_text(getattr(row, "coach_name", None))),
-            "Coach",
-        )
-    except Exception:
-        logger.exception("coach_dashboard_load_failed coach_account_id=%s", owner_email)
-        return coach_error(
-            request,
-            code="database_unavailable",
-            message="Unable to load coach dashboard data.",
-            status=503,
-        )
-
-    response_payload = {
-            "owner": {
-                "name": timetable_payload.get("owner_name") or owner_name,
-                "email": owner_email,
-            },
-            "learners": learners,
-            "monthlyRisk": monthly_risk,
-            "assignedGroups": assigned_groups,
-            # Attendance is overlaid onto each learner above (the one
-            # canonical source); no separate attendance dataset ships here.
-            # Full imported review history (sections/fields/tables/rawText)
-            # is not needed by this dashboard -- it is not rendered here, and
-            # the caseload drawer that does need it loads /coach/caseload
-            # directly. Evidence stays empty: its dedicated page loads that
-            # expensive dataset on demand.
-            "timetable": {
-                "summary": timetable_payload.get("summary", {}),
-                "events": timetable_payload.get("events", []),
-                "reviewGenerationIssues": timetable_payload.get("reviewGenerationIssues", []),
-            },
-            "evidence": {"items": []},
-            "errors": {},
-        }
-    _coach_perf("dashboard", "total", endpoint_started, learner_count=len(learners))
-    cache.set(dashboard_cache_key, response_payload, 30)
-    return JsonResponse(response_payload)
-
-
-@coach_access_required
-@require_GET
 def coach_learner_case_file(request, learner_id):
     owner_email = authenticated_coach_email(request)
     try:
@@ -11925,8 +11825,9 @@ def coach_caseload(request):
     endpoint_started = perf_counter()
     owner_email = authenticated_coach_email(request)
     refresh_live_snapshots = request_prefers_live_caseload_snapshots(request)
-    summary_only = clean_text(request.GET.get("summary")).casefold() in {"1", "true", "yes", "on"}
-    paginated = any(key in request.GET for key in ("page", "page_size", "search", "status", "cohort", "group", "sort", "direction"))
+    request_context = CaseloadRequestContext.from_request(request)
+    summary_only = request_context.summary_only
+    paginated = request_context.paginated
     validator = ObjectValidator(request.GET)
     page = validator.integer("page", default=1, minimum=1)
     requested_page_size = validator.integer("page_size", default=10, minimum=1)
@@ -11948,8 +11849,11 @@ def coach_caseload(request):
     # Caseload enrichment is expensive and the page may request it again on a
     # refresh/remount.  Keep a short per-coach snapshot for read-only GETs;
     # live snapshot requests explicitly bypass this cache.
-    cache_scope = hashlib.sha256(request.META.get("QUERY_STRING", "").encode()).hexdigest()[:16]
-    caseload_cache_key = f"coach-caseload:v3:{normalize_email(owner_email)}:{int(summary_only)}:{cache_scope}"
+    caseload_cache_key = coach_caseload_cache_key(
+        owner_email,
+        summary_only=summary_only,
+        query_string=request_context.query_string,
+    )
     if not refresh_live_snapshots:
         cached_caseload = cache.get(caseload_cache_key)
         if cached_caseload is not None:
@@ -11958,7 +11862,7 @@ def coach_caseload(request):
     # two tabs must not run that identical work concurrently and exhaust the
     # per-process pools. The winner fills the ordinary response cache; followers
     # wait only for that same scoped coach/page/filter key.
-    caseload_lock_key = f"{caseload_cache_key}:building"
+    caseload_lock_key = coach_caseload_lock_key(caseload_cache_key)
     owns_caseload_lock = True
     if paginated and not refresh_live_snapshots:
         owns_caseload_lock = cache.add(caseload_lock_key, "1", 120)
@@ -13381,10 +13285,22 @@ def _imported_review_field(field, *, section_id, index):
     }
 
 
+def _imported_review_has_usable_form(review: dict, *, has_normalized_sections: bool = False) -> bool:
+    """Return whether an import contains a real form rather than metadata only."""
+    if has_normalized_sections:
+        return True
+    return any(
+        bool(section.get("fields") or section.get("tables") or clean_text(section.get("rawText")))
+        for section in review.get("sections") or []
+        if isinstance(section, dict)
+    )
+
+
 def _imported_review_definition(owner_email: str, event_key: str) -> dict | None:
     """Adapt one owned Aptem review to the native form-definition contract.
 
-    The source remains read-only and is never copied into Curriculum tables.
+    Summary-only imports remain read-only. Imports with a real form can store
+    LMS-local answers without changing the original Aptem data.
     ``event_key`` is the same stable identity used by the timetable row.
     """
     prefix = "imported-review:"
@@ -13426,14 +13342,29 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
         sections = _sections_by_review(cursor, [row["id"]])
 
     review = _serialize_review(row, sections)
-    if not review.get("detailsAvailable"):
-        return None
     learner = next((item for item in learners if int(item.id) == profile_id), None)
     if learner is None:
         return None
 
+    normalized_sections = sections.get(row["id"]) or []
+    form_available = _imported_review_has_usable_form(
+        review,
+        has_normalized_sections=bool(normalized_sections),
+    )
+    summary_only = not form_available
+    canonical_event_key = f"{prefix}{aptem_review_id}"
+    saved_instance = (
+        ImportedReviewInstance.objects.filter(
+            owner_email__iexact=owner_email,
+            event_key=canonical_event_key,
+        ).first()
+        if form_available
+        else None
+    )
+    saved_answers = saved_instance.answers if saved_instance and isinstance(saved_instance.answers, dict) else {}
+
     adapted_sections = []
-    for section_index, section in enumerate(review.get("sections") or []):
+    for section_index, section in enumerate((review.get("sections") or []) if form_available else []):
         section_id = str(section.get("id") or f"{row['id']}:{section_index}")
         fields = [
             _imported_review_field(field, section_id=section_id, index=index)
@@ -13472,6 +13403,9 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
                 "yesFields": [],
                 "noFields": [],
             })
+        for field in fields:
+            if field["id"] in saved_answers:
+                field["answer"] = saved_answers[field["id"]]
         adapted_sections.append({
             "id": f"aptem-section:{section_id}",
             "title": clean_text(section.get("name")) or "Review section",
@@ -13489,19 +13423,31 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
         role: {"required": False, "signed": False, "signedBy": None, "signedName": None, "signedAt": None, "signature": None}
         for role in curriculum_review_instances.SIGNATURE_ROLES
     }
+    instance_status = (
+        clean_text(review.get("status")) or CoachCalendarEvent.STATUS_NOT_SCHEDULED
+        if summary_only
+        else saved_instance.status if saved_instance else ImportedReviewInstance.STATUS_IN_PROGRESS
+    )
+    instance_completed_at = (
+        review.get("completedDate")
+        if summary_only
+        else saved_instance.completed_at.isoformat() if saved_instance and saved_instance.completed_at else None
+    )
     return {
-        "readOnly": True,
+        "readOnly": summary_only,
         "source": "aptem",
+        "formAvailable": form_available,
+        "summaryOnly": summary_only,
         "instance": {
-            "id": event_key,
+            "id": canonical_event_key,
             "reviewTemplateId": "",
             "learnerId": profile_id,
             "programmeId": clean_text(getattr(learner, "programme_id", None)),
             "occurrenceNumber": 1,
             "targetDate": target_date,
-            "status": clean_text(review.get("status")) or CoachCalendarEvent.STATUS_NOT_SCHEDULED,
+            "status": instance_status,
             "startedAt": None,
-            "completedAt": review.get("completedDate"),
+            "completedAt": instance_completed_at,
         },
         "template": {
             "id": "",
@@ -13780,6 +13726,38 @@ def coach_review_instance_previous(request, instance_id):
 def coach_review_instance_answers(request, instance_id):
     if request.method != "POST":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
+    owner_email = authenticated_coach_email(request)
+    if instance_id.startswith("imported-review:"):
+        definition = _imported_review_definition(owner_email, instance_id)
+        if not definition:
+            return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
+        if definition.get("summaryOnly"):
+            return JsonResponse({"detail": "This imported review has summary information only and cannot be edited."}, status=409)
+        try:
+            payload = parse_json_body(request)
+        except ValidationError as exc:
+            return validation_error_response(exc)
+        answers = payload.get("answers")
+        if not isinstance(answers, dict):
+            return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
+        field_ids = {
+            field["id"]
+            for section in definition.get("sections", [])
+            for field in section.get("fields", [])
+        }
+        if any(field_id not in field_ids for field_id in answers):
+            return JsonResponse({"detail": "answers contains a field that is not part of this review."}, status=400)
+        imported, _created = ImportedReviewInstance.objects.get_or_create(
+            owner_email=owner_email,
+            event_key=definition["instance"]["id"],
+            defaults={"learner_id": definition["instance"]["learnerId"]},
+        )
+        if imported.status == ImportedReviewInstance.STATUS_COMPLETED:
+            return JsonResponse({"detail": "This review has already been completed and is read-only."}, status=409)
+        imported.answers = answers
+        imported.save(update_fields=["answers", "updated_at"])
+        return JsonResponse(_imported_review_definition(owner_email, imported.event_key))
+
     instance_row, error = _authorized_review_instance(request, instance_id)
     if error:
         return error
@@ -13790,7 +13768,6 @@ def coach_review_instance_answers(request, instance_id):
     answers = payload.get("answers")
     if not isinstance(answers, dict):
         return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
-    owner_email = authenticated_coach_email(request)
     try:
         curriculum_review_instances.save_review_instance_answers(instance_row, answers, actor=owner_email)
     except ValueError as exc:
@@ -14004,6 +13981,44 @@ def coach_review_instance_progress(request, instance_id):
 def coach_review_instance_complete(request, instance_id):
     if request.method != "POST":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
+    owner_email = authenticated_coach_email(request)
+    if instance_id.startswith("imported-review:"):
+        definition = _imported_review_definition(owner_email, instance_id)
+        if not definition:
+            return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
+        if definition.get("summaryOnly"):
+            return JsonResponse({"detail": "This imported review has summary information only and cannot be completed."}, status=409)
+        payload = {}
+        if request.body:
+            try:
+                payload = parse_json_body(request)
+            except ValidationError as exc:
+                return validation_error_response(exc)
+        if not isinstance(payload, dict):
+            return JsonResponse({"detail": "Request body must be a JSON object."}, status=400)
+        answers = payload.get("answers", {})
+        if not isinstance(answers, dict):
+            return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
+        field_ids = {
+            field["id"]
+            for section in definition.get("sections", [])
+            for field in section.get("fields", [])
+        }
+        if any(field_id not in field_ids for field_id in answers):
+            return JsonResponse({"detail": "answers contains a field that is not part of this review."}, status=400)
+        imported, _created = ImportedReviewInstance.objects.get_or_create(
+            owner_email=owner_email,
+            event_key=definition["instance"]["id"],
+            defaults={"learner_id": definition["instance"]["learnerId"]},
+        )
+        if imported.status == ImportedReviewInstance.STATUS_COMPLETED:
+            return JsonResponse({"detail": "This review has already been completed."}, status=409)
+        imported.answers = answers
+        imported.status = ImportedReviewInstance.STATUS_COMPLETED
+        imported.completed_at = timezone.now()
+        imported.save(update_fields=["answers", "status", "completed_at", "updated_at"])
+        return JsonResponse(_imported_review_definition(owner_email, imported.event_key))
+
     instance_row, error = _authorized_review_instance(request, instance_id)
     if error:
         return error
@@ -14018,7 +14033,6 @@ def coach_review_instance_complete(request, instance_id):
     answers = payload.get("answers")
     if answers is not None and not isinstance(answers, dict):
         return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
-    owner_email = authenticated_coach_email(request)
     ok, errors = curriculum_review_instances.complete_review_instance(
         instance_row, actor=owner_email, answers=answers,
     )

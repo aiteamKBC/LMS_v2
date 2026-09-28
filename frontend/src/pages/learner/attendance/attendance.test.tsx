@@ -212,7 +212,22 @@ describe('Attendance lecture workspace', () => {
       lecture({ id: 'attended', title: 'Attended lecture', absenceReport: { id: 3, status: 'pending' },
         recovery: { method: 'catch-up', date: '2026-09-17' } }),
       lecture({ id: 'future', title: 'Future reported lecture', status: 'upcoming',
-        absenceReport: { id: 4, status: 'approved' }, recovery: { method: 'alternative', date: null } }),
+        absenceReport: { id: 4, status: 'approved' }, recovery: { method: 'alternative', date: '2026-09-30',
+          startTime: '09:00', endTime: '11:00', group: 'Group B', calendarKey: 'absence-alternative:4', ended: false } }),
+      lecture({ id: 'catchup-card', title: 'Catch-up card lecture', status: 'absent', catchupStatus: 'pending',
+        absenceReport: { id: 6, status: 'approved' }, recovery: { method: 'catch-up', date: '2026-10-02',
+          startTime: '10:40', endTime: '11:10', calendarKey: 'catch-up:248:8:2026-10-02', ended: false } }),
+      lecture({ id: 'recording-card', title: 'Recording plan lecture', status: 'upcoming',
+        componentHref: '/learner/component/apprenticeship/12/COMP-LIVE-1', absenceReport: { id: 7, status: 'approved' }, recovery: { method: 'recorded', date: '2026-10-03',
+          startTime: '18:00', endTime: '19:00', calendarKey: 'absence-recording:7', ended: false,
+          watchedSeconds: 2820, recordingSeconds: 7200 } }),
+      lecture({ id: 'past-recording', title: 'Past recording plan lecture', status: 'absent', catchupStatus: 'pending',
+        componentHref: '/learner/component/apprenticeship/12/COMP-LIVE-2', absenceReport: { id: 8, status: 'approved' },
+        recovery: { method: 'recorded', date: '2026-09-10', startTime: '18:00', endTime: '19:00',
+          calendarKey: 'absence-recording:8', ended: true, watchedSeconds: 0, recordingSeconds: 0 } }),
+      lecture({ id: 'live-alt', title: 'Live alternative lecture', status: 'absent',
+        absenceReport: { id: 5, status: 'approved' }, recovery: { method: 'alternative', date: '2026-09-14',
+          startTime: '10:00', endTime: '12:00', calendarKey: 'absence-alternative:5', joinUrl: 'https://teams.example/alt', ended: false } }),
     ];
     mount();
     const madeUp = await screen.findByRole('article', { name: 'Made up lecture' });
@@ -235,7 +250,35 @@ describe('Attendance lecture workspace', () => {
 
     const future = screen.getByRole('article', { name: 'Future reported lecture' });
     expect(within(future).getByText('Absence reported')).toBeInTheDocument();
-    expect(within(future).getByText('Alternative session booked')).toBeInTheDocument();
+    const plan = within(future).getByRole('link', { name: /Alternative session/ });
+    expect(plan).toHaveAttribute('href', '/learner/calendar?event=absence-alternative%3A4');
+    expect(plan).toHaveTextContent('Wed 30 Sept · 09:00–11:00');
+    expect(plan).toHaveTextContent('Group B');
+
+    const catchupCard = screen.getByRole('article', { name: 'Catch-up card lecture' });
+    expect(within(catchupCard).getByRole('link', { name: /Catch-up session/ }))
+      .toHaveAttribute('href', '/learner/calendar?event=catch-up%3A248%3A8%3A2026-10-02');
+    expect(within(catchupCard).getByRole('link', { name: /Catch-up session/ })).toHaveTextContent('Fri 2 Oct · 10:40–11:10');
+    expect(within(catchupCard).getByRole('button', { name: 'Change catch-up' })).toBeEnabled();
+
+    const recordingCard = screen.getByRole('article', { name: 'Recording plan lecture' });
+    const recording = within(recordingCard).getByRole('link', { name: /Watch the recording/ });
+    expect(recording).toHaveTextContent('Planned');
+    expect(recording).toHaveTextContent('Sat 3 Oct · 18:00');
+    expect(recording).toHaveTextContent('Watched 47 min of 2h');
+    expect(recording).toHaveAttribute('href', '/learner/component/apprenticeship/12/COMP-LIVE-1');
+
+    // The planned watch time has passed, but the recording can still be watched.
+    const pastRecording = screen.getByRole('article', { name: 'Past recording plan lecture' });
+    const pastLink = within(pastRecording).getByRole('link', { name: /Watch the recording/ });
+    expect(pastLink).toHaveTextContent('Planned for');
+    expect(pastLink).toHaveTextContent('Not watched yet');
+    expect(pastLink).toHaveAttribute('href', '/learner/component/apprenticeship/12/COMP-LIVE-2');
+    expect(within(pastRecording).getByRole('button', { name: 'Book catch-up' })).toBeEnabled();
+
+    const liveAlternative = screen.getByRole('article', { name: 'Live alternative lecture' });
+    expect(within(liveAlternative).getByRole('link', { name: /Join alternative session/ })).toHaveAttribute('href', 'https://teams.example/alt');
+    expect(within(liveAlternative).queryByRole('button', { name: 'Book Catchup Session' })).not.toBeInTheDocument();
   });
 
   it('starts a linked absence report when booking recovery for an unreported missed lecture', async () => {

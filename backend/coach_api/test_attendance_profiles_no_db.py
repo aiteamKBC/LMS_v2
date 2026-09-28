@@ -4,6 +4,7 @@ import json
 import re
 import sys
 import types
+import unicodedata
 import unittest
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
@@ -143,18 +144,27 @@ class AttendanceProfilesTests(unittest.TestCase):
             "datetime_timezone": timezone, "parse_datetime": lambda value: datetime.fromisoformat(value),
             "Q": Predicate, "Lower": lambda value: value, "Trim": lambda value: value,
             "router": SimpleNamespace(db_for_read=lambda model: "synthetic"),
+            # Alias/link persistence is covered by its own focused loader tests.
+            # This synthetic roster fixture intentionally has no reviewed aliases.
+            "_attendance_alias_rows": lambda _database, _assignments: [],
+            "_attendance_identity_link_rows": lambda _database, _occurrences: [],
             "timezone": SimpleNamespace(now=lambda: self.start, is_aware=lambda value: value.tzinfo is not None,
                                         is_naive=lambda value: value.tzinfo is None,
                                         make_aware=lambda value, tz: value.replace(tzinfo=tz),
                                         localtime=lambda value: value.astimezone(timezone(timedelta(hours=1)))),
         }
-        policy_namespace = {"datetime": datetime, "timezone": timezone}
+        policy_namespace = {"datetime": datetime, "timezone": timezone, "json": json,
+                            "re": re, "unicodedata": unicodedata}
         load_functions(BACKEND / "curriculum_api/session_results_policy.py",
-                       {"instant", "attendance_seconds", "evidence_seconds"}, policy_namespace)
+                       {"instant", "attendance_seconds", "evidence_seconds",
+                        "attendance_display_name", "attendance_name_key"}, policy_namespace)
         self.namespace["evidence_seconds"] = policy_namespace["evidence_seconds"]
+        self.namespace["attendance_display_name"] = policy_namespace["attendance_display_name"]
+        self.namespace["attendance_name_key"] = policy_namespace["attendance_name_key"]
         self.bind_rows()
         load_functions(BACKEND / "learner_api/teams_attendance.py",
-                       {"_email", "_assigned_learner_emails_by_module", "_module_expected_emails",
+                       {"_email", "_canonical_attendance_email", "_unique_exact_name_email",
+                        "_assigned_learner_emails_by_module", "_module_expected_emails",
                         "_local_datetime", "_graph_datetime", "_attendance_interval_bounds",
                         "fetch_verified_teams_attendance_rows"},
                        self.namespace)
@@ -175,7 +185,8 @@ class AttendanceProfilesTests(unittest.TestCase):
                                attendance_report_id=f"report-{identifier}", artifacts_synced_at=start, updated_at=start)
 
     def record(self, occurrence_id, email, intervals):
-        return SimpleNamespace(occurrence_id=occurrence_id, email=email, graph_record_id="record",
+        return SimpleNamespace(id=f"row-{occurrence_id}-{len(intervals)}", occurrence_id=occurrence_id,
+                               email=email, graph_record_id="record", role="attendee", raw_data={},
                                display_name="Synthetic Participant", total_attendance_seconds=300,
                                intervals=[{"joinDateTime": (self.start + timedelta(minutes=start)).isoformat(),
                                            "leaveDateTime": (self.start + timedelta(minutes=end)).isoformat()}
@@ -217,12 +228,11 @@ class AttendanceProfilesTests(unittest.TestCase):
             ["absent", "absent"],
         )
 
-    def test_unknown_email_is_not_attributed_by_display_name(self):
+    def test_unknown_email_is_not_attributed_but_expected_absence_remains(self):
         self.records = [self.record("O1", "", [(0, 5)])]
-        self.assertEqual(
-            [row["session_id"] for row in self.fetch(include_reported_participants=True)],
-            ["O2"],
-        )
+        rows = self.fetch(include_reported_participants=True)
+        self.assertEqual([row["session_id"] for row in rows], ["O1", "O2"])
+        self.assertTrue(all(row["attendance_status"] == "absent" for row in rows))
 
     def test_learner_module_and_date_scopes_are_preserved(self):
         rows = self.fetch(2, include_reported_participants=True)

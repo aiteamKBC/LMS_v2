@@ -1,6 +1,7 @@
 """Run directly with Python. No Django imports, DB setup, credentials or network."""
 import ast
 import copy
+import hashlib
 import importlib.util
 import logging
 import re
@@ -40,7 +41,7 @@ class CalendarChecksTests(unittest.TestCase):
         self.corrupt = ''
         self.payload = self.make_payload()
         self.v = types.ModuleType('curriculum_api.views')
-        self.v.__dict__.update(datetime=datetime, timedelta=timedelta, timezone=timezone, ZoneInfo=ZoneInfo,
+        self.v.__dict__.update(datetime=datetime, timedelta=timedelta, timezone=timezone, ZoneInfo=ZoneInfo, hashlib=hashlib,
                               escape=escape, re=re, urllib_parse=urllib_parse, logger=logging.getLogger('calendar-test'),
                               TEAMS_REPEAT_VALUES={'none', 'weekly', 'daily', 'weekdays'},
                               TEAMS_LOBBY_VALUES={'invited', 'organizer', 'everyone'}, DEFAULT_TEAMS_LOBBY_BYPASS='everyone', LIVE_SESSIONS_TABLE='series', LIVE_SESSION_OCCURRENCES_TABLE='occurrences',
@@ -58,20 +59,31 @@ class CalendarChecksTests(unittest.TestCase):
                               json_body=lambda request: self.payload, ensure_live_sessions_table=lambda: None,
                               ensure_live_session_tracking_tables=lambda: None,
                               resolve_authoring_catalogue_id=lambda value: value, authoring_module_exists=lambda _: True,
+                              resolve_stored_module_catalogue_id=lambda value: value,
                               authoring_fetch_all=self.fetch_rows, has_column=lambda *args: True,
                               calendar_groups=lambda *args: [], stored_calendar_series=lambda _: [],
                               teams_non_delivery_reason=lambda *args, **kwargs: '',
                               truthy=lambda value: str(value).strip().lower() in {'1', 'true', 'yes', 'on'},
                               graph_event_utc=self.utc_event, persist_live_session_series=self.persist_series,
                               replace_live_session_occurrences=self.persist_occurrences,
+                              held_schedule_snapshot=lambda _live_session_id: [],
+                              with_schedule_change_notice=lambda response, _live_session_id, _before: response,
                               update_authoring_rows=self.update_series, json_db_value=lambda value: value,
                               apply_teams_meeting_options=lambda *args, **kwargs: (self.options_ok, {'id': 'online-1'}, []),
                               teams_series_email_list=lambda value: value or [],
-                              persist_recreated_occurrence_details=lambda *args: None)
+                              persist_recreated_occurrence_details=self.persist_recreated_details,
+                              # The instance read waits for Microsoft to finish expanding a
+                              # recurrence. A test double answers at once, so the wait is a
+                              # no-op here rather than real seconds on every short series.
+                              time=types.SimpleNamespace(sleep=lambda _seconds: None))
         names = {'clean_str', 'parse_graph_datetime', 'teams_attendee_emails', 'teams_event_body_html',
-                 'teams_event_payload', 'teams_calendar_minute_key', 'teams_shifted_occurrence_targets',
+                 'teams_event_payload', 'teams_single_occurrence_payload', 'teams_calendar_minute_key',
+                 'teams_shifted_occurrence_targets', 'teams_expanded_instances',
+                 'teams_standalone_occurrence_meeting',
                  'apply_teams_occurrence_shifts', 'curriculum_teams_meeting', 'curriculum_teams_meeting_schedule',
-                 'reschedule_single_live_session_occurrence', 'teams_schedule_settings'}
+                 'verify_teams_calendar_with_standalones', 'publish_teams_calendar_attendees',
+                 'reschedule_single_live_session_occurrence', 'saved_live_session_occurrences',
+                 'teams_schedule_settings'}
         tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8-sig'))
         for node in tree.body:
             if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == 'GRAPH_SILENT_INVITE_HEADERS' for target in node.targets):
@@ -88,8 +100,8 @@ class CalendarChecksTests(unittest.TestCase):
         self.addCleanup(self.modules.stop)
 
     def make_payload(self, hour=0):
-        dates = ['2026-09-17', '2026-10-08', '2026-10-15', '2026-10-22', '2026-10-29',
-                 '2026-11-05', '2026-11-12', '2026-11-19', '2026-11-26', '2026-12-03', '2026-12-10', '2026-12-17']
+        dates = ['2026-09-17', '2026-09-24', '2026-10-08', '2026-10-15', '2026-10-22', '2026-10-29',
+                 '2026-11-05', '2026-11-12', '2026-11-19', '2026-11-26', '2026-12-03', '2026-12-10']
         starts = [datetime.fromisoformat(day).replace(hour=hour, tzinfo=ZoneInfo('Europe/London')).astimezone(timezone.utc) for day in dates]
         return {'title': 'Synthetic', 'moduleCatalogueId': 'MOD-SYNTHETIC', 'organizerEmail': 'organizer@example.invalid',
                 'attendees': ['learner@example.invalid'], 'presenters': [], 'coOrganizers': [],
@@ -119,6 +131,12 @@ class CalendarChecksTests(unittest.TestCase):
     def persist_occurrences(self, live_id, payload, *args, **kwargs):
         self.tracked = copy.deepcopy(payload['scheduledOccurrences'])
         return self.tracked
+
+    def persist_recreated_details(self, live_id, details):
+        by_number = {int(item['sessionNumber']): item for item in self.tracked}
+        for detail in details:
+            row = by_number[int(detail['session_number'])]
+            row.update(detail)
 
     def update_series(self, table, where, params, values):
         if self.series:
@@ -185,6 +203,8 @@ class CalendarChecksTests(unittest.TestCase):
         result = self.create()
         self.assertEqual(result.status_code, 201, result)
         module_id, saved, settings, occurrences = self.attach.call_args.args
+        # The same walk tops weeks up to their delivery days, so no follow-up restore is needed.
+        self.assertTrue(self.attach.call_args.kwargs.get('create_missing'))
         self.assertEqual(module_id, 'MOD-SYNTHETIC')
         self.assertEqual(saved['id'], 'LIVE-SYNTHETIC')
         self.assertEqual(settings['liveSessionUrl'], result['meeting']['joinUrl'])
@@ -220,12 +240,12 @@ class CalendarChecksTests(unittest.TestCase):
         result = self.create()
         self.assertEqual(result.status_code, 201, result)
         self.assertEqual(self.events['event-1']['recurrence']['pattern']['daysOfWeek'], ['thursday'])
-        self.assertEqual(self.events['event-1']['recurrence']['range']['numberOfOccurrences'], 14)
+        self.assertEqual(self.events['event-1']['recurrence']['range']['numberOfOccurrences'], 13)
         self.assertEqual(len(self.instances), 12)
         self.assertEqual(len(self.tracked), 12)
         deletes = [i for i, call in enumerate(self.calls) if call[0] == 'DELETE']
         invitations = [i for i, call in enumerate(self.calls) if call[0] == 'PATCH' and 'attendees' in call[2]]
-        self.assertEqual(len(deletes), 2)
+        self.assertEqual(len(deletes), 1)
         self.assertEqual(len(invitations), 1)
         self.assertLess(max(deletes), invitations[0])
         self.assertTrue(self.events['event-1']['hideAttendees'])
@@ -460,6 +480,75 @@ class CalendarChecksTests(unittest.TestCase):
         patches = [call[2] for call in self.calls if call[0] == 'PATCH']
         self.assertEqual(patches, [])
         self.assertTrue(all(not event['attendees'] for event in self.events.values()))
+
+    def test_deleted_series_occurrence_is_restored_silently_and_tracked_with_its_real_link(self):
+        self.assertEqual(self.create().status_code, 201)
+        missing_start = datetime.fromisoformat(self.payload['scheduledOccurrences'][2]['startDateTimeUtc'])
+        wanted_starts = {
+            datetime.fromisoformat(item['startDateTimeUtc'])
+            for item in self.payload['scheduledOccurrences']
+        }
+        original = self.graph
+
+        def preserve_deleted_occurrence(method, path, payload=None, **kwargs):
+            result = original(method, path, payload, **kwargs)
+            if method == 'PATCH' and path.endswith('/events/event-1') and payload and 'recurrence' in payload:
+                master = self.instances_by_master['event-1']
+                self.instances_by_master['event-1'] = [
+                    item for item in master
+                    if checks.event_instant(item, 'start') in wanted_starts
+                    and checks.event_instant(item, 'start') != missing_start
+                ]
+            return result
+
+        self.instances_by_master['event-1'] = [
+            item for item in self.instances_by_master['event-1']
+            if checks.event_instant(item, 'start') != missing_start
+        ]
+        sys.modules['coach_api.views'].microsoft_graph_request = preserve_deleted_occurrence
+        self.v.apply_teams_meeting_options = Mock(return_value=(True, {'id': 'online-restored'}, []))
+        self.calls.clear()
+        self.headers.clear()
+
+        result = self.v.curriculum_teams_meeting_schedule(
+            types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC',
+        )
+
+        self.assertEqual(result.status_code, 200, result)
+        restored = self.events['event-2']
+        self.assertEqual(checks.event_instant(restored, 'start'), missing_start)
+        self.assertEqual(restored['attendees'], [])
+        self.assertTrue(restored['hideAttendees'])
+        restored_row = next(item for item in self.tracked if int(item['sessionNumber']) == 3)
+        self.assertEqual(restored_row['graph_event_id'], 'event-2')
+        self.assertEqual(restored_row['join_url'], restored['onlineMeeting']['joinUrl'])
+        post = next(item for item in self.headers if item[0] == 'POST' and item[1].endswith('/events'))
+        self.assertEqual(post[2], self.v.GRAPH_SILENT_INVITE_HEADERS)
+        self.assertFalse([
+            item for item in self.calls
+            if item[0] == 'PATCH' and item[2] and 'attendees' in item[2]
+        ])
+
+        # Later people/options saves must update both the master meeting and the
+        # separately restored occurrence without creating another event or mail.
+        self.payload.update(peopleOnly=True, presenters=['presenter@example.invalid'])
+        self.calls.clear()
+        self.headers.clear()
+        self.v.apply_teams_meeting_options.reset_mock()
+        result = self.v.curriculum_teams_meeting_schedule(
+            types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC',
+        )
+        self.assertEqual(result.status_code, 200, result)
+        self.assertEqual(self.v.apply_teams_meeting_options.call_count, 2)
+        self.assertTrue(all(
+            call.kwargs['presenters'] == ['presenter@example.invalid']
+            for call in self.v.apply_teams_meeting_options.call_args_list
+        ))
+        self.assertFalse([call for call in self.calls if call[0] in ('POST', 'DELETE')])
+        self.assertFalse([
+            item for item in self.calls
+            if item[0] == 'PATCH' and item[2] and 'attendees' in item[2]
+        ])
 
     def test_read_failure_does_not_trigger_blind_calendar_update(self):
         self.assertEqual(self.create().status_code, 201)
