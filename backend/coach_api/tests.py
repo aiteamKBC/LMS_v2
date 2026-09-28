@@ -1,6 +1,6 @@
 import json
 from time import perf_counter
-from datetime import date, time, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from inspect import unwrap
 from types import SimpleNamespace
@@ -154,39 +154,35 @@ class CaseloadAptemIdTests(SimpleTestCase):
 
 
 class DashboardAttendanceTests(SimpleTestCase):
-    """Aptem-linked dashboard rows use KBC; other rows keep their register."""
+    """Dashboard rows reuse the learner attendance summary for every learner."""
 
-    @patch("coach_api.views.fetch_kbc_attendance_rates")
     @patch("coach_api.views.caseload_canonical_attendance")
-    def test_aptem_rows_carry_the_kbc_rate(self, summaries, kbc_rates):
-        kbc_rates.return_value = {"4321": {"sessions": 62, "present": 59, "absent": 3, "rate": 95, "lastSessionDate": date(2026, 9, 18)}}
+    def test_aptem_rows_carry_the_learner_dashboard_rate(self, summaries):
+        summaries.return_value = {7: {"sessions": 28, "present": 23, "absent": 5, "attendanceRate": 82, "lastSessionDate": date(2026, 9, 18)}}
         rows = [SimpleNamespace(id=7, _caseload_source=SimpleNamespace(aptem_id="4321"))]
         learners = [{"id": "7", "name": "A Learner", "email": "a@example.com"}]
 
         payload = dashboard_attendance_rows(rows, learners)
 
         self.assertEqual(len(payload), 1)
-        self.assertEqual(payload[0]["attendance"], 95)
+        self.assertEqual(payload[0]["attendance"], 82)
         self.assertTrue(payload[0]["hasAttendance"])
-        self.assertEqual(payload[0]["present"], 59)
+        self.assertEqual(payload[0]["present"], 23)
         self.assertEqual(payload[0]["lastSessionDate"], "2026-09-18")
-        summaries.assert_called_once_with([])
-        self.assertEqual(list(kbc_rates.call_args.args[0]), [4321])
+        summaries.assert_called_once_with(rows)
 
-    @patch("coach_api.views.fetch_kbc_attendance_rates", return_value={})
     @patch("coach_api.views.caseload_canonical_attendance", return_value={})
-    def test_learners_with_no_register_are_left_out(self, summaries, kbc_rates):
+    def test_learners_with_no_register_are_left_out(self, summaries):
         rows = [SimpleNamespace(id=7, _caseload_source=SimpleNamespace(aptem_id="4321"))]
         learners = [{"id": "7", "name": "A Learner", "email": "a@example.com"}]
 
         self.assertEqual(dashboard_attendance_rows(rows, learners), [])
 
-    @patch("coach_api.views.fetch_kbc_attendance_rates")
     @patch("coach_api.views.caseload_canonical_attendance")
-    def test_a_partial_learner_dict_does_not_break_the_dashboard(self, summaries, kbc_rates):
+    def test_a_partial_learner_dict_does_not_break_the_dashboard(self, summaries):
         """This helper enriches whatever the serializer produced; a missing key
         must never turn the whole dashboard into a 503."""
-        kbc_rates.return_value = {"4321": {"sessions": 4, "present": 4, "absent": 0, "rate": 100}}
+        summaries.return_value = {2: {"sessions": 4, "present": 4, "absent": 0, "attendanceRate": 100}}
         rows = [SimpleNamespace(id=2, _caseload_source=SimpleNamespace(aptem_id="4321"))]
 
         payload = dashboard_attendance_rows(rows, [{"id": "2"}])
@@ -194,16 +190,14 @@ class DashboardAttendanceTests(SimpleTestCase):
         self.assertEqual(payload[0]["learner"], None)
         self.assertEqual(payload[0]["attendance"], 100)
 
-    @patch("coach_api.views.fetch_kbc_attendance_rates", side_effect=RuntimeError("unavailable"))
     @patch("coach_api.views.caseload_canonical_attendance", return_value={})
-    def test_an_unreachable_register_leaves_the_dashboard_renderable(self, summaries, kbc_rates):
+    def test_an_unreachable_register_leaves_the_dashboard_renderable(self, summaries):
         rows = [SimpleNamespace(id=7, _caseload_source=SimpleNamespace(aptem_id="4321"))]
 
         self.assertEqual(dashboard_attendance_rows(rows, [{"id": "7", "name": "A"}]), [])
 
-    @patch("coach_api.views.fetch_kbc_attendance_rates", return_value={})
     @patch("coach_api.views.caseload_canonical_attendance")
-    def test_learner_without_aptem_keeps_existing_register(self, summaries, kbc_rates):
+    def test_learner_without_aptem_keeps_existing_register(self, summaries):
         summaries.return_value = {8: {"sessions": 3, "present": 2, "absent": 1, "attendanceRate": 67}}
         row = SimpleNamespace(id=8, _caseload_source=SimpleNamespace(aptem_id=""))
 
@@ -211,7 +205,6 @@ class DashboardAttendanceTests(SimpleTestCase):
 
         self.assertEqual(payload[0]["attendance"], 67)
         summaries.assert_called_once_with([row])
-        kbc_rates.assert_called_once()
 
     def test_no_query_runs_for_an_empty_caseload(self):
         with patch("coach_api.views.caseload_canonical_attendance") as summaries:
@@ -255,6 +248,59 @@ class DashboardAttendanceTests(SimpleTestCase):
         summary = caseload_canonical_attendance([learner])[7]
 
         self.assertEqual((summary["sessions"], summary["present"], summary["attendanceRate"]), (2, 1, 50))
+
+    @patch("coach_api.views.fetch_verified_teams_attendance_rows")
+    @patch("coach_api.views.fetch_kbc_attendance_rows_bulk")
+    @patch("coach_api.views.combined_attendance_rows")
+    def test_aptem_attendance_bulk_load_is_constant_for_the_caseload(self, combined, kbc_bulk, teams_bulk):
+        day = date(2026, 9, 3)
+        learners = [
+            SimpleNamespace(
+                id=index,
+                _caseload_source=SimpleNamespace(id=100 + index, aptem_id=4000 + index,
+                                                 username=f"Learner {index}", email=f"learner{index}@example.test"),
+            )
+            for index in range(1, 26)
+        ]
+        kbc_bulk.return_value = [
+            {"learner_id": 100 + index, "session_id": f"kbc-{index}", "session_date": day,
+             "module_title": "Module", "attendance_status": "present", "source": "kbc-attendance",
+             "minutes_late": 0, "catchup_completed": False, "updated_at": None,
+             "learner_name": f"Learner {index}", "learner_email": f"learner{index}@example.test"}
+            for index in range(1, 26)
+        ]
+        teams_bulk.return_value = []
+
+        result = caseload_canonical_attendance(learners)
+
+        self.assertEqual(len(result), 25)
+        kbc_bulk.assert_called_once()
+        teams_bulk.assert_called_once()
+        combined.assert_not_called()
+
+    @patch("coach_api.views.fetch_verified_teams_attendance_rows")
+    @patch("coach_api.views.fetch_kbc_attendance_rows_bulk")
+    def test_aptem_attendance_accepts_the_same_mixed_source_timestamps_as_the_learner_register(
+        self, kbc_bulk, teams_bulk,
+    ):
+        source = SimpleNamespace(id=193, aptem_id=8533, username="Learner", email="learner@example.test")
+        common = {
+            "learner_id": 193, "learner_name": "Learner", "learner_email": source.email,
+            "session_date": date(2026, 9, 3), "module_title": "Module",
+            "minutes_late": 0, "catchup_completed": False,
+        }
+        kbc_bulk.return_value = [{**common, "session_id": "kbc", "attendance_status": "present",
+                                  "updated_at": datetime(2026, 9, 3, 10)}]
+        teams_bulk.return_value = [{**common, "enrolment_id": 193,
+                                    "session_date": date(2026, 9, 4), "module_title": "Other module",
+                                    "session_id": "teams", "occurrence_id": "teams",
+                                    "attendance_status": "absent", "updated_at": timezone.now()}]
+
+        summary = caseload_canonical_attendance([
+            SimpleNamespace(id=7, _caseload_source=source),
+        ])[7]
+
+        self.assertEqual((summary["present"], summary["sessions"], summary["attendanceRate"]), (1, 2, 50))
 
 
 class AttendanceDetailRowsTests(SimpleTestCase):
@@ -506,6 +552,11 @@ class OtjhTargetContractTests(SimpleTestCase):
 class CanonicalCoachMetricsTests(SimpleTestCase):
     def canonical_loader_patches(self, *, read_metrics):
         mocks = {
+            "canonical_learning": SimpleNamespace(metrics_bulk=MagicMock(return_value={
+                11: {"source": "learner-dashboard", "programme": {"completed": 443, "total": 499, "percent": 88.78, "status": "ready"},
+                     "otjh": {"actual": 308.11, "planned": None},
+                     "ksb": {"completed": 475, "total": 711, "percent": 66.81, "status": "ready"}},
+            })),
             "load_direct_progress_records_bulk": MagicMock(return_value={
                 10: [{"componentId": "native-null"}],
                 11: [{"componentId": "native-aptem"}],
@@ -594,11 +645,35 @@ class CanonicalCoachMetricsTests(SimpleTestCase):
 
         self.assertEqual(set(result), {100, 101})
         self.assertEqual(captured[10]["subject_attempts"], set())
-        self.assertEqual(captured[11]["subject_attempts"], {("group-1", "activity-1")})
-        self.assertEqual(captured[11]["manual_hours"], 7.5)
-        self.assertEqual(captured[11]["aptem_planned_total"], 400)
-        mocks["load_subject_attempts_bulk"].assert_called_once_with([(11, 42)])
-        mocks["load_accepted_ksb_rows_bulk"].assert_called_once_with([(11, 42, "apprenticeship")])
+        self.assertNotIn(11, captured)
+        self.assertEqual(result[101]["programme"]["completed"], 443)
+        mocks["load_subject_attempts_bulk"].assert_called_once_with([])
+        mocks["load_accepted_ksb_rows_bulk"].assert_called_once_with([])
+
+    def test_mixed_caseload_reuses_learner_dashboard_metrics_for_aptem(self):
+        captured = {}
+
+        def read_metrics(source, kind, preloaded):
+            captured[source.pk] = preloaded
+            return {"source": "existing", "programme": {"completed": 1, "total": 1}}
+
+        native = SimpleNamespace(pk=10, aptem_id=None)
+        aptem = SimpleNamespace(pk=11, aptem_id="42")
+        rows = [
+            SimpleNamespace(id=100, learner_type="commercial", enrolment_id=10, _caseload_source=native),
+            SimpleNamespace(id=101, learner_type="apprenticeship", enrolment_id=11, _caseload_source=aptem),
+        ]
+        patches, mocks = self.canonical_loader_patches(read_metrics=MagicMock(side_effect=read_metrics))
+        with patches:
+            result = caseload_canonical_metrics(rows)
+
+        self.assertEqual(result[101]["programme"], {"completed": 443, "total": 499, "percent": 88.78, "status": "ready"})
+        self.assertEqual(result[101]["otjh"], {"actual": 308.11, "planned": None})
+        self.assertEqual(result[101]["ksb"], {"completed": 475, "total": 711, "percent": 66.81, "status": "ready"})
+        self.assertEqual(result[100]["source"], "existing")
+        self.assertEqual(set(captured), {10})
+        mocks["load_direct_progress_records_bulk"].assert_called_once_with([10])
+        mocks["canonical_learning"].metrics_bulk.assert_called_once_with({11: 42})
 
     def test_zero_learner_caseload_runs_no_metric_loaders(self):
         read_metrics = MagicMock()
@@ -642,6 +717,58 @@ class CanonicalCoachMetricsTests(SimpleTestCase):
         self.assertEqual((result["activityProgress"], result["activityProgressAvailable"]), (8.97, True))
         self.assertEqual((result["ksbCompleted"], result["ksbTarget"], result["ksbProgress"]), (14, 20, 70))
         self.assertEqual(result["metricsSource"], "learner-dashboard")
+
+    def test_aptem_overlay_keeps_exact_learner_dashboard_values_and_null_target(self):
+        payload = {
+            "otjhCompleted": 111.9, "otjhTarget": 42, "otjhPlanned": 42,
+            "overallProgress": 100, "overallProgressAvailable": True,
+            "ksbCompleted": 14, "ksbTarget": 14, "ksbProgress": 100,
+            "ksbProgressAvailable": True, "enrollmentStatus": "active",
+        }
+        metrics = {
+            "migrated": True,
+            "programme": {"completed": 443, "total": 499, "percent": 88.8, "status": "ready"},
+            "otjh": {"actual": 308.11, "planned": None},
+            "ksb": {"completed": 475, "total": 711, "percent": 66.8, "status": "ready"},
+        }
+
+        result = apply_canonical_learner_metrics(payload, metrics)
+
+        self.assertEqual((result["programmeCompleted"], result["programmeTarget"], result["programmeProgress"]), (443, 499, 88.8))
+        self.assertEqual((result["componentsCompleted"], result["componentsPlanned"], result["activityProgress"]), (443, 499, 88.8))
+        self.assertEqual((result["otjhCompleted"], result["otjhTarget"], result["otjhPlanned"]), (308.11, None, None))
+        self.assertEqual(result["otjhActual"], 308.11)
+        self.assertEqual((result["ksbCompleted"], result["ksbTarget"], result["ksbProgress"]), (475, 711, 66.8))
+        self.assertEqual((result["overallProgress"], result["overallProgressAvailable"]), (88.8, True))
+        self.assertEqual((result["metricsSource"], result["ksbSource"], result["otjhSource"]),
+                         ("learner-dashboard", "learner-dashboard", "learner-dashboard"))
+
+    def test_coach_overlay_has_exact_parity_with_the_shared_learner_calculator(self):
+        from learner_api.canonical_learning import metrics_from_records
+
+        records = [
+            {"id": 1, "accepted": True, "completed": True, "actual_seconds": 5400,
+             "ksbs": ["K1", "S1"], "segments": [], "sources": []},
+            {"id": 2, "accepted": False, "completed": True, "actual_seconds": 900,
+             "ksbs": ["K1"], "segments": [], "sources": []},
+        ]
+        canonical = metrics_from_records(records, {})
+        result = apply_canonical_learner_metrics({
+            "otjhCompleted": 999, "otjhTarget": 42, "otjhPlanned": 42,
+            "ksbProgressAvailable": False, "enrollmentStatus": "active",
+        }, canonical)
+
+        self.assertEqual(
+            (result["programmeCompleted"], result["programmeTarget"], result["programmeProgress"]),
+            (canonical["programme"]["completed"], canonical["programme"]["total"], canonical["programme"]["percent"]),
+        )
+        self.assertEqual(result["otjhCompleted"], canonical["otjh"]["completed_actual"])
+        self.assertEqual(result["otjhActual"], canonical["otjh"]["actual"])
+        self.assertEqual(result["otjhPlanned"], canonical["otjh"]["planned"])
+        self.assertEqual(
+            (result["ksbCompleted"], result["ksbTarget"], result["ksbProgress"]),
+            (canonical["ksb"]["completed"], canonical["ksb"]["total"], canonical["ksb"]["percent"]),
+        )
 
     def test_unavailable_metrics_leave_the_existing_snapshot_untouched(self):
         payload = {"otjhCompleted": 4, "otjhTarget": 5}
@@ -1110,6 +1237,7 @@ class ApplyAttendanceSummaryTests(SimpleTestCase):
         self.assertFalse(payload["attendanceRateAvailable"])
 
 
+@override_settings(CACHES={"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}})
 class CoachDashboardViewTests(SimpleTestCase):
     @patch("coach_api.dashboard_service.CoachDashboardService.build")
     @patch("coach_api.views.collect_generated_timetable")
@@ -1336,10 +1464,85 @@ class CoachDashboardReadModelTests(SimpleTestCase):
 
         self.assertEqual(payload["learners"], [{"id": "1"}])
         self.assertIn("readModel", payload)
-        objects.filter.assert_called_once_with(owner_email="coach@example.com", schema_version=3)
+        objects.filter.assert_called_once_with(owner_email="coach@example.com", schema_version=4)
         objects.filter.return_value.only.assert_called_once_with("payload", "refreshed_at")
         objects.filter.return_value.only.return_value.first.assert_called_once_with()
         build_live.assert_not_called()
+
+    @patch("coach_api.dashboard_service.CoachDashboardSnapshot.objects")
+    @patch("coach_api.dashboard_service.CoachDashboardService.refresh_metric_projection")
+    def test_previous_metric_schema_snapshot_is_upgraded_without_full_rebuild(self, refresh_metrics, objects):
+        from coach_api.dashboard_service import CoachDashboardService
+
+        objects.filter.return_value.only.return_value.first.return_value = None
+        previous = SimpleNamespace(payload={"learners": [{"id": "stale"}]})
+        objects.filter.return_value.only.return_value.first.side_effect = [None, previous]
+        refresh_metrics.return_value = {"learners": [{"id": "canonical"}]}
+
+        payload = CoachDashboardService("coach@example.com").build()
+
+        self.assertEqual(payload["learners"], [{"id": "canonical"}])
+        self.assertEqual(objects.filter.call_args_list[0].kwargs,
+                         {"owner_email": "coach@example.com", "schema_version": 4})
+        self.assertEqual(objects.filter.call_args_list[1].kwargs,
+                         {"owner_email": "coach@example.com"})
+        refresh_metrics.assert_called_once_with(previous.payload)
+
+    def test_previous_response_cache_namespace_cannot_serve_legacy_metrics(self):
+        import hashlib
+        from coach_api.dashboard_cache import coach_dashboard_cache_key
+
+        identity = "coach@example.com"
+        old_hash = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        old_key = f"coach-dashboard-summary:v1:{old_hash}"
+
+        self.assertNotEqual(coach_dashboard_cache_key(identity), old_key)
+        self.assertTrue(coach_dashboard_cache_key(identity).startswith("coach-dashboard-summary:v2:"))
+
+    @patch("coach_api.dashboard_service.CoachDashboardSnapshot.objects")
+    def test_snapshot_metric_upgrade_uses_the_same_canonical_values_as_caseload(self, objects):
+        from learner_api.canonical_learning import metrics_from_records
+        from coach_api.dashboard_service import CoachDashboardService
+
+        canonical = metrics_from_records([
+            {"id": 1, "accepted": True, "completed": True, "actual_seconds": 3600,
+             "ksbs": ["K1"], "segments": [], "sources": []},
+            {"id": 2, "accepted": False, "completed": True, "actual_seconds": 0,
+             "ksbs": ["K1"], "segments": [], "sources": []},
+        ], {})
+        previous = {"learners": [{
+            "id": "7", "otjhCompleted": 111, "otjhTarget": 42,
+            "ksbCompleted": 14, "ksbTarget": 14, "ksbProgress": 100,
+            "ksbProgressAvailable": True, "enrollmentStatus": "active",
+        }], "meetings": {"events": [{"id": "preserved"}]}}
+        row = SimpleNamespace(id=7)
+        with patch.multiple(
+            "coach_api.views",
+            fetch_caseload_dashboard_profiles=MagicMock(return_value=[row]),
+            caseload_canonical_metrics=MagicMock(return_value={7: canonical}),
+            caseload_aptem_ids=MagicMock(return_value={7: 8533}),
+            dashboard_attendance_rows=MagicMock(return_value=[{
+                "id": "7", "attendance": 82, "hasAttendance": True,
+                "present": 23, "sessions": 28, "absent": 5,
+            }]),
+        ):
+            payload = CoachDashboardService("coach@example.com").refresh_metric_projection(previous)
+
+        learner = payload["learners"][0]
+        self.assertEqual(
+            (learner["programmeCompleted"], learner["programmeTarget"], learner["programmeProgress"]),
+            (canonical["programme"]["completed"], canonical["programme"]["total"], canonical["programme"]["percent"]),
+        )
+        self.assertEqual(
+            (learner["ksbCompleted"], learner["ksbTarget"], learner["ksbProgress"]),
+            (canonical["ksb"]["completed"], canonical["ksb"]["total"], canonical["ksb"]["percent"]),
+        )
+        self.assertEqual((learner["otjhCompleted"], learner["otjhTarget"]),
+                         (canonical["otjh"]["completed_actual"], canonical["otjh"]["planned"]))
+        self.assertEqual((learner["attendancePresent"], learner["attendanceSessions"], learner["attendanceRate"]),
+                         (23, 28, 82))
+        self.assertEqual(payload["meetings"], previous["meetings"])
+        objects.update_or_create.assert_called_once()
 
 
 @override_settings(COACH_DASHBOARD_CACHE_TTL=90)

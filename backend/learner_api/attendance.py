@@ -142,6 +142,40 @@ def fetch_kbc_attendance_rows(*, aptem_id, learner_id, learner_name, learner_ema
             ]
 
 
+def fetch_kbc_attendance_rows_bulk(learners):
+    """Bulk equivalent of ``fetch_kbc_attendance_rows`` for Aptem learners."""
+    grouped = {}
+    for item in learners or []:
+        key = str(item.get('aptem_id') or '').strip()
+        if key:
+            grouped.setdefault(key, []).append(item)
+    identities = {key: values[0] for key, values in grouped.items() if len(values) == 1}
+    if not identities:
+        return []
+    dsn = _kbc_attendance_connection_string()
+    if not dsn:
+        raise RuntimeError('KBC attendance database is not configured.')
+    with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute('''
+                SELECT "ID"::text AS aptem_id,"key","date","Attendance",attendance_status,
+                       module,lecture_name,created_at AS updated_at
+                FROM public.kbc_attendance
+                WHERE "ID"::text=ANY(%s) AND "Attendance" IN (0,1) AND "date" IS NOT NULL
+                ORDER BY "ID"::text,"date" DESC,"key"
+            ''', [list(identities)])
+            rows = cursor.fetchall()
+    result = []
+    for row in rows:
+        identity = identities.get(row['aptem_id'])
+        if identity:
+            result.append(_normalize_kbc_attendance_row(
+                row, learner_id=identity['learner_id'], learner_name=identity['learner_name'],
+                learner_email=identity['learner_email'],
+            ))
+    return result
+
+
 def fetch_kbc_attendance_rates(aptem_ids):
     """Attendance rates for many learners in one query, keyed by Aptem id.
 
