@@ -1,7 +1,8 @@
 import type { SidebarNavItem } from '@/components/feature/Sidebar';
 import { CHAT_ENABLED } from '@/lib/featureFlags';
+import { inclusionLoginUrl } from '@/features/inclusion/navigation';
 
-const inclusionLoginUrl = `${(import.meta.env.VITE_INCLUSION_URL || "https://admin.kentbusinesscollege.net").replace(/\/$/, "")}/login`;
+const inclusionLoginHref = inclusionLoginUrl();
 
 // ============================================================================
 // Learner tools reached from the dashboard, with the same permission IDs as
@@ -68,9 +69,23 @@ export const learnerNavItems: SidebarNavItem[] = [
 // ============================================================================
 // COACH WORKSPACE — Grouped sidebar
 // ============================================================================
+// Gated to the audit roles in `rbac.ts`, so a coach reading their own workspace
+// never sees it: this door reads every coach's activity, not the signed-in
+// one's.
+//
+// Named on its own because it is the one Coach destination that does not read
+// the selected coach. That makes it the only item the picker at
+// `/workspace/coach` can offer before a coach has been chosen.
+export const coachAuditTrailNavItem: SidebarNavItem = {
+  id: 'coach-audit-trail',
+  label: 'Audit Trail',
+  icon: 'ri-history-line',
+  href: '/coach/audit-trail',
+  matchPaths: ['/coach/audit-trail/people'],
+};
+
 export const coachNavItems: SidebarNavItem[] = [
   { id: 'coach-dashboard', label: 'Dashboard', icon: 'ri-dashboard-line', href: '/workspace/coach' },
-  { id: 'coach-notifications', label: 'Notifications', icon: 'ri-notification-3-line', href: '/notifications' },
   {
     id: 'coach-meetings',
     label: 'Meetings',
@@ -102,8 +117,7 @@ export const coachNavItems: SidebarNavItem[] = [
     href: '/coach/monthly-logs',
     matchPaths: ['/coach/monthly-cycle'],
   },
-  { id: 'coach-inclusion', label: 'Inclusion Ticket System', icon: 'ri-heart-pulse-line', href: inclusionLoginUrl, external: true },
-  { id: 'coach-absence-reports', label: 'Absence Reports', icon: 'ri-error-warning-line', href: '/coach/absence-reports' },
+  { id: 'coach-inclusion', label: 'Inclusion Ticket System', icon: 'ri-heart-pulse-line', href: inclusionLoginHref, external: true },
 ];
 
 // ============================================================================
@@ -633,7 +647,7 @@ export const adminNavItems: SidebarNavItem[] = [
       { id: 'admin-tutor-dashboard', label: 'Tutor Dashboard', icon: 'ri-dashboard-line', href: 'https://tutordashboard.kentbusinesscollege.net', external: true },
     ],
   },
-  { id: 'admin-inclusion', label: 'Inclusion System', icon: 'ri-heart-pulse-line', href: inclusionLoginUrl, external: true },
+  { id: 'admin-inclusion', label: 'Inclusion System', icon: 'ri-heart-pulse-line', href: inclusionLoginHref, external: true },
 ];
 
 // ============================================================================

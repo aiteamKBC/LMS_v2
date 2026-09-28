@@ -164,6 +164,28 @@ class CoachCalendarSequence(models.Model):
         ]
 
 
+class CoachDashboardSnapshot(models.Model):
+    """Persistent read model for the Coach Dashboard summary only.
+
+    Source tables remain authoritative.  A controlled refresh rebuilds this
+    projection; HTTP reads never recompute cross-schema learner aggregates.
+    """
+
+    owner_email = models.EmailField(max_length=255, unique=True)
+    payload = models.JSONField(default=dict)
+    schema_version = models.PositiveSmallIntegerField(default=1)
+    refreshed_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = _table_name(
+            "coach_test_dashboard_snapshots",
+            'Coach"."coach_dashboard_snapshot',
+        )
+        indexes = [
+            models.Index(fields=["-refreshed_at"], name="coach_dash_snapshot_fresh_idx"),
+        ]
+
+
 class CoachAbsenceReport(models.Model):
     STATUS_PENDING = "pending"
     STATUS_APPROVED = "approved"

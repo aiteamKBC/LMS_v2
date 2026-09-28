@@ -3,6 +3,7 @@ from django.urls import path
 from system_audit import activity as system_activity
 
 from . import activity, learner_assignments, programme_audit, quality, review_schedule, review_types, reviews, views
+from .teams_create_guard import teams_create_status, teams_meeting_collection
 from .teams_schedule_delivery import schedule_email
 from .teams_calendar_state import sync_calendar_state
 from .teams_directory import search_teams_directory
@@ -119,7 +120,8 @@ urlpatterns = [
     path('curriculum/components/<str:component_id>/upload/', views.curriculum_component_upload, name='curriculum-component-upload'),
     path('curriculum/components/<str:component_id>/ksb-mappings/', views.curriculum_component_ksb_mappings, name='curriculum-component-ksb-mappings'),
     path('curriculum/components/<str:component_id>/', views.curriculum_component_detail, name='curriculum-component-detail'),
-    path('curriculum/teams-meetings/', views.curriculum_teams_meeting, name='curriculum-teams-meeting'),
+    path('curriculum/teams-meetings/', teams_meeting_collection, name='curriculum-teams-meeting'),
+    path('curriculum/teams-meetings/create-status/', teams_create_status, name='curriculum-teams-create-status'),
     path('curriculum/teams-meetings/summary/', views.curriculum_teams_meeting_summary, name='curriculum-teams-meeting-summary'),
     path('curriculum/live-sessions/occurrences/', views.curriculum_live_session_occurrences, name='curriculum-live-session-occurrences'),
     path('curriculum/teams-meetings/<str:live_session_id>/schedule/', views.curriculum_teams_meeting_schedule, name='curriculum-teams-meeting-schedule'),

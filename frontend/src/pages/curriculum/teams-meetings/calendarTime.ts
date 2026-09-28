@@ -38,6 +38,49 @@ export function calendarInputError(row: { sessions: { startTime: unknown; endTim
   return '';
 }
 
+const minuteOf = (value: string) => {
+  const instant = Date.parse(value);
+  return Number.isFinite(instant) ? Math.floor(instant / 60000) : NaN;
+};
+
+/**
+ * Which date Teams holds for each planned session, paired by date before position.
+ *
+ * `planned` and `held` are UTC instants. A planned session is paired with the
+ * held one on its exact minute, then with one on the same day (`dayOf`, the
+ * calendar day in the business zone), and only then, in order, with whatever
+ * held dates are still unclaimed -- a genuine move. Pairing by position alone
+ * turned one session missing from Teams into "still holds next week's date" on
+ * every row after it, and a last row "not on Teams" that Teams did hold.
+ *
+ * `paired[i]` is the held instant for `planned[i]`, or '' when Teams holds
+ * nothing for it. `extra` is what Teams holds that no planned session claims.
+ */
+export function pairHeldDates(
+  planned: readonly string[],
+  held: readonly string[],
+  dayOf: (value: string) => string,
+): { paired: string[]; extra: string[] } {
+  const remaining = held.filter(value => Number.isFinite(minuteOf(value)))
+    .sort((left, right) => Date.parse(left) - Date.parse(right));
+  const paired = planned.map(() => '');
+  const claim = (index: number, match: string | undefined) => {
+    if (match === undefined) return;
+    paired[index] = match;
+    remaining.splice(remaining.indexOf(match), 1);
+  };
+  planned.forEach((value, index) => {
+    if (Number.isFinite(minuteOf(value))) claim(index, remaining.find(item => minuteOf(item) === minuteOf(value)));
+  });
+  planned.forEach((value, index) => {
+    if (!paired[index] && Number.isFinite(minuteOf(value))) claim(index, remaining.find(item => dayOf(item) === dayOf(value)));
+  });
+  const open = planned.flatMap((value, index) => (!paired[index] && Number.isFinite(minuteOf(value)) ? [index] : []));
+  const leftovers = [...remaining];
+  open.forEach((index, order) => claim(index, leftovers[order]));
+  return { paired, extra: remaining };
+}
+
 export function reviewDateLabel(value: string, timeZone: string): string {
   if (!Number.isFinite(Date.parse(value))) return 'Check this date and time';
   return new Intl.DateTimeFormat('en-GB', {

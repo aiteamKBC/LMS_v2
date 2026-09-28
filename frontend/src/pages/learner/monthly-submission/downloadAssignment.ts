@@ -5,7 +5,13 @@ import { formatSystemTimestamp } from '@/lib/format';
 import { monthName, statusLabels } from './model';
 
 const escape = (value: unknown) => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]!));
-const safeName = (name: string) => name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').replace(/^\.+/, '_').trim() || 'assignment';
+const safeName = (name: string) => name
+  .replace(/[<>:"/\\|?*]/g, '_')
+  .split('')
+  .map(char => char.charCodeAt(0) <= 0x1f ? '_' : char)
+  .join('')
+  .replace(/^\.+/, '_')
+  .trim() || 'assignment';
 
 export function assignmentReport(submission: StoredLearningReflectionSubmission, attempt?: number): string {
   const monthly = submission.monthlyAssignment;

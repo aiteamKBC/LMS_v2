@@ -12,16 +12,17 @@ import { LearnerInformation, MonthlyHours, ActivityLog } from '@/features/old-ot
 import { JournalDownloads } from '@/features/old-otjh/JournalDownloads';
 import { SignatureCapture } from '@/features/old-otjh/SignatureCapture';
 import { RecordBadge } from '@/features/old-otjh/RecordDesign';
-import { MonthListSkeleton, MonthReportSkeleton } from '@/features/old-otjh/RecordSkeletons';
+import { MonthReportSkeleton } from '@/features/old-otjh/RecordSkeletons';
 import { displayDate, monthLabel, monthStatus, previousMonthSignature } from '@/features/old-otjh/report';
 import { coachViewAs } from '@/lib/coachViewAs';
 import type { SignatureCaptureMethod } from '@/features/old-otjh/api';
 import design from '@/features/old-otjh/design.module.css';
 import journal from '@/features/old-otjh/journal.module.css';
 import reportStyles from '@/features/old-otjh/report.module.css';
-import { completeLogMonth, getLogContent, getLogLearners, getLogMonth, getLogSummary, signLogMonth, unlockLogMonth, type LogSummary, type LogPerspective } from './api';
+import { completeLogMonth, getLogContent, getLogMonth, getLogSummary, signLogMonth, unlockLogMonth, type LogSummary, type LogPerspective } from './api';
 import styles from './monthlyLogs.module.css';
 import { MonthList, MonthIndexSkeleton } from './MonthList';
+import { CoachMonthlyLogLearners } from '@/features/coach/monthly-logs/components/CoachMonthlyLogLearners';
 
 export default function MonthlyLogsPage() {
   const { auth } = useAuth();
@@ -39,7 +40,7 @@ export default function MonthlyLogsPage() {
     showBackButton backFallbackHref={month ? base : perspective === 'learner' ? overview : '/coach/monthly-logs'}>
     <PageContainer className={`${design.scope} ${design.page} ${styles.theme} ${month ? journal.canvas : ''}`}>
       {id ? <LearnerLogs key={`${perspective}-${id}`} id={id} month={month} base={base} perspective={perspective} /> : perspective === 'learner'
-        ? <EmptyState title="Your learner account is unavailable" /> : <CoachLearners />}
+        ? <EmptyState title="Your learner account is unavailable" /> : <CoachMonthlyLogLearners />}
     </PageContainer>
   </WorkspaceShell>;
 }
@@ -62,22 +63,6 @@ function FutureMonthState({ month, base }: { month: string; base: string }) {
         <Link className={styles.futurePrimaryAction} to="/learner/attendance"><AppIcon className="ri-calendar-check-line" />Back to Attendance</Link>
         <Link className={styles.futureSecondaryAction} to={base}><AppIcon className="ri-history-line" />View available months</Link>
       </>} />
-  </div>;
-}
-
-function CoachLearners() {
-  const { auth } = useAuth();
-  const [search, setSearch] = useState('');
-  const query = useQuery({ queryKey: ['monthly-logs', auth.account?.id, coachViewAs()?.email, 'learners'], queryFn: getLogLearners });
-  if (query.isPending) return <MonthListSkeleton />;
-  if (query.error) return <ErrorState error={query.error} retry={() => void query.refetch()} />;
-  const learners = query.data.learners.filter(learner => `${learner.name} ${learner.programme}`.toLowerCase().includes(search.toLowerCase()));
-  return <div className={design.monthList}>
-    <header className={design.monthListHeader}><h1 className="font-heading font-semibold">Monthly Logs</h1><p>Open a learner’s monthly record to review activities and add your signature.</p></header>
-    <label className="block space-y-2 text-sm">Search learners<input type="search" className="block w-full rounded-xl border p-3" value={search} onChange={e => setSearch(e.target.value)} /></label>
-    {learners.length ? <div className="grid gap-4 md:grid-cols-2">{learners.map(learner => <Link className={`${journal.card} block p-5`} to={`/coach/monthly-logs/${learner.id}`} key={learner.id}>
-      <h2 className="font-semibold">{learner.name}</h2><p className="mt-2 text-sm">{learner.programme}</p><span className="mt-4 inline-block text-sm font-semibold">Open monthly logs →</span>
-    </Link>)}</div> : <EmptyState title="No learners found" />}
   </div>;
 }
 

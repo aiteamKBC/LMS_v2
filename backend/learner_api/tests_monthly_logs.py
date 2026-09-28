@@ -25,6 +25,21 @@ class MonthlyLogsTests(SimpleTestCase):
                         'email': 'learner@example.test', 'coach_email': 'coach@example.test',
                         '_profile': None, '_view_as': False}
         self.row = sources.row('progress:1', '2026-09-12T10:00:00Z', 'Reading', 'Reading', hours=1)
+        # Keep this SimpleTestCase a true unit suite as the production journal
+        # gains canonical/history persistence dependencies. Those integrations
+        # have dedicated tests; these cases exercise monthly-log orchestration.
+        dependencies = [
+            patch.object(logs.canonical, 'enabled', return_value=False),
+            patch.object(logs.history, 'later_rows', return_value={}),
+            patch.object(logs.history, 'summary', side_effect=lambda learner: logs.old.summary(learner)),
+            patch.object(logs.history, 'detail', side_effect=lambda learner, month, demo=False: logs.old.month_detail(learner, month)),
+            patch.object(logs, 'lock_state', return_value={
+                'locked': False, 'locked_at': None, 'unlocked_at': None, 'unlocked_by': None,
+            }),
+        ]
+        for dependency in dependencies:
+            dependency.start()
+            self.addCleanup(dependency.stop)
 
     def request(self, method='get', **data):
         request = getattr(RequestFactory(), method)('/', data=data)
@@ -89,13 +104,14 @@ class MonthlyLogsTests(SimpleTestCase):
         self.assertEqual(detail['training_plan_target_source'], 'signed_training_plan')
         start.assert_not_called()
 
-    def test_historical_summary_uses_signed_training_plan_targets(self):
+    def test_historical_summary_uses_history_service_targets(self):
         historical = {'months': [
             {'month': '2026-01', 'training_plan_target': 1},
             {'month': '2026-02', 'training_plan_target': 30},
         ]}
-        with patch.object(logs.old, 'summary', return_value=historical), \
-             patch.object(logs, 'signed_training_plan_targets', return_value={'2026-01': 3}):
+        historical['months'][0]['training_plan_target'] = 3
+        historical['months'][0]['training_plan_target_source'] = 'signed_training_plan'
+        with patch.object(logs.history, 'summary', return_value=historical):
             summary = logs.legacy_summary(self.learner)
 
         self.assertEqual(summary['months'][0]['training_plan_target'], 3)
