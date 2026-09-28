@@ -1293,6 +1293,7 @@ def learner_calendar(request, kind, pk):
         from coach_api.live_session_outcomes import annotate_live_session_outcomes
         annotate_live_session_outcomes(
             events, learner_profile_id=getattr(mirror, "id", None), learner_email=email,
+            recording_viewer=(kind, pk),
         )
     except DatabaseError as exc:
         logger.exception("learner_calendar: event lookup failed")

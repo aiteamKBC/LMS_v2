@@ -183,12 +183,58 @@ function MonthGroup({ now, month, rows, expanded, onToggle, onOpen, onReport, on
   </div>;
 }
 
+const minutesLabel = (seconds: number) => {
+  const minutes = Math.round(seconds / 60);
+  return minutes >= 60 ? `${Math.floor(minutes / 60)}h${minutes % 60 ? ` ${minutes % 60}m` : ''}` : `${minutes} min`;
+};
+
+/** How much of the lecture recording the learner has played (informational; it does not make the lecture up). */
+function watchedLabel(watched = 0, length = 0) {
+  if (watched < 60) return 'Not watched yet';
+  const seen = length > 0 ? Math.min(watched, length) : watched;
+  return length > 0 ? `Watched ${minutesLabel(seen)} of ${minutesLabel(length)}` : `Watched ${minutesLabel(seen)}`;
+}
+
+const PLAN_COPY: Record<string, { label: string; join: string; icon: string }> = {
+  'catch-up': { label: 'Catch-up session', join: 'Join catch-up', icon: 'ri-calendar-event-line' },
+  alternative: { label: 'Alternative session', join: 'Join alternative session', icon: 'ri-calendar-event-line' },
+  recorded: { label: 'Watch the recording', join: 'Watch the recording', icon: 'ri-play-circle-line' },
+};
+
+function RecoveryPlanLink({ recovery, recordingHref }: { recovery: NonNullable<AttendanceLecture['recovery']>; recordingHref?: string }) {
+  const copy = PLAN_COPY[recovery.method] || PLAN_COPY['catch-up'];
+  const date = recovery.date ? new Date(`${recovery.date}T00:00:00`).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '';
+  const time = recovery.startTime ? `${recovery.startTime}${recovery.endTime && recovery.method !== 'recorded' ? `–${recovery.endTime}` : ''}` : '';
+  const when = [date, time].filter(Boolean).join(' · ');
+  const details = <>
+    <AppIcon className={recovery.joinUrl ? 'ri-video-chat-line' : copy.icon} />
+    <span className={styles.alternativeText}>
+      <strong>{recovery.joinUrl ? copy.join : copy.label}</strong>
+      {recovery.method === 'recorded' && when && <span>{recovery.ended ? 'Planned for' : 'Planned'}</span>}
+      {when && <span>{when}</span>}
+      {recovery.group && <span>{recovery.group}</span>}
+      {recovery.method === 'recorded' && <span className={styles.watchProgress}>{watchedLabel(recovery.watchedSeconds, recovery.recordingSeconds)}</span>}
+    </span>
+  </>;
+  // Live now: straight into Teams. A recording opens the lecture's own component (its recording
+  // is shown there); otherwise open the plan in the calendar (details and Join).
+  const to = recovery.method === 'recorded' && recordingHref ? recordingHref
+    : `/learner/calendar?event=${encodeURIComponent(recovery.calendarKey || '')}`;
+  return recovery.joinUrl
+    ? <a className={styles.alternativeLink} href={recovery.joinUrl} target="_blank" rel="noopener noreferrer">{details}</a>
+    : <Link className={styles.alternativeLink} to={to}>{details}</Link>;
+}
+
 function LectureRow({ now, row, onOpen, onReport, onCatchup }: { now: number; row: AttendanceLecture; onOpen: (row: AttendanceLecture) => void; onReport: (row: AttendanceLecture) => void; onCatchup: (row: AttendanceLecture) => void }) {
   const titleId = useId();
   const live = isLectureLive(row, now);
   const joinUrl = lectureJoinUrl(row);
   const date = monthKey(row.date) === 'undated' ? null : new Date(`${row.date}T00:00:00`);
   const outcome = lectureOutcome(row);
+  // A booked plan the learner can still go to: open it in the calendar, or join it when live.
+  // A recording can be watched at any time, so its card stays after the planned time passes.
+  const planOpen = Boolean(row.recovery?.calendarKey && (!row.recovery.ended || row.recovery.method === 'recorded') && !outcome.madeUp
+    && row.catchupStatus !== 'missed' && (row.status === 'absent' || outcome.upcomingReport));
   return <article aria-labelledby={titleId} className={styles.lectureRow} data-status={row.status}>
     <div className={styles.lectureInfo}>
       <span className={styles.lectureIcon} aria-hidden="true"><AppIcon className={row.source === 'microsoft-teams' ? 'ri-vidicon-line' : 'ri-book-open-line'} /></span>
@@ -207,6 +253,12 @@ function LectureRow({ now, row, onOpen, onReport, onCatchup }: { now: number; ro
     </div>
     <div className={styles.lectureAttendanceAction} data-label="Attendance action">
       {outcome.madeUp ? <span className={styles.unmapped}>{outcome.alternative ? 'Made up via alternative' : 'Made up via catch-up'}</span>
+        : planOpen && row.recovery ? <div className={styles.planStack}>
+            <RecoveryPlanLink recovery={row.recovery} recordingHref={row.componentHref} />
+            {/* A booked catch-up can be moved; a recording plan does not make the lecture up. */}
+            {row.status === 'absent' && row.recovery.method !== 'alternative' && <button type="button" className={styles.planSecondary} onClick={() => onCatchup(row)}>
+              {row.recovery.method === 'catch-up' ? 'Change catch-up' : 'Book catch-up'}</button>}
+          </div>
         : row.status === 'absent' && row.catchupStatus !== 'completed' ? <button type="button" className={styles.catchupButton} onClick={() => onCatchup(row)}><AppIcon className="ri-calendar-event-line" />{outcome.catchupBooked ? 'Change catch-up' : 'Book Catchup Session'}</button>
         : row.canReportAbsence ? <button type="button" className={styles.reportButton} onClick={() => onReport(row)}><AppIcon className="ri-calendar-close-line" />Report Absence</button>
         : outcome.upcomingReport && row.recovery?.method === 'catch-up' && !row.recovery.date

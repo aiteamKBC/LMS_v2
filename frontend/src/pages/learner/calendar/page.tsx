@@ -219,6 +219,7 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
     durationMinutes: ev.durationMinutes || 60,
     bookingStatus: ev.status,
     meetingOutcome: ev.meetingOutcome ?? null,
+    watchedRecording: Boolean(ev.watchedRecording),
     bookingSessionType: BOOKABLE_COACH_SESSION_TYPES.has(ev.source as BookableSessionType)
       ? ev.source as CalendarEvent['bookingSessionType']
       : undefined,
@@ -1512,6 +1513,8 @@ function LearnerCalendarBody() {
               <span className={`h-1.5 w-1.5 rounded-full ${LEARNER_STATUS_META[learnerEventStatus(showEventDetails)].dot}`}></span>
               {LEARNER_STATUS_META[learnerEventStatus(showEventDetails)].label}
             </span>
+            {showEventDetails.watchedRecording && <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-emerald-800 ring-1 ring-inset ring-emerald-200">
+              <AppIcon className="ri-play-circle-line" />Watched the full recording</span>}
           </>}
           actions={<>
 
