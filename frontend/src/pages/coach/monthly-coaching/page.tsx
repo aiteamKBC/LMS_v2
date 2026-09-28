@@ -307,7 +307,7 @@ export default function CoachMonthlyCoaching() {
       navigate(reviewInstancePath(event.reviewInstanceId), { state: reviewInstanceRouteState(event, listUrl()) });
       return;
     }
-    if (event.hasReviewForm && event.aptemReviewId) {
+    if (event.aptemReviewId) {
       navigate(reviewInstancePath(eventIdentity(event)), { state: reviewInstanceRouteState(event, listUrl()) });
       return;
     }

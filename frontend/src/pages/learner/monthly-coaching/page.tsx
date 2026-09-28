@@ -52,9 +52,10 @@ function monthlyCoachingTitle(session?: LearnerCalendarEvent | null): string {
   if (session?.importedReview) {
     return session.importedReview.name || session.title || 'Monthly Coaching Meeting';
   }
-  if (session?.reviewTemplateId) return `${session.title} #${session.occurrenceNumber || session.sequence}`;
+  const occurrence = session?.occurrenceNumber ?? session?.sequence;
+  if (session?.reviewTemplateId) return `${session.title}${occurrence != null ? ` #${occurrence}` : ' — Manual Review'}`;
   const month = monthLabel(dateOf(session));
-  return `Monthly Coaching Meeting${month ? ` — ${month}` : ''}${session?.sequence ? ` #${session.sequence}` : ''}`;
+  return `Monthly Coaching Meeting${month ? ` — ${month}` : ''}${occurrence != null ? ` #${occurrence}` : ''}`;
 }
 
 function shouldShowLearnerMeetingRecording(session?: LearnerCalendarEvent | null): boolean {
@@ -324,6 +325,7 @@ export default function MonthlyCoachingPage() {
     selected?.reviewTemplateId || selected?.reviewInstanceId ? (selected.eventKey || selected.id) : '',
   );
   const meetingMonth = dateOf(selected)?.slice(0, 7) || '';
+  const mcmMonth = selected && (selected.source === 'mcr' || selected.reviewTypeCode === 'mcm') ? meetingMonth : undefined;
   const completedMcm = Boolean(
     selected && meetingMonth && (selected.source === 'mcr' || selected.reviewTypeCode === 'mcm') &&
     ['completed', 'awaiting-signature'].includes(reviewInstance.definition?.instance?.status || selected.status),
@@ -394,7 +396,9 @@ export default function MonthlyCoachingPage() {
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}<button type="button" onClick={refresh} className="ml-3 font-bold underline">Try again</button></div>}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <button type="button" onClick={() => navigate(backHref)} className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-600 hover:text-primary-800"><AppIcon className="ri-arrow-left-line" />Back to coaching meetings</button>
-          <CurrentMonthLogLink learner={myLearner} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-background-300 bg-white px-4 py-3 text-sm font-semibold text-primary-700 hover:bg-primary-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-600" />
+          <CurrentMonthLogLink learner={myLearner} month={mcmMonth}
+            workflow={mcmMonth ? 'mcm' : undefined}
+            className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-background-300 bg-white px-4 py-3 text-sm font-semibold text-primary-700 hover:bg-primary-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-600" />
           {/* The learner prepares and presents their MCM slides; a read-only
               workspace viewer can open them but not create or edit them. */}
           {selected && !selected.importedReview && selectedDate && (

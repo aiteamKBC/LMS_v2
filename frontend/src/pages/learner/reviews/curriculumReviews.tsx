@@ -42,8 +42,9 @@ function formatTime(value?: string | null): string {
 export function curriculumReviewTitle(review?: LearnerCalendarEvent | null): string {
   if (!review) return 'Review';
   const name = review.title || review.reviewTypeName || 'Review';
-  return review.reviewTemplateId && (review.occurrenceNumber || review.sequence)
-    ? `${name} #${review.occurrenceNumber || review.sequence}` : name;
+  const occurrence = review.occurrenceNumber ?? review.sequence;
+  if (!review.reviewTemplateId) return name;
+  return `${name}${occurrence != null ? ` #${occurrence}` : ' — Manual Review'}`;
 }
 
 export function CurriculumReviewsListPage() {
