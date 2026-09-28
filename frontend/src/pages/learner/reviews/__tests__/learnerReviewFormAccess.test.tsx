@@ -231,6 +231,21 @@ describe('Learner Review View opens the generic Curriculum form', () => {
     expect(vi.mocked(fetch).mock.calls.every(call => !call[1]?.method || call[1].method === 'GET')).toBe(true);
   });
 
+  it('opens the MCM target month when the meeting is booked in a different month', async () => {
+    events = [event({
+      id: SCHEDULED_MCM,
+      targetDate: '2026-12-16',
+      scheduledDate: '2026-09-28',
+      date: '2026-09-28',
+    })];
+
+    mountMcm(SCHEDULED_MCM);
+    await screen.findByTestId('learner-review-instance-form');
+    fireEvent.click(screen.getByRole('link', { name: "This month's logs" }));
+
+    expect(screen.getByTestId('returned-location')).toHaveTextContent('/learner/monthly-logs/apprenticeship/12/2026-12?workflow=mcm&source=mcm');
+  });
+
   it('shows the saved learner image and points to the pending coach without asking the learner to sign again', () => {
     reviewDefinition.instance!.status = 'awaiting-signature';
     reviewDefinition.signatures.participant = { required: true, signed: true, signedName: 'Aya Khater', signature: 'data:image/png;base64,c2F2ZWQ=', signedAt: '2026-09-14T15:38:56Z' };
