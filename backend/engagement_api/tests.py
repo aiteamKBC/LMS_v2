@@ -21,6 +21,17 @@ from . import feedback, feedback_delivery, hooks, permissions, services, views
 
 
 class FeedbackValidationTests(SimpleTestCase):
+    def test_feedback_section_icon_is_validated_and_preserved(self):
+        sections = feedback._validated_sections([{
+            'title': 'Your experience', 'icon': 'ri-star-line', 'questions': [],
+        }])
+        fallback = feedback._validated_sections([{
+            'title': 'Comments', 'icon': 'untrusted-icon-class', 'questions': [],
+        }])
+
+        self.assertEqual(sections[0]['icon'], 'ri-star-line')
+        self.assertEqual(fallback[0]['icon'], 'ri-file-list-3-line')
+
     def test_post_lecture_delivery_requires_finalized_attendance(self):
         occurrence = feedback_delivery.LectureOccurrence(key='OCC-1', module_catalogue_id='MOD-1')
         with self.assertRaisesMessage(ValueError, 'finalized'):
@@ -304,7 +315,9 @@ class FeedbackValidationTests(SimpleTestCase):
         form = SimpleNamespace(id=19, form_type='post_lecture', template_key='template-1')
         delivery_form = SimpleNamespace(version=1)
         delivery = SimpleNamespace(
-            id=3, session_title='Martech - Thur - Session 1', module_name='Martech - Thur',
+            id=3, occurrence_key='martech-2026-09-24',
+            session_title='Martech - Thur - Session 1', module_name='Martech - Thur',
+            starts_at=datetime(2026, 9, 24, 9, 30, tzinfo=timezone.utc),
             form=delivery_form,
         )
         recipient = SimpleNamespace(
@@ -332,9 +345,47 @@ class FeedbackValidationTests(SimpleTestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['learnerName'], 'Synthetic Learner')
         self.assertEqual(rows[0]['email'], 'learner@example.test')
+        self.assertEqual(rows[0]['deliveryId'], 3)
+        self.assertEqual(rows[0]['occurrenceKey'], 'martech-2026-09-24')
         self.assertEqual(rows[0]['sessionTitle'], 'Martech - Thur - Session 1')
+        self.assertEqual(rows[0]['sessionStartsAt'], '2026-09-24T09:30:00+00:00')
         self.assertEqual(rows[0]['source'], 'attendance')
         self.assertEqual(rows[0]['responseStatus'], 'completed')
+
+    def test_recipient_lecture_summaries_group_counts_and_sort_newest_first(self):
+        rows = [
+            {'deliveryId': 3, 'occurrenceKey': 'older', 'sessionTitle': 'Session 1', 'moduleName': 'Martech', 'sessionStartsAt': '2026-09-17T09:30:00+00:00', 'responseStatus': 'completed'},
+            {'deliveryId': 3, 'occurrenceKey': 'older', 'sessionTitle': 'Session 1', 'moduleName': 'Martech', 'sessionStartsAt': '2026-09-17T09:30:00+00:00', 'responseStatus': 'not_started'},
+            {'deliveryId': 4, 'occurrenceKey': 'newer', 'sessionTitle': 'Session 2', 'moduleName': 'Martech', 'sessionStartsAt': '2026-09-24T09:30:00+00:00', 'responseStatus': 'completed'},
+            {'deliveryId': None, 'occurrenceKey': '', 'sessionTitle': '', 'moduleName': '', 'sessionStartsAt': None, 'responseStatus': 'not_started'},
+        ]
+
+        summaries = feedback._recipient_lecture_summaries(rows)
+
+        self.assertEqual([item['deliveryId'] for item in summaries], [4, 3])
+        self.assertEqual(summaries[0]['assignedCount'], 1)
+        self.assertEqual(summaries[0]['responseCount'], 1)
+        self.assertEqual(summaries[1]['assignedCount'], 2)
+        self.assertEqual(summaries[1]['responseCount'], 1)
+
+    def test_staff_can_filter_form_recipients_by_lecture(self):
+        form = SimpleNamespace(id=19)
+        rows = [
+            {'key': 'delivery-3-1', 'deliveryId': 3, 'occurrenceKey': 'older', 'sessionTitle': 'Session 1', 'moduleName': 'Martech', 'sessionStartsAt': '2026-09-17T09:30:00+00:00', 'learnerName': 'First Learner', 'email': 'first@example.test', 'programme': 'Marketing', 'responseStatus': 'completed'},
+            {'key': 'delivery-4-2', 'deliveryId': 4, 'occurrenceKey': 'newer', 'sessionTitle': 'Session 2', 'moduleName': 'Martech', 'sessionStartsAt': '2026-09-24T09:30:00+00:00', 'learnerName': 'Second Learner', 'email': 'second@example.test', 'programme': 'Marketing', 'responseStatus': 'not_started'},
+        ]
+        with (
+            _patched(_account(role='staff')),
+            mock.patch.object(feedback.FeedbackForm.objects, 'get', return_value=form),
+            mock.patch.object(feedback, '_form_recipient_rows', return_value=rows),
+        ):
+            response = feedback.form_recipients(RequestFactory().get('/?deliveryId=4'), pk=19)
+
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.content)
+        self.assertEqual([item['key'] for item in payload['recipients']], ['delivery-4-2'])
+        self.assertEqual(payload['total'], 1)
+        self.assertEqual([item['deliveryId'] for item in payload['lectures']], [4, 3])
 
     def test_learner_cannot_view_form_recipient_names(self):
         with _patched(_account(role='learner')):

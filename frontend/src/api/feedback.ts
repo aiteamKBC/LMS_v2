@@ -1,5 +1,5 @@
 export type FeedbackFormStatus = 'draft' | 'published' | 'closed';
-export type FeedbackFormType = 'general' | 'post_lecture';
+export type FeedbackFormType = 'general' | 'post_lecture' | 'post_event';
 export type FeedbackDeliveryScope = 'manual' | 'all_modules' | 'module';
 export type FeedbackQuestionType = 'short_text' | 'long_text' | 'yes_no' | 'single_choice' | 'multiple_choice' | 'dropdown' | 'rating' | 'likert' | 'number' | 'date' | 'name' | 'email' | 'photo_upload';
 export interface FeedbackNameAnswer { firstName: string; lastName: string }
@@ -20,6 +20,7 @@ export interface FeedbackQuestion {
 export interface FeedbackSection {
   id?: number;
   title: string;
+  icon?: string;
   description: string;
   sortOrder?: number;
   questions: FeedbackQuestion[];
@@ -128,9 +129,14 @@ export interface FeedbackAnalyticsData {
 export interface FeedbackLearnerOption { id: string; name: string; email: string; programme: string; cohort: string }
 export interface FeedbackRecipient {
   key: string; learnerId: string; learnerName: string; email: string; programme: string;
-  source: 'manual' | 'attendance'; sessionTitle: string; moduleName: string;
+  source: 'manual' | 'attendance'; deliveryId: number | null; occurrenceKey: string;
+  sessionTitle: string; sessionStartsAt: string | null; moduleName: string;
   assignedAt: string | null; dueDate: string | null;
   responseStatus: LearnerFeedbackStatus; formVersion: number;
+}
+export interface FeedbackLectureOption {
+  deliveryId: number; occurrenceKey: string; sessionTitle: string; moduleName: string;
+  startsAt: string | null; assignedCount: number; responseCount: number;
 }
 
 function learnerPreviewQuery(learnerId?: string | number | null): string {
@@ -191,9 +197,10 @@ export const feedbackApi = {
   duplicateForm: (id: number) => request<{ form: FeedbackForm }>(`/forms/${id}/duplicate/`, { method: 'POST' }),
   learners: (search = '') => request<{ learners: FeedbackLearnerOption[] }>(`/learners/?search=${encodeURIComponent(search)}`),
   assign: (id: number, targetType: 'all_learners' | 'learner', targetIds: string[], dueDate?: string | null) => request(`/forms/${id}/assignments/`, { method: 'POST', body: JSON.stringify({ targetType, targetIds, dueDate }) }),
-  recipients: (id: number, search = '', page = 1, pageSize = 50) => {
+  recipients: (id: number, search = '', page = 1, pageSize = 50, deliveryId?: number | null) => {
     const params = new URLSearchParams({ search, page: String(page), pageSize: String(pageSize) });
-    return request<{ recipients: FeedbackRecipient[]; total: number; page: number; pageSize: number }>(`/forms/${id}/recipients/?${params}`);
+    if (deliveryId != null) params.set('deliveryId', String(deliveryId));
+    return request<{ recipients: FeedbackRecipient[]; lectures: FeedbackLectureOption[]; total: number; page: number; pageSize: number }>(`/forms/${id}/recipients/?${params}`);
   },
   responses: (filters?: { formId?: number; status?: string; learner?: string }) => {
     const params = new URLSearchParams();

@@ -5,7 +5,7 @@ CREATE SCHEMA IF NOT EXISTS "Feedback";
 CREATE TABLE IF NOT EXISTS "Feedback".feedback_forms (
     id bigserial PRIMARY KEY,
     title varchar(255) NOT NULL,
-    form_type varchar(40) NOT NULL DEFAULT 'general' CHECK (form_type IN ('general','post_lecture')),
+    form_type varchar(40) NOT NULL DEFAULT 'general' CHECK (form_type IN ('general','post_lecture','post_event')),
     delivery_scope varchar(20) NOT NULL DEFAULT 'manual' CHECK (delivery_scope IN ('manual','all_modules','module')),
     template_key uuid NOT NULL DEFAULT gen_random_uuid(),
     version integer NOT NULL DEFAULT 1 CHECK (version > 0),
@@ -61,25 +61,34 @@ END
 WHERE delivery_scope = 'manual' AND form_type = 'post_lecture';
 
 DO $$
+DECLARE constraint_row record;
 BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM pg_constraint
-    WHERE conname = 'feedback_form_type_check'
-      AND conrelid = '"Feedback".feedback_forms'::regclass
-  ) THEN
-    ALTER TABLE "Feedback".feedback_forms
-      ADD CONSTRAINT feedback_form_type_check
-      CHECK (form_type IN ('general','post_lecture'));
-  END IF;
+  FOR constraint_row IN
+    SELECT c.conname
+      FROM pg_constraint c
+      JOIN pg_class t ON t.oid = c.conrelid
+      JOIN pg_namespace n ON n.oid = t.relnamespace
+     WHERE n.nspname = 'Feedback' AND t.relname = 'feedback_forms'
+       AND c.contype = 'c' AND pg_get_constraintdef(c.oid) LIKE '%form_type%'
+  LOOP
+    EXECUTE format('ALTER TABLE "Feedback".feedback_forms DROP CONSTRAINT %I', constraint_row.conname);
+  END LOOP;
+  ALTER TABLE "Feedback".feedback_forms
+    ADD CONSTRAINT feedback_form_type_check
+    CHECK (form_type IN ('general','post_lecture','post_event'));
 END $$;
 
 CREATE TABLE IF NOT EXISTS "Feedback".feedback_form_sections (
     id bigserial PRIMARY KEY,
     form_id bigint NOT NULL REFERENCES "Feedback".feedback_forms(id) ON DELETE CASCADE,
     title varchar(255) NOT NULL,
+    icon varchar(80) NOT NULL DEFAULT 'ri-file-list-3-line',
     description text NOT NULL DEFAULT '',
     sort_order integer NOT NULL DEFAULT 0
 );
+
+ALTER TABLE "Feedback".feedback_form_sections
+  ADD COLUMN IF NOT EXISTS icon varchar(80) NOT NULL DEFAULT 'ri-file-list-3-line';
 
 CREATE TABLE IF NOT EXISTS "Feedback".feedback_questions (
     id bigserial PRIMARY KEY,
@@ -156,11 +165,50 @@ CREATE TABLE IF NOT EXISTS "Feedback".feedback_delivery_recipients (
     UNIQUE (delivery_id, learner_id)
 );
 
+-- Event feedback is separate from lecture deliveries: a roster is imported
+-- once per Engagement event and its personal token grants access to every open
+-- post-event form attached to that event.
+CREATE TABLE IF NOT EXISTS "Feedback".feedback_event_campaigns (
+    id bigserial PRIMARY KEY,
+    event_id bigint NOT NULL REFERENCES "Engagement".events(id) ON DELETE RESTRICT,
+    form_id bigint NOT NULL REFERENCES "Feedback".feedback_forms(id) ON DELETE RESTRICT,
+    status varchar(20) NOT NULL DEFAULT 'open' CHECK (status IN ('open','closed','cancelled')),
+    created_by varchar(255) NOT NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (event_id, form_id)
+);
+
+CREATE TABLE IF NOT EXISTS "Feedback".feedback_event_recipients (
+    id bigserial PRIMARY KEY,
+    event_id bigint NOT NULL REFERENCES "Engagement".events(id) ON DELETE RESTRICT,
+    attendee_name varchar(255) NOT NULL,
+    attendee_email varchar(320) NOT NULL,
+    learner_id varchar(100) NOT NULL DEFAULT '',
+    attendance_source varchar(80) NOT NULL DEFAULT 'spreadsheet',
+    attendance_reference varchar(255) NOT NULL DEFAULT '',
+    token_hash varchar(64) NULL,
+    token_expires_at timestamptz NULL,
+    invite_status varchar(20) NOT NULL DEFAULT 'pending' CHECK (invite_status IN ('pending','sent','failed')),
+    invitation_sent_at timestamptz NULL,
+    invitation_error text NOT NULL DEFAULT '',
+    revoked_at timestamptz NULL,
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS feedback_event_recipient_email_unique
+  ON "Feedback".feedback_event_recipients (event_id, lower(attendee_email));
+ALTER TABLE "Feedback".feedback_event_recipients
+  ADD COLUMN IF NOT EXISTS revoked_at timestamptz NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS feedback_event_recipient_token_unique
+  ON "Feedback".feedback_event_recipients (token_hash) WHERE token_hash IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS "Feedback".feedback_responses (
     id bigserial PRIMARY KEY,
     form_id bigint NOT NULL REFERENCES "Feedback".feedback_forms(id) ON DELETE RESTRICT,
     delivery_id bigint NULL,
-    learner_id varchar(100) NOT NULL,
+    event_recipient_id bigint NULL REFERENCES "Feedback".feedback_event_recipients(id) ON DELETE RESTRICT,
+    learner_id varchar(100) NOT NULL DEFAULT '',
     learner_name varchar(255) NOT NULL,
     programme varchar(255) NOT NULL DEFAULT '',
     status varchar(20) NOT NULL DEFAULT 'in_progress' CHECK (status IN ('in_progress','completed')),
@@ -170,7 +218,9 @@ CREATE TABLE IF NOT EXISTS "Feedback".feedback_responses (
 );
 
 ALTER TABLE "Feedback".feedback_responses
-  ADD COLUMN IF NOT EXISTS delivery_id bigint NULL;
+  ADD COLUMN IF NOT EXISTS delivery_id bigint NULL,
+  ADD COLUMN IF NOT EXISTS event_recipient_id bigint NULL,
+  ALTER COLUMN learner_id SET DEFAULT '';
 
 DO $$
 DECLARE constraint_row record;
@@ -196,6 +246,15 @@ BEGIN
     ALTER TABLE "Feedback".feedback_responses
       ADD CONSTRAINT feedback_response_delivery_fk
       FOREIGN KEY (delivery_id) REFERENCES "Feedback".feedback_deliveries(id) ON DELETE RESTRICT;
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'feedback_response_event_recipient_fk'
+      AND conrelid = '"Feedback".feedback_responses'::regclass
+  ) THEN
+    ALTER TABLE "Feedback".feedback_responses
+      ADD CONSTRAINT feedback_response_event_recipient_fk
+      FOREIGN KEY (event_recipient_id) REFERENCES "Feedback".feedback_event_recipients(id) ON DELETE RESTRICT;
   END IF;
 END $$;
 
@@ -229,12 +288,16 @@ BEGIN
   END IF;
 END $$;
 
-CREATE UNIQUE INDEX IF NOT EXISTS feedback_response_unique_general
+DROP INDEX IF EXISTS "Feedback".feedback_response_unique_general;
+CREATE UNIQUE INDEX feedback_response_unique_general
   ON "Feedback".feedback_responses (form_id, learner_id)
-  WHERE delivery_id IS NULL;
+  WHERE delivery_id IS NULL AND event_recipient_id IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS feedback_response_unique_delivery
   ON "Feedback".feedback_responses (delivery_id, learner_id)
   WHERE delivery_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS feedback_response_unique_event_recipient
+  ON "Feedback".feedback_responses (event_recipient_id, form_id)
+  WHERE event_recipient_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS "Feedback".feedback_answers (
     id bigserial PRIMARY KEY,

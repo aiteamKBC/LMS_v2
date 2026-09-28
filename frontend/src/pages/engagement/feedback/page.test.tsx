@@ -19,7 +19,7 @@ vi.mock('@/api/feedback', async importOriginal => {
     ...actual,
     feedbackApi: {
       ...actual.feedbackApi,
-      listForms: vi.fn(), responses: vi.fn(), analytics: vi.fn(), versions: vi.fn(),
+      listForms: vi.fn(), responses: vi.fn(), analytics: vi.fn(), versions: vi.fn(), recipients: vi.fn(),
     },
   };
 });
@@ -43,6 +43,13 @@ describe('feedback form version history', () => {
       { id: 20, title: 'Lecture feedback', version: 2, isCurrent: true, previousVersionId: 19, status: 'published', createdAt: '2026-09-25T10:00:00Z', updatedAt: '2026-09-25T10:00:00Z', publishedAt: '2026-09-25T10:00:00Z', deliveryCount: 0, assignedCount: 0, startedCount: 0, responseCount: 0 },
       { id: 19, title: 'Lecture feedback', version: 1, isCurrent: false, previousVersionId: null, status: 'published', createdAt: '2026-09-24T10:00:00Z', updatedAt: '2026-09-24T10:00:00Z', publishedAt: '2026-09-24T10:00:00Z', deliveryCount: 1, assignedCount: 22, startedCount: 3, responseCount: 3 },
     ] });
+    vi.mocked(feedbackApi.recipients).mockResolvedValue({
+      recipients: [], total: 0, page: 1, pageSize: 50,
+      lectures: [
+        { deliveryId: 32, occurrenceKey: 'session-2', sessionTitle: 'Martech - Thur - Session 2', moduleName: 'Martech - Thur', startsAt: '2026-09-24T09:30:00Z', assignedCount: 10, responseCount: 3 },
+        { deliveryId: 31, occurrenceKey: 'session-1', sessionTitle: 'Martech - Thur - Session 1', moduleName: 'Martech - Thur', startsAt: '2026-09-17T09:30:00Z', assignedCount: 12, responseCount: 1 },
+      ],
+    });
   });
 
   it('shows the current version and opens historical versions read-only', async () => {
@@ -57,5 +64,20 @@ describe('feedback form version history', () => {
     expect(screen.getByText('Version history — Lecture feedback')).toBeInTheDocument();
     expect(screen.getByText('v1')).toBeInTheDocument();
     expect(screen.getByText('Historical')).toBeInTheDocument();
+  });
+
+  it('opens assigned learners on the latest lecture and can select another lecture', async () => {
+    const user = userEvent.setup();
+    render(<MemoryRouter><FeedbackPage /></MemoryRouter>);
+    await user.click(await screen.findByRole('button', { name: 'Forms' }));
+    await user.click(screen.getByRole('button', { name: '22' }));
+
+    const lectureFilter = await screen.findByRole('combobox', { name: 'Filter by lecture' });
+    await waitFor(() => expect(feedbackApi.recipients).toHaveBeenCalledWith(20, '', 1, 50, 32));
+    expect(lectureFilter).toHaveValue('32');
+    expect(screen.getByRole('option', { name: /Session 1.*12 assigned, 1 responses/ })).toBeInTheDocument();
+
+    await user.selectOptions(lectureFilter, '31');
+    await waitFor(() => expect(feedbackApi.recipients).toHaveBeenCalledWith(20, '', 1, 50, 31));
   });
 });

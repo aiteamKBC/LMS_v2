@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { AuthError, apiAuthHealth, apiMicrosoftStart } from '@/api/auth';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { PublicEventFeedback } from '@/features/feedback/PublicEventFeedback';
 // Shared with RequireAuth, so the page you are sent to after signing in and
 // the page you are sent back to when refused are decided by one definition.
 import { postLoginRouteFor } from '@/lib/routeAccess';
@@ -23,6 +24,9 @@ export default function LoginPage() {
   // Undefined until the health check answers, so the button is not flashed in
   // and then taken away on a deployment that has no provider configured.
   const [ssoAvailable, setSsoAvailable] = useState<boolean | undefined>(undefined);
+  const feedbackToken = new URLSearchParams(location.search).get('feedback')
+    || new URLSearchParams(location.hash.replace(/^#/, '')).get('feedback')
+    || '';
 
   // A refused Microsoft sign-in comes back with ?sso_error=... . Lift it into
   // the form's error box, then strip it so a refresh cannot resurrect it.
@@ -54,9 +58,9 @@ export default function LoginPage() {
   // sending it to a protected route would have it bounced straight back here,
   // and round again.
   useEffect(() => {
-    if (!isInitialized || !auth.account) return;
+    if (feedbackToken || !isInitialized || !auth.account) return;
     navigate(postLoginRouteFor(auth.account), { replace: true });
-  }, [isInitialized, auth.account, navigate]);
+  }, [feedbackToken, isInitialized, auth.account, navigate]);
 
   const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
@@ -106,6 +110,8 @@ export default function LoginPage() {
       setSsoLoading(false);
     }
   };
+
+  if (feedbackToken) return <PublicEventFeedback token={feedbackToken} />;
 
   return (
     <main className={styles.page}>

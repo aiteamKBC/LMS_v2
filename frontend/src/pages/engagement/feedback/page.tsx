@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Swal from 'sweetalert2';
-import { feedbackApi, type FeedbackAnalyticsData, type FeedbackForm, type FeedbackFormVersion, type FeedbackLearnerOption, type FeedbackRecipient, type FeedbackResponse } from '@/api/feedback';
+import { feedbackApi, type FeedbackAnalyticsData, type FeedbackForm, type FeedbackFormVersion, type FeedbackLearnerOption, type FeedbackLectureOption, type FeedbackRecipient, type FeedbackResponse } from '@/api/feedback';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { FormRenderer } from '@/features/feedback/FormRenderer';
 import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
@@ -125,30 +125,41 @@ function VersionsDialog({ form, onClose, onPreview }: { form: FeedbackForm; onCl
 
 function RecipientsDialog({ form, onClose }: { form: FeedbackForm; onClose: () => void }) {
   const [recipients, setRecipients] = useState<FeedbackRecipient[]>([]);
+  const [lectures, setLectures] = useState<FeedbackLectureOption[]>([]);
+  const [deliveryId, setDeliveryId] = useState('');
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const lectureFilterInitialised = useRef(false);
   const pageSize = 50;
   useEffect(() => {
     let active = true;
     setLoading(true); setError('');
     const timer = setTimeout(() => {
-      feedbackApi.recipients(form.id, search, page, pageSize).then(data => {
+      feedbackApi.recipients(form.id, search, page, pageSize, deliveryId ? Number(deliveryId) : undefined).then(data => {
         if (!active) return;
-        setRecipients(data.recipients); setTotal(data.total);
+        setRecipients(data.recipients); setLectures(data.lectures); setTotal(data.total);
+        if (!lectureFilterInitialised.current) {
+          lectureFilterInitialised.current = true;
+          if (data.lectures.length) {
+            setDeliveryId(String(data.lectures[0].deliveryId));
+            setPage(1);
+          }
+        }
       }).catch(reason => {
         if (active) setError(reason instanceof Error ? reason.message : 'Could not load assigned learners.');
       }).finally(() => { if (active) setLoading(false); });
     }, search ? 250 : 0);
     return () => { active = false; clearTimeout(timer); };
-  }, [form.id, page, search]);
+  }, [deliveryId, form.id, page, search]);
   const pages = Math.max(Math.ceil(total / pageSize), 1);
   return <Modal title={`Assigned learners — ${form.title}`} onClose={onClose}>
-    <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-foreground-500">{total} assignment{total === 1 ? '' : 's'}. Attendance assignments include the lecture that triggered the form.</p><input aria-label="Search assigned learners" value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Search name, email, programme or lecture…" className="min-w-64 rounded-lg border px-3 py-2 text-xs" /></div>
+    {lectures.length > 0 && <div className="mb-3 rounded-xl border border-primary-100 bg-primary-50/40 p-3"><label htmlFor="feedback-lecture-filter" className="mb-1.5 block text-xs font-semibold text-foreground-700">Lecture</label><select id="feedback-lecture-filter" aria-label="Filter by lecture" value={deliveryId} onChange={event => { setDeliveryId(event.target.value); setPage(1); }} className="w-full rounded-lg border border-foreground-200 bg-white px-3 py-2.5 text-xs text-foreground-800"><option value="">All lectures ({lectures.reduce((count, lecture) => count + lecture.assignedCount, 0)} assignments)</option>{lectures.map(lecture => <option key={lecture.deliveryId} value={lecture.deliveryId}>{lectureOptionLabel(lecture)}</option>)}</select></div>}
+    <div className="mb-3 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-foreground-500">{total} assignment{total === 1 ? '' : 's'}{deliveryId ? ' for this lecture' : ''}. Attendance assignments include the lecture that triggered the form.</p><input aria-label="Search assigned learners" value={search} onChange={event => { setSearch(event.target.value); setPage(1); }} placeholder="Search name, email, programme or lecture…" className="min-w-64 rounded-lg border px-3 py-2 text-xs" /></div>
     {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
-    {loading ? <p className="py-10 text-center text-sm text-foreground-400">Loading assigned learners…</p> : <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[760px] text-left text-xs"><thead className="bg-background-100 text-foreground-500"><tr>{['Learner', 'Programme', 'Assigned From', 'Lecture', 'Assigned', 'Response'].map(label => <th key={label} className="px-3 py-2.5 font-semibold">{label}</th>)}</tr></thead><tbody className="divide-y">{recipients.map(recipient => <tr key={recipient.key}><td className="px-3 py-3"><span className="block font-semibold text-foreground-900">{recipient.learnerName}</span><span className="text-[10px] text-foreground-400">{recipient.email || `Learner ${recipient.learnerId}`}</span></td><td className="px-3 py-3">{recipient.programme || '—'}</td><td className="px-3 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${recipient.source === 'attendance' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>{recipient.source === 'attendance' ? 'Attendance' : 'Manual'}</span></td><td className="px-3 py-3"><span className="block">{recipient.sessionTitle || '—'}</span>{recipient.moduleName && <span className="text-[10px] text-foreground-400">{recipient.moduleName} · v{recipient.formVersion}</span>}</td><td className="px-3 py-3 text-foreground-500">{formatDate(recipient.assignedAt)}</td><td className="px-3 py-3"><Status status={recipient.responseStatus} /></td></tr>)}{!recipients.length && !error && <tr><td colSpan={6} className="p-10 text-center text-foreground-400">No assigned learners found.</td></tr>}</tbody></table></div>}
+    {loading ? <p className="py-10 text-center text-sm text-foreground-400">Loading assigned learners…</p> : <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[760px] text-left text-xs"><thead className="bg-background-100 text-foreground-500"><tr>{['Learner', 'Programme', 'Assigned From', 'Lecture', 'Assigned', 'Response'].map(label => <th key={label} className="px-3 py-2.5 font-semibold">{label}</th>)}</tr></thead><tbody className="divide-y">{recipients.map(recipient => <tr key={recipient.key}><td className="px-3 py-3"><span className="block font-semibold text-foreground-900">{recipient.learnerName}</span><span className="text-[10px] text-foreground-400">{recipient.email || `Learner ${recipient.learnerId}`}</span></td><td className="px-3 py-3">{recipient.programme || '—'}</td><td className="px-3 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${recipient.source === 'attendance' ? 'bg-blue-100 text-blue-700' : 'bg-purple-100 text-purple-700'}`}>{recipient.source === 'attendance' ? 'Attendance' : 'Manual'}</span></td><td className="px-3 py-3"><span className="block">{recipient.sessionTitle || '—'}</span>{recipient.moduleName && <span className="text-[10px] text-foreground-400">{recipient.moduleName} · v{recipient.formVersion}</span>}{recipient.sessionStartsAt && <span className="block text-[10px] text-foreground-400">{formatDateTime(recipient.sessionStartsAt)}</span>}</td><td className="px-3 py-3 text-foreground-500">{formatDate(recipient.assignedAt)}</td><td className="px-3 py-3"><Status status={recipient.responseStatus} /></td></tr>)}{!recipients.length && !error && <tr><td colSpan={6} className="p-10 text-center text-foreground-400">No assigned learners found.</td></tr>}</tbody></table></div>}
     {total > pageSize && <div className="mt-4 flex items-center justify-between"><button type="button" disabled={page === 1} onClick={() => setPage(value => value - 1)} className={`${button} border disabled:opacity-40`}>Previous</button><span className="text-xs text-foreground-500">Page {page} of {pages}</span><button type="button" disabled={page >= pages} onClick={() => setPage(value => value + 1)} className={`${button} border disabled:opacity-40`}>Next</button></div>}
   </Modal>;
 }
@@ -157,3 +168,9 @@ function ResponseDialog({ response, onClose }: { response: FeedbackResponse; onC
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) { return <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 p-4" role="dialog" aria-modal="true"><div className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl"><div className="mb-4 flex items-center justify-between"><h2 className="font-heading text-lg font-bold">{title}</h2><button onClick={onClose} aria-label="Close" className="text-xl text-foreground-400">×</button></div>{children}</div></div>; }
 function Status({ status }: { status: string }) { const styles = status === 'published' || status === 'completed' ? 'bg-emerald-100 text-emerald-700' : status === 'draft' || status === 'in_progress' ? 'bg-amber-100 text-amber-700' : 'bg-background-200 text-foreground-600'; return <span className={`rounded-full px-2 py-1 text-[10px] font-semibold ${styles}`}>{status.replace('_', ' ').replace(/\b\w/g, x => x.toUpperCase())}</span>; }
 function formatDate(value: string | null) { return value ? new Date(value).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'; }
+function formatDateTime(value: string) { return new Date(value).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+function lectureOptionLabel(lecture: FeedbackLectureOption) {
+  const name = [lecture.moduleName, lecture.sessionTitle].filter(Boolean).join(' — ') || `Lecture ${lecture.deliveryId}`;
+  const date = lecture.startsAt ? ` — ${formatDateTime(lecture.startsAt)}` : '';
+  return `${name}${date} (${lecture.assignedCount} assigned, ${lecture.responseCount} responses)`;
+}

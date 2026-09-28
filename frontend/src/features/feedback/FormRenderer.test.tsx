@@ -2,7 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
-import { FormRenderer } from './FormRenderer';
+import { FeedbackStepProgress, FormRenderer } from './FormRenderer';
+import { missingRequiredQuestionIds } from './formPresentation';
 import type { FeedbackAnswerValue, FeedbackSection } from '@/api/feedback';
 
 const sections: FeedbackSection[] = [{
@@ -17,6 +18,18 @@ const sections: FeedbackSection[] = [{
 }];
 
 describe('FormRenderer', () => {
+  it('renders professional step progress and identifies missing required answers', () => {
+    const steps: FeedbackSection[] = [
+      ...sections,
+      { id: 2, title: 'Your thoughts', icon: 'ri-chat-3-line', description: '', questions: [] },
+    ];
+    render(<FeedbackStepProgress sections={steps} activeSection={1} />);
+
+    expect(screen.getByRole('navigation', { name: 'Form progress' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Your thoughts/ })).toHaveAttribute('aria-current', 'step');
+    expect([...missingRequiredQuestionIds(sections[0], {})]).toEqual([10, 12, 13]);
+  });
+
   it('renders the shared learner/preview structure and emits typed answers', async () => {
     const onChange = vi.fn(); const user = userEvent.setup();
     function Harness() {

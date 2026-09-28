@@ -206,6 +206,12 @@ def rule_for(path):
     # Exact path only: the learner's attendance APIs still require a session.
     if path == '/learner_api/attendance-mode/review/':
         return None
+    # A post-event attendee arrives from an emailed, high-entropy bearer link.
+    # The view validates only a hash and exposes forms for that token's event;
+    # keeping this narrow prefix public lets guests respond without opening any
+    # other Engagement endpoint.
+    if path.startswith('/engagement_api/feedback/public-event/'):
+        return None
     if path.startswith(('/learner_api/certificates/verify/', '/learner_api/personal-learning/verify/')):
         return None
     from old_otjh.gate import is_transition_path

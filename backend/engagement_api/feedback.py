@@ -32,7 +32,8 @@ from learner_api.profile_photo import normalize_photo
 from .helpers import json_body, json_error
 from .models import (
     FeedbackAnswer, FeedbackAssignment, FeedbackDelivery, FeedbackDeliveryRecipient,
-    FeedbackForm, FeedbackQuestion, FeedbackResponse, FeedbackSection, FeedbackUpload,
+    FeedbackEventRecipient, FeedbackForm, FeedbackQuestion, FeedbackResponse,
+    FeedbackSection, FeedbackUpload,
 )
 from .permissions import (
     actor_name, learner_read_scope, require_learner_identity,
@@ -45,7 +46,12 @@ QUESTION_TYPES = {
     'name', 'email', 'photo_upload',
 }
 CHOICE_TYPES = {'single_choice', 'multiple_choice', 'dropdown', 'likert'}
-FORM_TYPES = {'general', 'post_lecture'}
+FORM_TYPES = {'general', 'post_lecture', 'post_event'}
+SECTION_ICONS = {
+    'ri-file-list-3-line', 'ri-user-line', 'ri-book-open-line',
+    'ri-star-line', 'ri-chat-3-line', 'ri-lightbulb-line',
+    'ri-graduation-cap-line', 'ri-calendar-event-line', 'ri-heart-line',
+}
 EMPTY_ANSWERS = (None, '', [])
 logger = logging.getLogger(__name__)
 
@@ -87,13 +93,20 @@ def _question_dict(question):
 
 def _section_dict(section):
     return {
-        'id': section.id, 'title': section.title, 'description': section.description,
+        'id': section.id, 'title': section.title, 'icon': section.icon,
+        'description': section.description,
         'sortOrder': section.sort_order,
         'questions': [_question_dict(q) for q in section.questions.all()],
     }
 
 
 def _assigned_count(form):
+    if form.form_type == 'post_event':
+        return FeedbackEventRecipient.objects.filter(
+            event__feedback_campaigns__form=form,
+            event__feedback_campaigns__status='open',
+            revoked_at__isnull=True,
+        ).distinct().count()
     family_ids = [form.id]
     if form.form_type == 'post_lecture':
         family_ids = list(FeedbackForm.objects.filter(template_key=form.template_key).values_list('id', flat=True))
@@ -291,7 +304,7 @@ def _apply_curriculum_scope(form, payload):
     if requested_type not in FORM_TYPES:
         raise ValueError('Unsupported feedback form type.')
     form.form_type = requested_type
-    if requested_type == 'general':
+    if requested_type in {'general', 'post_event'}:
         form.delivery_scope = 'manual'
         for field in (
             'programme_id', 'programme_name', 'cohort_id', 'cohort_name',
@@ -385,7 +398,9 @@ def _validated_sections(raw_sections):
                 'helpText': str(raw_question.get('helpText') or '').strip(), 'config': config,
             })
         cleaned.append({
-            'title': title, 'description': str(raw_section.get('description') or '').strip(),
+            'title': title,
+            'icon': _clean(raw_section.get('icon')) if _clean(raw_section.get('icon')) in SECTION_ICONS else 'ri-file-list-3-line',
+            'description': str(raw_section.get('description') or '').strip(),
             'questions': clean_questions,
         })
     return cleaned
@@ -396,7 +411,8 @@ def _replace_structure(form, raw_sections):
     form.sections.all().delete()
     for section_index, section_data in enumerate(sections):
         section = FeedbackSection.objects.create(
-            form=form, title=section_data['title'], description=section_data['description'],
+            form=form, title=section_data['title'], icon=section_data['icon'],
+            description=section_data['description'],
             sort_order=section_index,
         )
         FeedbackQuestion.objects.bulk_create([
@@ -518,7 +534,8 @@ def form_detail(request, pk):
                 sections = payload.get('sections')
                 if sections is None:
                     sections = [
-                        {'title': section.title, 'description': section.description, 'questions': [
+                        {'title': section.title, 'icon': section.icon,
+                         'description': section.description, 'questions': [
                             {'type': question.question_type, 'text': question.question_text,
                              'required': question.required, 'helpText': question.help_text,
                              'config': deepcopy(question.config or {})}
@@ -645,8 +662,8 @@ def form_assignments(request, pk):
         return JsonResponse({'assignments': [assignment_dict(a) for a in form.assignments.all()]})
     if request.method != 'POST':
         return json_error('Method not allowed.', status=405)
-    if form.form_type == 'post_lecture':
-        return json_error('Post-lecture forms are assigned automatically from finalized attendance.', status=409)
+    if form.form_type != 'general':
+        return json_error('This feedback type is assigned automatically from finalized attendance.', status=409)
     if form.status != 'published':
         return json_error('Only published forms can be assigned.', status=409)
     payload = json_body(request) or {}
@@ -871,12 +888,15 @@ def _form_recipient_rows(form):
         delivery = recipient.delivery
         rows.append({
             'key': f'delivery-{delivery.id}-{learner_id}',
+            'deliveryId': delivery.id,
+            'occurrenceKey': delivery.occurrence_key,
             'learnerId': learner_id,
             'learnerName': recipient.learner_name or getattr(learner, 'username', '') or getattr(learner, 'email', '') or f'Learner {learner_id}',
             'email': getattr(learner, 'email', '') or '',
             'programme': recipient.programme or getattr(learner, 'programme', '') or '',
             'source': 'attendance',
             'sessionTitle': delivery.session_title,
+            'sessionStartsAt': _iso(delivery.starts_at),
             'moduleName': delivery.module_name,
             'assignedAt': _iso(recipient.assigned_at),
             'dueDate': _iso(recipient.due_date),
@@ -897,18 +917,44 @@ def _form_recipient_rows(form):
     for learner_id, (learner, assignment) in manual_by_learner.items():
         rows.append({
             'key': f'manual-{form.id}-{learner_id}',
+            'deliveryId': None, 'occurrenceKey': '',
             'learnerId': learner_id,
             'learnerName': learner.username or learner.email or f'Learner {learner_id}',
             'email': learner.email or '',
             'programme': learner.programme or '',
             'source': 'manual',
-            'sessionTitle': '', 'moduleName': '',
+            'sessionTitle': '', 'sessionStartsAt': None, 'moduleName': '',
             'assignedAt': _iso(assignment.assigned_at),
             'dueDate': _iso(assignment.due_date or form.due_date),
             'responseStatus': manual_status.get(learner_id, 'not_started'),
             'formVersion': form.version,
         })
     return rows
+
+
+def _recipient_lecture_summaries(rows):
+    lectures = {}
+    for row in rows:
+        delivery_id = row.get('deliveryId')
+        if delivery_id is None:
+            continue
+        lecture = lectures.setdefault(delivery_id, {
+            'deliveryId': delivery_id,
+            'occurrenceKey': row.get('occurrenceKey') or '',
+            'sessionTitle': row.get('sessionTitle') or '',
+            'moduleName': row.get('moduleName') or '',
+            'startsAt': row.get('sessionStartsAt'),
+            'assignedCount': 0,
+            'responseCount': 0,
+        })
+        lecture['assignedCount'] += 1
+        if row.get('responseStatus') == 'completed':
+            lecture['responseCount'] += 1
+    return sorted(
+        lectures.values(),
+        key=lambda lecture: (lecture['startsAt'] or '', lecture['deliveryId']),
+        reverse=True,
+    )
 
 
 @require_staff
@@ -920,6 +966,14 @@ def form_recipients(request, pk):
     except FeedbackForm.DoesNotExist:
         return json_error('Feedback form not found.', status=404)
     rows = _form_recipient_rows(form)
+    lectures = _recipient_lecture_summaries(rows)
+    delivery_id = _clean(request.GET.get('deliveryId'))
+    if delivery_id:
+        try:
+            selected_delivery_id = int(delivery_id)
+        except (TypeError, ValueError):
+            return json_error('Lecture must be a valid delivery id.')
+        rows = [row for row in rows if row.get('deliveryId') == selected_delivery_id]
     search = _clean(request.GET.get('search')).casefold()
     if search:
         fields = ('learnerName', 'email', 'programme', 'sessionTitle', 'moduleName')
@@ -933,6 +987,7 @@ def form_recipients(request, pk):
     start = (page - 1) * page_size
     return JsonResponse({
         'recipients': rows[start:start + page_size],
+        'lectures': lectures,
         'total': total, 'page': page, 'pageSize': page_size,
     })
 

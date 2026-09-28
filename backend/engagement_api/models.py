@@ -504,7 +504,7 @@ class FlashCardView(models.Model):
 # backend/sql/2026-09-20_feedback_forms.sql.
 class FeedbackForm(models.Model):
     STATUS_CHOICES = [('draft', 'Draft'), ('published', 'Published'), ('closed', 'Closed')]
-    TYPE_CHOICES = [('general', 'General'), ('post_lecture', 'Post-lecture')]
+    TYPE_CHOICES = [('general', 'General'), ('post_lecture', 'Post-lecture'), ('post_event', 'Post-event')]
     DELIVERY_SCOPE_CHOICES = [('manual', 'Manual'), ('all_modules', 'All modules'), ('module', 'One module')]
 
     title = models.CharField(max_length=255)
@@ -546,6 +546,7 @@ class FeedbackForm(models.Model):
 class FeedbackSection(models.Model):
     form = models.ForeignKey(FeedbackForm, on_delete=models.CASCADE, related_name='sections', db_column='form_id')
     title = models.CharField(max_length=255)
+    icon = models.CharField(max_length=80, blank=True, default='ri-file-list-3-line')
     description = models.TextField(blank=True, default='')
     sort_order = models.IntegerField(default=0)
 
@@ -632,6 +633,48 @@ class FeedbackDeliveryRecipient(models.Model):
         db_table = 'Feedback"."feedback_delivery_recipients'
 
 
+class FeedbackEventCampaign(models.Model):
+    """A published post-event form made available for one Engagement event."""
+
+    STATUS_CHOICES = [('open', 'Open'), ('closed', 'Closed'), ('cancelled', 'Cancelled')]
+
+    event = models.ForeignKey(Event, on_delete=models.PROTECT, related_name='feedback_campaigns', db_column='event_id')
+    form = models.ForeignKey(FeedbackForm, on_delete=models.PROTECT, related_name='event_campaigns', db_column='form_id')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='open')
+    created_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_event_campaigns'
+
+
+class FeedbackEventRecipient(models.Model):
+    """One attendee granted token-scoped access to every open form for an event."""
+
+    INVITE_STATUS_CHOICES = [('pending', 'Pending'), ('sent', 'Sent'), ('failed', 'Failed')]
+
+    event = models.ForeignKey(Event, on_delete=models.PROTECT, related_name='feedback_recipients', db_column='event_id')
+    attendee_name = models.CharField(max_length=255)
+    attendee_email = models.EmailField(max_length=320)
+    learner_id = models.CharField(max_length=100, blank=True, default='')
+    attendance_source = models.CharField(max_length=80, default='spreadsheet')
+    attendance_reference = models.CharField(max_length=255, blank=True, default='')
+    token_hash = models.CharField(max_length=64, null=True, blank=True)
+    token_expires_at = models.DateTimeField(null=True, blank=True)
+    invite_status = models.CharField(max_length=20, choices=INVITE_STATUS_CHOICES, default='pending')
+    invitation_sent_at = models.DateTimeField(null=True, blank=True)
+    invitation_error = models.TextField(blank=True, default='')
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."feedback_event_recipients'
+
+
 class FeedbackResponse(models.Model):
     STATUS_CHOICES = [('in_progress', 'In progress'), ('completed', 'Completed')]
 
@@ -640,7 +683,11 @@ class FeedbackResponse(models.Model):
         FeedbackDelivery, on_delete=models.PROTECT, related_name='responses',
         db_column='delivery_id', null=True, blank=True,
     )
-    learner_id = models.CharField(max_length=100)
+    event_recipient = models.ForeignKey(
+        FeedbackEventRecipient, on_delete=models.PROTECT, related_name='responses',
+        db_column='event_recipient_id', null=True, blank=True,
+    )
+    learner_id = models.CharField(max_length=100, blank=True, default='')
     learner_name = models.CharField(max_length=255)
     programme = models.CharField(max_length=255, blank=True, default='')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='in_progress')

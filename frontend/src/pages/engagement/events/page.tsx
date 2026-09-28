@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { WorkspaceHeroBanner } from '@/components/feature/WorkspaceHeroBanner';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { useToast } from '@/hooks/useToast';
 import { useOperatorIdentity } from '@/hooks/useOperatorIdentity';
 import { roleNavMap } from '@/mocks/navigation';
@@ -11,6 +12,7 @@ import {
   type EngagementEvent as Event, type AttendanceRosterEntry,
 } from '@/api/engagement';
 import { EventCardSkeletonGrid } from '@/pages/engagement/EngagementSkeletons';
+import { EventFeedbackManager } from '@/features/feedback/EventFeedbackManager';
 
 const engagementNav = roleNavMap.engagement;
 
@@ -188,6 +190,7 @@ export default function EventsPage() {
 
   // DELETE dialog
   const [deleteEventId, setDeleteEventId] = useState<string | null>(null);
+  const [feedbackEvent, setFeedbackEvent] = useState<Event | null>(null);
 
   // Attendance modal — mark who showed up; 'present' awards event_attended points.
   const [attendanceEventId, setAttendanceEventId] = useState<string | null>(null);
@@ -429,6 +432,9 @@ export default function EventsPage() {
                   <button onClick={() => openAttendance(event)} className="flex items-center gap-1 px-2 py-1.5 bg-secondary-50 text-secondary-700 rounded-lg text-[11px] font-medium hover:bg-secondary-100 transition-smooth cursor-pointer whitespace-nowrap">
                     <AppIcon className="ri-checkbox-circle-line"></AppIcon> Attendance
                   </button>
+                  <button onClick={() => setFeedbackEvent(event)} className="flex items-center gap-1 px-2 py-1.5 bg-primary-50 text-primary-700 rounded-lg text-[11px] font-medium hover:bg-primary-100 transition-smooth cursor-pointer whitespace-nowrap">
+                    <AppIcon className="ri-chat-3-line"></AppIcon> Feedback
+                  </button>
                   <button onClick={() => openEditModal(event)} className="flex items-center gap-1 px-2 py-1.5 bg-background-100 text-foreground-600 rounded-lg text-[11px] font-medium hover:bg-background-200/50 transition-smooth cursor-pointer whitespace-nowrap">
                     <AppIcon className="ri-edit-line"></AppIcon> Edit
                   </button>
@@ -591,6 +597,7 @@ export default function EventsPage() {
             </div>
           </div>
         )}
+        {feedbackEvent && <EventFeedbackManager event={feedbackEvent} onClose={() => setFeedbackEvent(null)} />}
       </div>
     </WorkspaceShell>
   );

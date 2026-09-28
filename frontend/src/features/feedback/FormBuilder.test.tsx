@@ -11,6 +11,24 @@ vi.mock('sweetalert2', () => ({ default: { fire: vi.fn() } }));
 afterEach(() => vi.restoreAllMocks());
 
 describe('post-lecture feedback delivery scope', () => {
+  it('lets the creator choose section icons and previews sections as steps', async () => {
+    const user = userEvent.setup();
+    render(<MemoryRouter><FormBuilder /></MemoryRouter>);
+
+    await user.click(screen.getByRole('button', { name: '+ Add Section' }));
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Section 2 icon' }), 'ri-chat-3-line');
+    await user.clear(screen.getByRole('textbox', { name: 'Section 2 title' }));
+    await user.type(screen.getByRole('textbox', { name: 'Section 2 title' }), 'Your thoughts');
+    await user.click(screen.getByRole('button', { name: 'Preview' }));
+
+    expect(screen.getByRole('navigation', { name: 'Form progress' })).toBeInTheDocument();
+    expect(screen.getByText('1/2')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Back' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+    expect(screen.getByText('2/2')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Back' })).toBeInTheDocument();
+  });
+
   it('defaults to the fixed all-modules form and loads curriculum only for a module override', async () => {
     const curriculum = vi.spyOn(feedbackApi, 'curriculumOptions').mockResolvedValue({
       programmes: [{ id: 'PROG-1', name: 'Data' }],
