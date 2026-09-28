@@ -714,6 +714,10 @@ def write_fields(payload, *, require_create=False):
     if "trainingPlan" in payload:
         fields["learning_plan"] = _normalize_training_plan(payload["trainingPlan"])
     fields.update(_employer_id_field(payload))
+    if require_create and not _s(fields.get("programme_status")):
+        # Every account starts at 'Fresh user'. Left unset it was stored NULL,
+        # which some readers took for "status unknown" rather than new.
+        fields["programme_status"] = DEFAULT_PROGRAMME_STATUS
     validate_learner_dates(fields)
     return fields
 
