@@ -25,9 +25,6 @@ export function CreateProgressPanel({
   busy,
   onCheckAgain,
   onConfirmUncertain,
-  steps: suppliedSteps,
-  title,
-  description,
 }: {
   moduleName: string;
   sessionCount: number;
@@ -36,11 +33,8 @@ export function CreateProgressPanel({
   busy: boolean;
   onCheckAgain: () => void;
   onConfirmUncertain: () => void;
-  steps?: ReturnType<typeof progressSteps>;
-  title?: string;
-  description?: string;
 }) {
-  const steps = suppliedSteps || progressSteps(progress?.status || null, sessionCount);
+  const steps = progressSteps(progress?.status || null, sessionCount);
   const stalled = recovery?.phase === 'stalled';
   const uncertain = recovery?.phase === 'uncertain';
   const working = !stalled && !uncertain;
@@ -52,12 +46,12 @@ export function CreateProgressPanel({
         </span>
         <div className="min-w-0">
           <h3 id="teams-create-progress-title" className="text-[13px] font-bold text-foreground-800">
-            {title || (working ? `Creating the Teams calendar for ${moduleName}` : `The Teams calendar for ${moduleName}`)}
+            {working ? `Creating the Teams calendar for ${moduleName}` : `The Teams calendar for ${moduleName}`}
           </h3>
           <p className="mt-0.5 text-[12px] text-foreground-600">
-            {description || (working
+            {working
               ? 'This usually takes under a minute. Closing this window does not stop it: the calendar and its emails are finished on the server either way, and nothing is created twice.'
-              : 'Here is what the server reported last.')}
+              : 'Here is what the server reported last.'}
           </p>
         </div>
       </div>

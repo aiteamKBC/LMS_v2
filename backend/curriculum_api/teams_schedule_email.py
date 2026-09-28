@@ -151,10 +151,7 @@ def render_schedule_email(title, occurrences, time_zone, roster=None, settings=N
               'FOOTER_NOTE': ('Organiser copy. Learner details in this message are for the calendar&rsquo;s organisers and presenters only.' if organiser
                               else 'This message is for your learning schedule. Other learners&rsquo; email addresses are not included.'),
               'ROWS': ''.join(rows), 'LINK_CONTENT': link_content(sessions, links)}
-    # The subject is what the recipient sees in their inbox, so it never carries an
-    # internal label: an organiser's copy is told apart by its content, not by its
-    # subject line.
-    subject = ' '.join(str(title).split())[:160] + ' — your session schedule'
+    subject = ' '.join(str(title).split())[:160] + ' — your session schedule' + (' (organiser copy)' if organiser else '')
     text = f'{title}\nYour session schedule\n\n' + '\n\n'.join(text_rows)
     if organiser:
         text += '\n\nMeeting settings\n' + '\n'.join(f'{name}: {value}' for name, value in settings or [])
@@ -292,10 +289,7 @@ def render_change_email(title, previous, current, time_zone, roster=None, sessio
                               else 'This message is for your learning schedule. Other learners&rsquo; details are not included.'),
               'ROWS': ''.join(rows), 'LINK_CONTENT': link_content(sessions, links) if has_current else ''}
     kind_label = ('sessions cancelled' if count > 1 else 'session cancelled') if cancelling else 'your session schedule has changed'
-    # The subject is what the recipient sees in their inbox, so it never carries an
-    # internal label: an organiser's copy is told apart by its content, not by its
-    # subject line.
-    subject = ' '.join(str(title).split())[:160] + f' — {kind_label}'
+    subject = ' '.join(str(title).split())[:160] + f' — {kind_label}' + (' (organiser copy)' if organiser else '')
     text = f'{title}\nWhat changed\n\n' + '\n'.join(change_text)
     if text_rows:
         text += '\n\nYour updated schedule\n\n' + '\n\n'.join(text_rows)

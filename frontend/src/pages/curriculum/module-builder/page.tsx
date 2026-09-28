@@ -144,7 +144,7 @@ import { appendWeekTemplateCopies } from './weekTemplateImport';
 // Round-trip the module's components to Excel so KSBs can be filled in ChatGPT
 // and imported back. xlsx is dynamically imported inside these helpers, so it
 // stays off this page's initial bundle.
-import { buildKsbMappingPrompt, describeKsbImport, exportModuleKsbWorkbook, importModuleKsbWorkbook, type KsbImportSource, type KsbProfileEntry } from './ksbExcel';
+import { buildKsbMappingPrompt, describeKsbImport, exportModuleKsbWorkbook, importModuleKsbWorkbook, type KsbProfileEntry } from './ksbExcel';
 // Shared labelled form atoms and the Teams meeting modal live in their own files
 // so the modal (rendered by the shared week editor, which the Week Builder also
 // uses) can reuse them without importing this page.
@@ -384,23 +384,6 @@ function moduleSnapshot(module: ModuleCatalogueItem | null) {
   return module ? JSON.stringify(recalculateModule(module)) : '';
 }
 
-/**
- * Does this module already have a Teams calendar?
- *
- * The button that opens the calendar says what it will do. Once a calendar
- * exists, the dialog it opens is the calendar's own view -- update it, edit
- * the dates, cancel a session or the series -- so calling it "Create" promised
- * a second calendar that pressing it never makes.
- */
-function moduleHasTeamsCalendar(module: ModuleCatalogueItem | null) {
-  if (!module) return false;
-  return module.weekStructure.some(week => week.components.some(component => (
-    component.type === 'live-session'
-    && Boolean(String(component.settings?.teamsLiveSessionId || component.settings?.liveSessionUrl
-      || component.settings?.teamsMeetingUrl || '').trim())
-  )));
-}
-
 function moduleNeedsTeamsRestore(module: ModuleCatalogueItem | null) {
   if (!module) return false;
   return module.weekStructure.some(week => week.components.some(component => (
@@ -493,7 +476,7 @@ export default function ModuleBuilder() {
   const [aiMaterialOpen, setAiMaterialOpen] = useState(false);
   const [deletingModuleId, setDeletingModuleId] = useState<string | null>(null);
   const [hiddenModuleIds, setHiddenModuleIds] = useState<Set<string>>(new Set());
-  const [noticeAlert, setNoticeAlert] = useState<{ title: string; message: string; downloadableModule?: ModuleCatalogueItem } | null>(null);
+  const [noticeAlert, setNoticeAlert] = useState<{ title: string; message: string } | null>(null);
   const [lessonPickerWeekId, setLessonPickerWeekId] = useState<string | null>(null);
   const [reusePickerWeekId, setReusePickerWeekId] = useState<string | null>(null);
   const [weekTemplateImportOpen, setWeekTemplateImportOpen] = useState(false);
@@ -2068,33 +2051,17 @@ export default function ModuleBuilder() {
     setActionMessage(null);
     setNoticeAlert(null);
     try {
-      // The workbook is authored against the module's locked KSB source. Pass
-      // that source into the import so codes already present on a component do
-      // not bring a stale source identity back into the new mapping. The API
-      // validates both the code and its source, not the code alone.
-      const sourceId = cleanKsbSourceId(
-        workingModuleScopeLock?.ksbSourceId
-        || workspaceKsbProfileValue
-        || workingModule.ksbProfileSourceId,
-      );
-      const source: KsbImportSource | undefined = sourceId
-        ? {
-          sourceType: sourceId.startsWith('standard:') ? 'standard' : 'framework',
-          sourceId,
-          allowedCodes: workspaceKsbProfileEntries.map(entry => entry.code),
-        }
-        : undefined;
-      const { module: nextModule, summary } = await importModuleKsbWorkbook(file, workingModule, source);
+      const { module: nextModule, summary } = await importModuleKsbWorkbook(file, workingModule);
       if (!summary.rowsWithKsbs) {
         setActionMessage('No KSBs were found in the uploaded sheet. Fill the KSBs column before re-uploading.');
         return;
       }
       updateWorkingModule(() => nextModule);
-      setNoticeAlert({ title: 'KSB sheet imported', message: describeKsbImport(summary), downloadableModule: nextModule });
+      setNoticeAlert({ title: 'KSB sheet imported', message: describeKsbImport(summary) });
     } catch (err) {
       setActionMessage(err instanceof Error ? err.message : 'Unable to read the uploaded KSB sheet.');
     }
-  }, [updateWorkingModule, workingModule, workingModuleScopeLock?.ksbSourceId, workspaceKsbProfileEntries, workspaceKsbProfileValue]);
+  }, [updateWorkingModule, workingModule]);
 
   const duplicateModule = async (module: ModuleCatalogueItem) => {
     setDuplicatingModule(module);
@@ -2260,11 +2227,6 @@ export default function ModuleBuilder() {
     if (!current) return;
     const structureId = moduleStructureIdentifier(current);
     if (!structureId) return;
-    // The read can overlap an import or another authoring edit. Capture the
-    // exact copy we started reading; installing the response unconditionally
-    // would put the workspace back onto the older server copy and make a just-
-    // imported KSB mapping appear for a moment before disappearing.
-    const snapshotAtRead = moduleSnapshot(current);
     liveSyncReadAtRef.current = Date.now();
     const sequence = liveSyncSequenceRef.current + 1;
     liveSyncSequenceRef.current = sequence;
@@ -2278,12 +2240,6 @@ export default function ModuleBuilder() {
     // is dropped. Not an error: the workspace is up to date, by another route.
     if (liveSyncSequenceRef.current !== sequence) return;
     if (!remote) throw new Error('The saved version of this module could not be read.');
-    const latest = workingModuleRef.current;
-    if (
-      !latest
-      || latest.catalogueId !== current.catalogueId
-      || moduleSnapshot(latest) !== snapshotAtRead
-    ) return;
     const stored = recalculateModule(getDefaultStructure({
       ...current,
       ...remote,
@@ -2655,13 +2611,8 @@ export default function ModuleBuilder() {
       title: noticeAlert.title,
       text: noticeAlert.message,
       icon: 'success',
-      confirmButtonText: 'OK',
-      denyButtonText: noticeAlert.downloadableModule ? 'Download valid file' : undefined,
-      onDeny: noticeAlert.downloadableModule
-        ? async () => {
-          await exportModuleKsbWorkbook(noticeAlert.downloadableModule!, { fileNameSuffix: '-valid' });
-        }
-        : undefined,
+      timer: 2600,
+      confirmButtonText: 'Done',
     }).finally(() => {
       if (active) setNoticeAlert(null);
     });
@@ -3941,13 +3892,11 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
             <button
               type="button"
               onClick={onCreateTeamsMeeting}
-              title={moduleHasTeamsCalendar(module)
-                ? "Open this module's Teams calendar to update it, edit session dates or cancel a session, without leaving the builder"
-                : "Create one Teams meeting on each of this module's live-session dates, without leaving the builder"}
+              title="Create one Teams meeting on each of this module's live-session dates, without leaving the builder"
               className="inline-flex h-8 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-2.5 text-[11px] font-bold text-white transition-smooth hover:bg-primary-600"
             >
               <AppIcon className="ri-calendar-event-line"></AppIcon>
-              {moduleHasTeamsCalendar(module) ? 'Update Teams meeting' : 'Create Teams meeting'}
+              Create Teams meeting
             </button>
             <Link
               to={`/curriculum/teams-meetings?module=${encodeURIComponent(module.catalogueId)}`}
@@ -5050,10 +4999,7 @@ function TypeSpecificFields({
               className="inline-flex h-9 shrink-0 items-center justify-center gap-1.5 rounded-lg bg-primary-500 px-4 text-[11px] font-bold text-white shadow-sm transition-smooth hover:bg-primary-600"
             >
               <AppIcon className="ri-calendar-event-line"></AppIcon>
-              {/* The same dialog either way. With a calendar already booked it
-                  opens on that calendar, so this updates it rather than
-                  making a second one. */}
-              {getString('liveSessionUrl') ? 'Update Teams meeting' : 'Create Teams meeting'}
+              {getString('liveSessionUrl') ? 'Create another meeting' : 'Create Teams meeting'}
             </button>
           </div>
           {getString('liveSessionUrl') && (

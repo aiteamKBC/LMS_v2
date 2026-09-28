@@ -24,8 +24,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { clockLabel, durationLabel, normalizedClock } from '../../teams-meetings/calendarTime';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { DatePickerField } from '@/components/feature/DatePickerField';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
+import { DatePickerField } from '@/components/feature/DatePickerField';
 import { TutorClashNotice } from '@/components/feature/TutorClashNotice';
 import { useTutorAvailability } from '@/hooks/useTutorAvailability';
 import {
@@ -42,7 +42,6 @@ import {
   type CurriculumWeeklySession,
   type CurriculumProgramme,
   type CurriculumSessionPlanPreview,
-  guardedInput,
 } from '@/lib/curriculumApi';
 import type { SelectOption } from '@/components/feature/SelectField';
 import { createNewModule } from '../../module-builder/moduleAuthoringData';
@@ -77,7 +76,7 @@ import {
   type FormChainStep,
   type MultiSelectOption,
 } from './ui';
-import { useFormFieldMerge, useFormSeedGuard, useRecordGuard, useRecordRebaseRetry } from './useDrawerState';
+import { useFormFieldMerge, useFormSeedGuard } from './useDrawerState';
 
 export interface ModuleFormDefaults {
   programmeId?: string;
@@ -199,6 +198,14 @@ const MODULE_FIELD_LABELS: Record<string, string> = {
   cohortId: 'cohort',
   groupIds: 'groups',
   sessionsNumber: 'number of weeks',
+  sessionsPerWeek: 'sessions per week',
+  weekDays: 'delivery days',
+  weeklyTimes: 'session times',
+  groupStartTime: 'start time',
+  groupEndTime: 'end time',
+  deliveryPattern: 'delivery days and times',
+  startDate: 'start date',
+  targetEndDate: 'target end date',
   tutor: 'tutor',
   status: 'status',
   description: 'description',
@@ -207,10 +214,6 @@ const MODULE_FIELD_LABELS: Record<string, string> = {
 };
 
 const UNASSIGNED = 'unassigned';
-// Delivery days and clock controls belong to the Group editor. Keep the old
-// controls in this drawer's source for the derived schedule helpers, but never
-// render them as editable module fields.
-const showInheritedScheduleControls = false;
 const TRUE_FLAGS = new Set(['1', 'true', 'yes', 'y', 'on']);
 const FALSE_FLAGS = new Set(['0', 'false', 'no', 'n', 'off']);
 
@@ -339,16 +342,16 @@ export function ModuleFormDrawer({
   // than each minting their own.
   const createdCatalogueId = useRef('');
   const [plan, setPlan] = useState<CurriculumSessionPlanPreview | null>(null);
-  const [planFor, setPlanFor] = useState('');
-  const seededPlanKey = useRef('');
-  const [planLoading, setPlanLoading] = useState(false);
   // The inputs `plan` was fetched for. A plan whose key no longer matches the
   // form is stale, and the locally projected end date is used instead of it.
+  const [planFor, setPlanFor] = useState('');
   // The record the plan in state belongs to, so re-seeding the same one does not
   // throw it away. See the seed effect below.
+  const seededPlanKey = useRef('');
   // True while the debounced session-plan preview is in flight. It no longer
   // holds the save back: the end date is projected locally the moment the weeks
   // or the start date move, so a save can never carry the previous value's date.
+  const [planLoading, setPlanLoading] = useState(false);
   // What the drawer opened with, for the unsaved-changes check below.
   const baseline = useRef<Record<string, unknown>>({});
   const selectableProgrammes = useMemo(
@@ -377,11 +380,6 @@ export function ModuleFormDrawer({
   const liveRef = useRef<Record<string, unknown>>(liveValues);
   liveRef.current = liveValues;
   const coEdit = useFormFieldMerge(baseline, liveRef, MODULE_FIELD_LABELS);
-  // The server refuses a save built on a version somebody else has already
-  // replaced. The token is the Module Builder's own: this drawer writes through
-  // the same structure save, so a Builder save makes an open drawer stale and
-  // the other way round.
-  const guard = useRecordGuard<ModuleFormTarget>('module', module?.id, open);
   // The seeding effect below has to depend on `groups`, `cohorts` and
   // `programmes` to resolve the module's parent chain, and those arrays get a new
   // identity whenever the page refreshes them -- the Module Builder in particular
@@ -406,10 +404,6 @@ export function ModuleFormDrawer({
 
   useEffect(() => {
     const recordKey = cleanText(module?.id) || 'new-module';
-    // A refused save hands back the stored module; folding that in is the same
-    // operation as folding in one a poll brought, so everything below reads
-    // whichever version is current under one name.
-    const record = guard.stored || module;
     const verdict = allowSeed(open, recordKey);
     if (!verdict) return;
     // On a merge the drawer is already open on this module with edits in it, so
@@ -417,11 +411,6 @@ export function ModuleFormDrawer({
     if (verdict === 'seed') {
       setError(null);
       setSaving(false);
-    }
-    if (seededPlanKey.current !== recordKey) {
-      seededPlanKey.current = recordKey;
-      setPlan(null);
-      setPlanFor('');
     }
     // Only when the drawer is being pointed at a DIFFERENT record.
     //
@@ -433,6 +422,11 @@ export function ModuleFormDrawer({
     // below sees no dependency move and never refetches: clearing it here left
     // "Choose a group delivery day and start date" sitting where a plan had been
     // a moment earlier, with nothing able to bring it back.
+    if (seededPlanKey.current !== recordKey) {
+      seededPlanKey.current = recordKey;
+      setPlan(null);
+      setPlanFor('');
+    }
     // Only on a real (re)seed. A merge happens while the reader is part-way
     // through this same drawer, and clearing the groups they have just attached
     // or the tutor clash they are reading would be the mid-edit reset the seed
@@ -444,15 +438,15 @@ export function ModuleFormDrawer({
       createdCatalogueId.current = '';
     }
 
-    const storedDelivery = record?.deliveryUsages?.[0];
+    const storedDelivery = module?.deliveryUsages?.[0];
     // Id across every row first, name only if that found nothing: group names
     // ("G1") and cohort names ("October 2026") repeat across programmes, so an
     // id-or-name predicate inside one `find` attached the module to whichever
     // namesake happened to be listed first. See findByIdentifierThenName.
-    const parentGroupId = record?.groupId || storedDelivery?.groupId || defaults?.groupId;
+    const parentGroupId = module?.groupId || storedDelivery?.groupId || defaults?.groupId;
     const parentGroup = groups.find(group => sameIdentifier(group.id, parentGroupId))
       || groups.find(group => sameIdentifier(group.name, storedDelivery?.group));
-    const parentCohortId = record?.cohortId || storedDelivery?.cohortId || parentGroup?.cohortId || defaults?.cohortId;
+    const parentCohortId = module?.cohortId || storedDelivery?.cohortId || parentGroup?.cohortId || defaults?.cohortId;
     const parentCohort = cohorts.find(cohort => sameIdentifier(cohort.id, parentCohortId))
       || cohorts.find(cohort => sameIdentifier(cohort.name, storedDelivery?.cohort));
     // Snapped onto the option values with programmeSelectValue: every source
@@ -462,55 +456,56 @@ export function ModuleFormDrawer({
       selectableProgrammes,
       cleanText(parentCohort?.programmeId)
         || cleanText(parentGroup?.programmeId)
-        || cleanText(record?.programmeId)
+        || cleanText(module?.programmeId)
         || cleanText(storedDelivery?.programmeId)
-        || cleanText(record?.programme)
+        || cleanText(module?.programme)
         || cleanText(storedDelivery?.programme)
         || defaults?.programmeId,
     ) || (selectableProgrammes.length === 1 ? programmeIdentity(selectableProgrammes[0]) : '');
 
-    const directTutor = cleanText(record?.tutor);
+    const directTutor = cleanText(module?.tutor);
     const storedTutor = normaliseKey(directTutor) === UNASSIGNED
       ? cleanText(storedDelivery?.tutor)
       : directTutor || cleanText(storedDelivery?.tutor);
+    const initialDays = canonicalDeliveryDays(module?.weekDays || storedDelivery?.weekDays || parentGroup?.weekDays || '');
     const initial = {
-      name: cleanText(record?.name),
+      name: cleanText(module?.name),
       programmeId: resolvedProgrammeId,
-      cohortId: cleanText(parentCohort?.id) || cleanText(record?.cohortId) || cleanText(storedDelivery?.cohortId) || defaults?.cohortId || '',
+      cohortId: cleanText(parentCohort?.id) || cleanText(module?.cohortId) || cleanText(storedDelivery?.cohortId) || defaults?.cohortId || '',
       // The module's own group first: `primaryGroupId` below reads position 0 as
       // the delivery a PATCH belongs to when nothing more specific matches.
       groupIds: Array.from(new Set([
-        cleanText(parentGroup?.id) || cleanText(record?.groupId) || cleanText(storedDelivery?.groupId) || defaults?.groupId || '',
+        cleanText(parentGroup?.id) || cleanText(module?.groupId) || cleanText(storedDelivery?.groupId) || defaults?.groupId || '',
         ...attachedGroupIds,
       ].filter(Boolean))),
       // Seeded from the authored week count only. Seeding from `sessionsNumber`
       // (or the delivery's `sessions`) put a delivery-day-multiplied number in the
       // Weeks box, which then saved back multiplied again on every round-trip.
-      sessionsNumber: String(record?.deliveryWeeks || record?.weeks || record?.sessionsNumber || storedDelivery?.sessions || 1),
-      sessionsPerWeek: String(Math.max(1, deliveryDayIndexes(canonicalDeliveryDays(record?.weekDays || storedDelivery?.weekDays || parentGroup?.weekDays || '')).length)),
-      weekDays: canonicalDeliveryDays(record?.weekDays || storedDelivery?.weekDays || parentGroup?.weekDays || ''),
-      weeklyTimes: Object.fromEntries((record?.weeklySchedule || storedDelivery?.weeklySchedule || []).map(slot => [slot.day, { startTime: slot.startTime, endTime: slot.endTime }])),
-      groupStartTime: cleanText(record?.startTime || storedDelivery?.startTime)
-        || groupDeliveryPattern(parentGroup)?.startTime
-        || '',
-      groupEndTime: cleanText(record?.endTime || storedDelivery?.endTime)
-        || groupDeliveryPattern(parentGroup)?.endTime
-        || '',
-      startDate: cleanText(record?.startDate) || cleanText(storedDelivery?.startDate) || (module ? '' : cleanText(parentCohort?.startDate)),
-      targetEndDate: cleanText(record?.endDate) || cleanText(storedDelivery?.endDate),
+      sessionsNumber: String(module?.deliveryWeeks || module?.weeks || module?.sessionsNumber || storedDelivery?.sessions || 1),
+      sessionsPerWeek: String(Math.max(1, deliveryDayIndexes(initialDays).length)),
+      weekDays: initialDays,
+      weeklyTimes: Object.fromEntries((module?.weeklySchedule || storedDelivery?.weeklySchedule || []).map(slot => [slot.day, { startTime: slot.startTime, endTime: slot.endTime }])),
       // The module's own clock first, then the group's. The group's is taken
       // through `groupDeliveryPattern` rather than read raw: rows written before
       // the group schedule was split into columns kept a 12-hour clock, and a
       // "9:00 AM" reaching the time fields fails their `HH:MM` check, which left
       // the plan preview refusing to run on a group that had a perfectly good
       // timetable.
+      groupStartTime: cleanText(module?.startTime || storedDelivery?.startTime)
+        || groupDeliveryPattern(parentGroup)?.startTime
+        || '',
+      groupEndTime: cleanText(module?.endTime || storedDelivery?.endTime)
+        || groupDeliveryPattern(parentGroup)?.endTime
+        || '',
       // A new module inside a cohort starts when the cohort does â€” the same
       // default the backend falls back to when no start date is sent.
+      startDate: cleanText(module?.startDate) || cleanText(storedDelivery?.startDate) || (module ? '' : cleanText(parentCohort?.startDate)),
+      targetEndDate: cleanText(module?.endDate) || cleanText(storedDelivery?.endDate),
       tutor: normaliseKey(storedTutor) === UNASSIGNED ? '' : storedTutor,
-      status: cleanText(record?.status) || 'draft',
-      description: visibleNotes(record?.notes),
-      color: record?.color || parentGroup?.color || '#2563eb',
-      coverImage: cleanText(record?.coverImage),
+      status: cleanText(module?.status) || 'draft',
+      description: visibleNotes(module?.notes),
+      color: module?.color || parentGroup?.color || '#2563eb',
+      coverImage: cleanText(module?.coverImage),
     };
     const storedPattern = {
       sessionsPerWeek: initial.sessionsPerWeek,
@@ -526,8 +521,8 @@ export function ModuleFormDrawer({
     // yet a saved placement.
     initiallyAssigned.current = Boolean(
       parentGroup || parentCohort
-      || cleanText(record?.programmeId) || cleanText(record?.programme)
-      || cleanText(record?.cohortId) || cleanText(record?.groupId)
+      || cleanText(module?.programmeId) || cleanText(module?.programme)
+      || cleanText(module?.cohortId) || cleanText(module?.groupId)
       || cleanText(storedDelivery?.programmeId) || cleanText(storedDelivery?.cohortId) || cleanText(storedDelivery?.groupId),
     );
     // Always resets to 'now': the toggle is only offered on a fresh create (see
@@ -545,12 +540,17 @@ export function ModuleFormDrawer({
     // touched it, theirs where they have, theirs plus a sentence where both
     // changed it. On a plain seed every one of these is the stored value, which
     // is exactly what it always was.
+    const mergedPattern = coEdit.take(verdict, 'deliveryPattern', storedPattern);
     setName(coEdit.take(verdict, 'name', initial.name));
     setProgrammeId(coEdit.take(verdict, 'programmeId', initial.programmeId));
     setCohortId(coEdit.take(verdict, 'cohortId', initial.cohortId));
     setGroupIds(coEdit.take(verdict, 'groupIds', initial.groupIds));
     setSessionsNumber(coEdit.take(verdict, 'sessionsNumber', initial.sessionsNumber));
-    const mergedPattern = coEdit.take(verdict, 'deliveryPattern', storedPattern);
+    // The pattern was decided once, above. Its five fields are set from
+    // whichever version won, and the baseline for them is moved onto what is
+    // stored -- never onto the winning value, which would tell the dirty check
+    // this reader has no unsaved changes and let the next refresh re-seed the
+    // drawer over them.
     setSessionsPerWeek(mergedPattern.sessionsPerWeek);
     setWeekDays(mergedPattern.weekDays);
     setWeeklyTimes(mergedPattern.weeklyTimes);
@@ -565,7 +565,7 @@ export function ModuleFormDrawer({
     setColor(coEdit.take(verdict, 'color', initial.color));
     setCoverImage(coEdit.take(verdict, 'coverImage', initial.coverImage));
     coEdit.publish();
-  }, [allowSeed, attachedGroupIds, coEdit, cohorts, defaults?.cohortId, defaults?.groupId, defaults?.programmeId, groups, guard.stored, module, open, selectableProgrammes]);
+  }, [allowSeed, attachedGroupIds, coEdit, cohorts, defaults?.cohortId, defaults?.groupId, defaults?.programmeId, groups, module, open, selectableProgrammes]);
 
   const programmeOptions = useMemo(
     () => selectableProgrammes.map(programme => ({ value: programmeIdentity(programme), label: programme.name })),
@@ -639,11 +639,6 @@ export function ModuleFormDrawer({
   // shown as the group's own value rather than folded silently into the fields
   // below: those are the module's answer for a group that states none.
   const groupPattern = useMemo(() => groupDeliveryPattern(selectedGroup), [selectedGroup]);
-  const groupWeeklySchedule = useMemo<CurriculumWeeklySession[]>(() => (
-    groupPattern?.days && groupPattern.startTime && groupPattern.endTime
-      ? groupPattern.days.split(', ').map(day => ({ day, startTime: groupPattern.startTime, endTime: groupPattern.endTime }))
-      : []
-  ), [groupPattern]);
 
   // The end date is the backend's own session-plan calculation, so what the
   // drawer shows cannot drift from what the save stores.
@@ -706,8 +701,6 @@ export function ModuleFormDrawer({
   };
   const scheduleComplete = !selectedGroup || deliveryDaysPerWeek === Number(sessionsPerWeek);
   const weeksEntered = Math.max(1, Number(sessionsNumber) || 1);
-  const groupStartDate = cleanText(selectedGroup?.startDate) || cleanText(selectedCohort?.startDate);
-  const groupTotalSessions = Math.round(weeksEntered * Math.max(1, groupWeeklySchedule.length));
   const totalSessions = Math.round(weeksEntered * Math.max(1, deliveryDaysPerWeek));
   // Everything the plan is built from, in one string: what the preview in state
   // was fetched for is compared against it below, so a plan left over from the
@@ -786,21 +779,21 @@ export function ModuleFormDrawer({
   // These are the same fields the save uses.
   // ==========================================================================
   const conflictSlot = useMemo(() => (
-    groupWeeklySchedule.length > 0 && groupStartDate && groupTotalSessions > 0
+    scheduleComplete && validWeeklyTimes && startDate && weekDays && totalSessions > 0
       ? {
-        startDate: groupStartDate,
-        sessionsNumber: groupTotalSessions,
-        weekDays: groupPattern?.days || undefined,
-        weeklySchedule: groupWeeklySchedule,
-        startTime: groupWeeklySchedule[0]?.startTime || undefined,
-        endTime: groupWeeklySchedule[0]?.endTime || undefined,
+        startDate,
+        sessionsNumber: totalSessions,
+        weekDays,
+        weeklySchedule,
+        startTime: weeklySchedule[0]?.startTime || undefined,
+        endTime: weeklySchedule[0]?.endTime || undefined,
         cohortId: cohortId || cleanText(selectedGroup?.cohortId) || undefined,
         holidays: cohortHolidays,
         // Editing: the module must not be reported as blocking its own slot.
         moduleCatalogueId: module?.id || undefined,
       }
       : null
-  ), [cohortHolidays, cohortId, groupPattern?.days, groupStartDate, groupTotalSessions, groupWeeklySchedule, module?.id, selectedGroup?.cohortId]);
+  ), [cohortHolidays, cohortId, groupEndTime, groupStartTime, module?.id, scheduleComplete, selectedGroup?.cohortId, startDate, totalSessions, weekDays, weeklySchedule, validWeeklyTimes]);
   // Destructured rather than used through the hook's return value, which is a
   // fresh object every render: the memos below key off the parts that actually
   // move, so a keystroke in the name field does not rebuild the picker.
@@ -853,7 +846,7 @@ export function ModuleFormDrawer({
     ? 'Checking who is already teaching in this slot...'
     : bookable
       ? `Checked against ${sessionDates.length} session${sessionDates.length === 1 ? '' : 's'} using each day's scheduled time.`
-      : 'Select a Group and set the weeks to check who is free.';
+      : 'Set the group, the start date and the weeks to check who is free.';
 
   const changeProgramme = (value: string) => {
     setProgrammeId(value);
@@ -984,9 +977,14 @@ export function ModuleFormDrawer({
     // with none of them.
     if (selectedGroups.length) {
       if (!(Number(sessionsNumber) >= 1)) { setError('Set how many weeks the module runs for.'); return; }
-      if (!startDate) { setError('Choose the module start date.'); return; }
-      if (!endDate) { setError('Choose the module end date.'); return; }
+      if (!scheduleComplete) { setError(`Choose ${sessionsPerWeek} delivery days to match the sessions per week.`); return; }
+      if (!validWeeklyTimes) {
+        setError("Set each day's start and end time, with the end after the start."); return;
+      }
+      if (!startDate) { setError('Set the module start date.'); return; }
+      if (!endDate) { setError('Set the module end date - or set the start date and weeks so it can be calculated.'); return; }
       if (!tutor) { setError('Choose the tutor who delivers this module.'); return; }
+      if (dateWindowError) { setError(dateWindowError); return; }
       // Pre-empted rather than sent: the save enforces this and would refuse, so
       // firing it only trades an instant answer for a round-trip and the same
       // refusal. The clash itself is spelled out under the Tutor field, so this is
@@ -999,8 +997,7 @@ export function ModuleFormDrawer({
       }
     }
     const weeks = Math.max(1, Math.round(Number(sessionsNumber) || 1));
-    const primaryWeekDays = canonicalDeliveryDays(selectedGroup?.weekDays || '');
-    const sessions = Math.round(weeks * Math.max(1, deliveryDayIndexes(primaryWeekDays).length));
+    const sessions = totalSessions;
 
     const programme = programmes.find(item => sameIdentifier(programmeIdentity(item), programmeId))
       || programmes.find(item => sameIdentifier(item.name, programmeId));
@@ -1023,31 +1020,25 @@ export function ModuleFormDrawer({
      * their own defaults and holidays; only the primary end date was previewed.
      */
     const attachToGroup = (group: CurriculumGroup) => {
-      const groupWeekDays = canonicalDeliveryDays(group.weekDays || '');
+      const isPrimary = sameIdentifier(group.id, primaryGroupId);
+      const groupWeekDays = isPrimary ? weekDays : canonicalDeliveryDays(group.weekDays || '');
       const groupDeliveryDays = deliveryDayIndexes(groupWeekDays).length;
       const groupCohort = cohorts.find(item => sameIdentifier(item.id, group.cohortId));
-      const pattern = groupDeliveryPattern(group);
-      const groupSchedule = pattern?.days && pattern.startTime && pattern.endTime
-        ? pattern.days.split(', ').map(day => ({ day, startTime: pattern.startTime, endTime: pattern.endTime }))
-        : [];
-       return createGroupModule(group.id, {
+      return createGroupModule(group.id, {
         moduleName: trimmed,
         programmeId: programme ? programmeIdentity(programme) : programmeId,
         cohortId: cleanText(group.cohortId) || cohortId,
         groupId: group.id,
-         // Dates are owned by the module form. A group's day and clock still
-         // determine delivery, but changing the group window must not replace
-         // this module's explicitly chosen start/end dates.
-         startDate: startDate || undefined,
-         endDate: endDate || undefined,
+        startDate: startDate || undefined,
+        endDate: isPrimary ? (endDate || undefined) : undefined,
         sessionsNumber: Math.round(weeks * Math.max(1, groupDeliveryDays)),
         weeks,
         allowTutorConflict: overrideGroupIds.current.has(group.id) || undefined,
         tutor: tutor || undefined,
-        weeklySchedule: groupSchedule,
+        weeklySchedule: isPrimary ? weeklySchedule : undefined,
         weekDays: groupWeekDays || undefined,
-        startTime: pattern?.startTime || undefined,
-        endTime: pattern?.endTime || undefined,
+        startTime: (isPrimary ? weeklySchedule[0]?.startTime : cleanText(group.startTime)) || undefined,
+        endTime: (isPrimary ? weeklySchedule[0]?.endTime : cleanText(group.endTime)) || undefined,
         color,
         coverImage,
         notes: description,
@@ -1067,11 +1058,6 @@ export function ModuleFormDrawer({
         // sending that 1 back told the save to resize the module to one week.
         // An untouched box must leave the authored weeks exactly as they are.
         const weeksChanged = String(sessionsNumber).trim() !== String(baseline.current?.sessionsNumber ?? '').trim();
-        const primaryPattern = groupDeliveryPattern(selectedGroup);
-        const primaryWeekDays = canonicalDeliveryDays(selectedGroup?.weekDays || '');
-        const primarySchedule = primaryPattern?.days && primaryPattern.startTime && primaryPattern.endTime
-          ? primaryPattern.days.split(', ').map(day => ({ day, startTime: primaryPattern.startTime, endTime: primaryPattern.endTime }))
-          : [];
         const patchPayload = {
           name: trimmed,
           notes: description,
@@ -1085,9 +1071,6 @@ export function ModuleFormDrawer({
           // session dates, the tutor conflict check and the Teams series run on.
           sessionsNumber: sessions,
           ...(weeksChanged ? { weeks } : {}),
-          // Dates belong to the module. The selected group supplies only the
-          // delivery day and clock shown above, so changing a group does not
-          // silently rewrite this module's own calendar window.
           startDate: startDate || undefined,
           endDate: endDate || undefined,
           tutor,
@@ -1097,22 +1080,15 @@ export function ModuleFormDrawer({
           cohortName: selectedCohort?.name || undefined,
           groupId: primaryGroupId || undefined,
           groupName: selectedGroup?.name || undefined,
-          weeklySchedule: primarySchedule,
-          weekDays: primaryWeekDays || undefined,
-          startTime: primaryPattern?.startTime || undefined,
-          endTime: primaryPattern?.endTime || undefined,
+          weeklySchedule,
+          weekDays: weekDays || undefined,
+          startTime: weeklySchedule[0]?.startTime || undefined,
+          endTime: weeklySchedule[0]?.endTime || undefined,
         };
         // The PATCH merges onto the stored structure, so only what this form
         // owns is sent: the weeks, components and KSB mappings authored in the
         // Module Builder are left exactly as they are.
-        const outcome = await guard.save(
-          expectedRevision => updateCurriculumModule(module.id, guardedInput(patchPayload, expectedRevision)),
-        );
-        // Somebody saved first -- in this drawer or in the Module Builder. Their
-        // module is merging into this form now and the retry sends the result;
-        // nothing has been written, so no group attachment has run either.
-        if (!outcome.saved) return;
-        const patchResult = outcome.result;
+        const patchResult = await updateCurriculumModule(module.id, patchPayload);
         // Named by the save when the edit moved the dates the module's Teams
         // series was built from. Empty for a module with no calendar, which is
         // most of them.
@@ -1150,7 +1126,7 @@ export function ModuleFormDrawer({
           navigate,
           // The group's hour and the weeks just saved, so a push from the dialog
           // sends this form's own plan rather than re-deriving one.
-          sessionTimes: { startTime: primaryPattern?.startTime || '', endTime: primaryPattern?.endTime || '' },
+          sessionTimes: { startTime: cleanText(selectedGroup?.startTime), endTime: cleanText(selectedGroup?.endTime) },
           weeks: weeksEntered,
         });
         if (!warned) {
@@ -1250,12 +1226,6 @@ export function ModuleFormDrawer({
     }
   };
 
-  // See the cohort drawer: the retry has to send what the merge produced, which
-  // only exists after the render the merge caused.
-  const submitRef = useRef(submit);
-  submitRef.current = submit;
-  useRecordRebaseRetry(guard.rebase, submitRef);
-
   const bookConflictAnyway = () => {
     if (!tutorConflictGroup) return;
     overrideGroupIds.current.add(tutorConflictGroup.groupId);
@@ -1276,8 +1246,8 @@ export function ModuleFormDrawer({
       open={open}
       title={module ? 'Edit module' : 'Add module'}
       subtitle={module
-        ? 'Placement, module dates and tutor. Delivery days and times are read from the selected Group.'
-        : 'Where the module lives. Set its dates here; delivery days and times come from the selected Group.'}
+        ? 'Placement, dates and tutor. Weeks and components stay in the Module Builder.'
+        : 'Where the module lives and when it runs. Weeks and components are authored next, in the Module Builder.'}
       banner={chain?.banner}
       onClose={onClose}
       onSubmit={submit}
@@ -1396,26 +1366,27 @@ export function ModuleFormDrawer({
       <FormField label="Module name" required>
         <TextControl value={name} onChange={setName} placeholder="e.g. Data Modelling" />
       </FormField>
-      {/* Weeks describe the authored module structure. The selected Group owns
-          the delivery days and clock; this form owns the module date window. */}
+      {/* Weeks and the two dates are the module's own shape, so they are asked
+          for even with no placement ("Assign later"): a catalogue draft that
+          already knows it runs 8 weeks from March is worth recording, and the
+          Module Builder authors that many weeks straight away. What stays
+          behind the placement is the group's part -- the session plan and the
+          tutor -- which cannot be worked out without delivery days. */}
       <FormField
         label="Weeks"
         required={Boolean(selectedGroups.length)}
         hint={
-          selectedGroups.length
-            ? 'How many authored weeks the module contains. Its sessions use the selected Group delivery pattern.'
-            : 'How many authored weeks the module contains. Delivery dates are set when it is assigned to a Group.'
+          deliveryDaysPerWeek > 1
+            ? `= ${totalSessions} sessions (${deliveryDaysPerWeek} delivery days x ${sessionsNumber || 1} weeks). Counted from the dates below when you set them; each week is authored in the Module Builder.`
+            : selectedGroups.length
+              ? 'How long the module runs, counted from the dates below when you set them. Each week is authored in the Module Builder.'
+              : 'How long the module runs. Each week is authored in the Module Builder; the delivery dates follow when you assign it to a group.'
         }
       >
         <TextControl type="number" min={1} max={104} value={sessionsNumber} onChange={changeWeeks} />
       </FormField>
-      <p className="-mt-2 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[12px] leading-5 text-primary-800">
-        <AppIcon className="ri-information-line mr-1 text-sm"></AppIcon>
-        The selected Group supplies the delivery days and session times. The module start and end dates belong to this module.
-      </p>
       {showSchedule && selectedGroup && (
         <div className="space-y-4 rounded-lg border border-background-200 bg-background-50 p-4">
-          {showInheritedScheduleControls && <>
           <FormField
             label="Sessions per week"
             required
@@ -1436,27 +1407,25 @@ export function ModuleFormDrawer({
           <FormField label="Delivery days" as="group" required hint={`Choose ${sessionsPerWeek} day${sessionsPerWeek === '1' ? '' : 's'} each week (${deliveryDaysPerWeek} selected).`}>
             <WeekdayControl value={weekDays} maxSelections={Number(sessionsPerWeek)} onChange={value => { setWeekDays(value); setTargetEndDate(''); }} />
           </FormField>
-          </>}
           {/* The group's own timetable, stated as the group's rather than merged
               into the fields above. A module inherits it and may then differ, and
               "this module runs to its own schedule" is a fact the reader has to
               be able to see before they save dates that follow from it. */}
-          <>
+          {groupPattern && (
             <div className="rounded-lg border border-background-200 bg-background-100 p-3">
               <p className="text-[12px] font-semibold text-foreground-800">
-                {selectedGroup.name} delivers {groupPattern?.days || 'on no weekday yet'}
-                {groupPattern?.startTime && groupPattern?.endTime
+                {selectedGroup.name} delivers {groupPattern.days || 'on no weekday yet'}
+                {groupPattern.startTime && groupPattern.endTime
                   ? `, ${clockLabel(groupPattern.startTime)} - ${clockLabel(groupPattern.endTime)}`
                   : ''}
-                {groupPattern?.durationMinutes ? ` (${durationLabel(groupPattern.durationMinutes)} a session)` : ''}
+                {groupPattern.durationMinutes ? ` (${durationLabel(groupPattern.durationMinutes)} a session)` : ''}
               </p>
-              <p className="mt-1 text-[12px] text-foreground-600">Coach: {cleanText(selectedGroup.coach) || 'Not assigned'}</p>
-              {!groupPattern?.startTime || !groupPattern?.endTime ? (
+              {!groupPattern.startTime || !groupPattern.endTime ? (
                 <p className="mt-1 text-[12px] text-amber-700">
-                  This group has no {groupPattern?.startTime ? 'end' : groupPattern?.endTime ? 'start' : 'start and end'} time
+                  This group has no {groupPattern.startTime ? 'end' : groupPattern.endTime ? 'start' : 'start and end'} time
                   set, so the times below start at 09:00 - 10:00. Set the group&apos;s schedule for this module to follow it.
                 </p>
-              ) : !groupPattern?.days ? (
+              ) : !groupPattern.days ? (
                 <p className="mt-1 text-[12px] text-amber-700">
                   This group has no delivery day set, so the days above are this module&apos;s own.
                   Set the group&apos;s schedule for this module to follow it.
@@ -1464,11 +1433,29 @@ export function ModuleFormDrawer({
               ) : matchesGroupPattern ? (
                 <p className="mt-1 text-[12px] text-emerald-700">This module follows it.</p>
               ) : (
-                <p className="mt-1 text-[12px] text-emerald-700">This module follows the selected Group&rsquo;s delivery pattern.</p>
+                // The group states when its learners meet, so its day and clock
+                // are what the module is delivered on. The fields below are the
+                // module's own answer for a group that states none -- saying so
+                // beats a button that appears to settle a disagreement the
+                // schedule no longer has.
+                <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-[12px] text-amber-700">
+                    The fields below still say {modulePatternLabel}, but this module is delivered on
+                    the group&apos;s pattern above. Change {selectedGroup.name} to move it; the fields
+                    below are only used while a group states no pattern of its own.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={applyGroupPattern}
+                    className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-primary-300 bg-white px-3 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-50"
+                  >
+                    Match the group here
+                  </button>
+                </div>
               )}
             </div>
-          </>
-          {showInheritedScheduleControls && <>{weeklySchedule.map(slot => (
+          )}
+          {weeklySchedule.map(slot => (
             <div key={slot.day} className="rounded-lg border border-background-200 p-3">
               <p className="mb-2 text-[12px] font-semibold">{slot.day}</p>
               <div className="grid gap-4 sm:grid-cols-2">
@@ -1476,7 +1463,7 @@ export function ModuleFormDrawer({
                 <FormField label={`${slot.day} end time`} required hint={clockLabel(slot.endTime)}><TextControl type="time" value={slot.endTime} onChange={value => setWeeklyTimes(previous => ({ ...previous, [slot.day]: { startTime: slot.startTime, endTime: value } }))} /></FormField>
               </div>
             </div>
-          ))}</>}
+          ))}
           <p className="text-[12px] text-foreground-500">Each day repeats at its own time every week. {weeksEntered} weeks × {sessionsPerWeek} sessions = {Math.round(weeksEntered * Number(sessionsPerWeek))} sessions. Different times use separate Teams series and links.</p>
         </div>
       )}

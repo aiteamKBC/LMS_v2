@@ -26,7 +26,6 @@ import {
   type CurriculumHoliday,
   type CurriculumProgramme,
   type StaleTeamsCalendar,
-  guardedInput,
 } from '@/lib/curriculumApi';
 import { cleanText, cohortWeekCapacity, cohortsForProgramme, formatDateLabel, normaliseKey, programmeIdentity, programmeSelectValue, sameFormValues, sameIdentifier, weekendDateNotice } from './model';
 import {
@@ -41,7 +40,7 @@ import {
   type FormChainStep,
 } from './ui';
 import { confirmTeamsCalendarUpdate } from './teamsCalendarNotice';
-import { useFormFieldMerge, useFormSeedGuard, useRecordGuard, useRecordRebaseRetry } from './useDrawerState';
+import { useFormFieldMerge, useFormSeedGuard } from './useDrawerState';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { DatePickerField } from '@/components/feature/DatePickerField';
 
@@ -118,15 +117,6 @@ export function ProgrammeFormDrawer({
   const liveRef = useRef<Record<string, unknown>>(liveValues);
   liveRef.current = liveValues;
   const coEdit = useFormFieldMerge(baseline, liveRef, PROGRAMME_FIELD_LABELS);
-  // The server refuses a save built on a version somebody else has already
-  // replaced, and hands the stored programme back for the merge below.
-  const guard = useRecordGuard<CurriculumProgramme>(
-    'programme',
-    // Undefined while the drawer is creating one: there is no stored record to
-    // be stale against, so there is no token to read and nothing to guard.
-    programme ? programmeIdentity(programme) : undefined,
-    open,
-  );
   // `programme` gets a new identity on every background refresh of the list
   // behind this drawer, and this effect depends on it. Without the guard the
   // refresh re-seeded the fields from the stored record and threw away whatever
@@ -137,14 +127,11 @@ export function ProgrammeFormDrawer({
   useEffect(() => {
     const verdict = allowSeed(open, cleanText(programme?.id) || cleanText(programme?.sourceId) || 'new-programme');
     if (!verdict) return;
-    // A refused save hands back the stored programme; folding that in is the
-    // same operation as folding in one a background refresh brought.
-    const record = guard.stored || programme;
     const initial = {
-      name: cleanText(record?.name),
-      level: cleanText(record?.level).replace(/\D/g, ''),
-      description: cleanText(record?.description),
-      color: record?.color || '#6941c6',
+      name: cleanText(programme?.name),
+      level: cleanText(programme?.level).replace(/\D/g, ''),
+      description: cleanText(programme?.description),
+      color: programme?.color || '#6941c6',
     };
     if (verdict === 'seed') {
       baseline.current = initial;
@@ -156,7 +143,7 @@ export function ProgrammeFormDrawer({
     setDescription(coEdit.take(verdict, 'description', initial.description));
     setColor(coEdit.take(verdict, 'color', initial.color));
     coEdit.publish();
-  }, [allowSeed, coEdit, guard.stored, open, programme]);
+  }, [allowSeed, coEdit, open, programme]);
 
   const submit = async () => {
     if (!name.trim()) { setError('Give the programme a name.'); return; }
@@ -173,14 +160,8 @@ export function ProgrammeFormDrawer({
         color,
       };
       let created: CurriculumProgramme | null = null;
-      if (programme) {
-        const outcome = await guard.save(
-          expectedRevision => updateCurriculumProgramme(programmeIdentity(programme), guardedInput(payload, expectedRevision)),
-        );
-        // Somebody saved first. Their programme is merging into this form now,
-        // and the retry sends the result; nothing has been written yet.
-        if (!outcome.saved) return;
-      } else created = (await createCurriculumProgramme(payload)).programme || null;
+      if (programme) await updateCurriculumProgramme(programmeIdentity(programme), payload);
+      else created = (await createCurriculumProgramme(payload)).programme || null;
       // In a chain the record is handed straight back: the wizard moves to the
       // next step and says what was created once, at the end of the run.
       if (chain?.chained) {
@@ -209,12 +190,6 @@ export function ProgrammeFormDrawer({
       setSaving(false);
     }
   };
-
-  // See the cohort drawer: the retry has to send what the merge produced, which
-  // only exists after the render the merge caused.
-  const submitRef = useRef(submit);
-  submitRef.current = submit;
-  useRecordRebaseRetry(guard.rebase, submitRef);
 
   return (
     <EntityDrawer
@@ -328,11 +303,6 @@ export function CohortFormDrawer({
   const liveRef = useRef<Record<string, unknown>>(liveValues);
   liveRef.current = liveValues;
   const coEdit = useFormFieldMerge(baseline, liveRef, COHORT_FIELD_LABELS);
-  // The server refuses a save built on a version somebody else has already
-  // replaced, and hands the stored cohort back for the merge below to fold
-  // this reader's outstanding changes into. Polling still decides how soon a
-  // colleague's change appears; it no longer decides whether it survives.
-  const guard = useRecordGuard<CurriculumCohort>('cohort', cohort?.id, open);
   // `programmes` is in the seeding effect's dependencies and gets a new identity
   // on every background refresh; without this the list landing mid-edit reset the
   // form. See useFormSeedGuard.
@@ -347,25 +317,21 @@ export function CohortFormDrawer({
       setError(null);
       setSaving(false);
     }
-    // A refused save hands back the stored cohort. Folding that in is the same
-    // operation as folding in one a poll brought, so it goes through the same
-    // merge rather than a second path that could disagree with it.
-    const record = guard.stored || cohort;
-    if (record) {
+    if (cohort) {
       // A stored cohort already carries a practical end date, and it may have
       // been authored rather than calculated. Treat it as manual so reopening
       // the drawer cannot quietly move it back onto the duration rule.
-      const storedPracticalEnd = record.practicalEndDate || record.endDate || '';
+      const storedPracticalEnd = cohort.practicalEndDate || cohort.endDate || '';
       const initial = {
-        name: record.name || '',
-        programmeId: programmeSelectValue(programmes, cleanText(record.programmeId) || cleanText(record.programme)),
-        startDate: record.startDate || '',
-        durationMonths: record.durationMonths == null ? '' : String(record.durationMonths),
+        name: cohort.name || '',
+        programmeId: programmeSelectValue(programmes, cleanText(cohort.programmeId) || cleanText(cohort.programme)),
+        startDate: cohort.startDate || '',
+        durationMonths: cohort.durationMonths == null ? '' : String(cohort.durationMonths),
         practicalEndDate: storedPracticalEnd,
-        epaMonths: record.epaMonths == null ? '' : String(record.epaMonths),
-        apprenticeshipEndOverride: record.apprenticeshipEndOverride || '',
-        color: record.color || '#6d28d9',
-        excludedHolidayIds: [...new Set((record.excludedHolidayIds || []).map(normaliseKey).filter(Boolean))].sort(),
+        epaMonths: cohort.epaMonths == null ? '' : String(cohort.epaMonths),
+        apprenticeshipEndOverride: cohort.apprenticeshipEndOverride || '',
+        color: cohort.color || '#6d28d9',
+        excludedHolidayIds: [...new Set((cohort.excludedHolidayIds || []).map(normaliseKey).filter(Boolean))].sort(),
       };
       if (verdict === 'seed') baseline.current = initial;
       // `take` decides each field: the stored value when this reader has not
@@ -409,7 +375,7 @@ export function CohortFormDrawer({
     setApprenticeshipEndOverride(initial.apprenticeshipEndOverride);
     setColor(initial.color);
     setExcludedHolidayIds(initial.excludedHolidayIds);
-  }, [allowSeed, coEdit, cohort, defaults?.programmeId, guard.stored, open, programmes]);
+  }, [allowSeed, coEdit, cohort, defaults?.programmeId, open, programmes]);
 
   // `authoredPracticalEnd` above is also what the preview is given: in automatic
   // mode the backend works the practical end out from the start date and
@@ -561,12 +527,7 @@ export function CohortFormDrawer({
       // drawer opened on, with the dates the preview has already worked out.
       let saved: CurriculumCohort | null = null;
       if (cohort) {
-        const outcome = await guard.save(
-          expectedRevision => updateCurriculumCohort(cohort.id, guardedInput(payload, expectedRevision)),
-        );
-        // Somebody saved first. Their cohort is now merging into this form, and
-        // the retry below sends the result; nothing has been written yet.
-        if (!outcome.saved) return;
+        await updateCurriculumCohort(cohort.id, payload);
         saved = {
           ...cohort,
           name: payload.name,
@@ -609,13 +570,6 @@ export function CohortFormDrawer({
       setSaving(false);
     }
   };
-
-  // The retry has to send what the merge produced, and that only exists after
-  // the render the merge caused -- so the rebase calls whichever `submit` the
-  // current render built, never the one that was refused.
-  const submitRef = useRef(submit);
-  submitRef.current = submit;
-  useRecordRebaseRetry(guard.rebase, submitRef);
 
   return (
     <EntityDrawer
@@ -985,11 +939,6 @@ export function GroupFormDrawer({
   const liveRef = useRef<Record<string, unknown>>(liveValues);
   liveRef.current = liveValues;
   const coEdit = useFormFieldMerge(baseline, liveRef, GROUP_FIELD_LABELS);
-  // The server refuses a save built on a version somebody else has already
-  // replaced, and hands the stored group back for the merge below. It matters
-  // most here: the slot is what the Teams calendar is built from, so putting a
-  // colleague's day change back would move real meetings.
-  const guard = useRecordGuard<CurriculumGroup>('group', group?.id, open);
   // `cohorts` is a dependency of the seeding effect and gets a new identity on
   // every background refresh; without this a reload landing mid-edit reset the
   // form. See useFormSeedGuard.
@@ -1004,23 +953,20 @@ export function GroupFormDrawer({
       setError(null);
       setSaving(false);
     }
-    // A refused save hands back the stored group; folding that in is the same
-    // operation as folding in one a poll brought.
-    const record = guard.stored || group;
-    if (record) {
-      const parent = cohorts.find(cohort => normaliseKey(cohort.id) === normaliseKey(record.cohortId));
+    if (group) {
+      const parent = cohorts.find(cohort => normaliseKey(cohort.id) === normaliseKey(group.cohortId));
       const initial = {
-        name: record.name || '',
+        name: group.name || '',
         programmeId: programmeSelectValue(
           programmes,
-          cleanText(parent?.programmeId) || cleanText(record.programmeId) || cleanText(record.programme),
+          cleanText(parent?.programmeId) || cleanText(group.programmeId) || cleanText(group.programme),
         ),
-        cohortId: cleanText(record.cohortId),
-        coach: normaliseKey(record.coach) === 'unassigned' ? '' : cleanText(record.coach),
-        weekDays: cleanText(record.weekDays),
-        startTime: cleanText(record.startTime) || '09:00',
-        endTime: cleanText(record.endTime) || '11:00',
-        color: record.color || '#2563eb',
+        cohortId: cleanText(group.cohortId),
+        coach: normaliseKey(group.coach) === 'unassigned' ? '' : cleanText(group.coach),
+        weekDays: cleanText(group.weekDays),
+        startTime: cleanText(group.startTime) || '09:00',
+        endTime: cleanText(group.endTime) || '11:00',
+        color: group.color || '#2563eb',
       };
       const storedSchedule = { weekDays: initial.weekDays, startTime: initial.startTime, endTime: initial.endTime };
       if (verdict === 'seed') baseline.current = { ...initial, schedule: storedSchedule };
@@ -1061,7 +1007,7 @@ export function GroupFormDrawer({
     setStartTime(initial.startTime);
     setEndTime(initial.endTime);
     setColor(initial.color);
-  }, [allowSeed, coEdit, cohorts, defaults?.cohortId, defaults?.programmeId, group, guard.stored, open, programmes]);
+  }, [allowSeed, coEdit, cohorts, defaults?.cohortId, defaults?.programmeId, group, open, programmes]);
 
   const programmeOptions = useMemo(
     () => programmes.map(programme => ({ value: programmeIdentity(programme), label: programme.name })),
@@ -1091,14 +1037,8 @@ export function GroupFormDrawer({
       // save says which ones, for the notice below.
       let staleTeamsCalendars: StaleTeamsCalendar[] = [];
       if (group) {
-        const outcome = await guard.save(
-          expectedRevision => updateCurriculumGroup(group.id, guardedInput(payload, expectedRevision)),
-        );
-        // Somebody saved first. Their group is merging into this form now, and
-        // the retry sends the result; nothing has been written yet, so no
-        // calendar has been left behind to warn about either.
-        if (!outcome.saved) return;
-        staleTeamsCalendars = outcome.result?.teamsCalendarsToUpdate || [];
+        const result = await updateCurriculumGroup(group.id, payload);
+        staleTeamsCalendars = result?.teamsCalendarsToUpdate || [];
         saved = { ...group, ...payload };
       } else {
         saved = (await createCurriculumGroup(payload)).group || null;
@@ -1137,11 +1077,6 @@ export function GroupFormDrawer({
       setSaving(false);
     }
   };
-
-  // See the cohort drawer: the retry has to send what the merge produced.
-  const submitRef = useRef(submit);
-  submitRef.current = submit;
-  useRecordRebaseRetry(guard.rebase, submitRef);
 
   return (
     <EntityDrawer

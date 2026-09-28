@@ -315,23 +315,12 @@ def verify_saved_calendar(v, series, rows, recipients):
     owner = quote(series.get('organizer_email') or '', safe='')
     for item in manifest:
         group = [row for row in rows if row['session_number'] in item['sessionNumbers']]
-        # `rows` holds the sessions still standing, so a meeting whose sessions
-        # were all cancelled simply has nothing left here to verify. Reading
-        # that as a broken manifest is what stopped a cancellation email: the
-        # calendar was consistent, one of its meetings had just been withdrawn.
-        if not group:
-            continue
-        if any(row['session_number'] in covered or row['join_url'] != item['joinUrl'] for row in group):
+        if not group or any(row['session_number'] in covered or row['join_url'] != item['joinUrl'] for row in group):
             raise ValueError('The saved session-to-meeting links are inconsistent.')
         targets = [{'session_number': row['session_number'], 'start': utc_datetime(row['scheduled_start']),
                     'end': utc_datetime(row['scheduled_end'])} for row in group]
-        # Whether this meeting is a recurring one is a fact about how it was
-        # booked, not about how many of its sessions survive. Read from the
-        # surviving count, a series whose last-but-one session was cancelled
-        # would be read back as a single event and never match.
         checked = verify_calendar(microsoft_graph_request, owner, item['eventId'], targets, item['joinUrl'],
-                                  len(item['sessionNumbers']) > 1 if v.stored_calendar_series(series)
-                                  else series.get('repeat_pattern') != 'none')
+                                  len(group) > 1 if v.stored_calendar_series(series) else series.get('repeat_pattern') != 'none')
         invited = {str((attendee.get('emailAddress') or {}).get('address') or '').strip().lower()
                    for attendee in checked.get('attendees', [])}
         if not set(recipients).issubset(invited):
@@ -408,7 +397,7 @@ def added_only(recipients, organisers, added):
     return [value for value in recipients if value in wanted], [value for value in organisers if value in wanted]
 
 
-def dispatch_change(live_id, token, ledger, retry_failed=False, send=None, parallel=False):
+def dispatch_change(live_id, token, ledger, retry_failed=False, send=None):
     """Email one signed schedule change: each learner their copy, organisers theirs."""
     from .teams_schedule_notice import read_change_notice
     send = send or _send_message
@@ -418,35 +407,7 @@ def dispatch_change(live_id, token, ledger, retry_failed=False, send=None, paral
     # everyone the creation email reached, and "accepted once, never again" is
     # right for that email but would silence every update after it.
     return dispatch_by_role(f"{live_id}#{notice['id']}", recipients, organisers, learner_copy, organiser_copy,
-                            ledger, send, retry_failed, parallel)
-
-
-def send_change_emails(live_id, token, ledger=None, send=None):
-    """Deliver a confirmed schedule change from the server.
-
-    Cancellation actions use this path so closing the browser cannot prevent
-    the LMS notice. The ledger makes retries idempotent and keeps accepted
-    recipients from receiving a duplicate message.
-    """
-    try:
-        from login import email_azure
-        ledger = ledger or DeliveryLedger(connection)
-        ledger.check()
-        if not email_azure.is_configured():
-            return {'error': 'Schedule emails are not configured. Check the existing Azure mail settings.',
-                    'code': 'schedule_email_not_configured'}
-        previous_queued = None
-        while True:
-            status = dispatch_change(live_id, token, ledger, send=send or _send_message, parallel=True)
-            if not status['queued'] or (previous_queued is not None and status['queued'] >= previous_queued):
-                return status
-            previous_queued = status['queued']
-    except (ValueError, RuntimeError) as exc:
-        return {'error': str(exc), 'code': 'schedule_email_blocked'}
-    except Exception:
-        logger.error('Schedule change emails could not finish; durable delivery claims remain intact.')
-        return {'error': 'Schedule email status could not be confirmed. Retry to check pending messages; accepted messages will not be sent again.',
-                'code': 'schedule_email_status_unknown'}
+                            ledger, send, retry_failed)
 
 
 @transaction.non_atomic_requests

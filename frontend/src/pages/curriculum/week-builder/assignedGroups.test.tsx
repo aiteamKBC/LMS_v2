@@ -59,45 +59,4 @@ describe('week component assigned groups', () => {
     expect(screen.queryByRole('button', { name: /Group One/ })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Group Two/ })).toBeInTheDocument();
   });
-
-  it('lets the module\'s own group be unchecked', async () => {
-    const user = userEvent.setup();
-    const onChange = vi.fn();
-    const component = {
-      id: 'COMP-OWN-GROUP',
-      weekId: 'W1',
-      type: 'video' as const,
-      title: 'Video component',
-      description: '',
-      expectedOtjh: 1,
-      points: 0,
-      reflectionRequired: false,
-      reflectionQuestion: '',
-      workplaceEvidenceRequired: false,
-      tutorValidationRequired: false,
-      coachValidationRequired: false,
-      ksbMappings: [],
-      settings: { selectedGroupKeys: ['G1'], selectedGroupNames: ['Group One'] },
-    } as ComponentProps<typeof ComponentEditor>['component'];
-    const groupOptions = [{ key: 'G1', name: 'Group One', programmeId: 'P1', programme: 'Programme One', cohortId: 'C1', cohort: 'Cohort One', moduleCount: 1 }];
-
-    render(
-      <ComponentEditor
-        component={component}
-        onChange={onChange}
-        onBack={vi.fn()}
-        groupOptions={groupOptions}
-        weekScope={{ programmeId: 'P1', groupName: 'Group One' } as ComponentProps<typeof ComponentEditor>['weekScope']}
-      />,
-    );
-
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Assigned groups programme' }), 'P1');
-    await user.selectOptions(screen.getByRole('combobox', { name: 'Assigned groups cohort' }), 'C1');
-    const checkbox = screen.getByRole('checkbox') as HTMLInputElement;
-    expect(checkbox).toBeEnabled();
-    await user.click(checkbox);
-    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({
-      settings: expect.objectContaining({ selectedGroupKeys: [] }),
-    }));
-  });
 });

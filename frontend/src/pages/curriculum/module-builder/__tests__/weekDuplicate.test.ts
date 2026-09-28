@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   applyModuleWeekSessionPlan,
-  copyComponentToWeek,
   copyWeekToModule,
   createEmptyComponent,
   createLocalModuleDraft,
@@ -295,60 +294,5 @@ describe('duplicating a week', () => {
   it('leaves the module alone when the week id is not one of its own', () => {
     const source = authoredModule();
     expect(duplicateWeekInModule(source, 'WEEK-NOT-HERE')).toBe(source);
-  });
-});
-
-describe('an Assigned Groups component placement keeps the Teams join link', () => {
-  const source = {
-    id: 'COMP-SOURCE',
-    weekId: 'WEEK-SOURCE',
-    moduleId: 'MOD-SOURCE',
-    type: 'live-session' as const,
-    title: 'Live Teams Session 1',
-    description: '',
-    expectedOtjh: 2,
-    points: 10,
-    reflectionRequired: false,
-    reflectionQuestion: '',
-    workplaceEvidenceRequired: false,
-    tutorValidationRequired: false,
-    coachValidationRequired: true,
-    ksbMappings: [],
-    settings: {
-      liveSessionUrl: 'https://teams.microsoft.com/l/meetup-join/assigned-groups',
-      teamsMeetingUrl: '',
-      teamsLiveSessionId: 'LIVE-SOURCE',
-      selectedGroupKeys: ['GROUP-SOURCE'],
-      selectedGroupNames: ['Source group'],
-    },
-  };
-
-  it('keeps the join link in its Teams fields without moving the source calendar identity', () => {
-    const copy = copyComponentToWeek(source, 'WEEK-TARGET', 'MOD-TARGET');
-
-    expect(copy.settings.liveSessionUrl).toBe('https://teams.microsoft.com/l/meetup-join/assigned-groups');
-    expect(copy.settings.teamsMeetingUrl).toBe('https://teams.microsoft.com/l/meetup-join/assigned-groups');
-    expect(copy.settings.teamsLiveSessionId).toBeUndefined();
-    expect(copy.title).toBe('Live Teams Session 1');
-    expect(copy.settings.selectedGroupKeys).toBeUndefined();
-    expect(copy.id).not.toBe(source.id);
-    expect(copy.weekId).toBe('WEEK-TARGET');
-    expect(copy.moduleId).toBe('MOD-TARGET');
-    expect(source.settings.teamsMeetingUrl).toBe('');
-  });
-
-  it('normalises legacy rows that only have teamsMeetingUrl', () => {
-    const copy = copyComponentToWeek({
-      ...source,
-      settings: {
-        ...source.settings,
-        liveSessionUrl: '',
-        teamsMeetingUrl: 'https://teams.microsoft.com/l/meetup-join/legacy',
-      },
-    }, 'WEEK-TARGET', 'MOD-TARGET');
-
-    expect(copy.settings.liveSessionUrl).toBe('https://teams.microsoft.com/l/meetup-join/legacy');
-    expect(copy.settings.teamsMeetingUrl).toBe('https://teams.microsoft.com/l/meetup-join/legacy');
-    expect(copy.settings.teamsLiveSessionId).toBeUndefined();
   });
 });

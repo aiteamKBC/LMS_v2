@@ -144,30 +144,20 @@ def verify_calendar(request, owner, event_id, targets, expected_join_url='', rec
     return event
 
 
-def publish_attendees(request, owner, event, attendees, *, extra_headers=None, always=False):
+def publish_attendees(request, owner, event, attendees):
     """An attendee-only patch avoids reapplying the recurrence on people saves.
 
     Returns whether the invitation list was actually written. A caller that
     re-verifies the calendar afterwards only has to do so when something was
     sent; an unchanged list leaves the calendar exactly as the verification
-    before this call found it -- and, because nothing is written, Microsoft has
-    nothing to mail either.
-
-    ``extra_headers`` carries the caller's invitation preference, so that
-    correcting who belongs to a meeting and deciding whether Microsoft announces
-    it stay two separate decisions. Membership is never traded for silence.
-
-    ``always`` writes even when the list already matches. A session created
-    silently already has its people on it, and skipping the write there would
-    leave a meeting whose attendees are correct and whose attendees were never
-    told -- Microsoft only delivers a meeting to someone when something is sent.
+    before this call found it.
     """
     def addresses(items):
         return {str((item.get('emailAddress') or {}).get('address') or '').strip().lower() for item in items}
-    if not always and addresses(event.get('attendees') or []) == addresses(attendees):
+    if addresses(event.get('attendees') or []) == addresses(attendees):
         return False
     path = f'users/{owner}/events/{quote(event["id"], safe="")}'
-    request('PATCH', path, payload={'attendees': attendees}, extra_headers=extra_headers)
+    request('PATCH', path, payload={'attendees': attendees})
     confirmed = request('GET', path)
     if addresses(confirmed.get('attendees') or []) != addresses(attendees):
         raise RuntimeError('Microsoft did not confirm the full invitation list. Check the calendar before retrying.')

@@ -1413,7 +1413,7 @@ function withoutGroupAssignmentSettings(settings: ComponentSettings): ComponentS
 // that shares a meeting across cohorts — that is "Assigned groups"
 // (`placedCopy*` above), which places a copy deliberately and is stripped here
 // for the same reason.
-export const SESSION_DATE_SETTING_KEYS = [
+const SESSION_DATE_SETTING_KEYS = [
   'sessionDate',
   'sessionDay',
   'sessionDateTimeUtc',
@@ -1547,35 +1547,13 @@ export function copyComponentToWeek(
   targetWeekId: string,
   targetModuleId: string,
 ): ModuleComponent {
-  // A Teams booking belongs to the source module. Carrying its
-  // `teamsLiveSessionId` into another module either moves the source calendar
-  // or collides with the target module's one-active-calendar constraint. Keep
-  // the join URL, however: Assigned Groups intentionally lets another group
-  // open the same meeting. Only the local calendar identity/date are removed.
-  const sourceSettings = structuredClone(source.settings || {});
-  const copiedSettings = source.type === 'live-session'
-    ? independentCopySettings(sourceSettings)
-    : structuredClone(withoutGroupAssignmentSettings(sourceSettings));
-  if (source.type === 'live-session') {
-    const teamsLink = String(sourceSettings.liveSessionUrl || sourceSettings.teamsMeetingUrl || '').trim();
-    if (teamsLink) {
-      // Populate both supported spellings so the Week Builder and legacy
-      // learner/calendar readers resolve the same link after the copy.
-      copiedSettings.liveSessionUrl = teamsLink;
-      copiedSettings.teamsMeetingUrl = teamsLink;
-    }
-  }
   return {
     ...source,
     id: makeAuthoringId('component'),
     copiedFromId: source.id,
     moduleId: targetModuleId,
     weekId: targetWeekId,
-    // The meeting URL belongs to the Teams meeting-link settings, not the
-    // learner-facing session title. Keeping the source title unchanged also
-    // avoids turning every placement into a different session name.
-    title: source.title,
-    settings: copiedSettings,
+    settings: withoutGroupAssignmentSettings(source.settings),
     ksbMappings: source.ksbMappings.map(mapping => ({ ...mapping, id: makeAuthoringId('ksb') })),
   };
 }
@@ -1838,15 +1816,11 @@ export function fetchModuleSessionPlan(
   options: { timeoutMs?: number } = {},
 ): Promise<ModuleWeekSessionPlan> {
   const count = Math.max(0, Math.round(Number(weeks) || 0));
-  // Teams reconciliation must never be satisfied by a browser or shared
-  // curriculum cache: a Group day edit can land while this module builder is
-  // still open. `skipCache` also sends no-store/no-cache headers through the
-  // shared transport, so the plan is the server's current delivery pattern.
-  return fetchCurriculumJson<ModuleWeekSessionPlan>(
+  return apiJson<ModuleWeekSessionPlan>(
     `/curriculum/modules/${encodeURIComponent(String(moduleCatalogueId || '').trim())}/session-plan/${count ? `?weeks=${count}` : ''}`,
     // A caller rendering a spinner needs a budget: without one a slow backend
     // leaves it spinning on the browser's own default, which is minutes.
-    { ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}), skipCache: true },
+    options.timeoutMs ? { timeoutMs: options.timeoutMs } : undefined,
   );
 }
 
@@ -2801,7 +2775,7 @@ export async function createTeamsMeeting(
  * `coOrganizers` are optional: omit them to move dates only, pass them to correct
  * who is invited, who presents and who co-runs it without recreating the meeting.
  */
-export async function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & Partial<Pick<TeamsMeetingInput, 'lobbyBypass' | 'recording' | 'spokenLanguage' | 'seriesMode'>> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[]; peopleOnly?: boolean; settingsOnly?: boolean; notifyAttendees?: boolean }, options: { onSubmitted?: () => void } = {}) {
+export async function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & Partial<Pick<TeamsMeetingInput, 'lobbyBypass' | 'recording' | 'spokenLanguage' | 'seriesMode'>> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[]; peopleOnly?: boolean; settingsOnly?: boolean }) {
   // `settingsOnly` only labels the review ("meeting settings" rather than
   // "invitations"); the transport is the same people-only update either way.
   const { settingsOnly, ...sent } = input;
@@ -2819,32 +2793,18 @@ export async function updateTeamsMeetingSchedule(liveSessionId: string, input: P
     reviewed.startDateTimeUtc = reviewed.scheduledOccurrences[0].startDateTimeUtc;
     reviewed.durationMinutes = reviewed.scheduledOccurrences[0].durationMinutes;
   }
-  // What this save announces, decided once here and read by the review, by the
-  // write and by the result. A save that moves the calendar is announced to
-  // everyone already invited and carries the LMS change email. A save that only
-  // changes who is invited or how the meeting runs announces nothing: the
-  // people it adds are invited and emailed on their own, and nobody already on
-  // the meeting hears about it. The explicit choice travels with the PATCH so the
-  // review, calendar write and result dialog cannot disagree.
-  // A date update defaults to the historic behaviour (announce it), while the
-  // Teams Meetings workspace can explicitly turn that announcement off. A
-  // people/settings-only save is always quiet for everyone already invited;
-  // newly added people are handled separately after the calendar is verified.
-  const notifyAttendees = reviewed.peopleOnly ? false : reviewed.notifyAttendees !== false;
-  await reviewCalendar({ ...reviewed, settingsOnly, organizerEmail: series.organizer_email, joinUrl: series.join_url,
-    notifyOnUpdate: notifyAttendees,
+  const { notifyAttendees } = await reviewCalendar({ ...reviewed, settingsOnly, organizerEmail: series.organizer_email, joinUrl: series.join_url,
+    // A people-only save moves no date, so there is no "was / now" to tell anyone.
+    offerChangeEmail: !reviewed.peopleOnly,
     attendees: reviewed.attendees ?? series.attendees, presenters: reviewed.presenters ?? series.presenters,
     coOrganizers: reviewed.coOrganizers ?? series.co_organizers,
     recording: reviewed.recording ?? series.recording, lobbyBypass: reviewed.lobbyBypass ?? series.lobby_bypass, spokenLanguage: reviewed.spokenLanguage ?? series.spoken_language,
     calendarSeries: series.calendar_series, previousOccurrences: occurrences,
     seriesMode: series.calendar_series?.length ? 'per_day' : 'shared',
   }, series.timeZoneIana || getCalendarTimeZone());
-  // The review is complete. The caller can now replace its form with a
-  // progress panel without showing it behind the confirmation dialog.
-  options.onSubmitted?.();
   return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting']; warnings?: Array<{ code?: string; message: string; detail?: string }>; changeNotice?: string }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
     method: 'PATCH',
-    body: JSON.stringify({ ...reviewed, notifyAttendees }),
+    body: JSON.stringify(reviewed),
     // One update is around ten SERIAL Microsoft Graph round trips -- read the
     // event, patch it, re-read it, list its instances, verify them, publish the
     // attendee list, confirm it, verify again -- and every one of them is a call
@@ -2855,7 +2815,9 @@ export async function updateTeamsMeetingSchedule(liveSessionId: string, input: P
     timeoutMs: 120000,
   }).then(result => {
     clearCurriculumGetCache();
-    return { ...result, notifyAttendees };
+    // The review's choice travels with the result: whoever shows the outcome
+    // sends the change email only when the author ticked it.
+    return { ...result, notifyAttendees: Boolean(notifyAttendees && !reviewed.peopleOnly) };
   });
 }
 

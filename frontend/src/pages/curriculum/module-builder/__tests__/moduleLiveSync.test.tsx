@@ -211,25 +211,6 @@ describe('Module Builder live sync', { timeout: 25000 }, () => {
     expect(screen.queryByRole('button', { name: 'Load their version' })).not.toBeInTheDocument();
   });
 
-  it('does not overwrite a local edit made while a live refresh is reading', async () => {
-    const title = await openWorkspace();
-    let resolveRemote!: (value: ReturnType<typeof storedStructure>) => void;
-    const pendingRemote = new Promise<ReturnType<typeof storedStructure>>(resolve => {
-      resolveRemote = resolve;
-    });
-    loadModuleStructure.mockImplementationOnce(() => pendingRemote);
-
-    // The refresh starts while the workspace is clean. The import/edit lands
-    // before the response returns, which must make the response stale.
-    liveRefresh?.();
-    await waitFor(() => expect(loadModuleStructure).toHaveBeenCalledTimes(2));
-    await userEvent.clear(title);
-    await userEvent.type(title, 'Imported KSB edit');
-    resolveRemote(storedStructure('Week one, stale response', 'rev-2'));
-
-    await waitFor(() => expect(title).toHaveValue('Imported KSB edit'));
-  });
-
   it('keeps unsaved edits and offers the choice rather than taking the write', async () => {
     const title = await openWorkspace();
     await userEvent.clear(title);

@@ -98,25 +98,35 @@ describe('module drawer co-editing', () => {
     expect(screen.queryByTestId('co-edit-notice')).not.toBeInTheDocument();
   });
 
-  it('does not expose delivery pattern fields for co-editing', () => {
-    renderDrawer(storedModule());
+  it('keeps the delivery pattern whole when one moves the day and the other the time', async () => {
+    const { remoteSaveArrives } = renderDrawer(storedModule());
+    // This reader adds Thursday to the delivery days. A second day needs a
+    // second session in the week, which is the drawer's own rule.
+    await choose('Sessions per week', '2');
+    await userEvent.click(screen.getByRole('button', { name: 'Thu' }));
+    expect(screen.getByRole('button', { name: 'Thu' })).toHaveAttribute('aria-pressed', 'true');
 
-    expect(screen.queryByRole('combobox', { name: /Sessions per week/i })).not.toBeInTheDocument();
-    expect(screen.queryByRole('group', { name: /Delivery days/i })).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/^Start date/i)).not.toBeInTheDocument();
-    expect(screen.queryByLabelText(/^End date/i)).not.toBeInTheDocument();
+    // Their save moved the clock instead.
+    remoteSaveArrives(storedModule({ startTime: '14:00', endTime: '16:00' }));
+
+    const notice = await screen.findByTestId('co-edit-notice');
+    expect(notice).toHaveTextContent(/both changed the delivery days and times/i);
+    // This reader's pattern survived whole: their Thursday at their times, and
+    // never their Thursday at the other editor's times.
+    expect(screen.getByRole('button', { name: 'Thu' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByDisplayValue('14:00')).not.toBeInTheDocument();
   });
 
-  it('keeps the module name edit when a refresh carries group-owned schedule data', async () => {
+  it('takes their whole pattern when this reader has not touched the schedule', async () => {
     const { remoteSaveArrives } = renderDrawer(storedModule());
     await userEvent.clear(nameField());
     await userEvent.type(nameField(), 'B renamed it');
 
     remoteSaveArrives(storedModule({ weekDays: 'Thursday', startTime: '14:00', endTime: '16:00' }));
 
+    expect(await screen.findByDisplayValue('14:00')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Thu' })).toHaveAttribute('aria-pressed', 'true');
     expect(nameField()).toHaveValue('B renamed it');
-    expect(screen.queryByDisplayValue('14:00')).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Thu' })).not.toBeInTheDocument();
     expect(screen.queryByTestId('co-edit-notice')).not.toBeInTheDocument();
   });
 

@@ -155,37 +155,6 @@ class EmailTests(unittest.TestCase):
         self.assertIn('Pricing workshop', change_html)
         self.assertIn('Pricing workshop: was Thu, 24 Sept 2026', change_text)
 
-    def test_no_subject_carries_an_internal_copy_label(self):
-        """An organiser's subject reads like anyone else's: the label is internal.
-
-        The organiser copy stays a separate message with its own roster and
-        settings; only the subject line stops announcing which copy it is, on
-        every path that builds one -- a new schedule, a change, a cancelled
-        session and a cancelled calendar.
-        """
-        rows = [session(), session(2, '2026-09-24T11:00:00Z')]
-        roster = [('Learner One', 'one@example.invalid')]
-        settings = [('Time zone', 'Europe/London')]
-        pairs = [
-            (render_schedule_email('Module', rows, 'Europe/London'),
-             render_schedule_email('Module', rows, 'Europe/London', roster=roster, settings=settings)),
-            (render_change_email('Module', rows, [session(), session(2, '2026-09-25T11:00:00Z')], 'Europe/London'),
-             render_change_email('Module', rows, [session(), session(2, '2026-09-25T11:00:00Z')], 'Europe/London', roster=roster)),
-            (render_change_email('Module', rows, [session()], 'Europe/London'),
-             render_change_email('Module', rows, [session()], 'Europe/London', roster=roster)),
-            (render_change_email('Module', rows, [], 'Europe/London'),
-             render_change_email('Module', rows, [], 'Europe/London', roster=roster)),
-        ]
-        for (learner_subject, _lh, _lt), (organiser_subject, organiser_html, _ot) in pairs:
-            for label in ('organiser copy', 'organizer copy', 'admin copy', 'internal copy', '('):
-                self.assertNotIn(label, organiser_subject.lower())
-            self.assertEqual(organiser_subject, learner_subject)
-            # The copy itself is unchanged: it still carries the roster.
-            self.assertIn('Invited learners', organiser_html)
-        self.assertEqual(pairs[0][0][0], 'Module — your session schedule')
-        self.assertEqual(pairs[1][0][0], 'Module — your session schedule has changed')
-        self.assertEqual(pairs[2][0][0], 'Module — session cancelled')
-
     def test_session_titles_come_from_the_components_attached_to_this_calendar(self):
         rows = [{**session(), 'id': 'OCC-1'}, {**session(2, '2026-09-24T11:00:00Z'), 'id': 'OCC-2'}]
         components = [
@@ -471,10 +440,7 @@ class EmailTests(unittest.TestCase):
             self.assertIn('teams.microsoft.com/meet/synthetic', html)
         for organiser in ('organizer@example.invalid', 'co@example.invalid', 'tutor@example.invalid'):
             subject, html, text = copies[organiser]
-            # The inbox never shows an internal label: the organiser's subject is the
-            # learner's, word for word. Only the content tells the two copies apart.
-            self.assertNotIn('organiser copy', subject)
-            self.assertEqual(subject, copies['one@example.invalid'][0])
+            self.assertIn('organiser copy', subject)
             for learner in ('Learner One', 'one@example.invalid', 'Learner Two', 'two@example.invalid'):
                 self.assertIn(learner, html)
                 self.assertIn(learner, text)
@@ -496,8 +462,7 @@ class EmailTests(unittest.TestCase):
         retry = Mock(return_value=('accepted', ''))
         final = self.send_create(self.ledger, retry, retry=True)
         self.assertEqual([call.args[0] for call in retry.call_args_list], ['co@example.invalid'])
-        self.assertNotIn('organiser copy', retry.call_args.args[1][0])
-        self.assertIn('Invited learners', retry.call_args.args[1][1])
+        self.assertIn('organiser copy', retry.call_args.args[1][0])
         self.assertEqual(final['status'], 'complete')
 
     def test_create_failed_verification_sends_no_email_to_anyone(self):
@@ -637,8 +602,7 @@ class ChangeNoticeTests(unittest.TestCase):
         before, after = [session()], [session(start='2026-09-18T11:00:00Z')]
         subject, html, text = render_change_email('Module', before, after, 'Europe/London',
                                                   roster=[('Ada <b>', 'one@example.invalid'), ('', 'two@example.invalid')])
-        self.assertNotIn('organiser copy', subject)
-        self.assertEqual(subject, render_change_email('Module', before, after, 'Europe/London')[0])
+        self.assertIn('organiser copy', subject)
         self.assertIn('Invited learners', html)
         self.assertIn('Ada &lt;b&gt;', html)
         self.assertIn('two@example.invalid', html)
@@ -760,8 +724,7 @@ class ChangeNoticeTests(unittest.TestCase):
         self.assertNotIn('two@example.invalid', learner_html)
         for organiser in ('organizer@example.invalid', 'co@example.invalid'):
             subject, html, _text = next(call.args[1] for call in sender.call_args_list if call.args[0] == organiser)
-            self.assertNotIn('organiser copy', subject)
-            self.assertEqual(subject, next(call.args[1][0] for call in sender.call_args_list if call.args[0] == 'one@example.invalid'))
+            self.assertIn('organiser copy', subject)
             self.assertIn('Learner One', html)
             self.assertIn('two@example.invalid', html)
             self.assertIn('Thu, 24 Sept 2026', html)
@@ -785,8 +748,7 @@ class ChangeNoticeTests(unittest.TestCase):
         self.assertNotIn('two@example.invalid', html)
         self.assertNotIn('Invited learners', html)
         subject, html, _text = copies['co@example.invalid']
-        self.assertNotIn('organiser copy', subject)
-        self.assertEqual(subject, copies['one@example.invalid'][0])
+        self.assertIn('organiser copy', subject)
         self.assertIn('Invited learners', html)
         self.assertIn('two@example.invalid', html)
         self.assertIn('Join your Teams session', html)
@@ -823,75 +785,6 @@ class ChangeNoticeTests(unittest.TestCase):
         with patch.dict(sys.modules, {'curriculum_api.views': view}):
             request = types.SimpleNamespace(account=types.SimpleNamespace(role='admin'), method='POST')
             self.assertEqual(service['schedule_email'](request, 'LIVE-ONE').status_code, 400)
-
-
-class CancelledSessionVerificationTests(unittest.TestCase):
-    """A cancellation email must survive the calendar a cancellation leaves behind.
-
-    The rows handed here are the sessions still standing, so a meeting whose
-    sessions were all cancelled has none of them. Reading that as a broken
-    manifest, and reading a part-cancelled weekly meeting as a single event,
-    both blocked the very email the cancellation was supposed to send.
-    """
-
-    def setUp(self):
-        self.manifest = [{'eventId': 'mon-master', 'joinUrl': 'https://teams.microsoft.com/mon',
-                          'sessionNumbers': [1, 3, 5]},
-                         {'eventId': 'wed-master', 'joinUrl': 'https://teams.microsoft.com/wed',
-                          'sessionNumbers': [2, 4]}]
-        self.series = {'organizer_email': 'organizer@example.invalid', 'repeat_pattern': 'weekly'}
-        self.checked = []
-        self.v = types.SimpleNamespace(stored_calendar_series=lambda _series: self.manifest)
-        self.ns = {'quote': quote, 'utc_datetime': utc_datetime, 'verify_calendar': Mock(side_effect=self.verify)}
-        definitions(ROOT / 'teams_schedule_delivery.py', self.ns, ['verify_saved_calendar'])
-        graph = types.ModuleType('coach_api.views')
-        graph.microsoft_graph_request = Mock()
-        modules = patch.dict(sys.modules, {'coach_api': types.ModuleType('coach_api'), 'coach_api.views': graph})
-        modules.start()
-        self.addCleanup(modules.stop)
-
-    def verify(self, _request, _owner, event_id, targets, _link, recurring):
-        self.checked.append((event_id, [target['session_number'] for target in targets], recurring))
-        return {'attendees': [{'emailAddress': {'address': 'learner@example.invalid'}}]}
-
-    def rows(self, numbers):
-        links = {number: item['joinUrl'] for item in self.manifest for number in item['sessionNumbers']}
-        return [{'session_number': number, 'join_url': links[number],
-                 'scheduled_start': f'2026-10-{5 + number:02}T09:00:00Z',
-                 'scheduled_end': f'2026-10-{5 + number:02}T11:00:00Z'} for number in numbers]
-
-    def run_check(self, numbers):
-        self.ns['verify_saved_calendar'](self.v, self.series, self.rows(numbers), ['learner@example.invalid'])
-
-    def test_a_whole_meeting_cancelled_is_not_an_inconsistent_manifest(self):
-        self.run_check([1, 3, 5])
-        self.assertEqual([event for event, *_ in self.checked], ['mon-master'])
-
-    def test_a_part_cancelled_series_is_still_read_as_a_series(self):
-        # One Monday session left of three. Read from the survivors, this was
-        # verified as a single event and never matched its own master.
-        self.run_check([5, 2, 4])
-        self.assertEqual(self.checked, [('mon-master', [5], True), ('wed-master', [2, 4], True)])
-
-    def test_a_genuinely_mismatched_link_is_still_refused(self):
-        rows = self.rows([1, 3, 5])
-        rows[1]['join_url'] = 'https://teams.microsoft.com/wed'
-        with self.assertRaisesRegex(ValueError, 'inconsistent'):
-            self.ns['verify_saved_calendar'](self.v, self.series, rows, ['learner@example.invalid'])
-
-    def test_an_uninvited_learner_still_blocks_the_email(self):
-        with self.assertRaisesRegex(ValueError, 'invitation'):
-            self.ns['verify_saved_calendar'](self.v, self.series, self.rows([1, 3, 5]), ['other@example.invalid'])
-
-    def test_a_single_meeting_calendar_keeps_its_repeat_pattern(self):
-        self.manifest = []
-        self.v.stored_calendar_series = lambda _series: []
-        self.series['graph_event_id'], self.series['join_url'] = 'solo', 'https://teams.microsoft.com/solo'
-        self.series['repeat_pattern'] = 'none'
-        rows = [{'session_number': 1, 'join_url': 'https://teams.microsoft.com/solo',
-                 'scheduled_start': '2026-10-06T09:00:00Z', 'scheduled_end': '2026-10-06T11:00:00Z'}]
-        self.ns['verify_saved_calendar'](self.v, self.series, rows, ['learner@example.invalid'])
-        self.assertEqual(self.checked, [('solo', [1], False)])
 
 
 if __name__ == '__main__':

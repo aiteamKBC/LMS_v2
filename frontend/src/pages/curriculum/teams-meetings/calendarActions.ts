@@ -15,8 +15,6 @@ export interface ActionResult {
   status: 'done' | 'failed' | 'uncertain' | 'processing' | 'incomplete' | 'none'; completed?: number; total?: number; message: string;
   /** Once every change is confirmed: the server-signed before/after record the optional email is sent from. */
   changeNotice?: string;
-  /** Cancellation emails are dispatched server-side; errors retain the signed notice for retry. */
-  scheduleEmail?: { total?: number; accepted?: number; queued?: number; failed?: number; uncertain?: number; status?: 'complete' | 'pending'; error?: string; code?: string };
 }
 
 export async function calendarAction<T extends ActionReview | ActionResult>(liveId: string, body: Record<string, unknown>): Promise<T> {

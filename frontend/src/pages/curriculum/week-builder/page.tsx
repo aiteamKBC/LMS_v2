@@ -36,7 +36,6 @@ import {
   fetchWorkspaceQuizzes,
   toWeekTemplateInput,
   updateWeekTemplate,
-  weekTemplateConflict,
   uploadWeekComponentResource,
   validateWeekComponent,
   weekPaletteGroups,
@@ -465,11 +464,7 @@ function CreateTemplateModal({ onClose, onCreated }: { onClose: () => void; onCr
 // ---------------------------------------------------------------------------
 // Editor
 // ---------------------------------------------------------------------------
-// Exported for the same reason WeekComponentRail, WeekOverviewPanel and
-// ComponentEditor above are: what happens when two people save this template at
-// once is decided in here, and it is not worth reaching through the library
-// page and a URL parameter to ask it.
-export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: { initial: WeekTemplate; isNew: boolean; onClose: (changed: boolean, returnToPrevious?: boolean) => void; returnToPrevious?: boolean }) {
+function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: { initial: WeekTemplate; isNew: boolean; onClose: (changed: boolean, returnToPrevious?: boolean) => void; returnToPrevious?: boolean }) {
   const [template, setTemplate] = useState<WeekTemplate>(initial);
   const [persistedId, setPersistedId] = useState(isNew ? '' : initial.id);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -628,11 +623,6 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
    * landing last would reinstate what the newer one had just corrected.
    */
   const readSequence = useRef(0);
-  /**
-   * How many times a refused save will rebase and try again before it stops
-   * and says so. Three, the same bound the Module Builder uses.
-   */
-  const WEEK_TEMPLATE_REBASE_LIMIT = 3;
   const mergeStoredTemplate = useCallback(async () => {
     if (!persistedId || saving) return;
     const sequence = readSequence.current + 1;
@@ -649,9 +639,7 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
     const base = JSON.parse(savedSnapshot.current) as WeekTemplate;
     const { template: merged, notices } = mergeWeekTemplates(base, templateRef.current, stored);
     savedSnapshot.current = storedJson;
-    // The token comes from the stored copy, never from the merge: the next save
-    // has to be checked against the version this editor has just agreed with.
-    setTemplate({ ...merged, revision: stored.revision });
+    setTemplate(merged);
     // A component the other editor deleted takes the selection with it, rather
     // than leaving the panel on the right editing something that is gone.
     setSelectedId(prev => (prev && merged.components.some(component => component.id === prev) ? prev : null));
@@ -681,38 +669,8 @@ export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = fal
     }
     setSaving(true);
     try {
-      // The server refuses a save built on a version somebody else has already
-      // replaced -- it has to, because this PATCH deletes every component row
-      // the template owns and re-inserts the list it was sent, so a stale save
-      // used to take a colleague's whole afternoon with it. The refusal carries
-      // the stored template, which is merged here and sent again.
-      //
-      // Bounded at three, like the Module Builder: a busy template is the normal
-      // reason to be here, so one attempt is too few, and an unbounded chain is
-      // an editor that never finishes saving and never says why.
-      let working = template;
-      let result: WeekTemplate | null = null;
-      for (let rebases = 0; ; rebases += 1) {
-        try {
-          const input = toWeekTemplateInput(working);
-          result = persistedId
-            ? await updateWeekTemplate(persistedId, working.revision ? { ...input, expectedRevision: working.revision } : input)
-            : await createWeekTemplate(input);
-          break;
-        } catch (err) {
-          const conflict = weekTemplateConflict(err);
-          // Nothing to rebase onto, or this template is being written faster
-          // than one person can answer. Either way the work is still on screen.
-          if (!conflict?.template || rebases >= WEEK_TEMPLATE_REBASE_LIMIT) throw err;
-          const base = JSON.parse(savedSnapshot.current) as WeekTemplate;
-          const merged = mergeWeekTemplates(base, working, conflict.template);
-          working = { ...merged.template, revision: conflict.currentRevision };
-          savedSnapshot.current = JSON.stringify(conflict.template);
-          setTemplate(working);
-          setSelectedId(prev => (prev && working.components.some(item => item.id === prev) ? prev : null));
-          setCoEditNotices(merged.notices);
-        }
-      }
+      const input = toWeekTemplateInput(template);
+      const result = persistedId ? await updateWeekTemplate(persistedId, input) : await createWeekTemplate(input);
       setPersistedId(result.id);
       setTemplate(result);
       savedSnapshot.current = JSON.stringify(result);
@@ -2974,11 +2932,12 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
   const rawSelectedKeys = component.settings.selectedGroupKeys as string[] | undefined;
   const norm = (value?: string) => String(value ?? '').trim().toLowerCase();
   // The module was built for this group, so it's never really optional — shown
-  // It starts selected, but remains editable and can be cleared by the tutor.
-  const moduleGroupOption = groupName ? groupOptions.find(option => norm(option.name) === norm(groupName)) : undefined;
+  // locked/dimmed and always included, not something the user can uncheck.
+  const lockedOption = groupName ? groupOptions.find(option => norm(option.name) === norm(groupName)) : undefined;
   const storedKeys = rawSelectedKeys ?? [];
-  const selectedKeys = storedKeys;
-  const hasStoredSelection = Array.isArray(component.settings.selectedGroupKeys);
+  const selectedKeys = lockedOption && !storedKeys.includes(lockedOption.key)
+    ? [...storedKeys, lockedOption.key]
+    : storedKeys;
   const [browsingKey, setBrowsingKey] = useState<string | null>(null);
   const setGroups = (keys: string[]) => onChange({
     settings: { ...component.settings, selectedGroupKeys: keys, selectedGroupNames: groupOptions.filter(option => keys.includes(option.key)).map(option => option.name) },
@@ -2989,9 +2948,9 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
   // week saved without ever touching this list would still store it as
   // unassigned underneath.
   useEffect(() => {
-    if (moduleGroupOption && !hasStoredSelection) setGroups([moduleGroupOption.key]);
+    if (lockedOption && !storedKeys.includes(lockedOption.key)) setGroups(selectedKeys);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [moduleGroupOption?.key, hasStoredSelection]);
+  }, [lockedOption?.key]);
 
   // Placed copies this component has produced elsewhere, one entry per copy
   // (parallel arrays — ComponentSettingValue has no object type). A single
@@ -3019,6 +2978,7 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
   };
 
   const handleToggle = async (key: string) => {
+    if (key === lockedOption?.key) return;
     if (!selectedKeys.includes(key)) {
       setGroups([...selectedKeys, key]);
       return;
@@ -3081,6 +3041,7 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
       <GroupMultiSelect
         options={groupOptions}
         selectedKeys={selectedKeys}
+        lockedKey={lockedOption?.key ?? null}
         onChange={setGroups}
         onToggle={key => void handleToggle(key)}
         browsingKey={browsingKey}
@@ -3101,11 +3062,12 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
   );
 }
 
-function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, browsingKey, onBrowse }: {
+function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey, browsingKey, onBrowse }: {
   options: GroupOption[];
   selectedKeys: string[];
   onChange: (keys: string[]) => void;
   onToggle: (key: string) => void;
+  lockedKey: string | null;
   browsingKey: string | null;
   onBrowse: (key: string) => void;
 }) {
@@ -3113,7 +3075,7 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, browsingK
   // Groups now span every programme/cohort (not just this module's own), so
   // this narrows the picker in two steps — programme, then that programme's
   // cohorts — before the groups themselves are listed. The module's own
-  // The selected group list follows the active programme and cohort filters.
+  // (locked) group always stays visible regardless of what's picked here.
   const programmeChoices = useMemo(() => {
     const byId = new Map<string, string>();
     options.forEach(option => {
@@ -3162,7 +3124,7 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, browsingK
             <button onClick={() => onChange(Array.from(new Set([...selectedKeys, ...filteredOptions.map(option => option.key)])))} className="rounded-md px-2 py-0.5 text-[10px] font-bold text-primary-600 hover:bg-primary-50 transition-smooth">
               {filtering ? 'Select shown' : 'Select all'}
             </button>
-            <button onClick={() => onChange([])} className="rounded-md px-2 py-0.5 text-[10px] font-bold text-foreground-400 hover:bg-background-100 transition-smooth">Clear</button>
+            <button onClick={() => onChange(lockedKey ? [lockedKey] : [])} className="rounded-md px-2 py-0.5 text-[10px] font-bold text-foreground-400 hover:bg-background-100 transition-smooth">Clear</button>
           </div>
         )}
       </div>
@@ -3222,7 +3184,7 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, browsingK
           {filteredOptions.map(option => {
             const on = selectedSet.has(option.key);
             const browsing = browsingKey === option.key;
-            const locked = false;
+            const locked = option.key === lockedKey;
             if (locked) {
               return (
                 <div

@@ -36,7 +36,6 @@ urlpatterns = [
     # Polled by every open tab to notice a write made somewhere else. Kept next
     # to nothing in cost: one Redis read, no database.
     path('curriculum/cache-epoch/', views.curriculum_cache_epoch, name='curriculum-cache-epoch'),
-    path('curriculum/revisions/', views.curriculum_record_revisions, name='curriculum-record-revisions'),
     path('curriculum/preview/cohort-end-date/', views.curriculum_preview_cohort_end_date, name='curriculum-preview-cohort-end-date'),
     path('curriculum/preview/module-session-plan/', views.curriculum_preview_module_session_plan, name='curriculum-preview-module-session-plan'),
     path('curriculum/preview/tutor-availability/', views.curriculum_preview_tutor_availability, name='curriculum-preview-tutor-availability'),
@@ -59,9 +58,6 @@ urlpatterns = [
     path('curriculum/programme-audit/materials/', programme_audit.programme_audit_materials, name='curriculum-programme-audit-materials'),
     path('curriculum/programme-audit/materials/<slug:material_key>/', programme_audit.programme_audit_material, name='curriculum-programme-audit-material'),
     path('curriculum/programmes/<str:programme_id>/ksb-coverage/', views.curriculum_programme_ksb_coverage, name='curriculum-programme-ksb-coverage'),
-    # The card's KSB numbers on their own. Kept off /curriculum/programmes/ so a
-    # list of thirty programmes does not wait on thirty authoring-tree reads.
-    path('curriculum/programmes/<str:programme_id>/ksb-stats/', views.curriculum_programme_ksb_stats, name='curriculum-programme-ksb-stats'),
     path('curriculum/programmes/<str:programme_id>/learner-ksb-impact/', views.curriculum_programme_learner_ksb_impact, name='curriculum-programme-learner-ksb-impact'),
     path('curriculum/programmes/<str:programme_id>/learner-roster/', views.curriculum_programme_learner_roster, name='curriculum-programme-learner-roster'),
     path('curriculum/programmes/<str:programme_id>/cohorts/', views.curriculum_programme_cohort_collection, name='curriculum-programme-cohorts'),

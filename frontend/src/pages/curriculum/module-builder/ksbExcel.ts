@@ -45,14 +45,6 @@ export interface KsbImportResult {
   summary: KsbImportSummary;
 }
 
-/** The KSB source the imported sheet was authored against. */
-export interface KsbImportSource {
-  sourceType: string;
-  sourceId: string;
-  /** Codes exposed by the selected source. Imported rows are restricted to this list. */
-  allowedCodes?: string[];
-}
-
 /** One KSB available to map — the profile ChatGPT must map strictly within. */
 export interface KsbProfileEntry {
   code: string;
@@ -122,11 +114,11 @@ ${profileBlock}
 ═══════════════════════════════════════
 HOW TO FILL THE SHEET
 ═══════════════════════════════════════
-1. The "${COL_KSBS}" column is PRE-FILLED with each component's current KSBs. KEEP every current code that appears in the allowed list above and ADD any new applicable codes. REMOVE any current code that is not in the allowed list, even if it appears in the sheet. Only remove an allowed code if it genuinely does NOT apply to that component. Edit ONLY this column — leave every other column exactly as it is.
+1. The "${COL_KSBS}" column is PRE-FILLED with each component's current KSBs. KEEP every code that is already there and ADD any new applicable codes. Only remove a code if it genuinely does NOT apply to that component. Edit ONLY this column — leave every other column exactly as it is.
 2. NEVER edit the "${COL_COMPONENT_ID}" column — each row is matched back to its component by that id. Do not add, remove, reorder, or renumber rows.
 3. Each code in the "${COL_KSBS}" cell is written, separated by commas, as:
       CODE:classification:weight
-   • CODE — copy a code from the allowed list above exactly, including every period. K1.1 and K11 are different codes: never remove a period, join digits, rewrite, or "simplify" a code.
+   • CODE — a code from the allowed list above (e.g. K1, S3.2, B2).
    • classification — one of: main, secondary, possible.
    • weight — a whole number 0–100 for how strongly this component develops that KSB.
    Example cell: K1:main:40, S3.2:secondary:20, B2:possible:10
@@ -134,7 +126,7 @@ HOW TO FILL THE SHEET
    • main (weight ~40) — the component directly teaches or assesses this KSB; it is a core focus.
    • secondary (weight ~20) — the KSB is practised or reinforced, but is not the main focus.
    • possible (weight ~10) — the KSB is lightly touched or optional.
-5. Keep it precise: most components map to 2–6 KSBs total (the ones already there plus any you add). Do not over-map — only include a KSB if the title/description clearly supports it. Copy every selected code exactly as written in the allowed list, including dotted child codes such as K1.1.
+5. Keep it precise: most components map to 2–6 KSBs total (the ones already there plus any you add). Do not over-map — only include a KSB if the title/description clearly supports it.
 6. If a component's current KSBs are already correct and nothing needs adding, leave its "${COL_KSBS}" cell exactly as it is. A component with no applicable KSB keeps an empty cell.
 7. Balance across the whole module: aim to give every KSB in the list at least one "main" mapping somewhere if the content supports it, so the standard is fully covered.
 
@@ -263,9 +255,9 @@ async function writeKsbWorkbook(rows: ExportRow[], fileNameBase: string): Promis
     ['How to fill this sheet'],
     [''],
     [`1. Read each component's "${COL_TITLE}" and "${COL_DESCRIPTION}".`],
-    [`2. The "${COL_KSBS}" column is PRE-FILLED with the component's current KSBs. Keep codes from the allowed list, remove codes outside that list, and add any new applicable codes — e.g. K1, S3.2, B2.`],
-    ['3. Each code is written as CODE:type:weight — e.g. K1:main:40, K1.1:secondary:20, S3:secondary:20. Preserve periods exactly: K1.1 is not K11. Types are main, secondary or possible; weight is 0-100. Omit them to default to a main mapping.'],
-    ['4. Remove an allowed code only if it genuinely does not apply. A blank cell removes all mappings for that component when imported, so leave the cell unchanged if it should keep its current valid KSBs.'],
+    [`2. The "${COL_KSBS}" column is PRE-FILLED with the component's current KSBs. Keep them and add any new codes that apply, separated by commas — e.g. K1, S3.2, B2.`],
+    ['3. Each code is written as CODE:type:weight — e.g. K1:main:40, S3:secondary:20. Types are main, secondary or possible; weight is 0-100. Omit them to default to a main mapping.'],
+    ['4. Only remove a code if it genuinely does not apply. A blank cell leaves that component unchanged, so keep the cell as it is to keep the current KSBs.'],
     [`5. Do NOT edit the "${COL_COMPONENT_ID}" column — rows are matched back to components by that id.`],
     ['6. Save and re-upload this file where you exported it from.'],
   ]);
@@ -282,7 +274,7 @@ async function writeKsbWorkbook(rows: ExportRow[], fileNameBase: string): Promis
 
 // The read path — parse the sheet into componentId → filled KSBs. Shared by the
 // module and week imports; the caller decides which components to fold it onto.
-async function readKsbWorkbook(file: File, source?: KsbImportSource): Promise<{ byId: Map<string, ParsedKsb[]>; rowsWithKsbs: number; skippedTokens: string[] }> {
+async function readKsbWorkbook(file: File): Promise<{ byId: Map<string, ParsedKsb[]>; rowsWithKsbs: number; skippedTokens: string[] }> {
   const XLSX = await import('xlsx');
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: 'array' });
@@ -299,26 +291,15 @@ async function readKsbWorkbook(file: File, source?: KsbImportSource): Promise<{ 
 
   const skippedTokens: string[] = [];
   const byId = new Map<string, ParsedKsb[]>();
-  const allowedCodes = source?.allowedCodes
-    ? new Set(source.allowedCodes.map(code => code.trim().toUpperCase()).filter(Boolean))
-    : null;
   let rowsWithKsbs = 0;
   for (const row of rows) {
     const id = String(row[COL_COMPONENT_ID] ?? '').trim();
     const cell = String(row[COL_KSBS] ?? '').trim();
     if (!id || !cell) continue;
     const parsed = parseKsbCell(cell, skippedTokens);
-    const valid = allowedCodes
-      ? parsed.filter(item => {
-        if (allowedCodes.has(item.code.trim().toUpperCase())) return true;
-        skippedTokens.push(`${item.code} (not in selected KSB source)`);
-        return false;
-      })
-      : parsed;
-    // Keep a filled row even when all codes were invalid. Applying an empty
-    // result clears stale mappings instead of leaving them to fail on save.
+    if (!parsed.length) continue;
     rowsWithKsbs += 1;
-    byId.set(id, valid);
+    byId.set(id, parsed);
   }
   return { byId, rowsWithKsbs, skippedTokens };
 }
@@ -327,43 +308,18 @@ async function readKsbWorkbook(file: File, source?: KsbImportSource): Promise<{ 
 // mappings outright — the sheet is the AI's complete answer for that component,
 // not an addition. The definition of any code the component already carried is
 // kept, so re-importing never blanks descriptions the source had filled in.
-function normaliseSource(source?: Pick<KsbMapping, 'sourceType' | 'sourceId'>) {
-  let sourceType = String(source?.sourceType || '').trim().toLowerCase();
-  let sourceId = String(source?.sourceId || '').trim();
-  const separator = sourceId.indexOf(':');
-  if (separator > 0) {
-    const prefix = sourceId.slice(0, separator).toLowerCase();
-    if (prefix === 'standard' || prefix === 'profile' || prefix === 'framework') {
-      sourceType = prefix === 'standard' ? 'standard' : 'framework';
-      sourceId = sourceId.slice(separator + 1).trim();
-    }
-  }
-  if (sourceType === 'profile') sourceType = 'framework';
-  return { sourceType, sourceId };
-}
-
-function sameSource(left?: Pick<KsbMapping, 'sourceType' | 'sourceId'>, right?: KsbImportSource) {
-  if (!left || !right) return false;
-  const a = normaliseSource(left);
-  const b = normaliseSource(right);
-  return a.sourceType === b.sourceType && a.sourceId.toLowerCase() === b.sourceId.toLowerCase();
-}
-
-function applyParsedToComponent(component: ModuleComponent, parsed: ParsedKsb[], source?: KsbImportSource): ModuleComponent {
+function applyParsedToComponent(component: ModuleComponent, parsed: ParsedKsb[]): ModuleComponent {
   const existing = new Map(component.ksbMappings.map(mapping => [mapping.code, mapping]));
   const ksbMappings: KsbMapping[] = parsed.map(item => {
     const prior = existing.get(item.code);
     const weightClass = weightClassForType(item.type);
-    const sourceMatches = !source || sameSource(prior, source);
     return {
       id: makeAuthoringId('ksb'),
-      // A workbook is generated for one selected source. Never carry a stored
-      // KSB id from another source into the imported mapping.
-      ksbId: sourceMatches ? prior?.ksbId || '' : '',
+      ksbId: prior?.ksbId || '',
       code: item.code,
       description: prior?.description || '',
-      sourceType: source?.sourceType || prior?.sourceType,
-      sourceId: source?.sourceId || prior?.sourceId,
+      sourceType: prior?.sourceType,
+      sourceId: prior?.sourceId,
       type: item.type,
       classification: item.type,
       weight: item.weight,
@@ -379,16 +335,16 @@ function applyParsedToComponent(component: ModuleComponent, parsed: ParsedKsb[],
  * every week, plus a guide sheet. xlsx (~420 kB) is imported inside the shared
  * writer, so it never lands in the Module Builder's initial bundle.
  */
-export function exportModuleKsbWorkbook(module: ModuleCatalogueItem, options: { fileNameSuffix?: string } = {}): Promise<{ rows: number; fileName: string }> {
+export function exportModuleKsbWorkbook(module: ModuleCatalogueItem): Promise<{ rows: number; fileName: string }> {
   const rows = module.weekStructure.flatMap(week =>
     week.components.map(component => ({ weekNumber: week.weekNumber, weekTitle: week.title, component })),
   );
-  return writeKsbWorkbook(rows, `${slugify(module.title, 'module')}${options.fileNameSuffix || ''}`);
+  return writeKsbWorkbook(rows, slugify(module.title, 'module'));
 }
 
 /** Apply a filled sheet back onto the module's components, matching by id. */
-export async function importModuleKsbWorkbook(file: File, module: ModuleCatalogueItem, source?: KsbImportSource): Promise<KsbImportResult> {
-  const { byId, rowsWithKsbs, skippedTokens } = await readKsbWorkbook(file, source);
+export async function importModuleKsbWorkbook(file: File, module: ModuleCatalogueItem): Promise<KsbImportResult> {
+  const { byId, rowsWithKsbs, skippedTokens } = await readKsbWorkbook(file);
 
   const matchedIds = new Set<string>();
   let componentsUpdated = 0;
@@ -401,7 +357,7 @@ export async function importModuleKsbWorkbook(file: File, module: ModuleCatalogu
       matchedIds.add(component.id);
       componentsUpdated += 1;
       codesApplied += parsed.length;
-      return applyParsedToComponent(component, parsed, source);
+      return applyParsedToComponent(component, parsed);
     }),
   }));
 
@@ -419,8 +375,8 @@ export function exportWeekKsbWorkbook(weekTitle: string, components: ModuleCompo
 }
 
 /** Apply a filled sheet back onto a single week's components, matching by id. */
-export async function importWeekKsbWorkbook(file: File, components: ModuleComponent[], source?: KsbImportSource): Promise<{ components: ModuleComponent[]; summary: KsbImportSummary }> {
-  const { byId, rowsWithKsbs, skippedTokens } = await readKsbWorkbook(file, source);
+export async function importWeekKsbWorkbook(file: File, components: ModuleComponent[]): Promise<{ components: ModuleComponent[]; summary: KsbImportSummary }> {
+  const { byId, rowsWithKsbs, skippedTokens } = await readKsbWorkbook(file);
 
   const matchedIds = new Set<string>();
   let componentsUpdated = 0;
@@ -431,7 +387,7 @@ export async function importWeekKsbWorkbook(file: File, components: ModuleCompon
     matchedIds.add(component.id);
     componentsUpdated += 1;
     codesApplied += parsed.length;
-    return applyParsedToComponent(component, parsed, source);
+    return applyParsedToComponent(component, parsed);
   });
 
   const unmatchedIds = [...byId.keys()].filter(id => !matchedIds.has(id));
