@@ -1190,7 +1190,7 @@ export default function CoachProgressReviews() {
 
   const openCompletionForm = async (event: CoachCalendarEvent) => {
     setActionError(null);
-    if (event.hasReviewForm && event.aptemReviewId && !event.reviewInstanceId) {
+    if (event.aptemReviewId && !event.reviewInstanceId) {
       navigate(reviewInstancePath(eventIdentity(event)), {
         state: reviewInstanceRouteState(event, listUrl()),
       });
