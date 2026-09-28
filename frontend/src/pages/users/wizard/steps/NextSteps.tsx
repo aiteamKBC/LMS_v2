@@ -1,25 +1,56 @@
 import { StepHeading } from './fields';
 
+/** Student Support's Microsoft Bookings page, where the compliance meeting is booked. */
+const COMPLIANCE_MEETING_BOOKING_URL =
+  'https://outlook.office.com/book/StudentSupport1@kentbusinesscollege.com/s/EmOovIV5H0GGd131KDuFJQ2';
+
+const SUPPORT_EMAIL = 'office@kentbusinesscollege.com';
+
+function SectionHeading({ children }: { children: string }) {
+  return <h3 className="font-heading text-[16px] font-semibold text-primary-700">{children}</h3>;
+}
+
 export default function NextSteps() {
   return (
     <div>
-      <StepHeading title="Next Steps" subtitle="Welcome to Your Apprenticeship" />
-      <div className="space-y-4 text-[14px] text-foreground-700 leading-relaxed max-w-3xl">
-        <p>Thank you for completing your enrolment process.</p>
+      <StepHeading title="What Happens Now?" />
+      <div className="max-w-3xl space-y-6 text-[14px] leading-relaxed text-foreground-700">
+        <section className="space-y-2">
+          <SectionHeading>Next Step: Book Your Compliance Meeting</SectionHeading>
+          <p>
+            The next step in your apprenticeship application process is to <strong>book a compliance meeting as soon as
+            possible</strong>. This meeting is a key part of your onboarding and must be <strong>attended by both you and
+            your line manager</strong>. Book a meeting using the following link:
+          </p>
+          <p>
+            <a
+              href={COMPLIANCE_MEETING_BOOKING_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-primary-600 hover:underline"
+            >
+              Book Compliance Meeting
+            </a>{' '}
+            (select “Compliance Meeting”)
+          </p>
+        </section>
+
+        <section className="space-y-2">
+          <SectionHeading>What Needs to Be Completed Before the Meeting?</SectionHeading>
+          <p className="font-semibold text-foreground-800">Before attending your compliance meeting, please ensure you have:</p>
+          <ul className="list-disc space-y-1 pl-5">
+            <li>Ensured your employer has signed the apprenticeship agreement</li>
+            <li>Asked your employer to add Kent Business College to the Digital Apprenticeship Service (DAS)</li>
+            <li>
+              Completed the initial Maths and English assessments at least 24 hours before the compliance meeting
+              appointment (this is essential)
+            </li>
+          </ul>
+        </section>
+
         <p>
-          Once you click 'Finish' you will be directed to read and sign your compliance documents which will summarise
-          all the information captured as part of your enrolment, these documents include your Training Plan,
-          Apprenticeship Agreement, and Individual Learning Record (ILR).
-        </p>
-        <p>
-          Once signatures are completed, you will be directed to your Aptem e-portfolio learning plan where you will need
-          to open and complete your first piece of learning… When you have finished these activities and submitted your
-          answers your enrolment will be complete.
-        </p>
-        <p>Your tutor will provide further guidance on the next steps of your learning journey.</p>
-        <p>
-          If you have any questions or queries, please contact{' '}
-          <a href="mailto:meadmissions@ibisconsultancy.com" className="text-primary-600 hover:underline">meadmissions@ibisconsultancy.com</a>
+          <strong>Thank you!</strong> Please don’t hesitate to reach out if you have any questions:{' '}
+          <a href={`mailto:${SUPPORT_EMAIL}`} className="text-primary-600 hover:underline">{SUPPORT_EMAIL}</a>
         </p>
       </div>
     </div>
