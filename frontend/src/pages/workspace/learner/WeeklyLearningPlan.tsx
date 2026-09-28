@@ -165,7 +165,7 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
             </button>
             {/* Outside the row's button: the curriculum team's hint is there to
                 be read, not to become part of the label that selects the week. */}
-            {week.kind === 'session' && <HolidayNoteHint note={week.holidayNote} className="mt-1.5" />}
+            {week.kind === 'session' && <HolidayNoteHint note={week.holidayNote} className="learner-dashboard-week-note mt-1.5 min-w-0 max-w-full" />}
           </li>;
         })}
       </ol>
@@ -186,7 +186,7 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
           {selectedIndex >= 0 ? <p className="mt-1 text-sm font-medium text-foreground-500">
             {(() => { const { start, end } = weekWindow(weeks, selectedIndex); return `${dateLabel(start)}${end ? ` – ${dateLabel(end)}` : ''}`; })()}
           </p> : null}
-          {selectedWeek.kind === 'session' && <HolidayNoteHint note={selectedWeek.holidayNote} className="mt-2.5 text-xs" />}
+          {selectedWeek.kind === 'session' && <HolidayNoteHint note={selectedWeek.holidayNote} className="learner-dashboard-week-note mt-2.5 min-w-0 max-w-full text-xs" />}
 
             </div>
 
@@ -328,7 +328,7 @@ function KsbChip({ code }: { code: string }) {
     : type === 'S' ? 'border-accent-200 bg-accent-50 text-accent-700'
       : type === 'B' ? 'border-secondary-200 bg-secondary-100 text-foreground-800'
         : 'border-foreground-200 bg-background-100 text-foreground-600';
-  return <span className={cn('rounded-full border px-2 py-0.5 text-[11px] font-semibold', tone)}>{code}</span>;
+  return <span data-ksb-type={type} className={cn('learner-dashboard-ksb-chip rounded-full border px-2 py-0.5 text-[11px] font-semibold', tone)}>{code}</span>;
 }
 
 export function KsbChips({ codes }: { codes: string[] }) {

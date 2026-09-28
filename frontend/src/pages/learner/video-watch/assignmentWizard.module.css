@@ -72,3 +72,20 @@
 .assignmentWizard [class~="focus-visible:outline-blue-600"]:focus-visible {
   outline-color: oklch(var(--primary-600)) !important;
 }
+
+:global([data-theme='dark']) .assignmentWizard { border-color: #3b526c !important; }
+:global([data-theme='dark']) .assignmentWizard :is(
+  [class~="bg-sky-50/50"], [class~="bg-slate-50"], [class~="bg-blue-50"],
+  [class~="bg-slate-100"], [class~="bg-slate-200"]
+) { background-color: #213854 !important; }
+:global([data-theme='dark']) .assignmentWizard :is(
+  [class~="text-slate-900"], [class~="text-blue-950"], [class~="text-blue-900"]
+) { color: #f6f8fb !important; }
+:global([data-theme='dark']) .assignmentWizard [class~="text-blue-700"] { color: #d7c4f4 !important; }
+:global([data-theme='dark']) .assignmentWizard :is(
+  [class~="border-slate-200"], [class~="border-blue-100"],
+  [class~="border-slate-300"], [class~="border-blue-200"]
+) { border-color: #3b526c !important; }
+:global([data-theme='dark']) .assignmentWizard :is([class~="hover:bg-sky-50"], [class~="hover:bg-blue-50"]):hover:not(:disabled) {
+  background-color: #304766 !important;
+}
