@@ -3,16 +3,15 @@ import { formatHoursMinutes, isComponentComplete, type JourneyComponent } from '
 import type { CurriculumRow } from '@/pages/learner/training-plan-timeline/model';
 import { nativeHref, type SubjectEntry } from '@/pages/learner/my-learning/SubjectWorkspace';
 
-/** A week's own window: from its slot date up to (but excluding) the next slot's date. */
+/** A week's own window: up to the next slot, or seven days for the final week. */
 export function weekWindow(weeks: CurriculumRow[], index: number): { start: string; end: string | null } {
   const next = weeks[index + 1];
-  if (!next) return { start: weeks[index].date, end: null };
-  const end = new Date(`${next.date}T12:00:00Z`);
-  end.setUTCDate(end.getUTCDate() - 1);
+  const end = new Date(`${next?.date ?? weeks[index].date}T12:00:00Z`);
+  end.setUTCDate(end.getUTCDate() + (next ? -1 : 6));
   return { start: weeks[index].date, end: end.toISOString().slice(0, 10) };
 }
 
-/** The learner's default week: the one covering today, otherwise the next one, otherwise the first. */
+/** The learner's default week: the current one, otherwise the next one or the final past week. */
 export function resolveInitialWeek(weeks: CurriculumRow[], today: string): CurriculumRow | undefined {
   if (!weeks.length) return undefined;
   const current = weeks.find((week, index) => {
@@ -20,7 +19,7 @@ export function resolveInitialWeek(weeks: CurriculumRow[], today: string): Curri
     return start <= today && (end === null || end >= today);
   });
   if (current) return current;
-  return weeks.find(week => week.date > today) || weeks[0];
+  return weeks.find(week => week.date > today) || weeks[weeks.length - 1];
 }
 
 /** A stable key for a curriculum row, for selection state and React lists. */
