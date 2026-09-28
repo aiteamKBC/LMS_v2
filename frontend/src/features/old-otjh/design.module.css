@@ -14,6 +14,32 @@
   --record-shadow: 0 1px 2px oklch(.25 .012 265 / .06), 0 8px 24px -12px oklch(.25 .012 265 / .18);
   color: var(--record-ink);
 }
+
+/* Learner record pages share the same dark surfaces as Attendance. */
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .scope {
+  --record-brand: #bfa3ee;
+  --record-deep: #d7c4f4;
+  --record-soft: #24405d;
+  --record-ring: #526b88;
+  --record-ink: #f6f8fb;
+  --record-muted: #b6c4d5;
+  --record-border: #3b526c;
+  --record-surface: #1e344d;
+  --record-gradient: linear-gradient(135deg, #54377d, #315f89);
+  color: var(--record-ink);
+}
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .scope :is(.card, .monthFilters, .monthSummary, .yearGroup) {
+  background: #182d48;
+  border-color: var(--record-border);
+  color: var(--record-ink);
+}
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .scope .hero { background: #1e344d; border-color: var(--record-border); color: var(--record-ink); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .scope :is(.hero h1, .monthCutoff strong, .ringRow p, .ring > span) { color: var(--record-ink); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .scope :is(.heroCopy, .heroMeta small, .ringRow p:last-child) { color: var(--record-muted); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .scope :is(.ringPanel, .ring > span, .fact) { background: #182d48; border-color: var(--record-border); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .scope :is(.heroMonthGrid span, .monthMiniGrid span, .monthNumber, .monthIcon, .iconTile, .badge) { background: #24405d; border-color: var(--record-border); color: #e2d2fa; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .scope .yearGroup::before { border-color: #182d48; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .scope .monthCard:is(:hover, :focus-within) .monthNumber { background: #304766; color: var(--record-ink); }
 .page { width: 100%; max-width: none; margin-inline: auto; }
 .page h1, .page h2, .page h3 { color: inherit; letter-spacing: -.025em; }
 :global(.dashboard-theme .workspace-main) .page { width: 100%; max-width: none; }

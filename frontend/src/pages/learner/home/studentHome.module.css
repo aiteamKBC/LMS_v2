@@ -190,6 +190,36 @@
 @media (max-width: 1500px) { .progressBody ul { gap: 5px; } .progressDetails { padding-left: 8px; } .progressBody li>a { gap: 7px; } .progressIcon { width: 25px; height: 25px; } }
 @media (max-width: 1150px) { .scene { height: auto; min-height: 1100px; display: grid; grid-template-columns: 1fr 1fr; gap: 24px; padding: 32px; background-position: 65% center; } .hero { position: relative; top: auto; left: auto; width: auto; grid-column: 1; align-self: start; } .quote { position: absolute; top: 280px; left: 30px; width: 40%; } .shield { position: relative; left: auto; top: auto; width: 100%; height: auto; transform: none; grid-column: 2; grid-row: 1; align-self: start; } .card { position: relative; inset: auto; width: auto; min-height: 0; align-self: end; margin-bottom: 80px; } .progress { grid-column: 1; } .upcoming { grid-column: 2; } .kent, .location { display: none; } .footer { bottom: 25px; } .hero>p { font-size: 25px; } .hero h1 { font-size: 56px; } .hero h2 { font-size: 25px; } .hero .intro { font-size: 18px; } .ring { width: 105px; } .cardHeading h2 { font-size: 21px; } .progressBody li { font-size: 13px; } .upcoming li strong { font-size: 15px; } }
 @media (max-width: 700px) { .scene { display: flex; flex-direction: column; gap: 25px; padding: 28px 18px; min-height: 0; background-position: 64% bottom; background-size: auto 100%; } .scene::before { background: linear-gradient(#fff9f0d9, #fff9f080 60%, #f7f3ed59); } .hero { text-align: left; } .hero h1 { font-size: 48px; } .hero h2 { font-size: 24px; } .hero .intro { font-size: 16px; } .quote { position: static; width: auto; font-size: 21px; order: 2; } .shield { order: 1; width: 100%; max-width: 460px; margin: 0 auto; } .card { order: 3; margin: 0; padding: 20px; width: 100%; } .progressBody li { font-size: 13px; } .progressSummary p { font-size: 12px; } .upcoming li { padding: 16px 0; } .upcoming time, .upcoming li a>span { font-size: 13px; } .upcoming li strong { font-size: 16px; } .footer { order: 4; position: static; gap: 20px; padding-top: 15px; } .footer>span { font-size: 8px; line-height: 2; letter-spacing: 2px; max-width: 55%; } .footer p { font-size: 24px; color: white; text-shadow: 0 1px 5px #24112e; } }
+
+:global([data-theme='dark']) .home { color: #f6f0ff; background: #101e30; }
+:global([data-theme='dark']) .header { background: #162740; border-bottom-color: #526b88; }
+:global([data-theme='dark']) .scene::before { background: rgb(10 20 34 / .64); }
+:global([data-theme='dark']) .hero .intro { color: #d4ddec; }
+:global([data-theme='dark']) .card,
+:global([data-theme='dark']) .profileMenu,
+:global([data-theme='dark']) .headerDialogLink,
+:global([data-theme='dark']) .moduleChoice,
+:global([data-theme='dark']) .loading {
+  background: #182d48;
+  border-color: #3b526c;
+  color: #f6f8fb;
+}
+:global([data-theme='dark']) .shieldAction { color: #f6f0ff; }
+:global([data-theme='dark']) .shieldAction > span { color: #c9d5e5; }
+:global([data-theme='dark']) .actionSurface stop:first-child { stop-color: #263d5a; }
+:global([data-theme='dark']) .actionSurface stop:last-child { stop-color: #182d48; }
+:global([data-theme='dark']) .panelBorder { stroke: #715b91; }
+:global([data-theme='dark']) .ring > span { background: #182d48; }
+:global([data-theme='dark']) :is(.progressSummary p, .progressBody li, .progressBody li small, .progressPeriod, .hourLegend, .progressNote, .upcoming li a > span, .empty) { color: #b6c4d5; }
+:global([data-theme='dark']) :is(.progressBody li strong, .hourLegend dd) { color: #f6f8fb; }
+:global([data-theme='dark']) :is(.progressBody li a:hover, .progressBody li a:focus-visible, .profileMenu > a:hover, .profileMenu > button:hover) { background: #304766; color: #f6f8fb; }
+:global([data-theme='dark']) .progressIcon { background: #302748; color: #d7c4f4; }
+:global([data-theme='dark']) :is(.progressSummary, .upcoming li, .upcoming time) { border-color: #3b526c; }
+:global([data-theme='dark']) :is(.headerDialog, .headerNotifications a, .settingLabel select) { color: #f6f8fb; }
+:global([data-theme='dark']) :is(.headerNotifications a, .settingLabel select) { background: #182d48; border-color: #3b526c; }
+@media (max-width: 700px) {
+  :global([data-theme='dark']) .scene::before { background: linear-gradient(rgb(10 20 34 / .85), rgb(10 20 34 / .55)); }
+}
 @media (prefers-reduced-motion: reduce) {
   .home a, .home button, .panelBorder { transition: none; }
 }

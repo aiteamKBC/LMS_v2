@@ -13,8 +13,69 @@
 }
 
 :global([data-theme='dark']) .learningPage {
-  --learning-accent-ink: rgb(var(--learner-purple-300));
+  --learner-purple: #7545b9;
+  --learning-accent-ink: #d7c4f4;
   --learning-success-ink: rgb(var(--learner-success-300));
+}
+
+:global([data-theme='dark']) .learningPage :is(
+  .stat, .asidePanel, .empty, .search, .selectLabel select, .viewToggle,
+  .mapShortcut, .encouragement
+) {
+  background: var(--kbc-surface);
+  border-color: var(--kbc-border);
+  color: var(--kbc-text);
+}
+
+:global([data-theme='dark']) .learningPage :is(.heroIntro, .heroJourney) {
+  background-color: #182d48;
+  color: var(--kbc-text);
+}
+
+:global([data-theme='dark']) .learningPage .heroIntro {
+  background-image: linear-gradient(rgb(24 45 72 / .88), rgb(24 45 72 / .88)), url('/my-learning-hero-pattern.png');
+}
+
+:global([data-theme='dark']) .learningPage .heroJourney {
+  background-image: linear-gradient(90deg, #182d48 0%, rgb(24 45 72 / .95) 45%, rgb(24 45 72 / .35) 100%), url('/learner-learning-journey.webp');
+  border-color: var(--kbc-border);
+}
+
+:global([data-theme='dark']) .learningPage :is(.heroJourney p, .stat strong, .subjectHeading h2, .asidePanel h2, .continueSubject strong, .encouragement strong) {
+  color: var(--kbc-text);
+}
+
+:global([data-theme='dark']) .learningPage :is(
+  .heroIntro > p:last-child, .stat p, .stat small, .subjectHeading span,
+  .cardDescription, .nextActivity small, .continueSubject p, .asideEmpty,
+  .deadline small, .mapShortcut span, .encouragement p
+) {
+  color: var(--kbc-muted);
+}
+
+:global([data-theme='dark']) .learningPage :is(.statIcon, .progressRing span, .nextActivity, .miniTrack) {
+  background: var(--learner-soft);
+  color: var(--kbc-text);
+}
+
+:global([data-theme='dark']) .learningPage :is(.statIcon[data-tone='purple'], .mapShortcut) {
+  background: var(--learner-accent-soft);
+  color: var(--learning-accent-ink);
+}
+
+:global([data-theme='dark']) .learningPage :is(.statIcon[data-tone='green'], .encouragement) {
+  background: var(--learner-success-soft);
+  color: var(--learner-success);
+}
+
+:global([data-theme='dark']) .learningPage .viewToggle button[aria-pressed='true'] {
+  background: #5e378d;
+  color: #fff;
+}
+
+:global([data-theme='dark']) .learningPage :is(.status, .freeBadge) {
+  background: var(--learner-accent-soft);
+  color: var(--learner-purple);
 }
 
 .workspace {
