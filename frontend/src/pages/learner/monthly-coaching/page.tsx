@@ -324,10 +324,12 @@ export default function MonthlyCoachingPage() {
     myLearner.id,
     selected?.reviewTemplateId || selected?.reviewInstanceId ? (selected.eventKey || selected.id) : '',
   );
-  const meetingMonth = dateOf(selected)?.slice(0, 7) || '';
-  const mcmMonth = selected && (selected.source === 'mcr' || selected.reviewTypeCode === 'mcm') ? meetingMonth : undefined;
+  // Monthly Logs belong to the curriculum target month. The scheduled date
+  // is only the actual appointment date and may fall in another month.
+  const targetMonth = (selected?.targetDate || selected?.scheduledDate || selected?.date || '').slice(0, 7);
+  const mcmMonth = selected && (selected.source === 'mcr' || selected.reviewTypeCode === 'mcm') ? targetMonth : undefined;
   const completedMcm = Boolean(
-    selected && meetingMonth && (selected.source === 'mcr' || selected.reviewTypeCode === 'mcm') &&
+    selected && targetMonth && (selected.source === 'mcr' || selected.reviewTypeCode === 'mcm') &&
     ['completed', 'awaiting-signature'].includes(reviewInstance.definition?.instance?.status || selected.status),
   );
   const backParams = new URLSearchParams({ kind: myLearner.kind, learner: myLearner.id });
@@ -389,9 +391,9 @@ export default function MonthlyCoachingPage() {
   return (
     <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel} pageTitle="Monthly Coaching Meeting" pageSubtitle="Coaching meeting" userName={learner?.name || 'Learner'} userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}>
       <div className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
-        {completedMcm && meetingMonth && <aside className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-background-200 bg-background-50 p-4" aria-label="Monthly learning log">
-          <div><p className="text-sm font-semibold text-foreground-900">Your monthly learning log</p><p className="mt-1 text-sm text-foreground-600">You can also review your learning activities for {monthLabel(`${meetingMonth}-01`)}.</p></div>
-          <Link className="rounded-lg border border-background-300 bg-white px-4 py-3 text-sm font-semibold text-primary-700" to={`/learner/monthly-logs/${myLearner.kind}/${myLearner.id}/${meetingMonth}?workflow=mcm&source=mcm`}>Open monthly log</Link>
+        {completedMcm && targetMonth && <aside className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-background-200 bg-background-50 p-4" aria-label="Monthly learning log">
+          <div><p className="text-sm font-semibold text-foreground-900">Your monthly learning log</p><p className="mt-1 text-sm text-foreground-600">You can also review your learning activities for {monthLabel(`${targetMonth}-01`)}.</p></div>
+          <Link className="rounded-lg border border-background-300 bg-white px-4 py-3 text-sm font-semibold text-primary-700" to={`/learner/monthly-logs/${myLearner.kind}/${myLearner.id}/${targetMonth}?workflow=mcm&source=mcm`}>Open monthly log</Link>
         </aside>}
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}<button type="button" onClick={refresh} className="ml-3 font-bold underline">Try again</button></div>}
         <div className="flex flex-wrap items-center justify-between gap-3">

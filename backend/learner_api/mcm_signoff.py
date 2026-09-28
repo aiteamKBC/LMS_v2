@@ -20,7 +20,10 @@ logger = logging.getLogger(__name__)
 
 
 def _month_for(record):
-    value = getattr(record, "scheduled_date", None) or getattr(record, "target_date", None)
+    # The MCM occurrence owns the curriculum target month.  A later booking
+    # date is the appointment date and must not move the monthly-log sign-off
+    # into a different reporting month.
+    value = getattr(record, "target_date", None) or getattr(record, "scheduled_date", None)
     return value.strftime("%Y-%m") if value is not None else ""
 
 

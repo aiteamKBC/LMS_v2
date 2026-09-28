@@ -11,7 +11,7 @@ from django.test import SimpleTestCase, RequestFactory
 from django.core.files.uploadedfile import SimpleUploadedFile
 
 from old_otjh.service import ServiceError
-from . import monthly_logs as logs, monthly_log_sources as sources
+from . import monthly_logs as logs, monthly_log_sources as sources, mcm_signoff as signoff
 
 
 class MonthlyLogsTests(SimpleTestCase):
@@ -214,6 +214,14 @@ class MonthlyLogsTests(SimpleTestCase):
         self.assertIn('monthly_audit_signoffs', insert.args[0])
         self.assertIn('data:image/png;base64,mcm', insert.args[1][4])
         self.assertIn('mcm-digest', insert.args[1])
+
+    def test_mcm_signoff_uses_target_month_when_booking_is_later(self):
+        record = SimpleNamespace(
+            target_date=date(2026, 12, 16),
+            scheduled_date=date(2026, 9, 28),
+        )
+
+        self.assertEqual(signoff._month_for(record), '2026-12')
 
     def test_mcm_signature_copy_is_idempotent_when_monthly_signature_exists(self):
         report = {'source': 'lms', 'rows': [self.row], 'profile': None,
