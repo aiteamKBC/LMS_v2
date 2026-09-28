@@ -51,6 +51,42 @@ function mount(overrides: Partial<CoachingHomeProps> = {}, search = '') {
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('coaching learner navigation and actions', () => {
+  it('selects any timeline meeting in the summary card without opening its detail page', () => {
+    const props = mount({ sessions: [
+      session('attended', '2026-09-01'),
+      session('missed', '2026-09-08'),
+      session('scheduled', '2026-10-01'),
+      session('planned', '2027-01-01', { status: 'not-scheduled', scheduledDate: null, scheduledTime: null }),
+    ], attendance: [
+      attendance('attended', { date: '2026-09-01', attendanceConfirmed: true, canAttend: false }),
+      attendance('missed', { date: '2026-09-08', missed: true, canAttend: false }),
+    ] });
+    const timeline = within(screen.getByRole('region', { name: 'Monthly coaching programme timeline' }));
+    expect(timeline.getAllByRole('button')).toHaveLength(4);
+    expect(timeline.getByRole('button', { name: /1 Sept 2026, Attended/ }).closest('[data-status]')).toHaveAttribute('data-status', 'attended');
+    expect(timeline.getByRole('button', { name: /8 Sept 2026, Missed/ }).closest('[data-status]')).toHaveAttribute('data-status', 'missed');
+    const next = timeline.getByRole('button', { name: /1 Oct 2026, Scheduled/ });
+    expect(next).toHaveAttribute('aria-pressed', 'true');
+    const planned = timeline.getByRole('button', { name: /1 Jan 2027, Planned/ });
+    fireEvent.click(planned);
+    expect(planned).toHaveAttribute('aria-pressed', 'true');
+    expect(next).toHaveAttribute('aria-pressed', 'false');
+    const selected = within(screen.getByRole('article', { name: 'Selected coaching meeting' }));
+    expect(selected.getByRole('heading', { name: 'January 2027 coaching' })).toBeInTheDocument();
+    fireEvent.click(selected.getByRole('button', { name: 'Book a time' }));
+    expect(props.onSchedule).toHaveBeenCalledExactlyOnceWith(props.sessions[3]);
+    expect(screen.getByTestId('location')).toHaveTextContent('/learner/monthly-coaching?kind=apprenticeship&learner=12');
+    expect(props.onAttend).not.toHaveBeenCalled();
+  });
+  it('opens the overview card when selecting a meeting from the full list view', () => {
+    mount({ sessions: [session('next', '2026-10-01'), session('later', '2026-11-01')] }, '&view=all');
+    fireEvent.click(within(screen.getByRole('region', { name: 'Monthly coaching programme timeline' })).getByRole('button', { name: /1 Nov 2026, Scheduled/ }));
+    expect(within(screen.getByRole('article', { name: 'Selected coaching meeting' })).getByRole('heading', { name: 'November 2026 coaching' })).toBeInTheDocument();
+    expect(screen.getByTestId('location')).toHaveTextContent('/learner/monthly-coaching?kind=apprenticeship&learner=12');
+    fireEvent.click(screen.getByRole('link', { name: 'View all meetings' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Back to current meeting' }));
+    expect(within(screen.getByRole('article', { name: 'Current coaching meeting' })).getByRole('heading', { name: 'October 2026 coaching' })).toBeInTheDocument();
+  });
   it.each([
     { kind: 'apprenticeship', id: '12', now: '2026-09-14T10:00:00Z', month: '2026-09', canAct: true, search: '' },
     { kind: 'commercial', id: '34', now: '2026-09-30T23:30:00Z', month: '2026-10', canAct: false, search: '&view=all&tab=upcoming' },
@@ -129,17 +165,58 @@ describe('coaching learner navigation and actions', () => {
   });
 
   it('keeps a pending learner signature and the next appointment visible together', () => {
-    const signedMeeting = session('summary:1', '2026-09-01', { status: 'awaiting-signature', reviewTemplateId: 'template-1', coachName: 'Previous coach' });
-    const next = session('next:2', '2026-09-15');
+    const signedMeeting = session('summary:1', '2026-09-29', { status: 'awaiting-signature', reviewTemplateId: 'template-1', coachName: 'Previous coach' });
+    const next = session('next:2', '2026-10-28');
     mount({ sessions: [signedMeeting, next, session('far-future', '2027-01-01')], reviews: { 'summary:1': signatureDefinition() } });
+    const timeline = within(screen.getByRole('region', { name: 'Monthly coaching programme timeline' }));
+    const september = timeline.getByRole('button', { name: /29 Sept 2026, Scheduled/ });
+    const october = timeline.getByRole('button', { name: /28 Oct 2026, Scheduled/ });
+    expect(september).toHaveAttribute('aria-pressed', 'true');
+    expect(october).toHaveAttribute('aria-pressed', 'false');
     const attention = within(screen.getByRole('region', { name: 'Needs your attention' }));
     expect(attention.getByRole('heading', { name: 'Your signature is needed' })).toBeInTheDocument();
     expect(attention.getByRole('link', { name: 'Review & sign' })).toHaveAttribute('href', '/learner/monthly-coaching/summary%3A1?kind=apprenticeship&learner=12');
     const current = within(screen.getByRole('article', { name: 'Current coaching meeting' }));
-    expect(current.getByText('Tue, 15 Sept 2026')).toBeInTheDocument();
+    expect(current.getByText('Wed, 28 Oct 2026')).toBeInTheDocument();
     expect(current.getByRole('link', { name: 'Prepare for meeting' })).toHaveAttribute('href', '/learner/monthly-coaching/next%3A2?kind=apprenticeship&learner=12');
+    fireEvent.click(september);
+    expect(within(screen.getByRole('article', { name: 'Selected coaching meeting' })).getByRole('link', { name: 'Review & sign' })).toHaveAttribute('href', '/learner/monthly-coaching/summary%3A1?kind=apprenticeship&learner=12');
+    fireEvent.click(october);
+    expect(within(screen.getByRole('article', { name: 'Current coaching meeting' })).getByText('Wed, 28 Oct 2026')).toBeInTheDocument();
+    expect(october).toHaveAttribute('aria-pressed', 'true');
     expect(screen.queryByText('January 2027 coaching')).not.toBeInTheDocument();
     expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+  });
+
+  it('shows a closed, fully signed coaching form as attended in the timeline without recording attendance', () => {
+    const review = signatureDefinition();
+    review.instance!.status = 'completed';
+    review.signatures.participant.signed = true;
+    const closed = session('closed:4', '2026-09-29', { status: 'awaiting-signature', reviewTemplateId: 'template-1' });
+    const props = mount({ sessions: [closed], reviews: { [closed.eventKey]: review } });
+    const timeline = within(screen.getByRole('region', { name: 'Monthly coaching programme timeline' }));
+    const meeting = timeline.getByRole('button', { name: /29 Sept 2026, Attended/ });
+    expect(meeting.closest('[data-status]')).toHaveAttribute('data-status', 'attended');
+    fireEvent.click(meeting);
+    expect(within(screen.getByRole('article', { name: 'Selected coaching meeting' })).getByText('Completed')).toBeInTheDocument();
+    expect(props.onAttend).not.toHaveBeenCalled();
+  });
+
+  it('shows a completed coaching status in green before signature details load', () => {
+    const closed = session('closed:4', '2026-09-29', { status: 'completed' });
+    mount({ sessions: [closed] });
+    const timeline = within(screen.getByRole('region', { name: 'Monthly coaching programme timeline' }));
+    expect(timeline.getByRole('button', { name: /29 Sept 2026, Attended/ }).closest('[data-status]')).toHaveAttribute('data-status', 'attended');
+  });
+
+  it('lets a completed coaching status override a stale missed flag', () => {
+    const review = signatureDefinition();
+    review.instance!.status = 'completed';
+    review.signatures.participant.signed = true;
+    const closed = session('closed:4', '2026-09-29', { status: 'awaiting-signature', reviewTemplateId: 'template-1' });
+    mount({ sessions: [closed], reviews: { [closed.eventKey]: review }, attendance: [attendance(closed.id, { date: '2026-09-29', missed: true })] });
+    const timeline = within(screen.getByRole('region', { name: 'Monthly coaching programme timeline' }));
+    expect(timeline.getByRole('button', { name: /29 Sept 2026, Attended/ }).closest('[data-status]')).toHaveAttribute('data-status', 'attended');
   });
 
   it('confirms attendance using its own durable id when it differs from the calendar id', () => {
@@ -218,7 +295,7 @@ describe('coaching learner navigation and actions', () => {
     mount({ sessions }, '&view=all&tab=upcoming');
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     expect(screen.getByText(/Page 2 of 2/)).toBeInTheDocument();
-    const firstRow = screen.getAllByRole('listitem')[0];
+    const firstRow = within(screen.getByRole('region', { name: 'All coaching meetings' })).getAllByRole('listitem')[0];
     const details = within(firstRow).getByRole('link', { name: 'Prepare for meeting' });
     const url = new URL(details.getAttribute('href')!, 'http://localhost');
     expect(url.pathname).toBe('/learner/monthly-coaching/meeting%3A9');

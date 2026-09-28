@@ -25,6 +25,7 @@ import { assignmentTimeHours } from './AssignmentTimeEntries';
 import { HistoricalAssignmentCards } from './HistoricalAssignmentCards';
 import { useLearningStatements } from '@/hooks/useLearningStatements';
 import { parsePersonalLearning } from '@/lib/personalLearning';
+import styles from './assignmentWizard.module.css';
 
 export type AssignmentAnswers = {
   assignmentAnswer: string;
@@ -487,7 +488,7 @@ export function AssignmentSubmissionWizard({
   return (
     <AssignmentAiCheckContext.Provider value={{ learnerId, learnerKind: kind, enabled: !readOnly }}>
       <AssignmentAttemptHistory attempts={submissionAttempts} />
-      <section ref={wizardRef} className="overflow-hidden rounded-2xl border border-slate-200 bg-white font-sans shadow-sm">
+      <section ref={wizardRef} className={`${styles.assignmentWizard} overflow-hidden rounded-2xl border border-slate-200 bg-white font-sans shadow-sm`}>
         <div className="border-b border-slate-200 bg-sky-50/50 px-5 py-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -630,7 +631,7 @@ export function AssignmentSubmissionWizard({
                     onClick={() => void submit()}
                     aria-describedby={!learningConfirmed ? 'learning-confirmation-required' : undefined}
                     disabled={loadFailed || checking || savingDraft || submittingProgress || !learningConfirmed || checks.length !== 13 || checks.some(check => !check.passed)}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <AppIcon className={savingDraft || submittingProgress ? 'ri-loader-4-line animate-spin' : 'ri-send-plane-fill'} />
                     {savingDraft || submittingProgress ? 'Submitting…' : 'Submit assignment'}

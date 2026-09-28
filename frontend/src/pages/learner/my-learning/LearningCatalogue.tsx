@@ -19,7 +19,7 @@ function deadlineHref(item: OverviewWeek['deadlines'][number], kind?: string, le
 
 export function LearningHero({ map = false }: { map?: boolean }) {
   return <header className={styles.hero}>
-    <div><p className={styles.eyebrow}>{map ? 'Learning journey' : 'Your learner workspace'}</p>
+    <div className={styles.heroIntro}><p className={styles.eyebrow}>{map ? 'Learning journey' : 'Your learner workspace'}</p>
       <h1>{map ? 'Your week-by-week timeline' : 'My Learning'}</h1>
       <p>{map ? 'Explore your module, open a week and work through your learning materials.' : 'Your subjects, activities and progress. Every step brings you closer.'}</p>
     </div>

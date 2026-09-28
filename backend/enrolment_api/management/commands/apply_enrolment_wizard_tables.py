@@ -16,6 +16,8 @@ directory spans enrolment."Enrolment_Users" and enrolment."Commercial_users", so
 no single foreign key can address both):
 
     Wizard_Personal_Details   one row per learner; includes the learner's signature
+    Wizard_Ilr_Learner_Details one row per learner: the ILR learner details,
+                              health, education, employment and declaration
     Wizard_Skills_Radar       one row per learner (the chosen standard)
     Wizard_Ksb_Assessments    one row per KSB assessed
     Wizard_Plr                one row per learner (the ULN)
@@ -158,10 +160,73 @@ TABLES = [
             "Updated_at"         timestamptz NOT NULL DEFAULT now()
         )
         ''',
-        [],
+        [
+            # Added with the Add/Edit PLR form: study dates, and the
+            # certificate/evidence files held in Azure (each with its blob path).
+            ('"Start_date"', "date"),
+            ('"End_date"', "date"),
+            ('"Evidence"', "jsonb NOT NULL DEFAULT '[]'::jsonb"),
+        ],
         [
             'CREATE UNIQUE INDEX IF NOT EXISTS wizard_plr_record_uniq '
             'ON enrolment."Wizard_Plr_Records" ("Learner_kind", "Learner_id", "Record_ref")',
+        ],
+    ),
+    (
+        "Wizard_Ilr_Learner_Details",
+        '''
+        CREATE TABLE IF NOT EXISTS enrolment."Wizard_Ilr_Learner_Details" (
+            id                        bigserial PRIMARY KEY,
+            "Learner_kind"            varchar(32) NOT NULL,
+            "Learner_id"              bigint      NOT NULL,
+            -- Learner details. Name, DOB, current address, phone and email are
+            -- read from the learner record, not copied here.
+            "Years_at_address"        integer,
+            "At_address_since_birth"  boolean,
+            "Postcode_prior_to_enrolment" text,
+            "National_insurance_number"   text,
+            -- Ticked when the learner has no NI number and has applied for one.
+            "Ni_number_applied"       boolean,
+            "Legal_sex"               text,
+            "Pronouns"                text,
+            "Ethnicity"               text,
+            -- Health, education, employment. Stored as the DfE ILR option labels.
+            "Long_term_disability"    boolean,
+            "Highest_qualification"   text,
+            "Employment_status"       text,
+            -- Asked only of learners in paid employment.
+            "Employment_start_date"   date,
+            "Job_title"               text,
+            "Self_employed"           boolean,
+            "Full_time_education"     boolean,
+            -- Asked only when in full-time education or training.
+            "Expected_leaving_date"   date,
+            -- Asked only of learners not in paid employment.
+            "Length_of_unemployment"  text,
+            "Volunteers"              boolean,
+            "State_benefits"          text,
+            -- Asked when a benefit is claimed: own right or joint claim.
+            "Benefit_claim_basis"     text,
+            -- The certification signature. PNG data URL, like every other
+            -- signature column in this schema.
+            "Declaration_signature"   text,
+            "Declaration_signed_date" date,
+            "Created_at"              timestamptz NOT NULL DEFAULT now(),
+            "Updated_at"              timestamptz NOT NULL DEFAULT now()
+        )
+        ''',
+        [
+            ('"Employment_start_date"', "date"),
+            ('"Job_title"', "text"),
+            ('"Self_employed"', "boolean"),
+            ('"Expected_leaving_date"', "date"),
+            ('"Length_of_unemployment"', "text"),
+            ('"Volunteers"', "boolean"),
+            ('"Benefit_claim_basis"', "text"),
+        ],
+        [
+            'CREATE UNIQUE INDEX IF NOT EXISTS wizard_ilr_learner_details_learner_uniq '
+            'ON enrolment."Wizard_Ilr_Learner_Details" ("Learner_kind", "Learner_id")',
         ],
     ),
     (
@@ -179,7 +244,17 @@ TABLES = [
             "Updated_at"             timestamptz NOT NULL DEFAULT now()
         )
         ''',
-        [],
+        [
+            # Qualifications and GCSEs, and the files held in Azure (each with
+            # its blob path) — added with the redesigned CV/Job Description step.
+            ('"Highest_qualification"', "text"),
+            ('"Highest_qualification_field"', "text"),
+            ('"Has_field_qualification"', "boolean"),
+            ('"Highest_field_qualification"', "text"),
+            ('"Gcse_english"', "boolean"),
+            ('"Gcse_maths"', "boolean"),
+            ('"Documents"', "jsonb NOT NULL DEFAULT '[]'::jsonb"),
+        ],
         [
             'CREATE UNIQUE INDEX IF NOT EXISTS wizard_cv_job_learner_uniq '
             'ON enrolment."Wizard_Cv_Job" ("Learner_kind", "Learner_id")',

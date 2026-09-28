@@ -77,9 +77,22 @@ export function activityHref(component: JourneyComponent, week: string | undefin
   return null;
 }
 
+function formatActivityMinutes(durationMinutes: number): string {
+  const totalSeconds = Math.round(durationMinutes * 60);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours) return `${hours}h${minutes ? ` ${minutes}m` : ''}${seconds ? ` ${seconds}s` : ''}`;
+  return seconds ? `${minutes ? `${minutes}m ` : ''}${seconds}s` : `${minutes} mins`;
+}
+
 export function activityExpectedTimeLabel(component: JourneyComponent): string {
-  if (component.isQuiz && component.quizMeta?.duration) return `${component.quizMeta.duration} ${component.quizMeta.timeUnit || 'mins'}`;
-  if (component.durationMinutes) return `${component.durationMinutes} mins`;
+  if (component.isQuiz && component.quizMeta?.duration) {
+    const { duration, timeUnit } = component.quizMeta;
+    if (duration >= 60 && /^(min|mins|minute|minutes)$/i.test(timeUnit || 'mins')) return formatActivityMinutes(duration);
+    return `${duration} ${timeUnit || 'mins'}`;
+  }
+  if (component.durationMinutes) return formatActivityMinutes(component.durationMinutes);
   if (component.expectedOtjh != null) return formatHoursMinutes(component.expectedOtjh);
   return '—';
 }

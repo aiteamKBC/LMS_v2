@@ -367,8 +367,11 @@ def account_payload(account, *, subject=None):
                     *payload["accessWorkspaces"],
                     {
                         "access": "learner",
-                        "home": f"/workspace/learner?kind={learner_record.learner_type or 'commercial'}"
-                                f"&id={learner_record.pk}",
+                        # Path segments, not a query string: the SPA route is
+                        # /workspace/learner/:kind/:id and ignores ?kind=&id=,
+                        # which left the page with no learner to load.
+                        "home": f"/workspace/learner/{learner_record.learner_type or 'commercial'}"
+                                f"/{learner_record.pk}",
                         "navRole": "learner",
                     },
                 ]

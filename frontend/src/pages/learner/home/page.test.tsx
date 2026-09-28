@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { Suspense } from 'react';
 import { Link, MemoryRouter, useLocation, useParams, useRoutes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -8,9 +8,11 @@ import { studentWorkspaceRoutes } from '@/router/studentWorkspaceRoutes';
 import { overviewHome, type OverviewWeek } from '@/api/learnerOverview';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 import { rememberSignedInLearner } from '@/hooks/useMyLearner';
+import { resetFirstLoginDetailsRedirect } from '@/hooks/useFirstLoginDetailsRedirect';
 
-const state = vi.hoisted(() => ({ profileError: '', name: 'Alex Morgan', role: 'learner', programmeStatus: 'Active', upcoming: false, scheduleError: '', refresh: vi.fn(), modules: [] as OverviewWeek['modules'] }));
-vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { id: 3, subjectId: 71, learnerType: 'apprenticeship', role: state.role, displayName: state.name } }, logout: vi.fn(), retryInitialization: vi.fn() }) }));
+const state = vi.hoisted(() => ({ profileError: '', name: 'Alex Morgan', role: 'learner', learnerType: 'apprenticeship', firstLoginRequired: false, programmeStatus: 'Active', upcoming: false, scheduleError: '', refresh: vi.fn(), modules: [] as OverviewWeek['modules'] }));
+vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: { id: 3, subjectId: 71, learnerType: state.learnerType, role: state.role, displayName: state.name } }, logout: vi.fn(), retryInitialization: vi.fn() }) }));
+vi.mock('@/api/firstLoginDetails', () => ({ fetchFirstLoginDetails: vi.fn(async () => ({ required: state.firstLoginRequired })) }));
 vi.mock('@/hooks/useLearnerSummaryParam', () => ({ useLearnerSummaryParam: vi.fn(() => ({ real: { id: 71, name: state.name, programmeStatus: state.programmeStatus }, loadError: state.profileError, loading: false, refresh: state.refresh })) }));
 vi.mock('@/hooks/useLiveLearnerRead', () => ({ useLiveLearnerRead: vi.fn((_kind, _id, _enabled, read) => ({ data: { weekStart: '2026-09-07', weekEnd: '2026-09-13', modules: state.modules,
   deadlines: state.upcoming ? [{ id: 'a', title: 'My assignment', date: '2050-10-10', type: 'assignment' }] : [],
@@ -32,7 +34,7 @@ function Location() { const location = useLocation(); return <output data-testid
 function page() { return render(<MemoryRouter initialEntries={['/learner/home?kind=commercial&id=999']}><StudentHome/><Location/></MemoryRouter>); }
 function WorkspaceRoutes() { return useRoutes(studentWorkspaceRoutes); }
 function workspace(path: string) { return render(<MemoryRouter initialEntries={[path]}><Suspense fallback={<p>Loading</p>}><WorkspaceRoutes/></Suspense><Location/></MemoryRouter>); }
-beforeEach(() => { state.profileError = ''; state.role = 'learner'; state.programmeStatus = 'Active'; state.upcoming = false; state.scheduleError = ''; state.modules = []; rememberSignedInLearner(undefined, undefined); localStorage.clear(); });
+beforeEach(() => { resetFirstLoginDetailsRedirect(); state.learnerType = 'apprenticeship'; state.firstLoginRequired = false; state.profileError = ''; state.role = 'learner'; state.programmeStatus = 'Active'; state.upcoming = false; state.scheduleError = ''; state.modules = []; rememberSignedInLearner(undefined, undefined); localStorage.clear(); });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.clearAllMocks(); localStorage.clear(); });
 describe('connected student home', () => {
   it('uses only the authenticated identity, with real progress and empty events', () => {
@@ -78,7 +80,7 @@ describe('connected student home', () => {
   });
   it.each([
     ['Monthly Submission', '/learner/monthly-submission'],
-    ['Dashboard', '/workspace/learner/dashboard'], ['Attend or Report Absence', '/learner/attendance'],
+    ['Dashboard', '/workspace/learner/dashboard/apprenticeship/71'], ['Attend or Report Absence', '/learner/attendance'],
     ['Book for Monthly Coaching Session', '/learner/monthly-coaching'],
   ])('connects %s to its existing LMS route', (label, href) => {
     page();
@@ -98,7 +100,7 @@ describe('connected student home', () => {
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
     expect(screen.queryByRole('search')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('link', { name: 'Dashboard' }));
-    expect(screen.getByTestId('destination')).toHaveTextContent('/workspace/learner/dashboard');
+    expect(screen.getByTestId('destination')).toHaveTextContent('/workspace/learner/dashboard/apprenticeship/71');
   });
   it('continues the signed-in learner’s current module, ignoring an identity supplied in the URL', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -119,15 +121,39 @@ describe('connected student home', () => {
     workspace(path);
     expect(await screen.findByRole('heading', { name: 'Alex' })).toBeVisible();
     expect(screen.queryByRole('complementary', { name: 'Learner sidebar' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'View all progress' })).toHaveAttribute('href', '/workspace/learner/dashboard/apprenticeship/71');
     fireEvent.click(screen.getByRole('link', { name: 'Dashboard' }));
     expect(await screen.findByRole('heading', { name: 'Dashboard console' })).toBeVisible();
     expect(screen.getByRole('complementary', { name: 'Learner sidebar' })).toBeVisible();
-    expect(screen.getByTestId('destination')).toHaveTextContent('/workspace/learner/dashboard');
+    expect(screen.getByTestId('destination')).toHaveTextContent('/workspace/learner/dashboard/apprenticeship/71');
     fireEvent.click(screen.getByRole('link', { name: 'Return home' }));
     expect(await screen.findByRole('heading', { name: 'Alex' })).toBeVisible();
   });
 
-  it.each(['Fresh user', 'Onboarding', 'Delivery'])('keeps the landing page as the entry for programme status %s', async status => {
+  // Student Home opens once an apprentice's programme has started. Before
+  // that, each enrolment stage has its own page (requested 2026-09-27; this
+  // replaces the earlier "landing page at every stage" rule for apprentices).
+  it.each([
+    ['Fresh user', '/workspace/learner/dashboard'],
+    ['Onboarding', '/learner/onboarding'],
+    ['Delivery', '/workspace/learner/dashboard'],
+    ['Ready to enrol', '/workspace/learner/dashboard'],
+  ])('sends an apprentice at programme status %s to %s instead of the landing page', async (status, destination) => {
+    state.programmeStatus = status;
+    workspace('/workspace/learner');
+    await waitFor(() => expect(screen.getByTestId('destination')).toHaveTextContent(new RegExp(`^${destination}$`)));
+    expect(screen.queryByRole('heading', { name: 'Alex' })).not.toBeInTheDocument();
+  });
+
+  it('sends a new apprentice to the first-sign-in screens first', async () => {
+    state.programmeStatus = 'Fresh user';
+    state.firstLoginRequired = true;
+    workspace('/workspace/learner');
+    await waitFor(() => expect(screen.getByTestId('destination')).toHaveTextContent(/^\/learner\/welcome$/));
+  });
+
+  it.each(['Fresh user', 'Onboarding', 'Delivery'])('keeps the landing page as a commercial learner’s entry at programme status %s', async status => {
+    state.learnerType = 'commercial';
     state.programmeStatus = status;
     workspace('/workspace/learner');
     expect(await screen.findByRole('heading', { name: 'Alex' })).toBeVisible();
@@ -139,7 +165,8 @@ describe('connected student home', () => {
     workspace('/workspace/learner/commercial/502');
     expect(await screen.findByRole('heading', { name: 'Alex' })).toBeVisible();
     expect(useLearnerSummaryParam).toHaveBeenCalledWith('commercial', '502');
-    expect(screen.getByRole('link', { name: 'Dashboard' })).toHaveAttribute('href', '/workspace/learner/commercial/502/dashboard');
+    expect(screen.getByRole('link', { name: 'Dashboard' })).toHaveAttribute('href', '/workspace/learner/dashboard/commercial/502');
+    expect(screen.getByRole('link', { name: 'View all progress' })).toHaveAttribute('href', '/workspace/learner/dashboard/commercial/502');
     fireEvent.click(screen.getByRole('link', { name: 'Dashboard' }));
     expect(await screen.findByRole('heading', { name: 'Dashboard console' })).toBeVisible();
     fireEvent.click(screen.getByRole('link', { name: 'Return home' }));
