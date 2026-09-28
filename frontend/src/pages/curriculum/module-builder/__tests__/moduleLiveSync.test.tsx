@@ -15,9 +15,11 @@ import type { CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi'
  *
  * - nothing unsaved: take the stored version, because a screen that quietly
  *   disagrees with the database is the whole complaint;
- * - unsaved edits: say so and touch nothing, because adopting over them is the
- *   overwrite the save guard exists to prevent, and doing it silently would be
- *   worse than the stale screen was.
+ * - unsaved edits: merge the two copies. Their weeks and components arrive,
+ *   the reader's stay, and a field they both changed keeps the reader's and is
+ *   said out loud. Announcing the write and touching nothing -- which is what
+ *   this did before -- kept both editors' work but left them unable to save
+ *   without one of them reloading over the other.
  */
 
 const reload = vi.fn(async () => null);
@@ -116,7 +118,7 @@ vi.mock('@/lib/curriculumApi', async importOriginal => ({
 }));
 
 /** The stored module, as the structure endpoint serves it. */
-function storedStructure(weekTitle = 'Week one', revision = 'rev-1') {
+function storedStructure(weekTitle = 'Week one', revision = 'rev-1', extraWeeks: { id: string; title: string }[] = []) {
   return {
     weekStructure: [
       {
@@ -144,6 +146,16 @@ function storedStructure(weekTitle = 'Week one', revision = 'rev-1') {
         ],
         ksbMappings: [],
       },
+      ...extraWeeks.map((week, index) => ({
+        id: week.id,
+        moduleId: 'MOD-LIVE-1',
+        weekNumber: index + 2,
+        title: week.title,
+        summary: '',
+        learningOutcomes: [],
+        components: [],
+        ksbMappings: [],
+      })),
     ],
     structureRevision: revision,
   };
@@ -163,8 +175,8 @@ async function openWorkspace() {
 }
 
 /** Somebody else's save, followed by the write reaching this workspace. */
-async function saveArrivesFromElsewhere(weekTitle: string, revision: string) {
-  loadModuleStructure.mockResolvedValue(storedStructure(weekTitle, revision));
+async function saveArrivesFromElsewhere(weekTitle: string, revision: string, extraWeeks: { id: string; title: string }[] = []) {
+  loadModuleStructure.mockResolvedValue(storedStructure(weekTitle, revision, extraWeeks));
   liveRefresh?.();
 }
 
@@ -239,25 +251,167 @@ describe('Module Builder live sync', { timeout: 25000 }, () => {
     expect(lastExpectedRevision()).toBe('rev-2');
   });
 
-  it('keeps saving against its own revision while it is holding unsaved edits', async () => {
-    // The state this guards against is {revision: theirs, weeks: mine}. Taking
-    // their revision without their weeks would make this save legal at the
-    // endpoint, and it would replace their work without a word. Holding the
-    // local revision is what turns it into the 409 the banner already offers a
-    // way out of.
+  it('saves the merged module against the revision it merged with', async () => {
+    // The state this used to guard against is {revision: theirs, weeks: mine}:
+    // their revision on this reader's weeks alone would make the save legal at
+    // the endpoint and replace their work without a word. It is not that state
+    // any more. The weeks being saved are theirs merged with this reader's, so
+    // the revision they were merged with is the one the save is genuinely
+    // built on -- and holding the old revision instead would now refuse a
+    // payload that contains everybody's work.
     const title = await openWorkspace();
     await userEvent.clear(title);
     await userEvent.type(title, 'My unsaved week');
 
-    await saveArrivesFromElsewhere('Week one, renamed by Sara', 'rev-2');
+    await saveArrivesFromElsewhere('Week one, renamed by Sara', 'rev-2', [{ id: 'WEEK-2', title: 'A week Sara added' }]);
     expect(await screen.findByRole('button', { name: 'Load their version' })).toBeInTheDocument();
 
     await userEvent.click(screen.getByTestId('module-builder-save'));
 
     await waitFor(() => expect(saveModuleStructure).toHaveBeenCalled());
-    expect(lastExpectedRevision()).toBe('rev-1');
+    expect(lastExpectedRevision()).toBe('rev-2');
     const sent = (saveModuleStructure.mock.calls[0] as [string, { weekStructure: { title: string }[] }])[1];
+    // Both editors are in the payload: the week title this reader typed, and
+    // the week Sara added while they were typing it.
     expect(sent.weekStructure[0].title).toBe('My unsaved week');
+    expect(sent.weekStructure.map(week => week.title)).toContain('A week Sara added');
+  });
+
+  it('names the field both editors changed and keeps this one', async () => {
+    const title = await openWorkspace();
+    await userEvent.clear(title);
+    await userEvent.type(title, 'My unsaved week');
+
+    await saveArrivesFromElsewhere('Week one, renamed by Sara', 'rev-2');
+
+    const notice = await screen.findByTestId('module-builder-remote-update');
+    expect(notice).toHaveTextContent(/both changed the title/i);
+    expect(notice).toHaveTextContent(/Yours is kept/i);
+    expect(title).toHaveValue('My unsaved week');
+  });
+
+  it('merges and re-sends a save the server refused, instead of stopping at a red banner', async () => {
+    // The screen this was reported from: "Save failed - this module changed
+    // after you opened it. Reload the latest version before saving again."
+    // Reloading was the only way forward and it meant re-typing. Now the
+    // refusal is answered by reading what is stored, merging it in, and sending
+    // the merged module -- the reader sees a save, not a wall.
+    const title = await openWorkspace();
+    await userEvent.clear(title);
+    await userEvent.type(title, 'My unsaved week');
+
+    // The stored module the merge will read: someone else added a week.
+    loadModuleStructure.mockResolvedValue(storedStructure('Week one', 'rev-2', [{ id: 'WEEK-2', title: 'A week Sara added' }]));
+    const { ModuleStructureConflictError } = await import('../moduleAuthoringData');
+    saveModuleStructure.mockImplementationOnce(async () => {
+      throw new ModuleStructureConflictError('This module changed after you opened it.', 'rev-2', null);
+    });
+
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalledTimes(2));
+    expect(lastExpectedRevision()).toBe('rev-2');
+    const sent = (saveModuleStructure.mock.calls[1] as [string, { weekStructure: { title: string }[] }])[1];
+    expect(sent.weekStructure[0].title).toBe('My unsaved week');
+    expect(sent.weekStructure.map(week => week.title)).toContain('A week Sara added');
+    // Nothing is left on screen telling the reader to reload.
+    expect(screen.queryByText(/Reload the latest version/i)).not.toBeInTheDocument();
+  });
+
+  it('rebases onto the newest stored version each time, and stops', async () => {
+    // Three saves land elsewhere while this reader is mid-edit. Each refusal
+    // must be answered by reading what is stored NOW and merging onto that --
+    // never by firing the same payload at the endpoint again -- and the chain
+    // has to end rather than chase a module that is moving faster than this tab
+    // can answer.
+    const title = await openWorkspace();
+    await userEvent.clear(title);
+    await userEvent.type(title, 'My unsaved week');
+
+    const { ModuleStructureConflictError } = await import('../moduleAuthoringData');
+    // Somebody else is saving continuously: every read of the stored module
+    // answers with a version newer than the one before it, so every attempt is
+    // refused however fresh it was.
+    const readRevisions: string[] = [];
+    let moved = 1;
+    loadModuleStructure.mockImplementation(async () => {
+      moved += 1;
+      readRevisions.push(`rev-${moved}`);
+      return storedStructure('Week one', `rev-${moved}`);
+    });
+    saveModuleStructure.mockImplementation(async () => {
+      throw new ModuleStructureConflictError('This module changed after you opened it.', `rev-${moved + 1}`, null);
+    });
+
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+
+    // Bounded: the first attempt plus three rebases, and then it stops.
+    await waitFor(() => expect(screen.getByText(/being saved by someone else faster/i)).toBeInTheDocument(), { timeout: 8000 });
+    expect(saveModuleStructure).toHaveBeenCalledTimes(4);
+    const sent = (saveModuleStructure.mock.calls as [string, unknown, { expectedRevision?: string }?][])
+      .map(call => call[2]?.expectedRevision);
+    // The first attempt names the version the workspace opened on. Every one
+    // after it names the version read immediately before it -- the whole point:
+    // each retry is rebased onto what is stored NOW, never re-sent against the
+    // version that has already been refused.
+    expect(sent[0]).toBe('rev-1');
+    expect(sent.slice(1)).toEqual(readRevisions.slice(0, 3));
+    expect(new Set(sent).size).toBe(4);
+    // And nothing the reader typed was touched by any of it.
+    expect(title).toHaveValue('My unsaved week');
+  });
+
+  it('ignores a live read that is overtaken by a newer one', async () => {
+    // Two reads in the air at once -- a colleague saving twice while a forced
+    // structure rebuild is slow. The older reply must not land last and put the
+    // workspace back onto the version the newer one had already corrected.
+    const title = await openWorkspace();
+    let releaseFirst: (value: unknown) => void = () => undefined;
+    const firstRead = new Promise(resolve => { releaseFirst = resolve; });
+    // The first read hangs: a forced structure rebuild outlasting the cooldown
+    // between reads is the only way two of them are ever in the air together.
+    loadModuleStructure.mockImplementationOnce(async () => {
+      await firstRead;
+      return storedStructure('The older version', 'rev-2');
+    });
+    liveRefresh?.();
+
+    // A second write arrives while the first read is still waiting. The
+    // workspace holds it back for the cooldown and then reads again.
+    loadModuleStructure.mockResolvedValue(storedStructure('The newer version', 'rev-3'));
+    liveRefresh?.();
+    await waitFor(() => expect(title).toHaveValue('The newer version'), { timeout: 12000 });
+
+    // Now the stale reply lands, last. It must change nothing.
+    releaseFirst(null);
+    await new Promise(resolve => window.setTimeout(resolve, 100));
+    expect(title).toHaveValue('The newer version');
+
+    // And the workspace still saves against the newer version it is holding.
+    await userEvent.type(title, '!');
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+    await waitFor(() => expect(saveModuleStructure).toHaveBeenCalled());
+    expect(lastExpectedRevision()).toBe('rev-3');
+  });
+
+  it('tells the reader plainly when a refused save cannot be merged', async () => {
+    const title = await openWorkspace();
+    await userEvent.clear(title);
+    await userEvent.type(title, 'My unsaved week');
+
+    // The stored copy will not read, so there is nothing to merge with.
+    loadModuleStructure.mockRejectedValue(new Error('network'));
+    const { ModuleStructureConflictError } = await import('../moduleAuthoringData');
+    saveModuleStructure.mockImplementationOnce(async () => {
+      throw new ModuleStructureConflictError('This module changed after you opened it.', 'rev-2', null);
+    });
+
+    await userEvent.click(screen.getByTestId('module-builder-save'));
+
+    // One attempt only, the edit intact, and a sentence that says what to do.
+    await waitFor(() => expect(screen.getByText(/could not be read just now/i)).toBeInTheDocument());
+    expect(saveModuleStructure).toHaveBeenCalledTimes(1);
+    expect(title).toHaveValue('My unsaved week');
   });
 
   /** The placement drawer reporting that it has written the module. */
@@ -280,11 +434,13 @@ describe('Module Builder live sync', { timeout: 25000 }, () => {
     expect(lastExpectedRevision()).toBe('rev-2');
   });
 
-  it('never puts the drawer revision on unsaved weeks', async () => {
-    // The bad state this closes: {revision: the drawer's, weeks: the reader's}.
-    // The workspace used to merge exactly that -- remote revision, local weeks
-    // -- which made the next save legal at the endpoint and let it replace
-    // whatever the drawer had just written, silently.
+  it('merges the drawer write into unsaved weeks rather than holding it back', async () => {
+    // The bad state this closes is still {revision: the drawer's, weeks: the
+    // reader's alone}: that made the next save legal at the endpoint and let it
+    // replace whatever the drawer had just written, silently. What makes the
+    // drawer's revision safe to take now is that the drawer's content comes
+    // with it -- the reader's week title is kept over it, and said out loud,
+    // because they changed the same field.
     const title = await openWorkspace();
     await userEvent.clear(title);
     await userEvent.type(title, 'My unsaved week');
@@ -297,6 +453,6 @@ describe('Module Builder live sync', { timeout: 25000 }, () => {
     await userEvent.click(screen.getByTestId('module-builder-save'));
 
     await waitFor(() => expect(saveModuleStructure).toHaveBeenCalled());
-    expect(lastExpectedRevision()).toBe('rev-1');
+    expect(lastExpectedRevision()).toBe('rev-2');
   });
 });

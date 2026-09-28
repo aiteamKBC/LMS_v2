@@ -27,7 +27,7 @@ import {
 } from '../shared/entities/archive';
 import { duplicateCohortWithGroups } from '../shared/entities/cloneStructure';
 import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
-import { ArchiveNotice, ArchiveToggleButton, useCurriculumArchive } from '../shared/entities/archiveView';
+import { ArchiveNotice, useCurriculumArchive } from '../shared/entities/archiveView';
 import { CurriculumStructureWizard, withoutDiscardedRecords, type StructureWizardCreated } from '../shared/entities/structureWizard';
 import {
   EntityEmptyState,
@@ -280,11 +280,6 @@ export default function CurriculumCohortsPage() {
                 icon="ri-route-line"
                 label="Cohort + group + module"
                 onClick={() => setWizardOpen(true)}
-              />
-              <ArchiveToggleButton
-                active={showArchived}
-                count={archived.loaded ? archived.records.length : null}
-                onToggle={() => setShowArchived(previous => !previous)}
               />
             </>
           )}

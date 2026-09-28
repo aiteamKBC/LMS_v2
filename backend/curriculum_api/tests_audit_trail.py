@@ -629,3 +629,115 @@ class SafetyTests(AuditHarness):
         self.assertNotIn('meeting_options_url', columns)
         # Its identity is still traceable, which the Teams invariants require.
         self.assertIn('graph_event_id', columns)
+
+
+class CalendarMoveAuditTests(AuditHarness):
+    """Moving a booked session is an edit to the session, so it leaves a record.
+
+    ``persist_move`` used to write its components with a raw UPDATE, which never
+    reached the recorder: a session moved to a different day left the trail
+    saying nothing had happened. It now writes through ``update_authoring_rows``
+    like every other authoring change, and these assertions are the difference
+    between the two. The Teams identifiers it stamps in the same breath are
+    still left out -- that exclusion is the log's own rule and is asserted here
+    so routing the write through the recorder cannot quietly start publishing
+    join links.
+    """
+
+    SETTINGS = {
+        'version': '0.1', 'contentStatus': 'Draft',
+        'sessionDate': '2026-10-08', 'sessionDay': 'Thursday', 'sessionTime': '09:00',
+        'durationMinutes': 120, 'teamsDurationMinutes': 120,
+        'sessionDateTimeUtc': '2026-10-08T08:00:00+00:00',
+        'teamsStartDateTimeUtc': '2026-10-08T08:00:00+00:00',
+        'teamsEventId': 'event-before', 'teamsOccurrenceId': 'OCC-1',
+        'teamsLiveSessionId': 'LIVE-1', 'teamsSessionNumber': 1,
+    }
+
+    def save_session(self, **overrides):
+        payload = {
+            'id': 'COMP-LIVE', 'module_catalogue_id': 'MOD-A', 'week_id': 'WEEK-1',
+            'type': 'live_session', 'title': 'Live Teams Session 1', 'display_order': 0,
+            'settings_json': views.json_db_value(dict(self.SETTINGS)),
+        }
+        payload.update(overrides)
+        return self.committed(
+            lambda: views.authoring_upsert(views.AUTHORING_COMPONENTS_TABLE, ['id'], payload)
+        )
+
+    def restamp(self, **settings):
+        """One write of the merged settings, the way ``persist_move`` makes it."""
+        return self.committed(lambda: views.update_authoring_rows(
+            views.AUTHORING_COMPONENTS_TABLE, 'id = %s', ['COMP-LIVE'],
+            {'settings_json': views.json_db_value({**self.SETTINGS, **settings})},
+        ))
+
+    def test_moving_a_session_to_another_day_is_recorded(self):
+        self.sign_in()
+        self.save_session()
+        self.restamp(
+            sessionDate='2026-10-15', sessionDay='Thursday',
+            sessionDateTimeUtc='2026-10-15T08:00:00+00:00',
+            teamsStartDateTimeUtc='2026-10-15T08:00:00+00:00',
+            teamsEventId='event-after',
+        )
+        rows = self.revisions('component', 'COMP-LIVE')
+        self.assertEqual(len(rows), 2)
+        changes = self.changed_fields(rows[-1])
+        # The day it now runs on, and the confirmed instant behind it.
+        self.assertEqual(changes['settings.sessionDate'], ('2026-10-08', '2026-10-15'))
+        self.assertIn('settings.sessionDateTimeUtc', changes)
+        # The Teams event id moved in the same write and is deliberately absent.
+        self.assertNotIn('settings.teamsEventId', changes)
+
+    def test_moving_a_session_within_the_day_is_recorded(self):
+        self.sign_in()
+        self.save_session()
+        self.restamp(
+            sessionTime='14:00',
+            sessionDateTimeUtc='2026-10-08T13:00:00+00:00',
+            teamsStartDateTimeUtc='2026-10-08T13:00:00+00:00',
+        )
+        changes = self.changed_fields(self.revisions('component', 'COMP-LIVE')[-1])
+        self.assertEqual(changes['settings.sessionTime'], ('09:00', '14:00'))
+
+    def test_a_longer_session_is_recorded(self):
+        self.sign_in()
+        self.save_session()
+        self.restamp(durationMinutes=180, teamsDurationMinutes=180)
+        changes = self.changed_fields(self.revisions('component', 'COMP-LIVE')[-1])
+        self.assertEqual(changes['settings.durationMinutes'], ('120', '180'))
+
+    def test_restamping_only_teams_identifiers_records_nothing(self):
+        """The exclusion this fix must not disturb."""
+        self.sign_in()
+        self.save_session()
+        self.restamp(
+            teamsEventId='event-after',
+            teamsOccurrenceId='OCC-2',
+            teamsMeetingUrl='https://teams.microsoft.com/meet/synthetic',
+            liveSessionUrl='https://teams.microsoft.com/meet/synthetic',
+        )
+        self.assertEqual(len(self.revisions('component', 'COMP-LIVE')), 1)
+
+    def test_one_move_records_one_revision(self):
+        """The write helper reads and writes each row once; history says so too."""
+        self.sign_in()
+        self.save_session()
+        self.restamp(sessionDate='2026-10-15')
+        rows = self.revisions('component', 'COMP-LIVE')
+        self.assertEqual([row['revision_no'] for row in rows], [1, 2])
+
+    def test_the_moved_values_are_what_the_component_now_holds(self):
+        """History is the addition; the saved record must be untouched by it."""
+        self.sign_in()
+        self.save_session()
+        self.restamp(sessionDate='2026-10-15', teamsEventId='event-after')
+        row = views.authoring_fetch_all(
+            views.AUTHORING_COMPONENTS_TABLE, 'id = %s', ['COMP-LIVE'])[0]
+        settings = views.as_json_value(row.get('settings_json'), {})
+        self.assertEqual(settings['sessionDate'], '2026-10-15')
+        self.assertEqual(settings['teamsEventId'], 'event-after')
+        # Everything the move did not name survives the merge.
+        self.assertEqual(settings['contentStatus'], 'Draft')
+        self.assertEqual(settings['teamsOccurrenceId'], 'OCC-1')

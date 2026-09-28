@@ -23,6 +23,7 @@ from functools import lru_cache
 
 from django.db import DatabaseError, connections, models
 from django.db.models.functions import Lower, Trim
+from system_audit.writes import AuditedQuerySet
 
 
 class SafeJSONField(models.JSONField):
@@ -162,7 +163,7 @@ def _progress_entry_activity(entry):
     return item
 
 
-class LearnerTypeQuerySet(models.QuerySet):
+class LearnerTypeQuerySet(AuditedQuerySet):
     """Queryset for the merged learner table, scoped by "Learner_type"."""
 
     def apprenticeship(self):

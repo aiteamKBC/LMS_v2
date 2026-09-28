@@ -91,4 +91,23 @@ describe('My Learners table design', () => {
       sortKey="risk" sortDirection="desc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} />);
     expect(screen.getByLabelText(label)).toHaveAttribute('data-tone', tone);
   });
+
+  it('omits unavailable KSB and attendance detail lines instead of displaying placeholder ratios', () => {
+    render(<LearnerTable learners={[{
+      ...learner,
+      ksbProgress: null,
+      ksbProgressAvailable: false,
+      ksbCompleted: null,
+      ksbTarget: null,
+      liveAttendanceRate: null,
+      liveAttendanceRateAvailable: false,
+      attendancePresent: null,
+      attendanceSessions: null,
+    }]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
+      sortKey="risk" sortDirection="desc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} />);
+
+    expect(screen.getByLabelText('KSBs: not available').querySelector('[class*="miniRatio"]')).toBeNull();
+    expect(screen.getByLabelText('Attendance: not available').querySelector('[class*="miniRatio"]')).toBeNull();
+    expect(screen.getByLabelText('Activities: 80%')).toHaveTextContent('8 / 10');
+  });
 });

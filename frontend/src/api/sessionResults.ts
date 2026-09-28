@@ -77,6 +77,25 @@ export const loadSessionResult = (seriesId: string, number: number, learner?: Se
   read<{ sessions: SessionResult[]; job?: SessionSyncJob | null }>(`${sessionBase(seriesId, learner)}/sessions/${number}/`, signal);
 export const sessionFileUrl = (seriesId: string, file: SessionFile, learner?: SessionLearner, text = false) =>
   personalLearningUrl(`${sessionBase(seriesId, learner)}/artifacts/${encodeURIComponent(file.id)}/${text ? '?format=txt' : ''}`);
+export interface RecordingWatchState { watchedSeconds: number; durationSeconds: number; csrfToken?: string }
+const watchUrl = (seriesId: string, file: SessionFile, learner: SessionLearner) =>
+  `${sessionBase(seriesId, learner)}/artifacts/${encodeURIComponent(file.id)}/watch/`;
+/** Viewing so far, plus the CSRF token for reports (learners cannot read /coach_api/csrf). */
+export async function loadRecordingWatch(seriesId: string, file: SessionFile, learner: SessionLearner, signal?: AbortSignal) {
+  const response = await fetch(watchUrl(seriesId, file, learner), { credentials: 'include', signal });
+  if (!response.ok) throw new Error(`Viewing time is unavailable (${response.status}).`);
+  return response.json() as Promise<RecordingWatchState>;
+}
+/** Report seconds of a recording the learner played since the last report (learner view only). */
+export async function recordRecordingWatch(seriesId: string, file: SessionFile, learner: SessionLearner,
+  watch: { watchedSeconds: number; position: number; duration: number }, csrfToken: string, keepalive = false) {
+  const response = await fetch(watchUrl(seriesId, file, learner), {
+    method: 'POST', credentials: 'include', keepalive, body: JSON.stringify(watch),
+    headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrfToken, 'X-Requested-With': 'XMLHttpRequest' },
+  });
+  if (!response.ok) throw new Error(`Viewing time could not be saved (${response.status}).`);
+  return response.json() as Promise<{ watchedSeconds: number; durationSeconds: number }>;
+}
 export const loadTranscriptCues = (seriesId: string, artifactId: string, learner?: SessionLearner, signal?: AbortSignal) =>
   read<{ cues: TranscriptCue[] }>(`${sessionBase(seriesId, learner)}/artifacts/${encodeURIComponent(artifactId)}/?format=cues`, signal);
 export const sessionAttendanceUrl = (session: SessionResult, format: 'csv' | 'pdf' = 'csv') =>

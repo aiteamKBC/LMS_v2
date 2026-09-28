@@ -39,3 +39,22 @@ class LiveSessionOutcomeTests(SimpleTestCase):
         self.assertEqual(present.call_args.args[0], {'OCC-1'})
         self.assertNotIn('meetingOutcome', events[3])
         self.assertEqual(present.call_args.kwargs, {'learner_profile_id': None, 'learner_email': ''})
+
+
+class LiveSessionRecordingOutcomeTests(SimpleTestCase):
+    def test_a_fully_watched_recording_completes_a_missed_session_on_the_learners_calendar(self):
+        events = [learner_session('OCC-1'), learner_session('OCC-2'), learner_session('OCC-3')]
+        with patch('coach_api.live_session_outcomes._present_occurrences', return_value={'OCC-3'}), \
+                patch('curriculum_api.recording_views.fully_watched_occurrences', return_value={'OCC-1'}) as watched:
+            annotate_live_session_outcomes(events, learner_email='l@example.test', now=NOW,
+                                           recording_viewer=('commercial', 101))
+        self.assertEqual([e['meetingOutcome'] for e in events], ['completed', 'ended', 'completed'])
+        self.assertTrue(events[0]['watchedRecording'])
+        self.assertNotIn('watchedRecording', events[2])
+        watched.assert_called_once_with('commercial', 101, {'OCC-1', 'OCC-2'})
+
+    def test_coach_calendar_does_not_read_recording_views(self):
+        with patch('coach_api.live_session_outcomes._present_occurrences', return_value=set()), \
+                patch('curriculum_api.recording_views.fully_watched_occurrences') as watched:
+            annotate_live_session_outcomes([learner_session('OCC-1')], now=NOW)
+        watched.assert_not_called()

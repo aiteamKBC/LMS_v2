@@ -55,6 +55,7 @@ class AttachmentTests(unittest.TestCase):
             JsonResponse=lambda data: data, json_error=lambda message, **kwargs: {'error': message, **kwargs})
         names = {'clean_str', 'parse_int', 'parse_graph_datetime', 'utc_iso_value',
                  'live_session_row_to_component_settings', 'live_occurrence_component_settings',
+                 'occurrence_local_start', 'occurrence_local_date',
                  'attach_teams_meeting_to_module_weeks', 'curriculum_module_teams_meeting_restore'}
         tree = ast.parse(Path(__file__).with_name('views.py').read_text(encoding='utf-8-sig'))
         nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
@@ -72,7 +73,7 @@ class AttachmentTests(unittest.TestCase):
         if table == 'modules':
             return [{'module_catalogue_id': 'MOD-1'}]
         if table == 'weeks':
-            return [{'id': f'WEEK-{i}'} for i in range(2)]
+            return getattr(self, 'weeks', None) or [{'id': f'WEEK-{i}'} for i in range(2)]
         if table == 'components':
             return self.components
         self.fail('Unexpected storage access')
@@ -133,6 +134,95 @@ class AttachmentTests(unittest.TestCase):
         self.assertEqual(self.restore('POST')['code'], 'teams_calendar_verification_pending')
         self.assertEqual(self.writes, [])
 
+    def test_each_session_takes_the_meeting_on_its_own_date_across_a_numbering_gap(self):
+        """Components pair with bookings by date, not by counting them off.
+
+        The shape here is one seen in production: nine delivery slots, no live
+        session in week 7, and a series whose numbering carries a gap -- session
+        7 cancelled, the real bookings sitting on 8 and 9. Counting live
+        components against those numbers gave week 8's session the cancelled 7
+        and handed week 9's the 25 Dec meeting that belongs to week 8, leaving
+        the 1 Jan booking attached to nothing. Every screen then reported a
+        session that could never be brought back in line, because no update
+        could change what it was paired with.
+        """
+        fridays = ['2026-11-06', '2026-11-13', '2026-11-20', '2026-11-27',
+                   '2026-12-04', '2026-12-11', '2026-12-18', '2026-12-25', '2027-01-01']
+        self.n['module_week_session_plan'] = lambda *args: [{'date': day} for day in fridays]
+        self.weeks = [{'id': f'WEEK-{number}'} for number in range(1, 10)]
+        # Week 7 delivers no live session; its slot still exists in the plan.
+        live_weeks = [1, 2, 3, 4, 5, 6, 8, 9]
+        self.components = [{
+            'id': f'COMP-W{week}', 'week_id': f'WEEK-{week}', 'type': 'live_session',
+            # Weeks 8 and 9 both hold 25 Dec, which is the broken state on disk.
+            'settings_json': {'sessionDate': fridays[week - 1] if week < 8 else '2026-12-25'},
+        } for week in live_weeks]
+        # What Microsoft actually holds: 7 was cancelled and is never passed in.
+        self.occurrences = [{
+            'id': f'OCC-{number}', 'session_number': number, 'graph_event_id': f'EVENT-{number}',
+            'scheduled_start': f'{fridays[number - 1]}T07:00:00Z',
+            'scheduled_end': f'{fridays[number - 1]}T09:00:00Z',
+            'join_url': f'https://teams.microsoft.com/meet/{number}', 'status': 'scheduled',
+        } for number in [1, 2, 3, 4, 5, 6, 8, 9]]
+
+        self.n['attach_teams_meeting_to_module_weeks'](
+            'MOD-1', self.series, {'sessionTimeZone': 'Africa/Cairo'}, self.occurrences,
+        )
+
+        dated = {component_id: write['settings_json']['sessionDate'] for component_id, write in self.writes}
+        numbered = {component_id: write['settings_json']['teamsSessionNumber'] for component_id, write in self.writes}
+        # The week that owns 25 Dec keeps it, and the week planned for 1 Jan
+        # takes the booking that is actually on 1 Jan.
+        self.assertEqual(dated['COMP-W8'], '2026-12-25')
+        self.assertEqual(dated['COMP-W9'], '2027-01-01')
+        self.assertEqual(numbered['COMP-W8'], 8)
+        self.assertEqual(numbered['COMP-W9'], 9)
+        # And nothing earlier was disturbed by the gap.
+        for week in [1, 2, 3, 4, 5, 6]:
+            self.assertEqual(dated[f'COMP-W{week}'], fridays[week - 1])
+
+    def test_one_booking_is_never_claimed_by_two_sessions(self):
+        """Two components stuck on one date cannot both take that meeting."""
+        self.n['module_week_session_plan'] = lambda *args: [{'date': '2026-10-23'}, {'date': '2026-10-30'}]
+        self.components = [{
+            'id': f'COMP-{i}', 'week_id': f'WEEK-{i}', 'type': 'live_session',
+            'settings_json': {'sessionDate': '2026-10-23'},
+        } for i in range(2)]
+        self.n['attach_teams_meeting_to_module_weeks'](
+            'MOD-1', self.series, {'sessionTimeZone': 'Africa/Cairo'}, self.occurrences,
+        )
+        settings = {component_id: write['settings_json'] for component_id, write in self.writes}
+        self.assertEqual(settings['COMP-0']['teamsOccurrenceId'], 'OCC-0')
+        # The second falls through to the date its own week is planned for.
+        self.assertEqual(settings['COMP-1']['teamsOccurrenceId'], 'OCC-1')
+        self.assertEqual(settings['COMP-1']['sessionDate'], '2026-10-30')
+
+    def test_moved_occurrence_carries_its_new_date_not_only_its_new_instant(self):
+        """A rescheduled session's date follows the occurrence Microsoft holds.
+
+        The schedule endpoint rewrites the occurrence and re-attaches, so the
+        component used to take the new instant while keeping the date it was
+        first booked on. The two then disagreed for good: every screen comparing
+        dates read the old day, and no further update could clear it, because
+        each one moved the instant and left the date behind.
+        """
+        moved = {'id': 'OCC-MOVED', 'session_number': 1, 'graph_event_id': 'EVENT-MOVED',
+                 'scheduled_start': '2027-01-01T06:00:00Z', 'scheduled_end': '2027-01-01T08:00:00Z',
+                 'join_url': 'https://teams.microsoft.com/meet/moved', 'status': 'scheduled'}
+        settings = self.n['live_occurrence_component_settings'](moved, {'sessionTimeZone': 'Africa/Cairo'})
+        self.assertEqual(settings['sessionDateTimeUtc'], '2027-01-01T06:00:00Z')
+        self.assertEqual(settings['sessionDate'], '2027-01-01')
+        self.assertEqual(settings['sessionDay'], 'Friday')
+
+    def test_the_date_is_the_sessions_own_day_not_the_utc_one(self):
+        """22:00 UTC is already the next day in Cairo, and that is the day it runs."""
+        late = {'id': 'OCC-LATE', 'session_number': 2, 'graph_event_id': 'EVENT-LATE',
+                'scheduled_start': '2026-12-31T22:00:00Z', 'scheduled_end': '2026-12-31T23:00:00Z',
+                'join_url': 'https://teams.microsoft.com/meet/late', 'status': 'scheduled'}
+        settings = self.n['live_occurrence_component_settings'](late, {'sessionTimeZone': 'Africa/Cairo'})
+        self.assertEqual(settings['sessionDate'], '2027-01-01')
+        self.assertEqual(settings['sessionDay'], 'Friday')
+
 
 class OccurrenceReplacementTests(unittest.TestCase):
     """A repaired date must not move attendance identity to another session."""
@@ -170,11 +260,14 @@ class OccurrenceReplacementTests(unittest.TestCase):
             'update_authoring_rows': update,
             'authoring_upsert': upsert,
             'LIVE_SESSION_OCCURRENCES_TABLE': 'occurrences',
+            'transaction': SimpleNamespace(atomic=nullcontext),
         }
         tree = ast.parse(Path(__file__).with_name('views.py').read_text(encoding='utf-8-sig'))
-        node = next(node for node in tree.body
-                    if isinstance(node, ast.FunctionDef) and node.name == 'replace_live_session_occurrences')
-        exec(compile(ast.Module(body=[node], type_ignores=[]), 'occurrence-replacement', 'exec'), namespace)
+        names = {'occurrence_session_number', 'pair_planned_occurrences', 'replace_live_session_occurrences'}
+        nodes = [node for node in tree.body
+                 if isinstance(node, ast.FunctionDef) and node.name in names]
+        self.assertEqual(len(nodes), len(names))
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), 'occurrence-replacement', 'exec'), namespace)
 
         namespace['replace_live_session_occurrences'](
             'LIVE-1', {}, None, 120, 'weekly', 3,
@@ -188,6 +281,52 @@ class OccurrenceReplacementTests(unittest.TestCase):
         self.assertEqual(by_id['OCC-DEC18']['status'], 'cancelled')
         added = next(row for row in rows if row['scheduled_start'] == '2026-09-25T08:00:00Z')
         self.assertEqual((added['session_number'], added['status']), (2, 'scheduled'))
+
+    def test_cancelled_positive_number_is_released_before_reusing_it(self):
+        rows = [{
+            'id': 'OCC-CANCELLED-DEC17', 'session_number': 12,
+            'scheduled_start': '2026-12-17T12:00:00Z',
+            'scheduled_end': '2026-12-17T14:00:00Z',
+            'status': 'cancelled', 'created_at': 'old',
+        }]
+        targets = [{
+            'session_number': 12, 'start': '2026-12-10T12:00:00Z',
+            'end': '2026-12-10T14:00:00Z',
+        }]
+
+        def update(_table, _where, values, payload):
+            row = next(item for item in rows if item['id'] == values[0])
+            row.update(copy.deepcopy(payload))
+
+        namespace = {
+            'datetime': datetime,
+            'uuid': uuid,
+            'ensure_live_session_tracking_tables': lambda: None,
+            'scheduled_live_session_occurrences': lambda *args: copy.deepcopy(targets),
+            'authoring_fetch_all': lambda *args: rows,
+            'clean_str': lambda value: str(value or '').strip(),
+            'teams_calendar_minute_key': lambda value: str(value or '').replace('.000Z', 'Z'),
+            'update_authoring_rows': update,
+            'authoring_upsert': lambda _table, _keys, payload: rows.append(copy.deepcopy(payload)),
+            'LIVE_SESSION_OCCURRENCES_TABLE': 'occurrences',
+            'transaction': SimpleNamespace(atomic=nullcontext),
+        }
+        tree = ast.parse(Path(__file__).with_name('views.py').read_text(encoding='utf-8-sig'))
+        names = {'occurrence_session_number', 'pair_planned_occurrences', 'replace_live_session_occurrences'}
+        nodes = [node for node in tree.body
+                 if isinstance(node, ast.FunctionDef) and node.name in names]
+        self.assertEqual(len(nodes), len(names))
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), 'occurrence-replacement', 'exec'), namespace)
+
+        namespace['replace_live_session_occurrences'](
+            'LIVE-1', {}, None, 120, 'weekly', 1,
+            event_id='EVENT-SERIES', join_url='https://teams.microsoft.com/meet/series',
+        )
+
+        historical = next(row for row in rows if row['id'] == 'OCC-CANCELLED-DEC17')
+        active = next(row for row in rows if row['scheduled_start'] == '2026-12-10T12:00:00Z')
+        self.assertLess(historical['session_number'], 0)
+        self.assertEqual((active['session_number'], active['status']), (12, 'scheduled'))
 
 
 if __name__ == '__main__':

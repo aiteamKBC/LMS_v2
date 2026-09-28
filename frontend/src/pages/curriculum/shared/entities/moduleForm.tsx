@@ -63,6 +63,7 @@ import {
 } from './model';
 import { confirmTeamsCalendarUpdate } from './teamsCalendarNotice';
 import {
+  CoEditNotice,
   ColorControl,
   CoverImageControl,
   EntityDrawer,
@@ -75,7 +76,7 @@ import {
   type FormChainStep,
   type MultiSelectOption,
 } from './ui';
-import { useFormSeedGuard } from './useDrawerState';
+import { useFormFieldMerge, useFormSeedGuard } from './useDrawerState';
 
 export interface ModuleFormDefaults {
   programmeId?: string;
@@ -188,6 +189,29 @@ export interface SavedModuleRef {
   groupIds?: string[];
   groupNames?: string[];
 }
+
+// The names these fields go by on screen. A notice that says "you both changed
+// the groupStartTime" is our vocabulary, not the reader's.
+const MODULE_FIELD_LABELS: Record<string, string> = {
+  name: 'module name',
+  programmeId: 'programme',
+  cohortId: 'cohort',
+  groupIds: 'groups',
+  sessionsNumber: 'number of weeks',
+  sessionsPerWeek: 'sessions per week',
+  weekDays: 'delivery days',
+  weeklyTimes: 'session times',
+  groupStartTime: 'start time',
+  groupEndTime: 'end time',
+  deliveryPattern: 'delivery days and times',
+  startDate: 'start date',
+  targetEndDate: 'target end date',
+  tutor: 'tutor',
+  status: 'status',
+  description: 'description',
+  color: 'colour',
+  coverImage: 'cover image',
+};
 
 const UNASSIGNED = 'unassigned';
 const TRUE_FLAGS = new Set(['1', 'true', 'yes', 'y', 'on']);
@@ -342,10 +366,20 @@ export function ModuleFormDrawer({
     onSavingChange?.(saving);
   }, [onSavingChange, saving]);
 
-  const dirty = !sameFormValues(
-    { name, programmeId, cohortId, groupIds, sessionsNumber, sessionsPerWeek, weekDays, groupStartTime, groupEndTime, weeklyTimes, startDate, targetEndDate, tutor, status, description, color, coverImage },
-    baseline.current,
-  );
+  // The delivery pattern travels as one value as well as five. Merging its
+  // halves independently -- a colleague's days with this reader's times -- would
+  // produce a timetable neither of them chose, and this form is what the Teams
+  // calendar is built from, so that timetable would be booked.
+  const deliveryPattern = { sessionsPerWeek, weekDays, groupStartTime, groupEndTime, weeklyTimes };
+  const liveValues = {
+    name, programmeId, cohortId, groupIds, sessionsNumber, sessionsPerWeek, weekDays,
+    groupStartTime, groupEndTime, weeklyTimes, startDate, targetEndDate, tutor, status,
+    description, color, coverImage, deliveryPattern,
+  };
+  const dirty = !sameFormValues(liveValues, baseline.current);
+  const liveRef = useRef<Record<string, unknown>>(liveValues);
+  liveRef.current = liveValues;
+  const coEdit = useFormFieldMerge(baseline, liveRef, MODULE_FIELD_LABELS);
   // The seeding effect below has to depend on `groups`, `cohorts` and
   // `programmes` to resolve the module's parent chain, and those arrays get a new
   // identity whenever the page refreshes them -- the Module Builder in particular
@@ -370,9 +404,14 @@ export function ModuleFormDrawer({
 
   useEffect(() => {
     const recordKey = cleanText(module?.id) || 'new-module';
-    if (!allowSeed(open, recordKey)) return;
-    setError(null);
-    setSaving(false);
+    const verdict = allowSeed(open, recordKey);
+    if (!verdict) return;
+    // On a merge the drawer is already open on this module with edits in it, so
+    // the two refusals below would be answering a question nobody asked.
+    if (verdict === 'seed') {
+      setError(null);
+      setSaving(false);
+    }
     // Only when the drawer is being pointed at a DIFFERENT record.
     //
     // The plan is derived from the fields seeded below, not one of them, and
@@ -388,10 +427,16 @@ export function ModuleFormDrawer({
       setPlan(null);
       setPlanFor('');
     }
-    setTutorConflictGroup(null);
-    attachedThisSession.current = new Set();
-    overrideGroupIds.current = new Set();
-    createdCatalogueId.current = '';
+    // Only on a real (re)seed. A merge happens while the reader is part-way
+    // through this same drawer, and clearing the groups they have just attached
+    // or the tutor clash they are reading would be the mid-edit reset the seed
+    // guard exists to prevent, arriving by a different door.
+    if (verdict === 'seed') {
+      setTutorConflictGroup(null);
+      attachedThisSession.current = new Set();
+      overrideGroupIds.current = new Set();
+      createdCatalogueId.current = '';
+    }
 
     const storedDelivery = module?.deliveryUsages?.[0];
     // Id across every row first, name only if that found nothing: group names
@@ -462,7 +507,14 @@ export function ModuleFormDrawer({
       color: module?.color || parentGroup?.color || '#2563eb',
       coverImage: cleanText(module?.coverImage),
     };
-    baseline.current = initial;
+    const storedPattern = {
+      sessionsPerWeek: initial.sessionsPerWeek,
+      weekDays: initial.weekDays,
+      groupStartTime: initial.groupStartTime,
+      groupEndTime: initial.groupEndTime,
+      weeklyTimes: initial.weeklyTimes,
+    };
+    if (verdict === 'seed') baseline.current = { ...initial, deliveryPattern: storedPattern };
     // A module counts as already assigned the moment any parent resolved above
     // -- from its own stored fields or from the delivery it was found through --
     // not from `defaults`, which only seeds a fresh create's pickers and is not
@@ -477,31 +529,43 @@ export function ModuleFormDrawer({
     // the render below), where 'now' is the pre-existing, regression-safe
     // default. Editing an unassigned module does not read this flag at all --
     // it relaxes the same required fields directly, from `initiallyAssigned`.
-    setAssignMode('now');
+    if (verdict === 'seed') setAssignMode('now');
     // Shown by default on a fresh create (nothing to hide yet); collapsed by
     // default when opening a module that was already saved unassigned, so the
     // edit drawer reads as short as the create one did. A module that already
     // has a placement always shows the fields regardless of this flag -- see
     // where it is read below.
-    setRevealPlacement(!module);
-    setName(initial.name);
-    setProgrammeId(initial.programmeId);
-    setCohortId(initial.cohortId);
-    setGroupIds(initial.groupIds);
-    setSessionsNumber(initial.sessionsNumber);
-    setSessionsPerWeek(initial.sessionsPerWeek);
-    setWeekDays(initial.weekDays);
-    setWeeklyTimes(initial.weeklyTimes);
-    setGroupStartTime(initial.groupStartTime);
-    setGroupEndTime(initial.groupEndTime);
-    setStartDate(initial.startDate);
-    setTargetEndDate(initial.targetEndDate);
-    setTutor(initial.tutor);
-    setStatus(initial.status);
-    setDescription(initial.description);
-    setColor(initial.color);
-    setCoverImage(initial.coverImage);
-  }, [allowSeed, attachedGroupIds, cohorts, defaults?.cohortId, defaults?.groupId, defaults?.programmeId, groups, module, open, selectableProgrammes]);
+    if (verdict === 'seed') setRevealPlacement(!module);
+    // `take` decides each field: the stored value where this reader has not
+    // touched it, theirs where they have, theirs plus a sentence where both
+    // changed it. On a plain seed every one of these is the stored value, which
+    // is exactly what it always was.
+    const mergedPattern = coEdit.take(verdict, 'deliveryPattern', storedPattern);
+    setName(coEdit.take(verdict, 'name', initial.name));
+    setProgrammeId(coEdit.take(verdict, 'programmeId', initial.programmeId));
+    setCohortId(coEdit.take(verdict, 'cohortId', initial.cohortId));
+    setGroupIds(coEdit.take(verdict, 'groupIds', initial.groupIds));
+    setSessionsNumber(coEdit.take(verdict, 'sessionsNumber', initial.sessionsNumber));
+    // The pattern was decided once, above. Its five fields are set from
+    // whichever version won, and the baseline for them is moved onto what is
+    // stored -- never onto the winning value, which would tell the dirty check
+    // this reader has no unsaved changes and let the next refresh re-seed the
+    // drawer over them.
+    setSessionsPerWeek(mergedPattern.sessionsPerWeek);
+    setWeekDays(mergedPattern.weekDays);
+    setWeeklyTimes(mergedPattern.weeklyTimes);
+    setGroupStartTime(mergedPattern.groupStartTime);
+    setGroupEndTime(mergedPattern.groupEndTime);
+    coEdit.sync(verdict, storedPattern);
+    setStartDate(coEdit.take(verdict, 'startDate', initial.startDate));
+    setTargetEndDate(coEdit.take(verdict, 'targetEndDate', initial.targetEndDate));
+    setTutor(coEdit.take(verdict, 'tutor', initial.tutor));
+    setStatus(coEdit.take(verdict, 'status', initial.status));
+    setDescription(coEdit.take(verdict, 'description', initial.description));
+    setColor(coEdit.take(verdict, 'color', initial.color));
+    setCoverImage(coEdit.take(verdict, 'coverImage', initial.coverImage));
+    coEdit.publish();
+  }, [allowSeed, attachedGroupIds, coEdit, cohorts, defaults?.cohortId, defaults?.groupId, defaults?.programmeId, groups, module, open, selectableProgrammes]);
 
   const programmeOptions = useMemo(
     () => selectableProgrammes.map(programme => ({ value: programmeIdentity(programme), label: programme.name })),
@@ -569,10 +633,11 @@ export function ModuleFormDrawer({
     [holidays, selectedCohort, module?.sessionHolidays],
   );
 
-  // What the group this module is delivered by actually runs to. Read as the
-  // parent's own value and shown as such below, rather than being folded
-  // silently into the fields: a module may differ from its group deliberately,
-  // and the reader has to be able to see that it does.
+  // What the group this module is delivered by actually runs to -- which is
+  // what the module runs to. The group states when its learners meet, and the
+  // schedule reads it ahead of the module's own stored pattern, so this is
+  // shown as the group's own value rather than folded silently into the fields
+  // below: those are the module's answer for a group that states none.
   const groupPattern = useMemo(() => groupDeliveryPattern(selectedGroup), [selectedGroup]);
 
   // The end date is the backend's own session-plan calculation, so what the
@@ -663,17 +728,14 @@ export function ModuleFormDrawer({
     return () => { active = false; clearTimeout(timer); };
   }, [cohortHolidays, open, planInputs, scheduleComplete, totalSessions, startDate, weekDays, weeklySchedule, validWeeklyTimes]);
 
-  // The same walk the backend does, run here so the End date moves on the very
-  // keystroke that changed the weeks or the start date instead of 300ms later
-  // when the debounced preview lands. The server's own plan still wins the
-  // moment it arrives -- this only fills the gap the debounce used to leave
-  // blank (or, worse, filled with the previous weeks value's answer).
+  // The module's own calendar span -- start date plus the whole weeks entered.
+  // Independent of the generated session plan, which answers a different
+  // question (where sessions land) and must never decide this field.
   const projectedEndDate = useMemo(
-    () => scheduleComplete ? projectModuleEndDate(startDate, totalSessions, weekDays, cohortHolidays) : '',
-    [cohortHolidays, scheduleComplete, startDate, totalSessions, weekDays],
+    () => projectModuleEndDate(startDate, weeksEntered),
+    [startDate, weeksEntered],
   );
-  const planIsCurrent = Boolean(plan) && planFor === planInputs;
-  const calculatedEndDate = (planIsCurrent ? plan?.finalEndDate : '') || projectedEndDate || '';
+  const calculatedEndDate = projectedEndDate || '';
   const manualEndDate = cleanText(targetEndDate);
   // Manual wins: the generated plan can suggest an end date, but the drawer is
   // allowed to store the date the user picked.
@@ -683,10 +745,10 @@ export function ModuleFormDrawer({
   const endDateHelper = endDate
     ? manualEndDate
       ? calculatedEndDate && calculatedEndDate !== manualEndDate
-        ? `Set by hand. Generated sessions currently finish ${formatDateLabel(calculatedEndDate)}.`
+        ? `Set by hand. ${sessionsNumber} week${Number(sessionsNumber) === 1 ? '' : 's'} from the start date would put it at ${formatDateLabel(calculatedEndDate)}.`
         : 'Set by hand. The weeks above were counted from it; change the weeks to recalculate the date instead.'
-      : `The last of ${totalSessions} session${totalSessions === 1 ? '' : 's'} across ${sessionsNumber} week${Number(sessionsNumber) === 1 ? '' : 's'}${weekDays ? ` on ${weekDays}` : ''}${cohortHolidays.length ? `, skipping ${cohortHolidays.length} holiday${cohortHolidays.length === 1 ? '' : 's'}` : ''}.`
-    : plan?.warnings?.[0] || 'Set the start date, the weeks and the group delivery day to calculate it.';
+      : `${sessionsNumber} week${Number(sessionsNumber) === 1 ? '' : 's'} from the start date.`
+    : 'Set the start date and the weeks to calculate it.';
   // The cohort's delivery window is the module's boundary, and the end date is
   // usually the generated plan's -- so this is checked on what the drawer will
   // actually send, not only on what was typed. Shown while the form is open and
@@ -801,9 +863,7 @@ export function ModuleFormDrawer({
   //   * start date moved -> with an end date held by hand, the weeks are
   //                         recalculated and that end date stays put; with none,
   //                         the end date is recalculated from the weeks as before.
-  const weeksBetweenDates = (from: string, to: string) => (
-    projectModuleWeeks(from, to, weekDays, cohortHolidays, deliveryDaysPerWeek)
-  );
+  const weeksBetweenDates = (from: string, to: string) => projectModuleWeeks(from, to);
   const changeStartDate = (value: string) => {
     setStartDate(value);
     const held = cleanText(targetEndDate);
@@ -1201,6 +1261,7 @@ export function ModuleFormDrawer({
       error={error}
       dirty={dirty}
     >
+      <CoEditNotice notices={coEdit.notices} onDismiss={coEdit.dismiss} />
       {!module && !lockGroup && !chained && (
         <FormField as="group" label="When to assign" hint={
           assignMode === 'later'
@@ -1372,17 +1433,23 @@ export function ModuleFormDrawer({
               ) : matchesGroupPattern ? (
                 <p className="mt-1 text-[12px] text-emerald-700">This module follows it.</p>
               ) : (
+                // The group states when its learners meet, so its day and clock
+                // are what the module is delivered on. The fields below are the
+                // module's own answer for a group that states none -- saying so
+                // beats a button that appears to settle a disagreement the
+                // schedule no longer has.
                 <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                  <p className="text-[12px] text-foreground-600">
-                    This module runs to its own schedule: {modulePatternLabel}. Taking the group&apos;s
-                    pattern moves every session onto {groupPattern.days} and re-dates the module.
+                  <p className="text-[12px] text-amber-700">
+                    The fields below still say {modulePatternLabel}, but this module is delivered on
+                    the group&apos;s pattern above. Change {selectedGroup.name} to move it; the fields
+                    below are only used while a group states no pattern of its own.
                   </p>
                   <button
                     type="button"
                     onClick={applyGroupPattern}
                     className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-primary-300 bg-white px-3 text-[12px] font-bold text-primary-700 transition-smooth hover:bg-primary-50"
                   >
-                    Use the group&apos;s pattern
+                    Match the group here
                   </button>
                 </div>
               )}
@@ -1598,99 +1665,38 @@ function ymdOf(date: Date): string {
 }
 
 /**
- * The date the last session lands on -- the same walk `build_module_session_plan`
- * does on the server, run locally so the End date field answers the keystroke
- * that changed the weeks or the start date rather than the debounced preview
- * that follows it. Deliberately identical in shape to the backend loop: step a
- * day at a time from the start, count the delivery days, skip the ones a ticked
- * holiday covers. With no delivery day at all it falls back to one session a
- * week from the start, the same way the server's plan does. Returns '' only
- * when there is nothing to count from -- no start date, or no sessions.
+ * The date the module's authored duration ends -- start date plus the whole
+ * weeks entered, inclusive of both ends. This is the module's calendar span,
+ * not a session date: a module authored for 1 week always runs a full week
+ * from its start date, even when its only live session falls on day one.
+ * Delivery days and holidays never move it -- they decide where sessions
+ * land (`build_module_session_plan` on the server), which is a separate
+ * question from how long the module itself runs. Returns '' only when there
+ * is nothing to count from -- no start date, or no weeks.
  */
-function projectModuleEndDate(
-  startDate: string,
-  numberOfSessions: number,
-  weekDays: string,
-  holidays: CurriculumHoliday[],
-): string {
+function projectModuleEndDate(startDate: string, weeks: number): string {
   const start = dateFromYmd(startDate);
-  const days = deliveryDayIndexes(weekDays);
-  const sessionCount = Math.max(0, Math.round(Number(numberOfSessions) || 0));
-  if (!start || sessionCount <= 0) return '';
-  if (!days.length) {
-    // No group, so no delivery day to land on: one session a week from the
-    // start, which is exactly the fallback `module_delivery_session_plan` runs
-    // for a module with no delivery day. Holidays skip nothing here -- they
-    // belong to a cohort this module has not been given yet.
-    const weekly = new Date(start);
-    weekly.setDate(weekly.getDate() + (sessionCount - 1) * 7);
-    return ymdOf(weekly);
-  }
-
-  const blocked = holidayDateKeys(holidays);
-  const cursor = new Date(start);
-  let found = 0;
-  let guardDays = Math.max(3650, sessionCount * 21);
-  while (found < sessionCount && guardDays > 0) {
-    // JS counts weeks from Sunday; the delivery days are Monday-first.
-    const weekday = (cursor.getDay() + 6) % 7;
-    if (days.includes(weekday) && !blocked.has(ymdOf(cursor))) {
-      found += 1;
-      if (found === sessionCount) return ymdOf(cursor);
-    }
-    cursor.setDate(cursor.getDate() + 1);
-    guardDays -= 1;
-  }
-  return '';
+  const weekCount = Math.max(0, Math.round(Number(weeks) || 0));
+  if (!start || weekCount <= 0) return '';
+  const end = new Date(start);
+  end.setDate(end.getDate() + weekCount * 7 - 1);
+  return ymdOf(end);
 }
 
 /**
- * How many weeks a start and an end date span -- `projectModuleEndDate` run
- * backwards, so the Weeks box answers a date the user picked rather than the
- * other way round.
- *
- * Counted in delivery days, not calendar days: the same walk, stepping a day at
- * a time from the start to the end, counting the days this group actually runs
- * and skipping the ones a ticked holiday covers. A group teaching Mon + Wed that
- * runs 11 sessions is 6 weeks, not 5.5 -- a part-week is still a week the
- * builder has to author, so the division rounds up.
- *
- * With no group chosen yet there are no delivery days to count, and the span
- * falls back to whole calendar weeks. Returns 0 whenever there is nothing to
- * count -- a missing date, or an end date before the start.
+ * How many whole weeks a start and an end date span -- `projectModuleEndDate`
+ * run backwards, so the Weeks box answers a date the user picked rather than
+ * the other way round. Calendar weeks, inclusive of both ends: a part-week is
+ * still a week the builder has to author, so the division rounds up. Returns
+ * 0 whenever there is nothing to count -- a missing date, or an end date
+ * before the start.
  */
-function projectModuleWeeks(
-  startDate: string,
-  endDate: string,
-  weekDays: string,
-  holidays: CurriculumHoliday[],
-  deliveryDaysPerWeek: number,
-): number {
+function projectModuleWeeks(startDate: string, endDate: string): number {
   const start = dateFromYmd(startDate);
   const end = dateFromYmd(endDate);
   if (!start || !end || end < start) return 0;
-
-  const days = deliveryDayIndexes(weekDays);
-  const perWeek = Math.max(1, deliveryDaysPerWeek || days.length);
-  if (!days.length) {
-    // No delivery pattern to count against: the span in whole calendar weeks,
-    // inclusive of both ends, which is what the box would have been typed with.
-    const calendarDays = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
-    return clampModuleWeeks(Math.ceil(calendarDays / 7));
-  }
-
-  const blocked = holidayDateKeys(holidays);
-  const cursor = new Date(start);
-  let sessions = 0;
-  let guardDays = 3650;
-  while (cursor <= end && guardDays > 0) {
-    const weekday = (cursor.getDay() + 6) % 7;
-    if (days.includes(weekday) && !blocked.has(ymdOf(cursor))) sessions += 1;
-    cursor.setDate(cursor.getDate() + 1);
-    guardDays -= 1;
-  }
-  if (!sessions) return 0;
-  return clampModuleWeeks(Math.ceil(sessions / perWeek));
+  const calendarDays = Math.round((end.getTime() - start.getTime()) / 86400000) + 1;
+  return clampModuleWeeks(Math.ceil(calendarDays / 7));
 }
 
 /** The Weeks input's own bounds, so a computed count is never one it refuses. */

@@ -21,6 +21,7 @@
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import type { StaleTeamsCalendar } from '@/lib/curriculumApi';
 import { pushModulePlanToTeams, type TeamsCalendarPushResult } from './teamsCalendarPush';
+import { finishTeamsUpdate } from '../../teams-meetings/creationResult';
 import { isTeamsReviewCancelled } from '../../teams-meetings/calendarReview';
 
 /** The Teams Meetings page, opened on the module whose calendar has to move. */
@@ -112,7 +113,13 @@ export async function confirmTeamsCalendarUpdate({
     }
   }
   if (pushed) {
-    const { sessionCount, warning } = pushed as TeamsCalendarPushResult;
+    const { sessionCount, warning, outcome, sent } = pushed as TeamsCalendarPushResult;
+    if (outcome.notifyAttendees) {
+      // The author ticked the change email in the review: the result stays
+      // open to send it and report it, instead of a notice that times out.
+      await finishTeamsUpdate(outcome, sent);
+      return true;
+    }
     await showCurriculumAlert({
       title: warning ? 'Sent with warnings' : 'Teams calendar updated',
       text: warning

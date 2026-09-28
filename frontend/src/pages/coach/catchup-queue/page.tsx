@@ -1,13 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
-import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
-import { type AbsenceReport } from '@/mocks/absence-reports';
 import {
-  type CoachCalendarEvent,
-  fetchCoachCalendarEvents,
   formatDateLabel,
   formatTimeRangeLabel,
   meetingUrl,
@@ -22,23 +18,10 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { DataTable, type DataColumn } from '@/components/ui/DataTable';
 import { Pagination } from '@/components/ui/Pagination';
 import { Panel } from '@/components/ui/Panel';
+import { useCatchUpQueue } from '@/features/coach/meetings/catch-up/hooks/useCatchUpQueue';
+import type { CatchUpRequestRow } from '@/features/coach/meetings/catch-up/types/catchUp.types';
 
 const coachNav = roleNavMap.coach;
-const ABSENCE_REPORTS_ENDPOINT = '/coach_api/coach/absence-reports';
-
-interface CatchUpRequestRow {
-  id: string;
-  learner: string;
-  lecture?: string;
-  booking: CoachCalendarEvent;
-}
-
-const BOOKED_CATCHUP_STATUSES = new Set<CoachCalendarEvent['status']>([
-  'scheduled',
-  'in-progress',
-  'completed',
-]);
-
 function lectureLines(lecture: string) {
   const [title, ...sessionParts] = lecture.split(/\s+[—–-]\s+/);
   return { title, session: sessionParts.join(' — ') };
@@ -48,67 +31,13 @@ export default function CoachCatchupQueue() {
   const coach = useCoachIdentity();
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(12);
-  const [catchupQueue, setCatchupQueue] = useState<CatchUpRequestRow[]>([]);
-  const [queueLoading, setQueueLoading] = useState(true);
-  const [queueError, setQueueError] = useState('');
-  const [queueWarning, setQueueWarning] = useState('');
-
-  useEffect(() => {
-    if (!coach.isInitialized) return;
-    if (!coach.email) {
-      setCatchupQueue([]);
-      setQueueError('Coach access is required to load catch-up sessions.');
-      setQueueLoading(false);
-      return;
-    }
-
-    const controller = new AbortController();
-    setQueueLoading(true);
-    setQueueError('');
-    setQueueWarning('');
-
-    Promise.all([
-      fetchCoachCalendarEvents(controller.signal),
-      coachFetch(ABSENCE_REPORTS_ENDPOINT, { signal: controller.signal }).then(async response => {
-        const data = await response.json();
-        if (!response.ok) throw new Error(data.detail || `Request failed with ${response.status}`);
-        return data as { items?: AbsenceReport[] };
-      }).then(
-        data => ({ data, warning: '' }),
-        () => ({ data: { items: [] as AbsenceReport[] }, warning: 'Missed lecture details could not be loaded.' }),
-      ),
-    ])
-      .then(([calendarData, absenceResult]) => {
-        const lectureByEventKey = new Map(
-          (absenceResult.data.items || [])
-            .filter(report => report.recoveryMethod === 'catch-up' && report.catchupEventKey)
-            .map(report => [report.catchupEventKey as string, report.sessionTitle]),
-        );
-        const catchups = (calendarData.events || [])
-          .filter(event => event.source === 'catch-up' && BOOKED_CATCHUP_STATUSES.has(event.status))
-          .map((booking): CatchUpRequestRow => {
-            const id = booking.eventKey || booking.id;
-            return {
-              id,
-              learner: booking.learner || booking.email || 'Unknown learner',
-              lecture: lectureByEventKey.get(id),
-              booking,
-            };
-          });
-        setQueueWarning(absenceResult.warning);
-        setCatchupQueue(catchups);
-      })
-      .catch((requestError: unknown) => {
-        if (requestError instanceof DOMException && requestError.name === 'AbortError') return;
-        setCatchupQueue([]);
-        setQueueError(requestError instanceof Error ? requestError.message : 'Could not load catch-up sessions.');
-      })
-      .finally(() => {
-        if (!controller.signal.aborted) setQueueLoading(false);
-      });
-
-    return () => controller.abort();
-  }, [coach.email, coach.isInitialized]);
+  const queue = useCatchUpQueue(coach.isInitialized && Boolean(coach.email));
+  const catchupQueue = queue.rows;
+  const queueLoading = coach.isInitialized && !coach.email ? false : (!coach.isInitialized || queue.loading);
+  const queueError = coach.isInitialized && !coach.email
+    ? 'Coach access is required to load catch-up sessions.'
+    : queue.error;
+  const queueWarning = queue.warning;
 
   const totalPages = Math.ceil(catchupQueue.length / itemsPerPage) || 1;
   const paginated = catchupQueue.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);

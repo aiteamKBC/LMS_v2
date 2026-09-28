@@ -614,7 +614,7 @@ const SCHEDULABLE_SOURCE_META: Record<SchedulableSource, { description: string; 
     surface: 'from-secondary-500/10 via-secondary-400/5 to-transparent',
   },
   'catch-up': {
-    description: 'Learner catch-up bookings waiting for placement.',
+    description: 'Catch-up sessions available for scheduling or rescheduling.',
     icon: 'ri-timer-line',
     accent: 'text-rose-700',
     surface: 'from-rose-500/10 via-rose-400/5 to-transparent',
@@ -761,7 +761,7 @@ function scheduleActionLabel(event: TimetableEvent | null | undefined) {
   if (!event) return 'Schedule';
   if (event.status === 'cancelled') return 'Schedule Again';
   if (event.status === 'scheduled') return 'Reschedule';
-  if (event.source === 'catch-up' || event.source === 'student-support') return 'Approve & Schedule';
+  if (event.source === 'student-support') return 'Approve & Schedule';
   return 'Schedule';
 }
 
@@ -1906,12 +1906,16 @@ export default function CoachTimetablePage() {
   const selectedEventDetailsPath = selectedEvent ? eventDetailsPath(selectedEvent) : null;
   const selectedScheduleEventNotes = sanitizeEventNotes(selectedScheduleEvent?.notes);
   const scheduleModalFeedback = sanitizeCalendarSyncMessage(scheduleModalError || scheduleModalNotice);
+  const scheduleNeedsApproval = selectedScheduleEvent?.source === 'student-support'
+    && selectedScheduleEvent.status === 'not-scheduled';
   const scheduleModalTitle = scheduleModalCompact
     ? scheduleActionLabel(selectedScheduleEvent)
-    : 'Approve and place session';
+    : scheduleNeedsApproval ? 'Approve and place session' : 'Schedule session';
   const scheduleModalDescription = scheduleModalCompact
     ? 'Choose the new calendar slot for this event.'
-    : 'Choose source, select item, then approve the final calendar slot.';
+    : scheduleNeedsApproval
+      ? 'Choose source, select item, then approve the final calendar slot.'
+      : 'Choose the calendar slot for this session.';
 
   const openSelectedEventDetails = () => {
     if (!selectedEventDetailsPath) return;
@@ -2726,7 +2730,7 @@ export default function CoachTimetablePage() {
                           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary-50 text-primary-600">
                             <AppIcon className="ri-calendar-schedule-line"></AppIcon>
                           </span>
-                          {selectedEvent.status === 'not-scheduled' && (selectedEvent.source === 'catch-up' || selectedEvent.source === 'student-support') ? 'Approve & Schedule' : 'Schedule Meeting'}
+                          {selectedEvent.status === 'not-scheduled' && selectedEvent.source === 'student-support' ? 'Approve & Schedule' : 'Schedule Meeting'}
                         </h4>
                         {selectedEvent.status === 'not-scheduled' && (
                           <span className="rounded-full bg-red-50 px-2.5 py-1 text-[12px] font-bold text-red-700">Needs scheduling</span>
@@ -3544,7 +3548,11 @@ export default function CoachTimetablePage() {
 
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-background-200/70 pt-3">
                 <p className="text-[12px] text-foreground-500">
-                  {scheduleModalCompact ? 'This updates the calendar slot and Teams meeting details.' : 'Learner requests become official Teams meetings after coach approval.'}
+                  {scheduleModalCompact
+                    ? 'This updates the calendar slot and Teams meeting details.'
+                    : scheduleNeedsApproval
+                      ? 'Learner support requests become official Teams meetings after coach approval.'
+                      : 'This places the session on the coach calendar and updates its Teams meeting details.'}
                 </p>
                 <div className="flex items-center gap-3">
                   <button
