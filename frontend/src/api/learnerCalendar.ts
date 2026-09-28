@@ -477,9 +477,11 @@ export interface LearnerFirstSession {
   event: LearnerCalendarEvent | null;
   /** The session date, "YYYY-MM-DD", or null when nothing is booked. */
   startsOn: string | null;
-  /** 'book' — nothing booked yet. 'waiting' — booked, day not arrived.
-   *  'open' — the session day has come, so the programme runs normally. */
-  access: 'book' | 'waiting' | 'open';
+  /** 'enrolling' — an apprentice who has not finished enrolment; the first
+   *  session comes after it, so nothing is held yet. 'book' — nothing booked
+   *  yet. 'waiting' — booked, day not arrived. 'open' — the session day has
+   *  come, so the programme runs normally. */
+  access: 'enrolling' | 'book' | 'waiting' | 'open';
 }
 
 /**

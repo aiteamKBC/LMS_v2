@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Flag } from 'lucide-react';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { useWizard } from '../WizardContext';
 import { COMPETENCE_LEVELS, competenceMeta, competenceScore } from '@/mocks/enrolment-console';
 import { fetchKsbProfile, peekKsbProfile } from '@/api/curriculum';
@@ -6,6 +8,7 @@ import type { Ksb, KsbAssessment, RagLevel } from '../../types';
 import { Modal } from '../../components/Modal';
 import { FileList, inputClass, btnPrimary, btnSecondary, EmptyState } from '../../components/ui';
 import { StepHeading } from './fields';
+import { useShowStepErrors } from '../stepErrors';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 /**
@@ -17,6 +20,34 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
  * this is the learner's own self-assessment and staff editing it would falsify
  * the record they are meant to review.
  */
+
+/**
+ * A rating above this is flagged. 5 (Consistently) and up says the learner is
+ * already largely competent, and an apprenticeship must involve substantial new
+ * learning — so the learner is warned, must say why in a note, and the
+ * enrolment team sees the flag when they review the answers.
+ */
+const FLAG_ABOVE_SCORE = 4;
+
+const HIGH_RATING_WARNING =
+  'Rating yourself above 4 on many skills may affect your eligibility for this apprenticeship, which requires substantial new learning.';
+
+function isHighRating(level?: string | null): boolean {
+  return (competenceScore(level) ?? 0) > FLAG_ABOVE_SCORE;
+}
+
+function HighRatingFlag() {
+  return (
+    <span
+      role="img"
+      aria-label={`Flagged: rated above ${FLAG_ABOVE_SCORE}`}
+      title={`Rated above ${FLAG_ABOVE_SCORE}`}
+      className="w-7 h-7 rounded-full flex items-center justify-center shrink-0 bg-amber-50 text-amber-600 ring-1 ring-amber-200"
+    >
+      <Flag aria-hidden="true" className="h-3.5 w-3.5" />
+    </span>
+  );
+}
 
 interface WorkingAnswer {
   level: RagLevel | null;
@@ -34,6 +65,7 @@ function workingFrom(existing?: KsbAssessment): WorkingAnswer {
 
 export default function SkillsRadar() {
   const { draft, setSection, readOnly, board } = useWizard();
+  const showErrors = useShowStepErrors();
   const sr = draft.skillsRadar;
 
   // The KSBs come from the profile authored against THIS learner's programme
@@ -89,6 +121,10 @@ export default function SkillsRadar() {
     () => ksbs.filter((k) => sr.assessments[k.id]?.level).length,
     [ksbs, sr.assessments]
   );
+  const flaggedCount = useMemo(
+    () => ksbs.filter((k) => isHighRating(sr.assessments[k.id]?.level)).length,
+    [ksbs, sr.assessments]
+  );
 
   const open = (index: number) => {
     const ksb = ksbs[index];
@@ -126,6 +162,7 @@ export default function SkillsRadar() {
   };
 
   const openKsb = openIndex != null ? ksbs[openIndex] : null;
+  const highRating = isHighRating(work.level);
 
   return (
     <div>
@@ -157,7 +194,14 @@ export default function SkillsRadar() {
             ? 'The learner’s self-assessment. Read-only here — only the learner can change their own answers.'
             : 'Rate yourself on each item. You can revisit any answer before submitting.'}
         </p>
-        <span className="text-[12px] font-semibold text-foreground-600 shrink-0">{answeredCount} of {ksbs.length} answered</span>
+        <span className="flex items-center gap-3 shrink-0">
+          {flaggedCount > 0 && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200">
+              <Flag aria-hidden="true" className="h-3 w-3" />{flaggedCount} rated above {FLAG_ABOVE_SCORE}
+            </span>
+          )}
+          <span className="text-[12px] font-semibold text-foreground-600">{answeredCount} of {ksbs.length} answered</span>
+        </span>
       </div>
       )}
 
@@ -187,8 +231,10 @@ export default function SkillsRadar() {
           const level = sr.assessments[ksb.id]?.level ?? null;
           const meta = competenceMeta(level);
           const score = competenceScore(level);
+          // After a refused Next, every competency still to rate is marked.
+          const unrated = showErrors && !readOnly && !level;
           return (
-            <div key={ksb.id} className="flex items-center gap-3 px-3 py-2.5">
+            <div key={ksb.id} className={`flex items-center gap-3 px-3 py-2.5${unrated ? ' bg-red-50 ring-1 ring-inset ring-red-500' : ''}`}>
               <span className="text-[12px] font-semibold text-foreground-400 w-7 shrink-0 text-right">{i + 1}.</span>
               <span className="flex-1 min-w-0">
                 <span className="text-[13px] text-foreground-800">{ksb.codes.join(', ')} {ksb.title}</span>
@@ -198,11 +244,16 @@ export default function SkillsRadar() {
                 <span className={`text-[11px] font-bold w-7 h-7 rounded-full flex items-center justify-center shrink-0 ${meta.tintBg} ${meta.tintText}`} title={meta.label}>
                   {score}
                 </span>
+              ) : unrated ? (
+                <span className="text-[11px] text-red-600 shrink-0">Please answer</span>
               ) : (
                 <span className="text-[11px] text-foreground-300 shrink-0">—</span>
               )}
+              {/* Fixed-width slot so the scores stay in one column. */}
+              <span className="w-7 shrink-0">{isHighRating(level) && <HighRatingFlag />}</span>
               <button
                 onClick={() => open(i)}
+                aria-invalid={unrated || undefined}
                 className={`${btnSecondary} !py-1 !px-3 !text-[11px] shrink-0`}
               >
                 <AppIcon className={readOnly ? 'ri-eye-line' : 'ri-edit-line'} />{readOnly ? 'View' : level ? 'Edit' : 'Answer'}
@@ -226,7 +277,7 @@ export default function SkillsRadar() {
             ) : (
               <>
                 <button className={btnSecondary} onClick={() => setOpenIndex(null)}>Cancel</button>
-                <button className={btnPrimary} onClick={confirm} disabled={!work.level}>
+                <button className={btnPrimary} onClick={confirm} disabled={!work.level || (highRating && !work.note.trim())}>
                   <AppIcon className="ri-check-line" />{openIndex + 1 < ksbs.length ? 'Confirm & next' : 'Confirm'}
                 </button>
               </>
@@ -276,15 +327,46 @@ export default function SkillsRadar() {
             </div>
           </div>
 
+          {highRating && (
+            <div role="status" className="mb-4 flex items-start gap-2.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2.5">
+              <Flag aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+              <p className="text-[12px] leading-relaxed text-amber-800">
+                {readOnly ? (
+                  <>
+                    <span className="font-semibold">Flagged: the learner rated this above {FLAG_ABOVE_SCORE}.</span>{' '}
+                    High self-ratings may affect their eligibility for this apprenticeship, which requires substantial new learning.
+                  </>
+                ) : (
+                  <>
+                    <span className="font-semibold">{HIGH_RATING_WARNING}</span>{' '}
+                    Please add a note explaining this rating.
+                  </>
+                )}
+              </p>
+            </div>
+          )}
+
           <div className="mb-4">
-            <label className="block text-[12px] font-medium text-foreground-700 mb-1.5">Add a note:</label>
+            <label htmlFor={`competence-note-${openKsb.id}`} className="block text-[12px] font-medium text-foreground-700 mb-1.5">
+              Add a note{highRating && !readOnly && (
+                <><span aria-hidden="true" className="ml-0.5 text-red-500">*</span><span className="sr-only"> (required)</span></>
+              )}:
+            </label>
             <textarea
+              id={`competence-note-${openKsb.id}`}
               rows={3}
               value={work.note}
               readOnly={readOnly}
+              required={highRating && !readOnly}
+              aria-describedby={highRating && !readOnly ? `competence-note-hint-${openKsb.id}` : undefined}
               onChange={(e) => setWork((w) => ({ ...w, note: e.target.value }))}
               className={inputClass}
             />
+            {highRating && !readOnly && (
+              <p id={`competence-note-hint-${openKsb.id}`} className={`mt-1.5 text-[12px] ${work.note.trim() ? 'text-foreground-500' : 'text-red-600'}`}>
+                A note is required for ratings above {FLAG_ABOVE_SCORE}.
+              </p>
+            )}
           </div>
 
           <div>

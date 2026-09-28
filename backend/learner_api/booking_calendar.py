@@ -75,9 +75,14 @@ COVERED_YEARS = frozenset(range(2024, 2029))
 
 
 def booking_date_restriction(
-    day: date | None, *, today: date | None = None
+    day: date | None, *, today: date | None = None, allow_sunday: bool = False
 ) -> BookingDateRestriction | None:
-    """Why no learner session may be booked on ``day``, or ``None``."""
+    """Why no learner session may be booked on ``day``, or ``None``.
+
+    ``allow_sunday`` opens Sundays for the one session type that needs it: a
+    learner's first session, which staff arrange around the learner's week.
+    Saturdays, bank holidays and past dates stay closed either way.
+    """
     if day is None:
         return BookingDateRestriction("invalid-date", "Choose a valid booking date.")
     if day < (today or timezone.localdate()):
@@ -85,7 +90,9 @@ def booking_date_restriction(
             "past-date",
             "Sessions cannot be booked on a date that has already passed.",
         )
-    if day.weekday() >= 5:
+    if day.weekday() == 5 and allow_sunday:
+        return BookingDateRestriction("weekend", "Sessions cannot be booked on Saturdays.")
+    if day.weekday() >= 5 and not allow_sunday:
         return BookingDateRestriction(
             "weekend",
             "Sessions cannot be booked on Saturdays or Sundays.",

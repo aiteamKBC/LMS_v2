@@ -9,6 +9,7 @@ import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { type LearnerKind } from '@/api/learnerDetail';
 import { isOwnLearnerRecord } from '@/api/auth';
 import { useFreshUserRedirect, useOnboardingRedirect } from '@/hooks/useOnboardingRedirect';
+import { useFirstLoginDetailsRedirect } from '@/hooks/useFirstLoginDetailsRedirect';
 import { syncLearnerStatus } from '@/hooks/useLearnerNavGate';
 import { useLearnerAttendance } from '@/hooks/useLearnerAttendance';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -104,6 +105,13 @@ export default function LearnerOverview() {
   /* ── A learner whose enrolment hasn't been started yet gets the waiting page ──
      Same gating as above: `!loading` so an unresolved status never reads as fresh. */
   const isFreshUser = useFreshUserRedirect(real?.programmeStatus, isRealMode && !loading && !reviewingLearner);
+
+  /* ── A new apprentice gives their details and signature before anything else ──
+     Learner accounts only: the endpoint is the learner's own, never staff's. */
+  const checkingFirstLogin = useFirstLoginDetailsRedirect(
+    kind, id, real?.programmeStatus,
+    isRealMode && !loading && auth.account?.role === 'learner',
+  );
   const isCommercialWaiting = isCommercialPreStart && !loading;
 
   /* The sidebar caches the programme status for the whole browser session and
@@ -298,7 +306,7 @@ export default function LearnerOverview() {
     );
   }
 
-  if (isRealMode && (loading || redirectingToOnboarding)) {
+  if (isRealMode && (loading || redirectingToOnboarding || checkingFirstLogin)) {
     // Only the small identity read gates the page; cards load independently.
     return <PageSkeleton workspaceRole="learner" />;
   }

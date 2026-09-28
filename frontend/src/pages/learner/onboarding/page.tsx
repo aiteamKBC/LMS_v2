@@ -4,6 +4,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { useToast } from '@/hooks/useToast';
 import { useMyLearner } from '@/hooks/useMyLearner';
+import { useResetWorkspaceScroll } from '@/hooks/useResetWorkspaceScroll';
 import { updateEnrolmentUser } from '@/api/enrolmentUsers';
 import { updateCommercialBoard } from '@/api/commercialUsers';
 import { fetchWizardBootstrap } from '@/api/extendedIlr';
@@ -13,6 +14,7 @@ import { WizardProvider, useWizard } from '@/pages/users/wizard/WizardContext';
 import { WizardShell } from '@/pages/users/wizard/WizardShell';
 import { maxReachableStep, missingAcrossWizard } from '@/pages/users/wizard/validation';
 import { ONBOARDING_REVIEWS_ROUTE } from '@/hooks/useOnboardingRedirect';
+import { markEnrolmentSubmitted } from '@/hooks/useLearnerNavGate';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 const learnerNav = roleNavMap.learner;
@@ -83,6 +85,8 @@ function LearnerWizard({ currentIndex, onDone }: { currentIndex: number; onDone:
           dob: pd.dob,
           onboardingStatus: 'Submitted',
         });
+        // Opens the Reviews tab now, rather than on the learner's next session.
+        markEnrolmentSubmitted('apprenticeship', userId);
       }
       success('Enrolment submitted', 'Thank you — your enrolment has been sent to the team for review.');
       onDone();
@@ -163,9 +167,13 @@ export default function LearnerOnboardingPage() {
     return () => { cancelled = true; };
   }, [learnerId, isCommercial, reloadToken]);
 
-  const resolvedStepSlug = isCommercial && stepSlug === 'ilr' ? 'plr' : stepSlug;
+  // Neither ILR step applies to commercial delivery.
+  const resolvedStepSlug = isCommercial && (stepSlug === 'ilr' || stepSlug === 'ilr-details') ? 'plr' : stepSlug;
   const idx = WIZARD_STEPS.findIndex((s) => s.slug === resolvedStepSlug);
   const currentIndex = idx === -1 ? 0 : idx;
+
+  // Each step opens at its top rather than at the previous step's position.
+  const topRef = useResetWorkspaceScroll<HTMLElement>(currentIndex);
 
   if (isCommercial) return null;
 
@@ -186,7 +194,7 @@ export default function LearnerOnboardingPage() {
     >
       {/* w-full, matching the other learner pages — the shell already offsets for
           the collapsed sidebar rail, so an extra centred max-width fought it. */}
-      <main className="page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
+      <main ref={topRef} className="page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
         {loading && (
           <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-5">
             <RowsSkeleton rows={5} />

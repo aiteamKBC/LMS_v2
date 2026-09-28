@@ -36,6 +36,8 @@ from .mappers import _s, to_employer_row
 from .models import Employer, EnrolmentReview
 from .review_form import (
     MAX_SIGNATURE_CHARS,
+    _lookup as _lookup_enrolment_review,
+    _serialize_form as _serialize_enrolment_review,
     employer_signature_required,
     sections_for,
 )
@@ -590,6 +592,36 @@ def employer_review_instance(request, employer_id, kind, learner_id, event_key):
     except ValueError as exc:
         return _error(str(exc), 409)
     return JsonResponse(updated)
+
+
+@csrf_exempt
+@employer_or_staff()
+def employer_enrolment_review(request, employer_id, kind, learner_id, event_key):
+    """One legacy Enrolment_Reviews document, read by the learner's employer.
+
+    Backs "Show document" on a signed review. The learner-side read
+    (review_form.enrolment_review_form) is limited to the learner and staff, and
+    its GET stamps started_at, so the employer gets this read-only view instead,
+    limited to the reviews their signing list offers them.
+    """
+    if request.method != "GET":
+        return _error("Method not allowed.", 405)
+    employer, err = _employer_or_404(employer_id)
+    if err:
+        return err
+    try:
+        learner, review, event, failure = _lookup_enrolment_review(kind, learner_id, event_key)
+    except DatabaseError as exc:
+        return _error(f"Database error: {exc}", 502)
+    if failure is not None:
+        return failure
+    if learner.employer_id != employer.pk:
+        return _error("That learner does not belong to this employer.", 403)
+    # Same filter as _review_signing_rows: a review that wants no employer
+    # sign-off (the RPL review) is not the employer's to read.
+    if not employer_signature_required(review):
+        return _error("Review not found.", 404)
+    return JsonResponse(_serialize_enrolment_review(review, learner, event))
 
 
 @csrf_exempt
