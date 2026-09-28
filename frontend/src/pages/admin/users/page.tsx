@@ -14,7 +14,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { AdminPage, DataPanel, Pager, SourceNote, StatusBadge } from '../_shared/AdminPage';
 import { useAdminData } from '../_shared/useAdminData';
-import { accountAction, addLearnerRecord, fetchAccounts, type AccountStatus, type PlatformAccount } from '@/api/platformAdmin';
+import { accountAction, addLearnerRecord, deleteStaffAccount, fetchAccounts, type AccountStatus, type PlatformAccount } from '@/api/platformAdmin';
 import { accessLabel, accessShortLabel, fetchStaffUser, type StaffUserRow } from '@/api/staffUsers';
 import { useAuth } from '@/hooks/useAuth';
 import { EditStaffModal } from '@/pages/users/components/EditStaffModal';
@@ -67,6 +67,9 @@ export default function AdminAccountsPage() {
   // The account being given a learner record, if any. Opens a small form for
   // the programme and cohort the record should start with.
   const [enrollingAccount, setEnrollingAccount] = useState<PlatformAccount | null>(null);
+  // The staff account waiting on delete confirmation. Deleting cannot be
+  // undone, so the row button only opens the question.
+  const [deletingAccount, setDeletingAccount] = useState<PlatformAccount | null>(null);
   // The person record behind an account, open for editing from clicking their
   // name. A login account holds almost none of this — name, email, position and
   // contact details live on the staff row it points at — so the record is
@@ -367,6 +370,12 @@ export default function AdminAccountsPage() {
                         ) : (
                           <ActionButton busy={busy === account.id} onClick={() => runAction(account, 'restore')} tone="ok" icon="ri-refresh-line" label="Restore" />
                         )}
+                        {/* Staff only, and never your own: the server refuses
+                            both, so the button is not offered where it can only
+                            fail. */}
+                        {account.subjectType === 'staff' && auth.account?.id !== account.id && (
+                          <ActionButton busy={busy === account.id} onClick={() => setDeletingAccount(account)} tone="bad" icon="ri-delete-bin-line" label="Delete" />
+                        )}
                       </div>
                     </td>
                   </tr>
@@ -416,6 +425,22 @@ export default function AdminAccountsPage() {
         />
       )}
 
+      {deletingAccount && (
+        <DeleteAccountModal
+          account={deletingAccount}
+          onClose={() => setDeletingAccount(null)}
+          onDeleted={() => {
+            setActionError(null);
+            setActionNotice(`${deletingAccount.displayName || deletingAccount.email}’s account was deleted.`);
+            setData(prev => prev && ({
+              ...prev,
+              count: Math.max(0, prev.count - 1),
+              results: prev.results.filter(r => r.id !== deletingAccount.id),
+            }));
+          }}
+        />
+      )}
+
       {editingAccess && (
         <AccessPanel
           account={editingAccess}
@@ -438,6 +463,8 @@ export default function AdminAccountsPage() {
 
       <SourceNote>
         Suspending an account revokes its live sessions immediately and is recorded in the access log.
+        Deleting a staff account removes it and its staff record for good; learner and employer
+        accounts cannot be deleted here.
         A role cannot be changed here — it is derived from the person&apos;s enrolment record each request.
         Click a name to edit that record: its position and access are what the role is computed from.
         Access itself is a staff grant only — a learner or employer has none, because what they can
@@ -597,6 +624,79 @@ function AddLearnerModal({ account, onClose, onCreated }: {
           <button
             onClick={onClose}
             className="px-4 py-2.5 bg-background-100 border border-background-200 rounded-xl text-[13px] font-medium text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Confirm deleting a staff account.
+ *
+ * The page has no `confirm()` to lean on, and a one-click delete of somebody's
+ * sign-in and staff record is too easy to hit by accident next to Suspend. The
+ * server's refusal (linked records, not staff, self) is shown here, in the
+ * dialog that asked, rather than behind it on the page.
+ */
+function DeleteAccountModal({ account, onClose, onDeleted }: {
+  account: PlatformAccount;
+  onClose: () => void;
+  onDeleted: () => void;
+}) {
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const name = account.displayName || account.email;
+
+  async function remove() {
+    setDeleting(true);
+    setError(null);
+    try {
+      await deleteStaffAccount(account.id);
+      onDeleted();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not delete this account.');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={deleting ? undefined : onClose}>
+      <div className="bg-background-50 rounded-2xl border border-background-200 max-w-md w-full shadow-2xl" onClick={e => e.stopPropagation()}>
+        <div className="px-6 pt-6 pb-4 border-b border-foreground-200/60">
+          <h3 className="text-base font-heading font-semibold text-foreground-900">Delete staff account</h3>
+          <p className="mt-1 text-[12px] text-foreground-500 leading-relaxed">
+            Permanently deletes <strong>{name}</strong> ({account.email}): their sign-in account and
+            their staff record. They are signed out everywhere and removed from the user directory.
+            This cannot be undone — to block sign-in but keep the record, suspend instead.
+          </p>
+        </div>
+
+        {error && (
+          <div className="px-6 pt-4">
+            <div className="bg-red-50 border border-red-200/60 rounded-xl p-3">
+              <p className="text-[11px] text-red-800 leading-relaxed">{error}</p>
+            </div>
+          </div>
+        )}
+
+        <div className="px-6 py-4 mt-2 border-t border-foreground-200/60 flex items-center gap-3 bg-background-100/40">
+          <button
+            onClick={remove}
+            disabled={deleting}
+            className="px-4 py-2.5 bg-red-600 text-white rounded-xl text-[13px] font-semibold hover:bg-red-700 transition-smooth cursor-pointer disabled:opacity-40"
+          >
+            <AppIcon className={`${deleting ? 'ri-loader-4-line animate-spin' : 'ri-delete-bin-line'} mr-1.5`}></AppIcon>
+            {deleting ? 'Deleting…' : 'Delete account'}
+          </button>
+          <button
+            onClick={onClose}
+            disabled={deleting}
+            className="px-4 py-2.5 bg-background-100 border border-background-200 rounded-xl text-[13px] font-medium text-foreground-600 hover:bg-background-200 transition-smooth cursor-pointer disabled:opacity-40"
           >
             Cancel
           </button>

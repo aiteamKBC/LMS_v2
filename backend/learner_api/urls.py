@@ -17,6 +17,7 @@ from .attendance_confirmation import confirm_attendance
 from .meeting_attendance import meeting_attendance, confirm_meeting_attendance
 from .attendance_mode import attendance_mode, review_attendance_mode
 from .first_session_bookings import first_session_bookings
+from .first_login_details import first_login_details
 
 from . import certificates, monthly_assignment, legacy_assignments, quiz_reading, review_history
 from . import historical_evidence
@@ -56,6 +57,7 @@ urlpatterns = [
     path("tutor-learners/", views.tutor_learners, name="tutor-learners"),
     # Enrolment workspace: every learner's first-session booking, read only.
     path("first-session-bookings/", first_session_bookings, name="first-session-bookings"),
+    path("first-login-details/<int:pk>/", first_login_details, name="first-login-details"),
     path("enrolment-users/", views.enrolment_users, name="enrolment-users"),
     path("enrolment-users/import-template/", learner_import.import_template, name="enrolment-users-import-template"),
     path("enrolment-users/import/", learner_import.import_students, name="enrolment-users-import"),
@@ -147,6 +149,11 @@ urlpatterns = [
         "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/events/<path:event_key>/review/",
         employer_portal.employer_review_instance,
         name="employer-review-instance",
+    ),
+    path(
+        "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/reviews/<path:event_key>/",
+        employer_portal.employer_enrolment_review,
+        name="employer-enrolment-review",
     ),
     path("employers/<int:pk>/", employers.employer_detail, name="employer-detail"),
     path("learner-detail/<str:kind>/<int:pk>/", learner_detail.learner_detail, name="learner-detail"),

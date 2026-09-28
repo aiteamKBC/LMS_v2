@@ -975,6 +975,8 @@ def register_enrolment_wizard_records():
             'id', 'learner_kind', 'learner_id', 'record_ref',
             'place_of_study', 'qualification_type', 'subject', 'level',
             'award_date', 'credits', 'grade', 'record_type',
+            # Not `evidence`: its blob paths locate files rather than describe them.
+            'start_date', 'end_date',
         ),
     )
 
@@ -992,6 +994,10 @@ def register_enrolment_wizard_records():
             'id', 'learner_kind', 'learner_id',
             'pm_qualifications', 'functional_skills_enrol',
             'cv_file', 'experience_text',
+            # Not `documents`: its blob paths locate files rather than describe them.
+            'highest_qualification', 'highest_qualification_field',
+            'has_field_qualification', 'highest_field_qualification',
+            'gcse_english', 'gcse_maths',
         ),
         # A CV and a free-text work history are a person's own account of
         # themselves, held here only to be read during enrolment. That they were

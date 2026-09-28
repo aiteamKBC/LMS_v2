@@ -1,11 +1,15 @@
-import { useEffect, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { useWizard } from '../WizardContext';
 import { useToast } from '@/hooks/useToast';
 import { COUNTRY_OPTIONS, NATIONALITY_OPTIONS } from '@/lib/countries';
-import { WAGE_BAND_OPTIONS } from '@/mocks/enrolment-console';
-import { YesNoRadio, FileList, inputClass, btnPrimary, btnSecondary } from '../../components/ui';
-import { LabeledInput, LabeledSelect, LabeledTextarea, SignatureField, StepHeading } from './fields';
+import { YES_NO_SELECT } from '@/mocks/enrolment-console';
+import { YesNoRadio, inputClass, btnPrimary, btnSecondary } from '../../components/ui';
+import IlrEligibilityEvidence from './IlrEligibilityEvidence';
+import { useEmployerDetailsPrefill } from './useEmployerDetailsPrefill';
+import { LabeledInput, LabeledSelect, LabeledTextarea, StepHeading } from './fields';
 import { downloadIlrDocument } from './ilrDocument';
+import { IlrText } from './ilrAdditionalText';
+import { requiredMessage, useMissingCheck } from '../stepErrors';
 
 function Fieldset({ legend, intro, children }: { legend: string; intro?: string; children: ReactNode }) {
   return (
@@ -22,30 +26,18 @@ export default function Ilr() {
   const { success, error } = useToast();
   const ilr = draft.ilr;
   const set = (patch: Partial<typeof ilr>) => setSection('ilr', { ...ilr, ...patch });
+  // Empty Employer Details are filled from the learner's employer and organisation.
+  useEmployerDetailsPrefill();
+  // Red Yes/No rows once Next is pressed with them unanswered.
+  const missing = useMissingCheck();
+  const yn = (key: string) => (missing(key) ? requiredMessage('', 'choose') : undefined);
 
-  // The learner already signed on Personal details, so reuse that signature here
-  // rather than asking for the same mark twice.
-  //
-  // Copied into the ILR block rather than only displayed: the PDF export and the
-  // "learner signed" flag both read learnerSignature.signatureUrl, so a purely
-  // visual fallback would show a signature on screen but file a blank one. Runs
-  // once, only while this block has no signature of its own — replacing or
-  // clearing it on this step then wins, so a deliberately different declaration
-  // signature is never overwritten.
-  const personalSignature = draft.personalDetails.signature;
-  const usingPersonalSignature = !ilr.learnerSignature.signatureUrl && Boolean(personalSignature);
+  const ai = ilr.additionalInformation;
+  const setAi = (patch: Partial<typeof ai>) => set({ additionalInformation: { ...ai, ...patch } });
 
-  useEffect(() => {
-    if (!usingPersonalSignature) return;
-    set({
-      learnerSignature: {
-        ...ilr.learnerSignature,
-        signatureUrl: personalSignature,
-        date: ilr.learnerSignature.date || draft.personalDetails.signatureDate || new Date().toISOString().slice(0, 10),
-      },
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [usingPersonalSignature, personalSignature]);
+  // The learning and provider declarations (and their signature blocks) are no
+  // longer on this step, so the Personal details signature is no longer copied
+  // into the ILR either: it would sign a declaration the learner never saw.
 
   // Save the answers and file the PDF together: a filed document that doesn't
   // match the stored answers would be worse than not filing at all.
@@ -65,27 +57,34 @@ export default function Ilr() {
 
       <div className="max-w-3xl">
         <Fieldset legend="Contact Preferences" intro="How would you prefer to be contacted?">
-          <YesNoRadio legend="By post" name="c-post" value={ilr.contact.byPost} onChange={(v) => set({ contact: { ...ilr.contact, byPost: v } })} />
-          <YesNoRadio legend="By phone" name="c-phone" value={ilr.contact.byPhone} onChange={(v) => set({ contact: { ...ilr.contact, byPhone: v } })} />
-          <YesNoRadio legend="By e-mail" name="c-email" value={ilr.contact.byEmail} onChange={(v) => set({ contact: { ...ilr.contact, byEmail: v } })} />
+          <YesNoRadio legend="By post" name="c-post" error={yn('Contact by post')} value={ilr.contact.byPost} onChange={(v) => set({ contact: { ...ilr.contact, byPost: v } })} />
+          <YesNoRadio legend="By phone" name="c-phone" error={yn('Contact by phone')} value={ilr.contact.byPhone} onChange={(v) => set({ contact: { ...ilr.contact, byPhone: v } })} />
+          <YesNoRadio legend="By e-mail" name="c-email" error={yn('Contact by e-mail')} value={ilr.contact.byEmail} onChange={(v) => set({ contact: { ...ilr.contact, byEmail: v } })} />
         </Fieldset>
 
         <Fieldset legend="Emergency contact details / Next of kin">
-          <LabeledInput label="Full name" value={ilr.nextOfKin.fullName} onChange={(v) => set({ nextOfKin: { ...ilr.nextOfKin, fullName: v } })} />
-          <LabeledInput label="Relationship to you" value={ilr.nextOfKin.relationship} onChange={(v) => set({ nextOfKin: { ...ilr.nextOfKin, relationship: v } })} />
-          <LabeledInput label="Email address" type="email" value={ilr.nextOfKin.email} onChange={(v) => set({ nextOfKin: { ...ilr.nextOfKin, email: v } })} />
-          <LabeledInput label="Phone number" type="tel" value={ilr.nextOfKin.phone} onChange={(v) => set({ nextOfKin: { ...ilr.nextOfKin, phone: v } })} />
-          <YesNoRadio legend="Address same as learner?" name="nok-same" value={ilr.nextOfKin.sameAddressAsLearner} onChange={(v) => set({ nextOfKin: { ...ilr.nextOfKin, sameAddressAsLearner: v } })} />
+          <LabeledInput label="Full name" missingKey="Next of kin — full name" value={ilr.nextOfKin.fullName} onChange={(v) => set({ nextOfKin: { ...ilr.nextOfKin, fullName: v } })} />
+          <LabeledInput label="Relationship to you" missingKey="Next of kin — relationship" value={ilr.nextOfKin.relationship} onChange={(v) => set({ nextOfKin: { ...ilr.nextOfKin, relationship: v } })} />
+          <LabeledInput label="Email address" type="email" missingKey="Next of kin — email" value={ilr.nextOfKin.email} onChange={(v) => set({ nextOfKin: { ...ilr.nextOfKin, email: v } })} />
+          <LabeledInput label="Phone number" type="tel" missingKey="Next of kin — phone" value={ilr.nextOfKin.phone} onChange={(v) => set({ nextOfKin: { ...ilr.nextOfKin, phone: v } })} />
+          {/* Answering Yes clears the contact's own address, so a hidden answer is never saved or printed. */}
+          <YesNoRadio legend="Address same as learner?" name="nok-same" error={yn('Next of kin — same address')} value={ilr.nextOfKin.sameAddressAsLearner} onChange={(v) => set({ nextOfKin: { ...ilr.nextOfKin, sameAddressAsLearner: v, ...(v ? { postcode: '', address: '' } : {}) } })} />
+          {ilr.nextOfKin.sameAddressAsLearner === false && (
+            <>
+              <LabeledInput label="Postcode" placeholder="Post Code" missingKey="Next of kin — postcode" value={ilr.nextOfKin.postcode ?? ''} onChange={(v) => set({ nextOfKin: { ...ilr.nextOfKin, postcode: v } })} />
+              <LabeledInput label="Address" missingKey="Next of kin — address" value={ilr.nextOfKin.address ?? ''} onChange={(v) => set({ nextOfKin: { ...ilr.nextOfKin, address: v } })} />
+            </>
+          )}
         </Fieldset>
 
         <Fieldset legend="Eligibility">
-          <YesNoRadio legend="Are you primarily employed in England?" name="e-eng" value={ilr.eligibility.employedInEngland} onChange={(v) => set({ eligibility: { ...ilr.eligibility, employedInEngland: v } })} />
-          <LabeledSelect label="Please state your country of residence" value={ilr.eligibility.countryOfResidence} options={COUNTRY_OPTIONS} onChange={(v) => set({ eligibility: { ...ilr.eligibility, countryOfResidence: v } })} />
-          <YesNoRadio legend="Are you a UK/EEA National?" name="e-ukeea" value={ilr.eligibility.ukEeaNational} onChange={(v) => set({ eligibility: { ...ilr.eligibility, ukEeaNational: v } })} />
-          <LabeledSelect label="Please state your nationality" value={ilr.eligibility.nationality} options={NATIONALITY_OPTIONS} onChange={(v) => set({ eligibility: { ...ilr.eligibility, nationality: v } })} />
-          <YesNoRadio legend="Have you been resident in the UK/EEA for the previous 3 years?" name="e-res3" value={ilr.eligibility.residentPrev3Years} onChange={(v) => set({ eligibility: { ...ilr.eligibility, residentPrev3Years: v } })} />
-          <LabeledInput label="How many full years have you lived in the UK?" type="number" value={ilr.eligibility.yearsInUk != null ? String(ilr.eligibility.yearsInUk) : ''} onChange={(v) => set({ eligibility: { ...ilr.eligibility, yearsInUk: v ? Number(v) : undefined } })} />
-          <YesNoRadio legend="Do you require a Work Permit?" name="e-wp" value={ilr.eligibility.requiresWorkPermit} onChange={(v) => set({ eligibility: { ...ilr.eligibility, requiresWorkPermit: v } })} />
+          <YesNoRadio legend="Are you primarily employed in England?" name="e-eng" error={yn('Employed in England')} value={ilr.eligibility.employedInEngland} onChange={(v) => set({ eligibility: { ...ilr.eligibility, employedInEngland: v } })} />
+          <LabeledSelect label="Please state your country of residence" missingKey="Country of residence" value={ilr.eligibility.countryOfResidence} options={COUNTRY_OPTIONS} onChange={(v) => set({ eligibility: { ...ilr.eligibility, countryOfResidence: v } })} />
+          <YesNoRadio legend="Are you a UK/EEA National?" name="e-ukeea" error={yn('UK / EEA national')} value={ilr.eligibility.ukEeaNational} onChange={(v) => set({ eligibility: { ...ilr.eligibility, ukEeaNational: v } })} />
+          <LabeledSelect label="Please state your nationality" missingKey="Nationality" value={ilr.eligibility.nationality} options={NATIONALITY_OPTIONS} onChange={(v) => set({ eligibility: { ...ilr.eligibility, nationality: v } })} />
+          <YesNoRadio legend="Have you been resident in the UK/EEA for the previous 3 years?" name="e-res3" error={yn('Resident for the previous 3 years')} value={ilr.eligibility.residentPrev3Years} onChange={(v) => set({ eligibility: { ...ilr.eligibility, residentPrev3Years: v } })} />
+          <LabeledInput label="How many full years have you lived in the UK?" type="number" missingKey="Years in the UK" value={ilr.eligibility.yearsInUk != null ? String(ilr.eligibility.yearsInUk) : ''} onChange={(v) => set({ eligibility: { ...ilr.eligibility, yearsInUk: v ? Number(v) : undefined } })} />
+          <YesNoRadio legend="Do you require a Work Permit?" name="e-wp" error={yn('Requires a work permit')} value={ilr.eligibility.requiresWorkPermit} onChange={(v) => set({ eligibility: { ...ilr.eligibility, requiresWorkPermit: v } })} />
 
           <div className="pt-3">
             <p className="text-[12px] text-foreground-500 mb-2 leading-relaxed">
@@ -105,119 +104,67 @@ export default function Ilr() {
               placeholder="Describe the evidence provided…"
               className={`${inputClass} mb-2`}
             />
-            <FileList
-              files={ilr.eligibility.evidenceFiles.map((n, i) => ({ id: `${n}-${i}`, name: n }))}
-              onDelete={(id) => set({ eligibility: { ...ilr.eligibility, evidenceFiles: ilr.eligibility.evidenceFiles.filter((_, i) => `${ilr.eligibility.evidenceFiles[i]}-${i}` !== id) } })}
-              emptyText="No evidence uploaded"
-              addLabel="Add evidence"
-            />
-            <label className="inline-flex items-center gap-2 mt-2 px-3 py-1.5 text-[12px] bg-background-100 text-foreground-600 rounded-lg border border-background-200 hover:bg-background-200 transition-smooth cursor-pointer">
-              <AppIcon className="ri-upload-2-line" />Upload file
-              <input type="file" multiple className="hidden" onChange={(e) => set({ eligibility: { ...ilr.eligibility, evidenceFiles: [...ilr.eligibility.evidenceFiles, ...Array.from(e.target.files ?? []).map((f) => f.name)] } })} />
-            </label>
+            {/* Stored in Azure with its blob path on the Extended_ILR row, not in the answers. */}
+            <IlrEligibilityEvidence />
           </div>
         </Fieldset>
 
         <Fieldset legend="Employer Details" intro="Please provide the address you work at:">
-          <LabeledInput label="Organisation Name" value={ilr.employer.organisationName} onChange={(v) => set({ employer: { ...ilr.employer, organisationName: v } })} />
-          <LabeledInput label="Postcode" value={ilr.employer.postcode} onChange={(v) => set({ employer: { ...ilr.employer, postcode: v } })} />
-          <LabeledInput label="Address" value={ilr.employer.address} onChange={(v) => set({ employer: { ...ilr.employer, address: v } })} />
-          <LabeledInput label="City" value={ilr.employer.city} onChange={(v) => set({ employer: { ...ilr.employer, city: v } })} />
-          <LabeledInput label="Line Manager name" value={ilr.employer.lineManagerName} onChange={(v) => set({ employer: { ...ilr.employer, lineManagerName: v } })} />
-          <LabeledInput label="Line Manager email" type="email" value={ilr.employer.lineManagerEmail} onChange={(v) => set({ employer: { ...ilr.employer, lineManagerEmail: v } })} />
-          <LabeledInput label="Line Manager phone" type="tel" value={ilr.employer.lineManagerPhone} onChange={(v) => set({ employer: { ...ilr.employer, lineManagerPhone: v } })} />
+          <LabeledInput label="Organisation Name" missingKey="Employer — organisation name" value={ilr.employer.organisationName} onChange={(v) => set({ employer: { ...ilr.employer, organisationName: v } })} />
+          <LabeledInput label="Postcode" missingKey="Employer — postcode" value={ilr.employer.postcode} onChange={(v) => set({ employer: { ...ilr.employer, postcode: v } })} />
+          <LabeledInput label="Address" missingKey="Employer — address" value={ilr.employer.address} onChange={(v) => set({ employer: { ...ilr.employer, address: v } })} />
+          <LabeledInput label="City" missingKey="Employer — city" value={ilr.employer.city} onChange={(v) => set({ employer: { ...ilr.employer, city: v } })} />
+          <LabeledInput label="Line Manager name" missingKey="Line manager — name" value={ilr.employer.lineManagerName} onChange={(v) => set({ employer: { ...ilr.employer, lineManagerName: v } })} />
+          <LabeledInput label="Line Manager email" type="email" missingKey="Line manager — email" value={ilr.employer.lineManagerEmail} onChange={(v) => set({ employer: { ...ilr.employer, lineManagerEmail: v } })} />
+          <LabeledInput label="Line Manager phone" type="tel" missingKey="Line manager — phone" value={ilr.employer.lineManagerPhone} onChange={(v) => set({ employer: { ...ilr.employer, lineManagerPhone: v } })} />
         </Fieldset>
 
         <Fieldset legend="Other training">
-          <YesNoRadio legend="Have you attended any other government funded training programmes in the last 12 months?" name="ot-gov" value={ilr.otherTraining.attended12m} onChange={(v) => set({ otherTraining: { ...ilr.otherTraining, attended12m: v } })} />
+          <YesNoRadio legend="Have you attended any other government funded training programmes in the last 12 months?" name="ot-gov" error={yn('Other training in the last 12 months')} value={ilr.otherTraining.attended12m} onChange={(v) => set({ otherTraining: { ...ilr.otherTraining, attended12m: v } })} />
           {ilr.otherTraining.attended12m && (
-            <LabeledInput label="When was it completed?" type="date" value={ilr.otherTraining.completedWhen} onChange={(v) => set({ otherTraining: { ...ilr.otherTraining, completedWhen: v } })} />
+            <LabeledInput label="When was it completed?" type="date" missingKey="Other training — when completed" value={ilr.otherTraining.completedWhen} onChange={(v) => set({ otherTraining: { ...ilr.otherTraining, completedWhen: v } })} />
           )}
         </Fieldset>
 
         <Fieldset legend="Personal Circumstances">
-          <LabeledTextarea label="Do you have any caring responsibilities?" value={ilr.circumstances.caringResponsibilities} onChange={(v) => set({ circumstances: { ...ilr.circumstances, caringResponsibilities: v } })} />
+          <LabeledTextarea label="Do you have any caring responsibilities?" missingKey="Caring responsibilities" value={ilr.circumstances.caringResponsibilities} onChange={(v) => set({ circumstances: { ...ilr.circumstances, caringResponsibilities: v } })} />
           <LabeledTextarea label="Are there any other personal circumstances you want to tell us about?" value={ilr.circumstances.other} onChange={(v) => set({ circumstances: { ...ilr.circumstances, other: v } })} />
-          <YesNoRadio legend="Care leaver" name="pc-care" value={ilr.circumstances.careLeaver} onChange={(v) => set({ circumstances: { ...ilr.circumstances, careLeaver: v } })} />
+          <YesNoRadio legend="Care leaver" name="pc-care" error={yn('Care leaver')} value={ilr.circumstances.careLeaver} onChange={(v) => set({ circumstances: { ...ilr.circumstances, careLeaver: v } })} />
         </Fieldset>
 
         <Fieldset legend="Programme understanding">
-          <LabeledTextarea label="What is your understanding of the programme you are applying for?" value={ilr.understanding.programmeUnderstanding} onChange={(v) => set({ understanding: { ...ilr.understanding, programmeUnderstanding: v } })} />
-          <LabeledTextarea label="How will this programme help you in your career development/aspirations, and/or with your progression?" rows={5} value={ilr.understanding.careerProgression} onChange={(v) => set({ understanding: { ...ilr.understanding, careerProgression: v } })} />
+          <LabeledTextarea label="What is your understanding of the programme you are applying for?" missingKey="Understanding of the programme" value={ilr.understanding.programmeUnderstanding} onChange={(v) => set({ understanding: { ...ilr.understanding, programmeUnderstanding: v } })} />
+          <LabeledTextarea label="How will this programme help you in your career development/aspirations, and/or with your progression?" rows={5} missingKey="Career progression" value={ilr.understanding.careerProgression} onChange={(v) => set({ understanding: { ...ilr.understanding, careerProgression: v } })} />
         </Fieldset>
 
-        <Fieldset legend="Additional information">
-          <YesNoRadio legend="Are you aged between 16 and 18?" name="a-1618" value={ilr.additional.aged16to18} onChange={(v) => set({ additional: { ...ilr.additional, aged16to18: v } })} />
-          <YesNoRadio legend="Are you aged between 19 and 24?" name="a-1924" value={ilr.additional.aged19to24} onChange={(v) => set({ additional: { ...ilr.additional, aged19to24: v } })} />
-        </Fieldset>
+        {/* Replaced the age questions, media consent, the learning declaration and
+            the provider declaration. Wording shared with the PDF (ilrAdditionalText). */}
+        <Fieldset legend="Additional Information">
+          <LabeledTextarea label={IlrText.jobRoleRelevance} required rows={4} missingKey="Job role and the programme" value={ai.jobRoleRelevance} onChange={(v) => setAi({ jobRoleRelevance: v })} />
+          <LabeledSelect label={IlrText.residenceNotForFullTimeEducation} required missingKey="Residence not for full-time education" value={ai.residenceNotForFullTimeEducation} options={YES_NO_SELECT} onChange={(v) => setAi({ residenceNotForFullTimeEducation: v })} />
 
-        <Fieldset legend="Media Consent" intro="On occasion, Kent Business College may use your photograph or recordings in promotional material, on social media and other publications relating to our training provision.">
-          <YesNoRadio legend="Do you give Kent Business College consent for the above?" name="m-consent" value={ilr.media.consent} onChange={(v) => set({ media: { ...ilr.media, consent: v } })} />
-          <YesNoRadio legend="I understand that my Personal Learning Record (PLR) information will be shared with Kent Business College and other relevant organisations" name="d-plr" value={ilr.declarations.plrShared} onChange={(v) => set({ declarations: { ...ilr.declarations, plrShared: v } })} />
-          <YesNoRadio legend="I understand that I am on programme that is part funded by the DfE. I understand that members of the qualification and funding authorities may contact me in connection to my apprenticeship" name="d-dfe" value={ilr.declarations.dfeContact} onChange={(v) => set({ declarations: { ...ilr.declarations, dfeContact: v } })} />
-          <YesNoRadio legend="I understand that relevant personal details will be provided to the End Point and Awarding Organisation so that Registration and Certification can take place" name="d-epao" value={ilr.declarations.epaoDetails} onChange={(v) => set({ declarations: { ...ilr.declarations, epaoDetails: v } })} />
-          <YesNoRadio legend="I understand that Kentbusinesscollege will hold any relevant copies of my certificates for audit purposes" name="d-certs" value={ilr.declarations.kbcHoldsCerts} onChange={(v) => set({ declarations: { ...ilr.declarations, kbcHoldsCerts: v } })} />
-          <YesNoRadio legend="I confirm that all the information contained in this application is accurate and true" name="d-accurate" value={ilr.declarations.infoAccurate} onChange={(v) => set({ declarations: { ...ilr.declarations, infoAccurate: v } })} />
-          <YesNoRadio legend="Could you confirm whether you expect to spend more than 50% of your working hours in England? (The measure of 50% should exclude any time expected to be spent outside of England in remote and/or hybrid working)" name="d-50pc" value={ilr.declarations.over50PercentEngland} onChange={(v) => set({ declarations: { ...ilr.declarations, over50PercentEngland: v } })} />
-          <LabeledSelect label={'Please confirm your "current wage rate per hour" is equal to or higher than:'} value={ilr.declarations.wageRateBand} options={WAGE_BAND_OPTIONS} onChange={(v) => set({ declarations: { ...ilr.declarations, wageRateBand: v } })} />
+          <h4 className="text-[13px] font-heading font-semibold text-foreground-800 pt-4 pb-1">EHCP Status</h4>
+          <p className="text-[12px] text-foreground-500 pb-2 leading-relaxed">{IlrText.ehcpSharing}</p>
+          <LabeledSelect label={IlrText.ehcp} required missingKey="EHCP" value={ai.ehcp} options={YES_NO_SELECT} onChange={(v) => setAi({ ehcp: v })} />
+          <p className="text-[12px] text-foreground-500 py-2 leading-relaxed">{IlrText.ehcpUse}</p>
+
+          <YesNoRadio legend={IlrText.over50PercentEngland} name="d-50pc" error={yn('Declaration — over 50% in England')} value={ilr.declarations.over50PercentEngland} onChange={(v) => set({ declarations: { ...ilr.declarations, over50PercentEngland: v } })} />
+          <LabeledSelect label={IlrText.wageRateBand} required missingKey="Wage rate band" value={ilr.declarations.wageRateBand} options={[...IlrText.wageRateOptions]} onChange={(v) => set({ declarations: { ...ilr.declarations, wageRateBand: v } })} />
           <p className="text-[12px] text-foreground-500 py-2 leading-relaxed">
             If you are not sure use this link to check:{' '}
-            <a href="https://www.gov.uk/become-apprentice/pay-and-conditions" target="_blank" rel="noreferrer" className="text-primary-600 hover:underline">
-              https://www.gov.uk/become-apprentice/pay-and-conditions
+            <a href={IlrText.wageRateLink} target="_blank" rel="noreferrer" className="text-primary-600 hover:underline">
+              {IlrText.wageRateLink}
             </a>
           </p>
-          <YesNoRadio legend="Have you ever been known by any other name?" name="d-othername" value={ilr.declarations.knownByOtherName} onChange={(v) => set({ declarations: { ...ilr.declarations, knownByOtherName: v } })} />
-          <p className="text-[12px] text-foreground-500 py-2 leading-relaxed">
-            Your personal learning record (PLR) is a permanent online record of your qualifications and achievements. Your Training
-            Provider needs to access your PLR records to identify if you have any qualifications that could be considered as Recognised
-            Prior Learning or exemptions.
-          </p>
-          <p className="text-[12px] text-foreground-500 pb-2 leading-relaxed">
-            Your Personal Learning Record (PLR) data may be shared with authorised organisations where required for apprenticeship
-            delivery, compliance, funding, quality assurance, assessment, and audit purposes. This may include the Department for
-            Education (DfE), End-Point Assessment Organisations (EPAOs), Ofsted, awarding bodies, employers, auditors, and other
-            authorised partners. Your data will be retained for a period of 6 years, in line with relevant funding, our compliance
-            record, and record-keeping requirements.
-          </p>
-          <YesNoRadio legend="Please confirm that you are aware your training provider will need to access your PLR:" name="d-plraccess" value={ilr.declarations.plrAccessAware} onChange={(v) => set({ declarations: { ...ilr.declarations, plrAccessAware: v } })} />
-        </Fieldset>
-
-        {/* Learning declaration — mirrors the signature page of the printed document. */}
-        <Fieldset legend="Learning declaration">
-          <div className="text-[12px] text-foreground-600 leading-relaxed space-y-2 mb-3">
-            <p>I confirm my agreement to share my Personal Learning Record (PLR) information with Kent Business College and other relevant bodies.</p>
-            <p>I understand that my programme is supported and funded by the Department of Education (DfE) on behalf of the Secretary of State. I am happy to be contacted by the relevant funding authorities in connection with this programme.</p>
-            <p>I confirm all the information completed in this Application for learning document is accurate.</p>
-          </div>
-          <LabeledInput label="First Names" value={ilr.learnerSignature.firstNames} onChange={(v) => set({ learnerSignature: { ...ilr.learnerSignature, firstNames: v } })} />
-          <LabeledInput label="Surname" value={ilr.learnerSignature.surname} onChange={(v) => set({ learnerSignature: { ...ilr.learnerSignature, surname: v } })} />
-          <LabeledInput label="Date" type="date" value={ilr.learnerSignature.date} onChange={(v) => set({ learnerSignature: { ...ilr.learnerSignature, date: v } })} />
-          <SignatureField
-            label="Learner signature"
-            signatoryName={[ilr.learnerSignature.firstNames, ilr.learnerSignature.surname].filter(Boolean).join(' ')}
-            value={ilr.learnerSignature.signatureUrl}
-            onChange={(v) => set({ learnerSignature: { ...ilr.learnerSignature, signatureUrl: v || undefined, date: v && !ilr.learnerSignature.date ? new Date().toISOString().slice(0, 10) : ilr.learnerSignature.date } })}
-          />
-          {Boolean(personalSignature) && ilr.learnerSignature.signatureUrl === personalSignature && (
-            <p className="text-[11px] text-foreground-400 -mt-1 mb-1">
-              <i className="ri-information-line mr-1" />Using the signature from your Personal details. Replace it here to sign this declaration differently.
-            </p>
+          {/* Answering No clears the listed names, so a hidden answer is never saved or printed. */}
+          <YesNoRadio legend={IlrText.knownByOtherName} name="d-othername" error={yn('Known by another name')} value={ilr.declarations.knownByOtherName} onChange={(v) => set({ declarations: { ...ilr.declarations, knownByOtherName: v }, ...(v ? {} : { additionalInformation: { ...ai, otherNames: '' } }) })} />
+          {ilr.declarations.knownByOtherName === true && (
+            <LabeledTextarea label={IlrText.otherNames} value={ai.otherNames} onChange={(v) => setAi({ otherNames: v })} />
           )}
-        </Fieldset>
 
-        <Fieldset legend="Provider / Sub-contractor Declaration">
-          <p className="text-[12px] text-foreground-600 leading-relaxed mb-3">
-            I confirm I have seen evidence to verify the learners identity, immigration permission (if applicable) and relevant
-            eligibility for this qualification/funding.
-          </p>
-          <LabeledInput label="Print Name" value={ilr.providerSignature.printName} onChange={(v) => set({ providerSignature: { ...ilr.providerSignature, printName: v } })} />
-          <LabeledInput label="Date" type="date" value={ilr.providerSignature.date} onChange={(v) => set({ providerSignature: { ...ilr.providerSignature, date: v } })} />
-          <SignatureField
-            label="Provider signature"
-            signatoryName={ilr.providerSignature.printName}
-            value={ilr.providerSignature.signatureUrl}
-            onChange={(v) => set({ providerSignature: { ...ilr.providerSignature, signatureUrl: v || undefined, date: v && !ilr.providerSignature.date ? new Date().toISOString().slice(0, 10) : ilr.providerSignature.date } })}
-          />
+          <p className="text-[12px] text-foreground-600 font-medium pt-3 pb-2 leading-relaxed">{IlrText.plrRecord}</p>
+          <p className="text-[12px] text-foreground-500 pb-2 leading-relaxed">{IlrText.plrSharing}</p>
+          <YesNoRadio legend={IlrText.plrAccessAware} name="d-plraccess" error={yn('Aware provider will access PLR')} value={ilr.declarations.plrAccessAware} onChange={(v) => set({ declarations: { ...ilr.declarations, plrAccessAware: v } })} />
         </Fieldset>
 
         {/* Save + export. The document renders whatever is on screen, so it can

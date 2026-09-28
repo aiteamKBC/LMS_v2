@@ -1900,6 +1900,7 @@ def learner_summary(request, kind, pk):
             "learner_type", "aptem_id", "start_date", "end_date",
             "learner_start_date",
             "practical_period_end_date", "apprenticeship_end_date",
+            "onboarding_status",
         ).get(pk=pk)
         resolved_status = programme_status(source)
     except model.DoesNotExist:
@@ -1917,6 +1918,9 @@ def learner_summary(request, kind, pk):
         "phone": _s(source.phone_number),
         "programme": _s(source.programme),
         "programmeStatus": resolved_status,
+        # 'Submitted' once the learner hands in their enrolment wizard,
+        # 'Completed' once staff sign it off; the learner's Reviews unlock then.
+        "onboardingStatus": _s(getattr(source, "onboarding_status", "")),
         "cohort": _s(source.cohort),
         "group": _s(source.group),
         "employer": _s(source.employer),

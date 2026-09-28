@@ -34,6 +34,7 @@ import { caseFileTabs, type CaseFileTabId } from './components/caseFileTabs.conf
 import { LearnerCaseFileHeader } from './components/LearnerCaseFileHeader';
 import { AttendanceTab } from './tabs/AttendanceTab';
 import { ReviewsTab } from './tabs/ReviewsTab';
+import { EnrolmentDocumentsTab } from './tabs/EnrolmentDocumentsTab';
 import { EvidencePreviewModal, ProgressTab } from './tabs/ProgressTab';
 import { selectCaseFileKsbRows, selectCaseFileKsbSummary, type EvidencePreviewTarget } from './domain/ksbSelectors';
 import { formatAttendanceFraction } from './formatters';
@@ -181,6 +182,8 @@ export default function LearnerCaseFile() {
         return dashboardKind && (data.enrolmentId || data.learnerId)
           ? <AssignmentsTab kind={dashboardKind} learnerId={data.enrolmentId || data.learnerId} markingState={caseFileMarking} />
           : <EmptyState text="Assignments are unavailable because this learner's record type is unknown." />;
+      case 'enrolment-documents':
+        return <EnrolmentDocumentsTab learnerId={data.learnerId} />;
       case 'coach-notes':
         return <DocumentsTab data={data} />;
       case 'support':

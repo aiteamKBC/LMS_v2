@@ -42,6 +42,7 @@ from .booking_calendar import booking_calendar_payload, booking_date_restriction
 # Imported rather than restated so the gate, the booking and the calendar
 # cannot disagree about either.
 from .aptem_status import programme_status
+from .constants import DEFAULT_PROGRAMME_STATUS, DELIVERY_PROGRAMME_STATUS
 from .first_session import (
     SESSION_TYPE as FIRST_SESSION_TYPE,
     imported_from_aptem as first_session_imported_from_aptem,
@@ -1377,6 +1378,14 @@ def learner_calendar_book(request, kind, pk):
             return _error(
                 "No case owner has been assigned to you yet. Please contact your programme team.", 400
             )
+        if is_first_session and _still_enrolling(kind, learner):
+            # The gate stops offering it, but the calendar still lists the type:
+            # the order is kept here, where a stale tab cannot get round it.
+            return _error(
+                "Your first learning session is booked once your enrolment is complete: "
+                "your enrolment form, your three onboarding reviews and your compliance "
+                "documents.", 400
+            )
         if is_first_session:
             # There is only ever one first session. Without this a learner
             # could book a second from a stale tab and end up with two
@@ -1864,9 +1873,6 @@ def learner_calendar_reschedule(request, kind, pk):
         return _error("scheduledDate is required.", 400)
     if not scheduled_time:
         return _error("scheduledTime is required.", 400)
-    date_restriction = booking_date_restriction(scheduled_date)
-    if date_restriction is not None:
-        return _error(date_restriction.message, 400)
 
     try:
         record = _learner_booking_record(kind, pk, event_key)
@@ -1874,6 +1880,14 @@ def learner_calendar_reschedule(request, kind, pk):
             return _error("Booking not found.", 404)
         if record.status != CoachCalendarEvent.STATUS_SCHEDULED:
             return _error("Only an upcoming scheduled session can be rescheduled.", 409)
+        # Checked once the row is known: a first session may move to a Sunday,
+        # every other session type keeps the weekday-only calendar.
+        date_restriction = booking_date_restriction(
+            scheduled_date,
+            allow_sunday=_s(record.event_type).lower() == "first-session",
+        )
+        if date_restriction is not None:
+            return _error(date_restriction.message, 400)
         if (
             record.scheduled_date == scheduled_date
             and record.scheduled_time == scheduled_time
@@ -2105,6 +2119,34 @@ def _already_started(learner):
     return programme_status(learner).casefold() == "active"
 
 
+#: An apprentice's enrolment stages, before the one that books the first
+#: session. The wizard and the three onboarding reviews happen at Onboarding,
+#: the four compliance documents at Delivery; signing the last of those moves
+#: them to Ready to enrol (learner_progression), and only then is the first
+#: session theirs to book. Blank is the backend's own "Fresh user" default.
+APPRENTICE_ENROLMENT_STATUSES = frozenset(
+    status.casefold()
+    for status in ("", DEFAULT_PROGRAMME_STATUS, "Onboarding", DELIVERY_PROGRAMME_STATUS)
+)
+
+
+def _still_enrolling(kind, learner):
+    """Whether this is an apprentice who has not finished enrolling yet.
+
+    The first session comes after every enrolment step for an apprentice, so
+    until then there is nothing to book and no programme to hold them out of --
+    their own enrolment is the page they need. Commercial learners have no such
+    steps and book from the start, as before.
+
+    The record's own learner type wins over the URL's ``kind``: both kinds live
+    in one table, and the row is what says which one this learner is.
+    """
+    learner_type = _s(getattr(learner, "learner_type", "")) or _s(kind)
+    if learner_type.casefold() != "apprenticeship":
+        return False
+    return programme_status(learner).strip().casefold() in APPRENTICE_ENROLMENT_STATUSES
+
+
 @learner_self_or_staff(kwarg="pk")
 def learner_first_session(request, kind, pk):
     """Whether this learner has booked their first session, and when.
@@ -2112,7 +2154,8 @@ def learner_first_session(request, kind, pk):
         GET /learner_api/calendar/<kind>/<id>/first-session/
 
     -> {caseOwner: {name, email} | null, booked: bool, event: {...} | null,
-        startsOn: "YYYY-MM-DD" | null, access: "book" | "waiting" | "open"}
+        startsOn: "YYYY-MM-DD" | null,
+        access: "enrolling" | "book" | "waiting" | "open"}
 
     The first session used to be arranged by whoever enrolled the learner. It is
     now the learner's own first task: they sign in, book it with their case
@@ -2122,6 +2165,9 @@ def learner_first_session(request, kind, pk):
     browser -- a learner must not be able to reach their programme early by
     changing a date on their own machine:
 
+    * ``enrolling`` -- an apprentice still working through enrolment
+      (``_still_enrolling``). The first session comes after it, so nothing is
+      held and nothing is offered yet.
     * ``book``    -- nothing booked yet; the learner books it.
     * ``waiting`` -- booked, but the day has not arrived.
     * ``open``    -- the session day has come (or passed), so the programme runs
@@ -2169,6 +2215,12 @@ def learner_first_session(request, kind, pk):
         # permanent lockout the Aptem case above avoids, reached by a different
         # route (activated outside this booking flow, or before it existed).
         access = "open"
+    elif _still_enrolling(kind, learner):
+        # Checked before the booking itself: an apprentice who booked under the
+        # old order must not be held on the waiting screen, away from the
+        # enrolment steps still left. The booking is kept, and takes over again
+        # once they reach Ready to enrol.
+        access = "enrolling"
     elif starts_on is None:
         access = "book"
     else:

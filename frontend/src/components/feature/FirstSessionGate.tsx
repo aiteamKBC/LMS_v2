@@ -23,9 +23,12 @@ import { RouteLoadingSkeleton } from './RouteLoadingSkeleton';
 // Two states, both decided by the server (`access`), never by this browser: a
 // learner must not reach their programme early by changing their own clock.
 //
-//   'book'    -> the booking screen below
-//   'waiting' -> the holding screen below
-//   'open'    -> nothing; the programme renders normally
+//   'enrolling' -> nothing; an apprentice books only once every enrolment
+//                  step is done, and until then their enrolment is the page
+//                  they need (useOnboardingRedirect keeps them on it)
+//   'book'      -> the booking screen below
+//   'waiting'   -> the holding screen below
+//   'open'      -> nothing; the programme renders normally
 //
 // Note this is NOT the cohort start-date lockout that LearnerProgrammeGate
 // used to apply and that was deliberately removed. That held learners out of
@@ -109,7 +112,7 @@ function LearnerFirstSessionGate({ children }: { children: ReactNode }) {
   // has done nothing wrong, and holding them out on a network error would be
   // the same screen as holding them out on purpose.
   if (loadError && !state) return <>{children}</>;
-  if (!state || state.access === 'open') return <>{children}</>;
+  if (!state || state.access === 'open' || state.access === 'enrolling') return <>{children}</>;
 
   return (
     <Holding

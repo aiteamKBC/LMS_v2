@@ -170,3 +170,64 @@ export async function saveExtendedIlr(
   bootstrapResource.invalidate(key);
   return saved;
 }
+
+// ── Eligibility evidence ────────────────────────────────────────────────────
+// Proof of identification/residency for the ILR's Eligibility section. Files go
+// to Azure through quarantine -> scan -> approved, and each one's blob path is
+// recorded on the learner's Extended_ILR row (see ilr_eligibility_evidence.py).
+
+export interface IlrEvidenceFile {
+  id: string;
+  filename: string;
+  contentType: string;
+  sizeBytes: number | null;
+  uploadedAt: string | null;
+}
+
+export interface IlrEvidenceListing {
+  results: IlrEvidenceFile[];
+  /** True once the ILR is signed by both parties: files can no longer change. */
+  locked: boolean;
+}
+
+const evidenceBase = (kind: LearnerKind, learnerId: string) => `${BASE}/${kind}/${learnerId}/eligibility-evidence`;
+
+export function fetchIlrEvidence(kind: LearnerKind, learnerId: string): Promise<IlrEvidenceListing> {
+  return request<IlrEvidenceListing>(`${evidenceBase(kind, learnerId)}/`, { method: 'GET' });
+}
+
+/** Multipart, so no JSON Content-Type: the browser sets the boundary. */
+export async function uploadIlrEvidence(kind: LearnerKind, learnerId: string, file: File): Promise<IlrEvidenceFile> {
+  const body = new FormData();
+  body.append('file', file, file.name);
+  let res: Response;
+  try {
+    res = await fetch(`${evidenceBase(kind, learnerId)}/`, { method: 'POST', credentials: 'include', body });
+  } catch {
+    throw new Error('Could not reach the server. Is the backend running on port 8000?');
+  }
+  const text = await res.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!res.ok) throw new Error((data && data.error) || `Upload failed (${res.status})`);
+  return data as IlrEvidenceFile;
+}
+
+export async function deleteIlrEvidence(kind: LearnerKind, learnerId: string, fileId: string): Promise<void> {
+  await request<{ deleted: boolean }>(`${evidenceBase(kind, learnerId)}/${fileId}/`, { method: 'DELETE' });
+}
+
+/** A short-lived SAS URL for one stored file. */
+export async function getIlrEvidenceUrl(kind: LearnerKind, learnerId: string, fileId: string): Promise<string> {
+  const data = await request<{ url: string }>(`${evidenceBase(kind, learnerId)}/${fileId}/download/`, { method: 'GET' });
+  return data.url;
+}
+
+// ── Employer Details prefill ────────────────────────────────────────────────
+// From the learner's assigned employer and that employer's organisation (see
+// ilr_employer_details.py). Every field is '' when the record has nothing.
+
+export type IlrEmployerDetails = IlrForm['employer'];
+
+export function fetchIlrEmployerDetails(kind: LearnerKind, learnerId: string): Promise<IlrEmployerDetails> {
+  return request<IlrEmployerDetails>(`${BASE}/${kind}/${learnerId}/employer-details/`, { method: 'GET' });
+}
