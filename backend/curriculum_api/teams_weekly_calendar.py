@@ -84,10 +84,26 @@ def save_weekday_calendar(payload, graph_settings, series=None):
         **payload,
         'hideAttendees': True,
     }
-    # Existing calendars are repaired silently by default.  A caller must opt
-    # in to publishing a new attendee list; creation keeps the historical
-    # publish behaviour so a newly-created meeting still invites its roster.
-    notify_attendees = v.truthy(combined.get('notifyAttendees')) if series else True
+    # A change to the meeting itself is announced to everyone already invited.
+    # A save that only corrects who is invited, or how the meeting runs, is not:
+    # it goes to Microsoft silently and the people it adds are forwarded the
+    # meeting on their own, so nobody already on the calendar is mailed about a
+    # learner joining it. The LMS schedule email to those added is separate.
+    people_only = bool(combined.get('peopleOnly'))
+    notify_attendees = not people_only
+    newly_invited = v.teams_newly_invited(
+        [
+            *v.teams_series_email_list(series.get('attendees')),
+            *v.teams_series_email_list(series.get('presenters')),
+            *v.teams_series_email_list(series.get('co_organizers')),
+            v.clean_str(series.get('organizer_email')),
+        ],
+        [
+            *v.teams_series_email_list(combined.get('coOrganizers')),
+            *v.teams_series_email_list(combined.get('presenters')),
+            *v.teams_series_email_list(combined.get('attendees')),
+        ],
+    ) if existing else []
     # An existing calendar always belongs to its stored organizer's mailbox.
     organizer = v.clean_str(series.get('organizer_email')) or v.teams_new_meeting_organizer(combined.get('organizerEmail'))
     if not organizer:
@@ -121,9 +137,9 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                 'repeat': 'weekly' if len(items) > 1 else 'none', 'repeatOccurrences': len(items),
                 'transactionId': f"{combined.get('transactionId') or 'TEAMS-' + str(combined.get('moduleCatalogueId') or series.get('id'))}-{day}",
             }
-            event_body, attendees, presenters, co_organizers, start, duration, repeat, count = v.teams_event_payload(day_payload, graph_settings)
+            event_body, invited_people, presenters, co_organizers, stored_attendees, start, duration, repeat, count = v.teams_event_payload(day_payload, graph_settings)
             event_body.setdefault('recurrence', None)
-            prepared.append((day, day_payload, event_body, attendees, presenters, co_organizers))
+            prepared.append((day, day_payload, event_body, invited_people, stored_attendees, presenters, co_organizers))
         if co_organizers and not v.has_column(v.LIVE_SESSIONS_TABLE, 'co_organizers'):
             return v.json_error('The co-organizers schema must be applied before creating this meeting.', status=409)
     except (TypeError, ValueError, KeyError) as exc:
@@ -137,7 +153,7 @@ def save_weekday_calendar(payload, graph_settings, series=None):
     tracked_numbers = set()
     publish_queue = []
     try:
-        for index, (day, day_payload, body, attendees, presenters, co_organizers) in enumerate(prepared):
+        for index, (day, day_payload, body, invited_people, stored_attendees, presenters, co_organizers) in enumerate(prepared):
             previous = next((item for item in manifest if item.get('day') == day), {})
             # When splitting a legacy calendar, keep its first link for the first day.
             if not previous and not existing and series and index == 0:
@@ -183,7 +199,7 @@ def save_weekday_calendar(payload, graph_settings, series=None):
                 # Do not manufacture tracked occurrences before Graph confirms them.
                 live_id, _ = v.persist_live_session_series(
                     {**combined, 'scheduledOccurrences': [], 'repeat': 'none'}, event, [], graph_settings,
-                    organizer, attendees, presenters, co_organizers=co_organizers, persist_occurrences=False,
+                    organizer, stored_attendees, presenters, co_organizers=co_organizers, persist_occurrences=False,
                 )
             v.update_authoring_rows(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id], {'calendar_series': v.json_db_value(manifest)})
             if first_event is None:
@@ -191,7 +207,7 @@ def save_weekday_calendar(payload, graph_settings, series=None):
             applied, meeting, option_warnings = v.apply_teams_meeting_options(
                 organizer, join_url, recording=combined.get('recording') or 'none',
                 lobby_bypass=combined.get('lobbyBypass') or v.DEFAULT_TEAMS_LOBBY_BYPASS, spoken_language=combined.get('spokenLanguage') or 'en-GB',
-                attendees=attendees, presenters=presenters, co_organizers=co_organizers,
+                attendees=invited_people, presenters=presenters, co_organizers=co_organizers,
                 online_meeting_id=previous.get('onlineMeetingId'),
             )
             settings_applied = settings_applied and applied
@@ -200,7 +216,7 @@ def save_weekday_calendar(payload, graph_settings, series=None):
             warnings.extend(option_warnings)
             if day_payload['repeat'] != 'none':
                 if not combined.get('peopleOnly') and not dates_already_verified:
-                    shift_warnings, _ = v.apply_teams_occurrence_shifts(owner, quote(event_id, safe=''), body['subject'], targets, attendees)
+                    shift_warnings, _ = v.apply_teams_occurrence_shifts(owner, quote(event_id, safe=''), body['subject'], targets, invited_people)
                     warnings.extend(shift_warnings)
                 query = urlencode({'startDateTime': (min(item['start'] for item in targets) - timedelta(days=7)).isoformat(),
                                    'endDateTime': (max(item['end'] for item in targets) + timedelta(days=7)).isoformat(), '$top': 200})
@@ -239,11 +255,28 @@ def save_weekday_calendar(payload, graph_settings, series=None):
         if warnings or not settings_applied:
             raise RuntimeError('Microsoft did not accept every reviewed session or meeting option. New invitations remain pending.')
         # Every weekday must pass before any new invitation list is published.
-        if notify_attendees:
-            for checked, recipients, targets, recurring in publish_queue:
-                publish_attendees(microsoft_graph_request, owner, checked, recipients)
+        # The list itself is always published: who is on a meeting is not the
+        # author's email choice to make. Only whether Microsoft announces it is,
+        # and an unchanged list is skipped inside publish_attendees, so a save
+        # that moves nobody sends nothing.
+        for checked, recipients, targets, recurring in publish_queue:
+            written = publish_attendees(
+                microsoft_graph_request, owner, checked, recipients,
+                extra_headers=None if notify_attendees else v.GRAPH_SILENT_INVITE_HEADERS,
+            )
+            if written:
                 verify_calendar(microsoft_graph_request, owner, checked['id'], targets,
                                 (checked.get('onlineMeeting') or {}).get('joinUrl'), recurring)
+
+        if not notify_attendees and newly_invited:
+            # Every day's series, and only after all of them are verified: the
+            # first thing someone added sees should be the finished calendar.
+            warnings.extend(v.forward_teams_invitation(
+                microsoft_graph_request, owner,
+                [v.clean_str(checked.get('id')) for checked, _r, _t, _rec in publish_queue],
+                newly_invited,
+                comment=f"You have been added to {v.teams_calendar_subject(combined, series)}.",
+            ))
 
         days = {day for day, _ in groups}
         for old in list(manifest):
@@ -263,7 +296,7 @@ def save_weekday_calendar(payload, graph_settings, series=None):
             'start_datetime': v.parse_graph_datetime(combined.get('startDateTimeUtc')),
             'duration_minutes': combined.get('durationMinutes') or 60, 'repeat_pattern': 'weekly',
             'repeat_occurrences': len(requested_numbers), 'module_title': v.teams_calendar_subject(combined, series),
-            'attendees': v.json_db_value(attendees), 'presenters': v.json_db_value(presenters), 'co_organizers': v.json_db_value(co_organizers),
+            'attendees': v.json_db_value(stored_attendees), 'presenters': v.json_db_value(presenters), 'co_organizers': v.json_db_value(co_organizers),
             'recording': combined.get('recording') or 'none',
             'lobby_bypass': combined.get('lobbyBypass') or v.DEFAULT_TEAMS_LOBBY_BYPASS,
             'spoken_language': combined.get('spokenLanguage') or 'en-GB',
@@ -292,7 +325,7 @@ def save_weekday_calendar(payload, graph_settings, series=None):
         'liveSessionId': live_id, 'eventId': main['eventId'], 'joinUrl': main['joinUrl'],
         'onlineMeetingId': main.get('onlineMeetingId') or '', 'meetingOptionsUrl': main.get('meetingOptionsUrl') or '',
         'webLink': (first_event or {}).get('webLink') or '', 'organizerEmail': organizer,
-        'attendees': attendees, 'presenters': presenters, 'coOrganizers': co_organizers,
+        'attendees': stored_attendees, 'presenters': presenters, 'coOrganizers': co_organizers,
         'startDateTimeUtc': combined.get('startDateTimeUtc'), 'durationMinutes': combined.get('durationMinutes'),
         'repeat': 'weekly', 'repeatOccurrences': len(requested_numbers), 'trackedOccurrences': len(tracked_numbers),
         'settingsApplied': settings_applied, 'trackingReady': all(item.get('onlineMeetingId') for item in manifest),

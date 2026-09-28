@@ -32,6 +32,9 @@ class Response(dict):
         super().__init__(data or {})
         self.status_code = status
 
+    def json(self):
+        return dict(self)
+
 
 class CalendarFixture(unittest.TestCase):
     def setUp(self):
@@ -64,6 +67,12 @@ class CalendarFixture(unittest.TestCase):
             return {'value': copy.deepcopy(self.instances)}
         if resource.endswith('/events/master-1'):
             return copy.deepcopy(self.master)
+        if '/events/instance-' in resource:
+            # One occurrence read on its own. A cancelled one has left the
+            # calendar, which the reader reports as a confirmed 404 (None).
+            name = resource.rsplit('/events/', 1)[1]
+            found = next((item for item in self.instances if item['id'] == name), None)
+            return copy.deepcopy(found) if found else None
         if resource.endswith('/calendars'):
             return {'value': copy.deepcopy(self.calendars)}
         if resource.endswith('/calendars/calendar-1/events'):
@@ -358,6 +367,22 @@ class BoundaryTests(unittest.TestCase):
                     response.json = lambda: {'error': {'code': code}}
                     with self.subTest(status=status, code=code), self.assertRaises(CalendarStateError):
                         read('users/owner/events/master')
+
+    def test_calendar_transport_retries_a_transient_graph_read(self):
+        graph = types.ModuleType('coach_api.views')
+        graph.get_graph_settings = lambda: {'base_url': 'https://graph.microsoft.com/v1.0'}
+        graph.microsoft_graph_token = lambda: 'synthetic-token'
+        transport_error = type('TransportError', (Exception,), {})
+        response = types.SimpleNamespace(status_code=200, json=lambda: {'id': 'master'})
+        client = types.SimpleNamespace(get=Mock(side_effect=[transport_error(), response]))
+        namespace = {'contextmanager': contextmanager, 'time': time, 'CalendarStateError': CalendarStateError,
+                     'httpx': types.SimpleNamespace(HTTPError=transport_error,
+                         Client=lambda **kwargs: nullcontext(client))}
+        functions(ROOT / 'teams_calendar_state.py', {'calendar_reader'}, namespace)
+        with patch.dict(sys.modules, {'coach_api': types.ModuleType('coach_api'), 'coach_api.views': graph}):
+            with namespace['calendar_reader']() as read:
+                self.assertEqual(read('users/owner/events/master?$select=id'), {'id': 'master'})
+        self.assertEqual(client.get.call_count, 2)
 
 
 if __name__ == '__main__':

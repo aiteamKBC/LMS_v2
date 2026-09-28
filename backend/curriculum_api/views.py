@@ -1,3 +1,4 @@
+import base64
 import contextlib
 import functools
 import hashlib
@@ -24,6 +25,7 @@ from zoneinfo import ZoneInfo
 
 from django.conf import settings
 from django.core.cache import cache
+from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 from django.db import DatabaseError, IntegrityError, connection, connections, transaction
 from django.core.serializers.json import DjangoJSONEncoder
@@ -1079,6 +1081,16 @@ AI_MATERIAL_UPLOAD_EXTENSIONS = {'.pdf', '.epub', '.doc', '.docx', '.txt', '.rtf
 #: The component-id slot in the upload path. Not a component: the book belongs
 #: to the module, so every module has exactly one of these folders.
 AI_MATERIAL_UPLOAD_SLOT = 'ai-material'
+#: The same slot idea for module artwork. One cover per module.
+MODULE_COVER_UPLOAD_SLOT = 'cover'
+#: The image types the builder's picker produces, and the extension each is
+#: stored as. Anything else is left exactly as it arrived.
+MODULE_COVER_EXTENSIONS = {
+    'image/jpeg': '.jpg', 'image/jpg': '.jpg', 'image/png': '.png',
+    'image/gif': '.gif', 'image/webp': '.webp', 'image/avif': '.avif',
+    'image/svg+xml': '.svg', 'image/bmp': '.bmp',
+}
+MODULE_COVER_DATA_URI = re.compile(r'^data:(image/[a-zA-Z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)$')
 #: Where the book's metadata lives on ``curriculum.module_details``.
 AI_MATERIAL_COLUMN = 'ai_material'
 
@@ -1086,6 +1098,56 @@ AI_MATERIAL_COLUMN = 'ai_material'
 def safe_upload_segment(value, fallback):
     text = get_valid_filename(clean_str(value)).strip('._-')
     return text[:96] or fallback
+
+
+def stored_module_cover_image(module_catalogue_id, value):
+    """A module cover as a URL, storing the bytes first when it arrives inline.
+
+    The builder's picker reads the chosen file and sends it as a
+    ``data:image/...;base64,...`` URL, and that string used to be written
+    straight into ``curriculum.modules.cover_image_url`` -- up to 3 MB of base64
+    in a column every module list selects. Five modules doing it was 1.52 MB of a
+    1.79 MB ``/curriculum/modules/?compact=true`` response, 83% of it, and the
+    column is also read whole by the payload build and by My Learning. The
+    picture is the same size either way; what changes is that a list of 281
+    modules stops carrying it.
+
+    So the bytes go where every other authoring upload goes -- Azure when it is
+    configured, local disk when it is not -- and the column keeps the same
+    ``/curriculum_api/curriculum/uploads/...`` URL shape a component upload
+    stores. One cover per module, so the path has a fixed slot and a new upload
+    simply replaces the old one.
+
+    Anything that is not an inline image is returned untouched: an https:// URL
+    a curator pasted is already a URL, and '' still means "remove the cover".
+    Storage failing returns the value unchanged rather than raising -- a saved
+    module with an oversized cover is better than a module that would not save.
+    """
+    value = clean_str(value)
+    match = MODULE_COVER_DATA_URI.match(value)
+    if not match:
+        return value
+    content_type = match.group(1).lower()
+    try:
+        raw = base64.b64decode(re.sub(r'\s+', '', match.group(2)), validate=True)
+    except Exception:
+        logger.warning('Module %s sent a cover image that is not valid base64.', module_catalogue_id)
+        return value
+    if not raw:
+        return ''
+    module_segment = safe_upload_segment(module_catalogue_id, 'module')
+    extension = MODULE_COVER_EXTENSIONS.get(content_type, '.img')
+    timestamp = datetime.utcnow().strftime('%Y%m%d%H%M%S%f')
+    relative_path = (
+        f'{COMPONENT_UPLOAD_ROOT}/{module_segment}/{MODULE_COVER_UPLOAD_SLOT}/cover-{timestamp}{extension}'
+    )
+    try:
+        saved_path = upload_storage.store(ContentFile(raw), relative_path, content_type)
+    except Exception:
+        logger.exception('Unable to store the cover image for module %s.', module_catalogue_id)
+        return value
+    public_path = saved_path.removeprefix(f'{COMPONENT_UPLOAD_ROOT}/')
+    return f'/curriculum_api/curriculum/uploads/{public_path}'
 
 
 def component_upload_metadata(
@@ -1678,16 +1740,26 @@ def persist_live_session_series(payload, event, warnings, graph_settings, organi
 def link_live_session_series_to_module(module_catalogue_id, payload):
     ensure_live_sessions_table()
     live_session_ids = set()
-    for week in payload.get('weekStructure') or []:
-        for component in week.get('components') or []:
-            settings_payload = component.get('settings') if isinstance(component.get('settings'), dict) else {}
-            live_session_id = clean_str(settings_payload.get('teamsLiveSessionId'))
-            if live_session_id:
-                live_session_ids.add(live_session_id)
-    delivery_metadata = payload.get('deliveryMetadata') if isinstance(payload.get('deliveryMetadata'), dict) else {}
-    metadata_id = clean_str(delivery_metadata.get('teamsLiveSessionId'))
-    if metadata_id:
-        live_session_ids.add(metadata_id)
+    # A full structure is authoritative about which live-session rows belong
+    # to this module.  Its delivery metadata can be inherited from an older
+    # module snapshot and may still name the source meeting; using that fallback
+    # during a full save would silently move the source calendar to the target
+    # module when a component is copied between groups.  Metadata remains the
+    # compatibility path for the legacy partial save that sends no structure.
+    has_structure = 'weekStructure' in payload or 'weeks' in payload
+    if has_structure:
+        weeks = payload.get('weekStructure') if 'weekStructure' in payload else payload.get('weeks')
+        for week in weeks or []:
+            for component in week.get('components') or []:
+                settings_payload = component.get('settings') if isinstance(component.get('settings'), dict) else {}
+                live_session_id = clean_str(settings_payload.get('teamsLiveSessionId'))
+                if live_session_id:
+                    live_session_ids.add(live_session_id)
+    else:
+        delivery_metadata = payload.get('deliveryMetadata') if isinstance(payload.get('deliveryMetadata'), dict) else {}
+        metadata_id = clean_str(delivery_metadata.get('teamsLiveSessionId'))
+        if metadata_id:
+            live_session_ids.add(metadata_id)
     for live_session_id in live_session_ids:
         update_authoring_rows(
             LIVE_SESSIONS_TABLE,
@@ -1966,7 +2038,10 @@ def teams_event_payload(payload, graph_settings):
     if recurrence:
         event['recurrence'] = recurrence
     # Return normalized timing too, for the component settings response.
-    return event, invited_people, presenters, co_organizers, utc_start, duration, repeat, occurrences
+    # Return both representations deliberately: Graph needs every invited
+    # person, while the LMS attendees field must contain only people without an
+    # elevated presenter/co-organiser role.
+    return event, invited_people, presenters, co_organizers, attendees, utc_start, duration, repeat, occurrences
 
 
 def teams_single_occurrence_payload(title, target, attendees, transaction_id=''):
@@ -2393,10 +2468,18 @@ def apply_teams_occurrence_shifts(
                 continue
             transaction_seed = f'{series_event_id}:{target["session_number"]}:{target_key}'
             transaction_id = hashlib.sha256(transaction_seed.encode('utf-8')).hexdigest()
+            # The intended roster goes on at creation, silently. Publishing it
+            # afterwards used to be the only way people reached a recovered
+            # session, and that publish was gated on the author having asked for
+            # email -- so an author who chose not to email got a session with
+            # nobody on it. Membership is settled here, once, whatever the
+            # notification choice is.
             recreated = microsoft_graph_request(
                 'POST',
                 f'users/{owner_key}/events',
-                payload=teams_single_occurrence_payload(title, target, [], transaction_id),
+                payload=teams_single_occurrence_payload(
+                    title, target, invited_people, transaction_id,
+                ),
                 extra_headers=GRAPH_SILENT_INVITE_HEADERS,
             )
             standalone = teams_standalone_occurrence_meeting(
@@ -2416,9 +2499,27 @@ def apply_teams_occurrence_shifts(
 
 def verify_teams_calendar_with_standalones(
     request, owner_key, event_id, targets, expected_join_url='', recurring=True,
-    occurrence_details=None,
+    occurrence_details=None, expected_attendees=None,
 ):
-    """Verify the master series and any deleted occurrences restored separately."""
+    """Verify the master series and any deleted occurrences restored separately.
+
+    ``expected_attendees`` is checked against each separately restored session.
+    Dates alone used to be the whole of "verified", so a session rebuilt on its
+    own event with an empty invitation list passed every check and the update
+    reported success -- while nobody but the organizer had that session. An
+    occurrence is only really restored once the people it is for are on it.
+    """
+    def addresses(items):
+        """The email addresses on an attendee list, however it is written."""
+        found = set()
+        for item in items or []:
+            address = clean_str(
+                (item.get('emailAddress') or {}).get('address') if isinstance(item, dict) else item
+            )
+            if address:
+                found.add(address.lower())
+        return found
+
     details_by_number = {
         int(detail.get('session_number') or 0): detail
         for detail in (occurrence_details or [])
@@ -2438,7 +2539,7 @@ def verify_teams_calendar_with_standalones(
         detail = details_by_number.get(int(target['session_number']))
         if not detail:
             continue
-        verify_calendar(
+        standalone = verify_calendar(
             request,
             owner_key,
             clean_str(detail.get('graph_event_id')),
@@ -2446,26 +2547,72 @@ def verify_teams_calendar_with_standalones(
             clean_str(detail.get('join_url')),
             False,
         )
+        if expected_attendees is None:
+            continue
+        expected = addresses(expected_attendees)
+        actual = addresses(standalone.get('attendees'))
+        # The same set equality ``publish_attendees`` confirms a published list
+        # with: a session carrying someone the series does not invite is as wrong
+        # as one missing a learner, and neither is left standing as "verified".
+        if expected != actual:
+            raise CalendarMismatch(
+                f"Session {target['session_number']} was restored on its own Teams event "
+                'without its invited people. The calendar was not confirmed.'
+            )
     return event
 
 
 def publish_teams_calendar_attendees(
     request, owner_key, event, attendees, occurrence_details=None, *, force=False,
-    title='',
+    title='', silent=False, dates_unchanged=False,
 ):
-    """Publish the final invitation list to the master and restored sessions."""
-    if force:
-        request(
-            'PATCH',
-            f'users/{owner_key}/events/{urllib_parse.quote(clean_str(event.get("id")), safe="")}',
-            payload={
-                'subject': clean_str(title) or clean_str(event.get('subject')),
-                'hideAttendees': True,
-                'attendees': attendees,
-            },
+    """Publish the final invitation list to the master and restored sessions.
+
+    ``silent`` decides only whether Microsoft is asked to announce the write, not
+    who is on the meeting. Who belongs to a calendar event and whether an email
+    goes out are separate questions, and an author who chose not to email must
+    still end up with every intended learner invited -- the alternative, a
+    session nobody is on, is a silence bought by breaking the meeting.
+
+    A silent publish also keeps to the narrower ``attendees``-only patch, which
+    is the shape Microsoft documents as touching only the people who changed,
+    and it is skipped when the list already matches -- nothing to write is
+    nothing for Microsoft to send. A publish that is meant to be heard writes
+    either way: a session restored silently already carries its people, and
+    Microsoft puts a meeting on their calendars only when something is sent.
+    """
+    headers = GRAPH_SILENT_INVITE_HEADERS if silent else None
+    announce = not silent
+    def attendee_addresses(items):
+        return {
+            clean_str((item.get('emailAddress') or {}).get('address')).lower()
+            for item in (items or [])
+            if isinstance(item, dict) and clean_str((item.get('emailAddress') or {}).get('address'))
+        }
+
+    def needs_force_patch(current):
+        return (
+            not dates_unchanged
+            or
+            attendee_addresses(current.get('attendees')) != attendee_addresses(attendees)
+            or clean_str(title) and clean_str(title) != clean_str(current.get('subject'))
+            or current.get('hideAttendees') is not True
         )
+
+    if force:
+        if needs_force_patch(event):
+            request(
+                'PATCH',
+                f'users/{owner_key}/events/{urllib_parse.quote(clean_str(event.get("id")), safe="")}',
+                payload={
+                    'subject': clean_str(title) or clean_str(event.get('subject')),
+                    'hideAttendees': True,
+                    'attendees': attendees,
+                },
+                extra_headers=headers,
+            )
     else:
-        publish_attendees(request, owner_key, event, attendees)
+        publish_attendees(request, owner_key, event, attendees, extra_headers=headers, always=announce)
     for detail in occurrence_details or []:
         event_id = clean_str(detail.get('graph_event_id'))
         if not event_id or event_id == clean_str(event.get('id')):
@@ -2474,17 +2621,78 @@ def publish_teams_calendar_attendees(
             'GET', f'users/{owner_key}/events/{urllib_parse.quote(event_id, safe="")}',
         )
         if force:
-            request(
-                'PATCH',
-                f'users/{owner_key}/events/{urllib_parse.quote(event_id, safe="")}',
-                payload={
-                    'subject': clean_str(title) or clean_str(standalone.get('subject')),
-                    'hideAttendees': True,
-                    'attendees': attendees,
-                },
-            )
+            if needs_force_patch(standalone):
+                request(
+                    'PATCH',
+                    f'users/{owner_key}/events/{urllib_parse.quote(event_id, safe="")}',
+                    payload={
+                        'subject': clean_str(title) or clean_str(standalone.get('subject')),
+                        'hideAttendees': True,
+                        'attendees': attendees,
+                    },
+                    extra_headers=headers,
+                )
         else:
-            publish_attendees(request, owner_key, standalone, attendees)
+            publish_attendees(request, owner_key, standalone, attendees, extra_headers=headers, always=announce)
+
+
+def teams_newly_invited(stored, invited):
+    """Who a save adds to a meeting that already exists.
+
+    Compared case-insensitively against the roster the calendar holds now, so
+    moving someone between attendee, presenter and co-organizer does not make
+    them new. Order and spelling come from the incoming list.
+    """
+    was = {clean_str(email).lower() for email in (stored or []) if clean_str(email)}
+    added, seen = [], set()
+    for email in invited or []:
+        key = clean_str(email).lower()
+        if not key or key in was or key in seen:
+            continue
+        seen.add(key)
+        added.append(clean_str(email))
+    return added
+
+
+def forward_teams_invitation(request, owner_key, event_ids, recipients, comment=''):
+    """Send the meeting to the people a people-only save just added.
+
+    Microsoft's invitation preference is per write, never per person: the silent
+    attendee patch that keeps an update out of every existing invitee's mailbox
+    keeps it out of the new learner's too, and a meeting only reaches somebody's
+    calendar when something is sent to them. Forwarding is the one call Graph
+    offers that reaches named recipients alone, so the people already invited
+    stay unbothered while the person just added still gets a real Teams
+    invitation rather than only a link in an email.
+
+    Failures come back as warnings instead of raising: the calendar is already
+    saved and verified by the time this runs, and a mailbox refusing a forward
+    must not undo it or hide itself.
+    """
+    warnings = []
+    if not recipients:
+        return warnings
+    payload = {'ToRecipients': [{'emailAddress': {'address': clean_str(email)}} for email in recipients]}
+    if comment:
+        payload['Comment'] = comment
+    for event_id in dict.fromkeys(clean_str(value) for value in event_ids):
+        if not event_id:
+            continue
+        try:
+            request(
+                'POST',
+                f'users/{owner_key}/events/{urllib_parse.quote(event_id, safe="")}/forward',
+                payload=payload,
+            )
+        except (RuntimeError, ValueError) as exc:
+            warnings.append({
+                'code': 'teams_invitation_not_forwarded',
+                'message': 'Microsoft did not send the meeting invitation to everyone this save added. '
+                           'They are on the meeting and receive the LMS schedule email; forward the '
+                           'invitation from the calendar if it is still missing from theirs.',
+                'detail': str(exc),
+            })
+    return warnings
 
 
 def reschedule_single_live_session_occurrence(
@@ -2937,7 +3145,7 @@ def curriculum_teams_meeting(request):
         )
 
     try:
-        event_payload, attendees, presenters, co_organizers, utc_start, duration, repeat, occurrences = teams_event_payload(payload, graph_settings)
+        event_payload, invited_people, presenters, co_organizers, attendees, utc_start, duration, repeat, occurrences = teams_event_payload(payload, graph_settings)
         targets = calendar_targets(payload, utc_start, duration, repeat, occurrences, graph_timezone_iana(graph_settings))
         non_delivery_reason = teams_non_delivery_reason(targets, graph_timezone_iana(graph_settings))
         if non_delivery_reason:
@@ -3014,7 +3222,7 @@ def curriculum_teams_meeting(request):
             urllib_parse.quote(event_id, safe=''),
             clean_str(event_payload.get('subject')) or teams_calendar_subject(payload),
             teams_shifted_occurrence_targets(payload, duration),
-            attendees,
+            invited_people,
             meeting_options,
         )
         for shift_warning in shift_warnings:
@@ -3031,7 +3239,7 @@ def curriculum_teams_meeting(request):
         recording=recording,
         lobby_bypass=lobby_choice,
         spoken_language=spoken_language,
-        attendees=attendees,
+        attendees=invited_people,
         presenters=presenters,
         co_organizers=co_organizers,
     )
@@ -3060,6 +3268,7 @@ def curriculum_teams_meeting(request):
         event = verify_teams_calendar_with_standalones(
             microsoft_graph_request, owner_key, event_id, targets, join_url,
             repeat != 'none', recreated_details,
+            expected_attendees=event_payload['attendees'],
         )
         occurrence_rows = replace_live_session_occurrences(
             live_session_id, payload, utc_start, duration, repeat, occurrences,
@@ -3421,7 +3630,16 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     payload = json_body(request)
     if not isinstance(payload, dict):
         return json_error('A valid JSON body is required.')
-    notify_attendees = truthy(payload.get('notifyAttendees'))
+    # The browser sends the author's announcement choice. People/settings-only
+    # saves still stay quiet for everyone already invited; people such a save
+    # adds are reached directly instead, by forwarding the meeting to them alone.
+    people_only = bool(payload.get('peopleOnly'))
+    # The browser sends the explicit choice on every update. Keep an omitted
+    # value quiet for defensive API callers (and for legacy schedule-only
+    # requests); people/settings-only saves remain quiet for everyone already
+    # invited, while newly added people are forwarded separately after the
+    # calendar is verified.
+    notify_attendees = False if people_only else bool(payload.get('notifyAttendees'))
     series = series_rows[0]
     schedule_before = held_schedule_snapshot(live_session_id)
     # Omitted options retain their saved values for schedule-only callers.
@@ -3496,6 +3714,11 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             code='teams_co_organizers_schema_required',
         )
     invited_people = list(dict.fromkeys([*co_organizers, *presenters, *attendees]))
+    # Read from the stored roster, not from the browser: the people a silent
+    # save has to invite by hand are exactly those the calendar did not have.
+    newly_invited = teams_newly_invited(
+        [*stored_co_organizers, *stored_presenters, *stored_attendees, organizer], invited_people,
+    )
     calendar_attendees = [
         {'emailAddress': {'address': email, 'name': email.split('@', 1)[0]}, 'type': 'required'}
         for email in invited_people
@@ -3615,13 +3838,26 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         if warnings or not _applied:
             raise RuntimeError('Microsoft did not accept every calendar or meeting option change.')
         occurrence_details = recreated_details or current_occurrences
+        if not notify_attendees:
+            # An author who chose not to email still gets a structurally correct
+            # calendar. The write is the narrow attendees-only patch under the
+            # silent preference, and it is skipped outright when the list already
+            # matches -- so a schedule-only save asks Microsoft for nothing at
+            # all, while a session restored on its own event still ends up with
+            # the people it is for on it.
+            publish_teams_calendar_attendees(
+                microsoft_graph_request, owner_key, event, calendar_attendees,
+                occurrence_details, title=title, silent=True,
+            )
         event = verify_teams_calendar_with_standalones(
             microsoft_graph_request, owner_key, event_id, targets, join_url,
             repeat != 'none', occurrence_details,
+            # The author who is emailing has not published the list yet; that
+            # branch checks the people on its own final pass below.
+            expected_attendees=None if notify_attendees else calendar_attendees,
         )
         # Keep the saved attendee/presenter/co-organizer roles in the online
-        # meeting, but do not send another invitation during a repair/update.
-        # The admin review flow can opt in explicitly with notifyAttendees=true.
+        # meeting. The admin review flow opts in to email with notifyAttendees=true.
         if notify_attendees:
             # Only notify after the organizer's master and every exception have
             # been reconciled and verified. Updating the master then lets
@@ -3630,11 +3866,23 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             publish_teams_calendar_attendees(
                 microsoft_graph_request, owner_key, event, calendar_attendees,
                 occurrence_details, force=True, title=title,
+                dates_unchanged=bool(payload.get('peopleOnly')),
             )
             event = verify_teams_calendar_with_standalones(
                 microsoft_graph_request, owner_key, event_id, targets, join_url,
                 repeat != 'none', occurrence_details,
+                expected_attendees=calendar_attendees,
             )
+        if not notify_attendees and newly_invited:
+            # After verification: nobody is invited to a calendar Microsoft has
+            # not confirmed, and a half-applied repair is not what a learner
+            # should be looking at in their first invitation.
+            warnings.extend(forward_teams_invitation(
+                microsoft_graph_request, owner_key,
+                [event_id, *[clean_str(detail.get('graph_event_id')) for detail in (occurrence_details or [])]],
+                newly_invited,
+                comment=f'You have been added to {title}.',
+            ))
     except RuntimeError as exc:
         update_authoring_rows(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id], {
             'warnings': json_db_value([*warnings, {'code': 'teams_calendar_unverified', 'message': str(exc)}]),
@@ -9000,7 +9248,10 @@ def programme_learner_ksb_progress(programme_id, required_codes=None):
         return result
 
     try:
-        progress_totals, _rows, _excluded = learner_progress_ksb_consumption(learner_ids, list(expected))
+        # Totals only: this returns a percentage and four counts, never a row.
+        # See learner_progress_ksb_totals() for why the drill-down read is the
+        # wrong one to ask here.
+        progress_totals = learner_progress_ksb_totals(learner_ids, list(expected))
     except Exception as exc:
         logger.warning('Could not load learner KSB consumption for programme %s: %s', programme_id, exc)
         return result
@@ -10935,8 +11186,34 @@ def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=
         rows['program_configs'],
         ksb_profiles,
         include_config_only=visibility == 'all',
+        # No per-programme KSB statistics in a list payload. `ksbMapped` and the
+        # learner-progress figures each re-read a programme's whole authoring
+        # tree and its learners' progress; computing them for every programme was
+        # 69s of an 84s build, and this payload is shared by /overview/,
+        # /modules/ and /programmes/ -- so the Module Builder, which renders
+        # neither number, waited for all thirty of them before it could draw a
+        # single module card. They are served per programme by
+        # curriculum_programme_ksb_stats() instead, and the Programmes page
+        # fills its cards in behind the list. See _programme_ksb_stats for the
+        # placeholder every programme gets here.
+        only_stats_for_ids=frozenset(),
     )
     if visibility != 'all':
+        # Delivery rows can outlive an authoring module's archive row. In that
+        # state build_modules() still has enough data to produce a plausible
+        # published row, although the structure endpoint cannot serve it.
+        archived_catalogue_ids = {
+            clean_str(value)
+            for row in (rows.get('authoring_modules') or [])
+            if module_authoring_row_is_archived(row)
+            for value in (row.get('module_catalogue_id'), row.get('source_id'))
+            if clean_str(value)
+        }
+        modules = [
+            module for module in modules
+            if clean_str(module.get('moduleCatalogueId') or module.get('catalogueId') or module.get('id'))
+            not in archived_catalogue_ids
+        ]
         modules = [
             module for module in modules
             if (
@@ -10946,6 +11223,10 @@ def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=
         ]
     if not compact:
         modules = enrich_modules_with_authoring(modules, include_programme_deleted=visibility == 'all')
+    if visibility != 'all':
+        # Full enrichment can append authoring-only rows and carry archive
+        # status from the authoring summary, so apply the rule again.
+        modules = [module for module in modules if not is_archived_module_summary(module)]
     attach_module_assignment_counts(modules)
     cohorts, groups = build_cohorts_and_groups(
         training_rows,
@@ -12381,7 +12662,19 @@ def curriculum_overview(request):
     # cached before the same write.
     payload = cached_curriculum_value(cache_key, build_overview, force=force)
     if compact:
-        payload = {**payload, 'modules': compact_module_rows(payload['modules'])}
+        payload = {
+            **payload,
+            'modules': compact_module_rows(payload['modules']),
+            # 188 KB of KSB codes and their descriptions, and no caller of this
+            # endpoint reads them: every page that needs them -- the Programmes
+            # page, the Module Builder, the programme workspace -- fetches
+            # /curriculum/ksb-sets/ for itself. Emptied in the response rather
+            # than in the payload, because that endpoint is served from this same
+            # cached payload and does need them. Same shape as `holidays`,
+            # `tutors` and `coaches`, which a compact payload already answers
+            # empty.
+            'ksbSets': [],
+        }
     return JsonResponse(payload)
 
 
@@ -17738,6 +18031,329 @@ def lock_module_structure_row(module_catalogue_id):
         cursor.fetchall()
 
 
+# ---------------------------------------------------------------------------
+# The same guard, for the records that are not a module structure.
+#
+# Everything from here to `curriculum_record_revisions` generalises what
+# `module_structure_revision` and `lock_module_structure_row` do for the Module
+# Builder. The other authoring surfaces -- the programme, cohort, group and
+# module drawers, and the Week Builder -- each hold a record open in a browser
+# for as long as somebody is working in it, and each used to write blind:
+# whichever save landed second replaced the first, and nothing anywhere said so.
+#
+# Their only protection was that a poll usually reached the second editor first,
+# which makes correctness a matter of timing. These give them the mechanism the
+# Module Builder already has: one token, one lock, one refusal, so the behaviour
+# only has to be learned once and there is one place to correct it.
+# ---------------------------------------------------------------------------
+
+
+def record_revision(sources):
+    """Fingerprint the rows a guarded write would replace.
+
+    ``sources`` is one ``(label, table, where_sql, params, sort_column)`` per
+    table, in a fixed order so the fingerprint never depends on dictionary
+    iteration. Volatile columns are dropped and rows are sorted by their own
+    key, for the two reasons ``module_structure_revision`` gives: a timestamp
+    the write itself bumps would make every fingerprint differ from the last,
+    and one that trusted database order would refuse saves at random.
+
+    Returns '' when a table cannot be read at all, and also when the FIRST
+    source -- by convention the record's own row -- matches nothing. Callers
+    treat '' as "this could not be checked" and refuse the guarded save rather
+    than run it unchecked, the same fail-closed rule the structure endpoint
+    follows. The missing-row case earns its own answer because these records
+    are all edited in place: a record that is not stored has no version to be
+    stale against, and hashing its absence would mint a real-looking token that
+    every unstored record shared. (``module_structure_revision`` deliberately
+    does the opposite, because a module's first save is a legitimate write of
+    something not yet stored.)
+    """
+    material = []
+    for index, (label, table, where_sql, params, sort_column) in enumerate(sources):
+        try:
+            rows = authoring_fetch_all(
+                table,
+                where_sql,
+                params,
+                ensure_tables=False,
+                exclude_columns=STRUCTURE_REVISION_VOLATILE_COLUMNS,
+            )
+        except Exception:
+            # A table that cannot be read must not fail the request it was asked
+            # about; the caller decides what an unreadable fingerprint means.
+            logger.warning('Unable to fingerprint %s.', table, exc_info=True)
+            return ''
+        if index == 0 and not rows:
+            return ''
+        material.append([
+            label,
+            sorted(rows, key=lambda row: clean_str(row.get(sort_column))),
+        ])
+    return hashlib.sha256(
+        json.dumps(material, sort_keys=True, default=str).encode()
+    ).hexdigest()[:32]
+
+
+def lock_record_row(table, where_sql, params):
+    """Hold this record's row for the rest of the transaction.
+
+    The single-table counterpart of ``lock_module_structure_row``, and it exists
+    for exactly the same reason: without it the guard is a read followed by a
+    write, and two saves that both read revision 41 both pass it -- the second
+    overwriting the first with the very payload the check exists to refuse. The
+    lock makes check-and-write one operation, so the second save waits here,
+    then reads the revision the first one produced and is refused.
+
+    SQLite (the test runner) has no row locks and needs none: a write
+    transaction takes the whole database.
+    """
+    if connection.vendor != 'postgresql':
+        return
+    with connection.cursor() as cursor:
+        cursor.execute(
+            'select 1 from %s where %s for update' % (table_name(table), where_sql),
+            list(params or []),
+        )
+        cursor.fetchall()
+
+
+def programme_record_revision(identifier):
+    """Fingerprint of the ``programmes`` row a programme PATCH rewrites.
+
+    The name cascade onto cohorts, groups and modules is deliberately left out.
+    It is derived from this row rather than authored, so folding it in would
+    make a rename of the programme look like a change to every child -- and
+    would refuse a colleague's unrelated cohort edit.
+    """
+    ensure_module_authoring_tables()
+    config = programme_config_by_identifier(identifier)
+    if not config:
+        return ''
+    try:
+        key_column = programme_config_key_column()
+    except Exception:
+        logger.warning('Unable to resolve the programmes key column.', exc_info=True)
+        return ''
+    key_value = config.get(key_column)
+    if not clean_str(key_value):
+        return ''
+    return record_revision((
+        ('programme', 'programmes', quote_ident(key_column) + ' = %s', [key_value], key_column),
+    ))
+
+
+def cohort_record_revision(cohort_id):
+    """Fingerprint of the single ``curriculum.cohorts`` row a cohort PATCH writes."""
+    ident = clean_str(cohort_id)
+    if not ident:
+        return ''
+    ensure_module_authoring_tables()
+    return record_revision((
+        ('cohort', COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [ident], 'cohort_id'),
+    ))
+
+
+def group_record_revision(group_id):
+    """Fingerprint of the single ``curriculum.groups`` row a group PATCH writes.
+
+    The delivery-slot cascade onto the group's module rows is left out for the
+    reason the programme rename is: those rows inherit the slot, so including
+    them would report a module's own schedule edit as a change to the group.
+    The group row is what the group drawer authors, and it moves whenever the
+    cascade has anything to do.
+    """
+    ident = clean_str(group_id)
+    if not ident:
+        return ''
+    ensure_module_authoring_tables()
+    return record_revision((
+        ('group', GROUPS_TABLE, 'group_id = %s', [ident], 'group_id'),
+    ))
+
+
+def week_template_revision(template_id):
+    """Fingerprint of the week template and the components it owns.
+
+    Both tables, because a week template PATCH deletes every component row and
+    re-inserts the list it was sent: the components are the part of the record
+    an author spends an afternoon on, and a token that only covered the header
+    row would let a colleague's whole component list be replaced unnoticed.
+    """
+    ident = clean_str(template_id)
+    if not ident:
+        return ''
+    ensure_week_template_tables()
+    return record_revision((
+        ('template', WEEK_TEMPLATES_TABLE, 'id = %s', [ident], 'id'),
+        ('components', WEEK_TEMPLATE_COMPONENTS_TABLE, 'week_template_id = %s', [ident], 'id'),
+    ))
+
+
+def module_record_revision(identifier):
+    """Fingerprint of the module a drawer PATCH writes.
+
+    Shared with the Module Builder rather than its own: the drawer writes
+    through ``save_module_authoring_structure``, the same helper the structure
+    PATCH uses, so one token means a drawer edit and a Builder save can never
+    be told apart -- and either one refuses a stale copy of the other.
+    """
+    ident = clean_str(identifier)
+    if not ident:
+        return ''
+    return module_structure_revision(resolve_stored_module_catalogue_id(ident) or ident)
+
+
+#: How a caller names each guarded record kind, and how to fingerprint it.
+CURRICULUM_RECORD_REVISIONS = {
+    'programme': programme_record_revision,
+    'cohort': cohort_record_revision,
+    'group': group_record_revision,
+    'module': module_record_revision,
+    'weekTemplate': week_template_revision,
+}
+
+
+def curriculum_record_revision(kind, identifier):
+    """The current token for one record, or '' if it cannot be read."""
+    read = CURRICULUM_RECORD_REVISIONS.get(kind)
+    if not read:
+        return ''
+    try:
+        return read(identifier) or ''
+    except Exception:
+        logger.warning('Unable to read the %s revision for %s.', kind, identifier, exc_info=True)
+        return ''
+
+
+#: What a 409 hands back for each record kind: the stored values of the fields
+#: that drawer authors, so the editor can rebase its outstanding changes onto
+#: them without a second call. Deliberately not the whole record -- the counts
+#: and rollups a drawer displays are derived from other tables, and shipping
+#: them here would invite a merge to treat a colleague's unrelated edit as a
+#: change to this one.
+def cohort_conflict_record(cohort_id):
+    row = fetch_cohort_row(cohort_id)
+    if not row:
+        return None
+    return curriculum_cohort_from_authoring_detail({
+        **row,
+        # Stored as JSON text; the payload builder passes whatever it is handed
+        # straight through, and the drawer merges these as lists.
+        'holiday_ids': parse_json_value(row.get('holiday_ids'), []),
+        'excluded_holiday_ids': parse_json_value(row.get('excluded_holiday_ids'), []),
+    })
+
+
+def group_conflict_record(group_id):
+    row = fetch_group_row(group_id)
+    return curriculum_group_from_authoring_detail(row) if row else None
+
+
+def programme_conflict_record(identifier):
+    """The programme drawer's own fields, read from the ``programmes`` row.
+
+    Not ``programme_response``: that assembles the whole curriculum payload with
+    ``force=True``, which is seconds of work against a remote database -- and
+    this runs while the record's row is locked. The drawer authors the name,
+    level, description and colour, and they all live on the row already read.
+    """
+    config = programme_config_by_identifier(identifier)
+    if not config:
+        return None
+    return {
+        'id': programme_config_identity(config),
+        'sourceId': programme_config_identity(config),
+        'name': config.get('name') or '',
+        'level': config.get('level') or '',
+        'description': config.get('description') or '',
+        'color': config.get('color') or '',
+    }
+
+
+def requested_expected_revision(request, payload):
+    """The revision this caller is asking to be checked against, if any.
+
+    Absent means "do not check me", which is what every unguarded caller sends:
+    the Excel import, the structure wizard, the programme tree save, a record's
+    first save. Only a caller that read a token and sent it back is refused on
+    a mismatch -- the same opt-in the structure endpoint uses, and for the same
+    reason: the callers that write here without ever having read a revision are
+    legitimate and have to keep working.
+    """
+    payload = payload if isinstance(payload, dict) else {}
+    return clean_str(
+        payload.get('expectedRevision')
+        or payload.get('expected_revision')
+        or request.headers.get('If-Match')
+    )
+
+
+def record_conflict_response(expected_revision, current_revision, **extra):
+    """The 409 a stale guarded save is refused with.
+
+    Deliberately not a merge and not a server-side retry. The second editor is
+    the one who can see both versions and decide, so their work stays in their
+    browser and the stored record travels back for them to rebase onto. Nothing
+    has been written when this is returned.
+    """
+    if not current_revision:
+        # '' means the fingerprint could not be read at all, never that the
+        # record is empty -- an empty record still hashes to a real value.
+        # Carrying on would run this save unchecked, which is the overwrite the
+        # caller asked to be protected from by sending a revision. No record
+        # travels with this refusal: nothing was compared, so there is no other
+        # version to show.
+        return json_error(
+            'This record could not be checked against the saved version, so nothing was '
+            'written. Your changes are still here - try again in a moment.',
+            status=409,
+            conflict=True,
+            expectedRevision=expected_revision,
+            currentRevision='',
+        )
+    return json_error(
+        'Someone else saved this while you were editing it. Nothing of yours has been '
+        'overwritten - your changes are being merged with theirs.',
+        status=409,
+        conflict=True,
+        expectedRevision=expected_revision,
+        currentRevision=current_revision,
+        **extra,
+    )
+
+
+@require_GET
+def curriculum_record_revisions(request):
+    """Current tokens for the records named in the query string.
+
+    The drawers open their record from the curriculum overview, which is a
+    cached payload shared by every screen; a token minted there would be one
+    more thing to keep fresh, and would go stale exactly when a colleague saved.
+    So they ask for it here instead -- one indexed read per record, off the
+    cache entirely, when the drawer opens and again whenever it adopts a stored
+    version.
+
+    ``?cohort=COHORT-1&cohort=COHORT-2&group=GROUP-9`` answers
+    ``{"revisions": {"cohort": {"COHORT-1": "..."}, "group": {...}}}``. A record
+    that cannot be fingerprinted is answered with '' rather than left out, so a
+    caller can tell "unreadable" from "not asked for": a drawer holding ''
+    sends no token and saves unguarded, which is what it did before any of this.
+    """
+    revisions = {}
+    for kind in CURRICULUM_RECORD_REVISIONS:
+        wanted = unique([
+            clean_str(value) for value in request.GET.getlist(kind) if clean_str(value)
+        ])
+        if not wanted:
+            continue
+        revisions[kind] = {
+            identifier: curriculum_record_revision(kind, identifier)
+            for identifier in wanted
+        }
+    return JsonResponse({'revisions': revisions})
+
+
 def module_archive_parent_markers(module_row, module_catalogue_id):
     """Which ``deleted_via_parent`` markers belong to this module's archive.
 
@@ -18819,6 +19435,16 @@ def dedupe_authoring_module_rows(module_rows, mapping_rows=None, component_rows=
     return [item[1] for _, item in sorted(selected.items(), key=lambda pair: order.get(pair[0], 0))]
 
 
+def module_authoring_row_is_archived(row):
+    """Whether an authoring module row is unavailable to operational lists."""
+    row = row or {}
+    return (
+        clean_str(row.get('status')).lower() == 'archived'
+        or truthy(row.get('is_archived'))
+        or curriculum_row_effectively_deleted(row)
+    )
+
+
 def is_archived_module_summary(module):
     """Is this module out of the active lists?
 
@@ -18835,6 +19461,8 @@ def is_archived_module_summary(module):
         clean_str((module or {}).get('status')).lower() == 'archived'
         or clean_str((module or {}).get('authoringStatus')).lower() == 'archived'
         or clean_str((module or {}).get('deliveryStatus')).lower() == 'archived'
+        or truthy((module or {}).get('is_archived'))
+        or truthy((module or {}).get('isArchived'))
         or programme_deleted_row(module)
     )
 
@@ -19386,11 +20014,11 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
             # stores its cover: either a pasted URL or a data: URL read off the
             # picked file. An absent key keeps whatever is stored; an explicit
             # '' clears it, which is what the drawer's Remove sends.
-            'cover_image_url': clean_str(
+            'cover_image_url': stored_module_cover_image(module_catalogue_id, clean_str(
                 payload.get('coverImage') if 'coverImage' in payload
                 else payload.get('cover_image_url') if 'cover_image_url' in payload
                 else existing_module_row.get('cover_image_url')
-            ),
+            )),
             'status': clean_str(payload.get('status') or existing_module_row.get('status') or 'draft').lower(),
             'sessions_number': stored_sessions_number,
             'weeks_number': authored_week_count or None,
@@ -20576,6 +21204,81 @@ def curriculum_programmes(request):
     )
 
 
+# The KSB numbers a programme card shows, for one programme.
+#
+# They used to arrive inside every list payload, which is why /overview/,
+# /modules/ and /programmes/ all took ~84s cold: `ksbMapped` re-reads a
+# programme's whole authoring tree, and the learner figures read its learners'
+# progress, and both ran for all thirty programmes before any of the three
+# endpoints could answer. Neither number is on the critical path of a list -- a
+# card is readable without its progress bar -- so the list answers first and the
+# cards fill in behind it, one request each.
+#
+# Computed by build_programmes() with `only_stats_for_ids` naming this programme
+# alone, exactly as the programme detail payload does it. Not a second
+# implementation: the card and the programme's own page cannot disagree, because
+# the same function produces both.
+PROGRAMME_KSB_STAT_FIELDS = (
+    'ksbMapped', 'ksbTotal',
+    'learnerKsbProgressPercentage', 'learnerKsbConsumedWeight',
+    'learnerKsbExpectedWeight', 'learnerKsbLearnerCount',
+    'learnerKsbCodesStarted', 'learnerKsbCodesComplete', 'learnerKsbCodesTotal',
+)
+
+
+def build_programme_ksb_stats(identifier, visibility):
+    # Which programme this identifier means is already answered by the list
+    # payload: since the stats came out of it, its `programmes` are exactly the
+    # no-stats build the detail endpoint does a first pass for. Reading it here
+    # instead means one build_programmes per request rather than two, and thirty
+    # cards asking at once share one cached payload instead of rebuilding the
+    # whole list thirty times over.
+    payload = cached_curriculum_value(
+        f'overview:{visibility}:compact',
+        lambda: build_curriculum_payload(visibility, compact=True),
+    )
+    resolved = find_programme(payload, identifier)
+    if not resolved:
+        return None
+    with curriculum_read_scope():
+        curriculum_rows = get_cached_curriculum_rows(compact=True)
+        training_rows = curriculum_rows['training'] if visibility == 'all' else [
+            row for row in curriculum_rows['training']
+            if is_operational_training_row(row)
+        ]
+        ksb_profiles = curriculum_rows['ksb_profiles'] if visibility == 'all' else [
+            profile for profile in curriculum_rows['ksb_profiles']
+            if profile.get('is_active')
+        ]
+        programmes = build_programmes(
+            training_rows, curriculum_rows['program_configs'], ksb_profiles,
+            include_config_only=visibility == 'all',
+            only_stats_for_ids={clean_str(resolved.get('sourceId'))},
+        )
+    programme = find_programme({'programmes': programmes}, identifier)
+    if not programme:
+        return None
+    return {
+        'programmeId': clean_str(programme.get('sourceId') or programme.get('id')),
+        **{field: programme.get(field, 0) for field in PROGRAMME_KSB_STAT_FIELDS},
+    }
+
+
+@require_GET
+def curriculum_programme_ksb_stats(request, programme_id):
+    visibility = curriculum_visibility(request)
+    identifier = clean_str(programme_id)
+    force = request_bypasses_curriculum_cache(request)
+    stats = cached_curriculum_value(
+        f'programme-ksb-stats:{visibility}:{identifier}',
+        lambda: build_programme_ksb_stats(identifier, visibility),
+        force=force,
+    )
+    if not stats:
+        return json_error('Programme not found.', status=404)
+    return JsonResponse(stats)
+
+
 @require_GET
 def curriculum_programme_tree_detail(request, identifier):
     visibility = curriculum_visibility(request)
@@ -20619,10 +21322,10 @@ def _build_curriculum_programme_tree_detail_payload(identifier, visibility):
         profile for profile in curriculum_rows['ksb_profiles']
         if profile.get('is_active')
     ]
-    # build_programmes() computes ksbMapped/learner-progress for every programme
-    # it builds -- fine for the full list, wasteful here where only one programme
-    # is ever returned. The first pass skips every programme's stats (cheap: no
-    # extra reads) just to resolve which one this identifier means, using the
+    # build_programmes() computes ksbMapped/learner-progress only for the ids it
+    # is given, and here only one programme is ever returned. The first pass
+    # skips every programme's stats (cheap: no extra reads) just to resolve which
+    # one this identifier means, using the
     # same matching find_programme always applies; the second pass computes the
     # real numbers only for that resolved programme. See _programme_ksb_stats.
     cheap_programmes = build_programmes(
@@ -20953,50 +21656,83 @@ def curriculum_programme_detail(request, identifier):
             'updated_at': datetime.utcnow(),
         })
 
+    # Optimistic concurrency, opt-in, as on the module structure PATCH. The
+    # drawer sends every field it renders, so a save built before a colleague's
+    # would put their work back to what it was -- silently, because nothing here
+    # compared the two. The check and the write share one transaction, and the
+    # lock is taken first; see lock_record_row.
+    expected_revision = requested_expected_revision(request, payload)
     if config:
-        programme_status = programme_status_from_payload(payload, config)
-        updates = {
-            'name': name or config.get('name'),
-            'level': payload.get('level'),
-            'color': payload.get('color') or config.get('color'),
-            'description': payload.get('description'),
-            'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') if 'ksb_profile_source_id' in payload else config.get('ksb_profile_source_id')),
-            'required_otjh': payload_required_otjh(payload, config),
-            'status': programme_status,
-            'is_active': programme_status_is_active(programme_status),
-            'is_archived': programme_status_is_archived(programme_status),
-            'updated_at': datetime.utcnow(),
-        }
-        try:
-            key_column = programme_config_key_column()
-        except Exception:
-            key_column = programme_config_key_column()
-        key_value = config.get(key_column)
-        update_rows('programmes', f'{quote_ident(key_column)} = %s', [key_value], updates, allow_null_columns=['required_otjh'])
-        if 'ksbProfileSourceId' in payload or 'ksb_profile_source_id' in payload:
-            set_programme_modules_ksb_source(
-                unique([identifier, key_value, config.get('program_id'), config.get('name'), name]),
-                updates.get('ksb_profile_source_id') or '',
-            )
+        with transaction.atomic():
+            if expected_revision:
+                # Same tolerance as the update below: a key column that cannot
+                # be resolved is retried once rather than failing the request.
+                try:
+                    lock_column = programme_config_key_column()
+                except Exception:
+                    lock_column = programme_config_key_column()
+                lock_record_row(
+                    'programmes',
+                    quote_ident(lock_column) + ' = %s',
+                    [config.get(lock_column)],
+                )
+                current_revision = programme_record_revision(identifier)
+                if current_revision != expected_revision:
+                    return record_conflict_response(
+                        expected_revision, current_revision,
+                        programme=programme_conflict_record(identifier),
+                    )
+            programme_status = programme_status_from_payload(payload, config)
+            updates = {
+                'name': name or config.get('name'),
+                'level': payload.get('level'),
+                'color': payload.get('color') or config.get('color'),
+                'description': payload.get('description'),
+                'ksb_profile_source_id': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') if 'ksb_profile_source_id' in payload else config.get('ksb_profile_source_id')),
+                'required_otjh': payload_required_otjh(payload, config),
+                'status': programme_status,
+                'is_active': programme_status_is_active(programme_status),
+                'is_archived': programme_status_is_archived(programme_status),
+                'updated_at': datetime.utcnow(),
+            }
+            try:
+                key_column = programme_config_key_column()
+            except Exception:
+                key_column = programme_config_key_column()
+            key_value = config.get(key_column)
+            update_rows('programmes', f'{quote_ident(key_column)} = %s', [key_value], updates, allow_null_columns=['required_otjh'])
+            if 'ksbProfileSourceId' in payload or 'ksb_profile_source_id' in payload:
+                set_programme_modules_ksb_source(
+                    unique([identifier, key_value, config.get('program_id'), config.get('name'), name]),
+                    updates.get('ksb_profile_source_id') or '',
+                )
 
-        # Propagate the new programme name to the denormalized programme_name
-        # carried on child cohorts/groups/modules, keeping the canonical
-        # programme_id (and every relationship) unchanged.
-        if name and normalise(name) != normalise(config.get('name')):
-            propagate_programme_name(clean_str(config.get('program_id') or key_value), name)
+            # Propagate the new programme name to the denormalized programme_name
+            # carried on child cohorts/groups/modules, keeping the canonical
+            # programme_id (and every relationship) unchanged.
+            if name and normalise(name) != normalise(config.get('name')):
+                propagate_programme_name(clean_str(config.get('program_id') or key_value), name)
 
     invalidate_curriculum_cache()
+    # Read after the commit, so the token handed back is the one a reader would
+    # fingerprint now rather than one a rollback could take away.
+    saved_revision = programme_record_revision(identifier)
     payload_keys = set(payload.keys())
     if payload_keys and payload_keys.issubset({'ksbProfileSourceId', 'ksb_profile_source_id'}):
         return JsonResponse({
             'updated': True,
+            'revision': saved_revision,
             'programme': {
                 'id': identifier,
                 'sourceId': identifier,
                 'ksbProfileSourceId': normalise_ksb_profile_source_value(payload.get('ksbProfileSourceId') if 'ksbProfileSourceId' in payload else payload.get('ksb_profile_source_id') or ''),
             },
         })
-    return JsonResponse({'updated': True, 'programme': first_programme_response(identifier, name) or {'id': identifier}})
+    return JsonResponse({
+        'updated': True,
+        'revision': saved_revision,
+        'programme': first_programme_response(identifier, name) or {'id': identifier},
+    })
 
 
 def propagate_programme_name(programme_id, programme_name):
@@ -21578,7 +22314,11 @@ def curriculum_modules(request):
                 lambda: enrich_modules_with_authoring(payload['modules'], include_programme_deleted=visibility == 'all'),
             )
     if visibility != 'all':
-        modules = [module for module in modules if not programme_deleted_row(module)]
+        modules = [
+            module for module in modules
+            if not programme_deleted_row(module)
+            and not is_archived_module_summary(module)
+        ]
     # Opt-in slim response: a whitelist of the fields this endpoint's own callers
     # were traced to read, never the full row minus a few keys. See
     # COMPACT_MODULE_LIST_FIELDS for the set and COMPACT_MODULE_LIST_DROPPED for
@@ -21800,6 +22540,9 @@ def curriculum_module_structure_resolve(request):
             or clean_str(row.get('source_id')) in requested_set
             or normalise(row.get('title')) in title_set
         ]
+    # The resolver serves operational screens. Archived rows remain physically
+    # stored for the archive view, but they must resolve as unavailable here.
+    module_rows = [row for row in module_rows if not module_authoring_row_is_archived(row)]
     modules_by_id = {clean_str(row.get('module_catalogue_id')): row for row in module_rows}
     exact_summary_index = {}
     title_summary_index = defaultdict(list)
@@ -23947,6 +24690,124 @@ PROGRESS_LINEAGE_COLUMN_BY_SCOPE = {
 }
 
 
+def learner_progress_ksb_totals(learner_ids, programme_ksb_codes):
+    """Per-learner achieved KSB weight only, without the rows that produced it.
+
+    Same question as ``learner_progress_ksb_consumption`` asked at programme
+    scope, answered by the same rule -- ``progress_counts_as_achieved`` decides
+    what counts, one completion per (learner, component, code) counts once, and a
+    code outside ``programme_ksb_codes`` contributes nothing -- but it reads only
+    the six columns those three checks need.
+
+    It exists because the caller that only wants a percentage was paying for a
+    whole drill-down. The full read selects eighteen columns of
+    ``learner_progress_entries`` (445 MB for 220k rows: ``feedback``,
+    ``component_title``, ``module_title`` and the rest are wide text), groups by
+    every one of them, and joins out to ``curriculum.components``,
+    ``curriculum.weeks`` and ``curriculum.modules`` to resolve titles nobody
+    reads. Measured from outside the database's region that ran past the 15s
+    statement timeout on every programme, so the programme card's KSB bar was not
+    slow -- it was failing, and rendering 0. Narrowed to the columns the rule
+    needs, with no joins, it completes.
+
+    Deliberately programme-scope only. Everything the scope filter does -- the
+    component list, the lineage fallback, ``in_scope``/``out_of_scope`` -- needs
+    the rows, so a narrower scope still goes through the full read. There is no
+    ``totals_only`` flag on that function for the same reason: a scope-aware
+    caller must not be able to ask for totals that skipped the scope check.
+
+    The summing happens in SQL, and it has to. Narrowing the columns alone left
+    ~177k rows on the wire for a 150-learner programme -- 0.6s of database time
+    against 42s of transfer and dict building, measured from outside the region.
+    What comes back now is one row per (learner, KSB code).
+
+    The completion rule is still applied in Python, because
+    ``learner_api.progress_rules`` says it lives in exactly one place and a SQL
+    copy would drift from it. It is not reimplemented here: the distinct
+    ``(kind, passed)`` pairs are read first -- there are a handful -- the rule
+    decides which of them count, and the pairs it accepts go back into the
+    aggregate as parameters. The rule answers; SQL only carries the answer.
+    """
+    if not learner_ids or connection.vendor != 'postgresql':
+        return {}
+    if not learner_schema_table_exists('learner_progress_entries') or not learner_schema_table_exists('learner_progress_ksbs'):
+        return {}
+    code_filter = sorted({coverage_normalise_code(code) for code in programme_ksb_codes if coverage_normalise_code(code)})
+    if not code_filter:
+        # No mapped codes means no denominator, so there is nothing to total.
+        # Also keeps the aggregate below from reading the whole KSB table for a
+        # filter that would discard every row anyway.
+        return {}
+    totals = defaultdict(dict)
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''
+                select distinct p.kind, p.passed
+                from "Learner"."learner_progress_entries" p
+                where p.learner_id = any(%s)
+                ''',
+                [learner_ids],
+            )
+            outcome_pairs = [
+                (kind, passed) for kind, passed in cursor.fetchall()
+                if progress_counts_as_achieved(kind=kind, passed=passed)
+            ]
+            if not outcome_pairs:
+                return {}
+            # `is not distinct from` rather than `=`: an ungraded completion
+            # leaves `passed` NULL, and NULL = NULL is NULL, which would drop
+            # every row the rule just accepted.
+            outcome_sql = ' or '.join(
+                ['(p.kind is not distinct from %s and p.passed is not distinct from %s)'] * len(outcome_pairs)
+            )
+            outcome_params = [value for pair in outcome_pairs for value in pair]
+            cursor.execute(
+                f'''
+                select learner_id, code, sum(weight) as weight
+                from (
+                    -- One row per (learner, component, code): a component
+                    -- completed twice was earned once. The ordering picks the
+                    -- same winner the row-level read picks -- newest submission
+                    -- first, and the heaviest snapshot within it, which is the
+                    -- `max(weight)` the row-level read takes per progress row.
+                    select distinct on (
+                            p.learner_id,
+                            coalesce(nullif(btrim(p.component_ref), ''), 'progress:' || p.id),
+                            upper(btrim(k.ksb_code))
+                        )
+                        p.learner_id,
+                        upper(btrim(k.ksb_code)) as code,
+                        coalesce(k.weight, 0) as weight
+                    from "Learner"."learner_progress_entries" p
+                    join "Learner"."learner_progress_ksbs" k on k.progress_id = p.id
+                    where p.learner_id = any(%s)
+                      -- upper(btrim(...)) is ksb_coverage.normalise_code() in
+                      -- SQL, so a stored code that differs only in case or
+                      -- padding still matches the mapped codes it is filtered
+                      -- against. Comparing the raw column would silently drop it.
+                      and upper(btrim(k.ksb_code)) = any(%s)
+                      and ({outcome_sql})
+                    order by p.learner_id,
+                             coalesce(nullif(btrim(p.component_ref), ''), 'progress:' || p.id),
+                             upper(btrim(k.ksb_code)),
+                             p.submitted_at desc nulls last, p.id desc,
+                             k.weight desc nulls last
+                ) achieved
+                group by learner_id, code
+                ''',
+                [learner_ids, code_filter, *outcome_params],
+            )
+            for learner_id, ksb_code, weight in cursor.fetchall():
+                code = coverage_normalise_code(ksb_code)
+                if code:
+                    totals[learner_id][code] = float(float_weight(weight or 0) or 0)
+    except Exception as exc:
+        logger.warning('Could not load learner progress KSB totals: %s', exc)
+        return {}
+    return dict(totals)
+
+
 def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component_ids=(),
                                      include_unattributed=True, restrict_to_components=False,
                                      scope='', scope_identifier=''):
@@ -26064,6 +26925,9 @@ def _update_module_cover(request, identifier, payload):
     image = image.strip()
     if image and not _builder_cover_url(image):
         return json_error('Choose a valid module image.', status=400)
+    # Validated as an image first, then stored: the column keeps a URL, never
+    # the picture. See stored_module_cover_image().
+    image = stored_module_cover_image(identifier, image)
     try:
         with connection.cursor() as cursor:
             cursor.execute('''UPDATE curriculum.modules SET cover_image_url=%s,updated_at=CURRENT_TIMESTAMP
@@ -26220,7 +27084,29 @@ def curriculum_module_detail(request, identifier):
             conflicts = tutor_schedule_conflicts_created(module_schedule_view(existing_authoring), candidate)
             if conflicts:
                 return tutor_conflict_error(candidate, conflicts)
-        result = save_module_authoring_structure(module_catalogue_id, structure_payload)
+        # Optimistic concurrency, opt-in, and deliberately the SAME token the
+        # Module Builder's structure PATCH uses: this drawer writes through
+        # save_module_authoring_structure too, so one fingerprint covers both
+        # and either one refuses a stale copy of the other's work.
+        #
+        # `current` above was read before this lock. That is safe in the only
+        # direction that matters: a write landing between that read and the lock
+        # moves the revision, so the save is refused rather than performed on a
+        # structure it no longer matches.
+        expected_revision = requested_expected_revision(request, payload)
+        with transaction.atomic():
+            if expected_revision:
+                lock_module_structure_row(module_catalogue_id)
+                current_revision = module_structure_revision(module_catalogue_id)
+                if current_revision != expected_revision:
+                    return record_conflict_response(
+                        expected_revision,
+                        current_revision,
+                        module=curriculum_module_from_authoring_payload(
+                            get_authoring_structure_payload(module_catalogue_id)
+                        ),
+                    )
+            result = save_module_authoring_structure(module_catalogue_id, structure_payload)
         # A tutor change made straight against one module has to mirror onto the
         # raise the assignment notification, exactly as the tree save and the
         # group-modules endpoint do. Without this the module row carried the new
@@ -26240,6 +27126,9 @@ def curriculum_module_detail(request, identifier):
         return JsonResponse({
             'updated': True,
             'module': result,
+            # Read after the commit, so the token handed back is the one a
+            # reader would fingerprint now.
+            'revision': module_structure_revision(module_catalogue_id),
             'teamsCalendarsToUpdate': (
                 stale_teams_calendar_modules([module_catalogue_id]) if schedule_changed else []
             ),
@@ -26900,9 +27789,25 @@ def curriculum_cohort_detail(request, identifier):
         nullable.append('epa_months')
     if override_sent:
         nullable.append('apprenticeship_end_override')
-    update_cohort_fields(cohort_id, updates, allow_null_columns=tuple(nullable))
+    # Optimistic concurrency, opt-in, as on the module structure PATCH. The
+    # drawer sends every field it renders, including the ones this reader never
+    # touched, so a save built before a colleague's would put their work back to
+    # what it was -- silently, because nothing here compared the two.
+    expected_revision = requested_expected_revision(request, payload)
+    # One transaction around the check and the write; see lock_record_row.
+    with transaction.atomic():
+        if expected_revision:
+            lock_record_row(COHORT_AUTHORING_DETAILS_TABLE, 'cohort_id = %s', [cohort_id])
+            current_revision = cohort_record_revision(cohort_id)
+            if current_revision != expected_revision:
+                return record_conflict_response(
+                    expected_revision, current_revision, cohort=cohort_conflict_record(cohort_id),
+                )
+        update_cohort_fields(cohort_id, updates, allow_null_columns=tuple(nullable))
     invalidate_curriculum_cache()
-    return JsonResponse({'updated': True, 'id': cohort_id})
+    # Read after the commit, so the token handed back is the one a reader would
+    # fingerprint now rather than one a rollback could take away.
+    return JsonResponse({'updated': True, 'id': cohort_id, 'revision': cohort_record_revision(cohort_id)})
 
 
 @require_GET
@@ -27311,7 +28216,20 @@ def curriculum_group_detail(request, identifier):
             if clean_str(payload.get('programme')):
                 updates['programme_name'] = clean_str(payload.get('programme'))
 
+    # Optimistic concurrency, opt-in, as on the module structure PATCH. The
+    # check sits inside the transaction that already wraps this save, and takes
+    # the row lock before the first write -- see lock_record_row. Placing it any
+    # later would leave a half-applied PATCH, which is the same reason the tutor
+    # conflict above is checked before anything is written.
+    expected_revision = requested_expected_revision(request, payload)
     with transaction.atomic():
+        if expected_revision:
+            lock_record_row(GROUPS_TABLE, 'group_id = %s', [group_id])
+            current_revision = group_record_revision(group_id)
+            if current_revision != expected_revision:
+                return record_conflict_response(
+                    expected_revision, current_revision, group=group_conflict_record(group_id),
+                )
         updated_group = update_group_fields(group_id, updates) or group_row
         module_delivery_updates = {
             key: updates[key]
@@ -27399,6 +28317,9 @@ def curriculum_group_detail(request, identifier):
     return JsonResponse({
         'updated': True,
         'id': group_id,
+        # Read after the commit, so the token handed back is the one a reader
+        # would fingerprint now rather than one a rollback could take away.
+        'revision': group_record_revision(group_id),
         'teamsCalendarsToUpdate': stale_teams_calendar_modules([
             clean_str(row.get('module_catalogue_id')) for row in previous_module_rows
         ]) if module_delivery_updates else [],
@@ -29836,12 +30757,44 @@ def week_template_component_metrics(components):
     return round(total_otjh, 2), points, len(components or [])
 
 
-def week_template_detail_response(template_id, wrapper_key='weekTemplate', **extra):
+def week_template_record(template_id, *, after_write=False):
+    """A week template with the revision the editor sends back on save.
+
+    The order of the two reads is the whole point, and it differs by caller --
+    the reasoning is spelled out in ``structure_payload_with_revision`` and
+    ``stamp_revision_after_write``, which this mirrors.
+
+    Reading: revision first. These reads run in autocommit, so whichever is read
+    second describes the later state, and a payload carrying a revision it
+    predates would certify a stale save as current. Revision first means the
+    pair is either exactly consistent or provably stale, and a stale one is
+    refused rather than performed.
+
+    ``after_write``: revision last, for a caller that has just written this
+    template itself and needs the revision of its own write.
+    """
+    if after_write:
+        row = get_week_template_row(template_id)
+        if not row:
+            return None
+        components = get_week_template_component_rows(template_id)
+        revision = week_template_revision(template_id) or STRUCTURE_REVISION_UNAVAILABLE
+        return {**week_template_payload(row, components), 'revision': revision}
+    revision = week_template_revision(template_id) or STRUCTURE_REVISION_UNAVAILABLE
     row = get_week_template_row(template_id)
     if not row:
+        return None
+    return {
+        **week_template_payload(row, get_week_template_component_rows(template_id)),
+        'revision': revision,
+    }
+
+
+def week_template_detail_response(template_id, wrapper_key='weekTemplate', *, after_write=False, **extra):
+    record = week_template_record(template_id, after_write=after_write)
+    if not record:
         return json_error('Week template not found.', status=404)
-    components = get_week_template_component_rows(template_id)
-    payload = {'schema': CURRICULUM_SCHEMA, wrapper_key: week_template_payload(row, components)}
+    payload = {'schema': CURRICULUM_SCHEMA, wrapper_key: record}
     payload.update(extra)
     return JsonResponse(payload)
 
@@ -29917,7 +30870,7 @@ def curriculum_week_template_collection(request):
     if components:
         save_week_template_components(template_id, components)
     invalidate_curriculum_cache()
-    return week_template_detail_response(template_id, created=True)
+    return week_template_detail_response(template_id, after_write=True, created=True)
 
 
 @csrf_exempt
@@ -29974,8 +30927,29 @@ def curriculum_week_template_detail(request, identifier):
         total_otjh, points, component_count = week_template_component_metrics(components)
         updates.update({'total_otjh': total_otjh, 'points': points, 'component_count': component_count})
 
-    update_rows(WEEK_TEMPLATES_TABLE, 'id = %s', [identifier], updates)
-    if components_provided:
-        save_week_template_components(identifier, payload.get('components'))
+    # Optimistic concurrency, opt-in, exactly as the module structure PATCH
+    # does it. A components list replaces every component row this template
+    # owns, so a second editor's save landing on a version they never saw takes
+    # the first editor's whole afternoon with it.
+    expected_revision = requested_expected_revision(request, payload)
+    # One transaction around the check and the write. See lock_record_row:
+    # read-then-write would let two saves that read the same revision both pass.
+    with transaction.atomic():
+        if expected_revision:
+            lock_record_row(WEEK_TEMPLATES_TABLE, 'id = %s', [identifier])
+            current_revision = week_template_revision(identifier)
+            if current_revision != expected_revision:
+                # The stored template travels with the refusal so the editor can
+                # rebase without a second call. Nothing has been written.
+                return record_conflict_response(
+                    expected_revision,
+                    current_revision,
+                    weekTemplate=week_template_record(identifier),
+                )
+        update_rows(WEEK_TEMPLATES_TABLE, 'id = %s', [identifier], updates)
+        if components_provided:
+            save_week_template_components(identifier, payload.get('components'))
     invalidate_curriculum_cache()
-    return week_template_detail_response(identifier, updated=True)
+    # after_write: the revision handed back has to describe this save, not the
+    # state it landed on.
+    return week_template_detail_response(identifier, after_write=True, updated=True)
