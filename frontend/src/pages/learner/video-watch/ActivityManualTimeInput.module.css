@@ -106,3 +106,12 @@
   letter-spacing: 0.12em;
   text-transform: uppercase;
 }
+
+:global([data-theme='dark']) .card {
+  background: #182d48;
+  border-color: #3b526c;
+  box-shadow: 0 14px 26px -22px rgb(0 0 0 / .8);
+}
+:global([data-theme='dark']) :is(.heading, .input, .label) { color: #f6f8fb; }
+:global([data-theme='dark']) :is(.icon, .badge) { background: #302748; color: #d7c4f4; }
+:global([data-theme='dark']) .input::placeholder { color: #b6c4d5; }

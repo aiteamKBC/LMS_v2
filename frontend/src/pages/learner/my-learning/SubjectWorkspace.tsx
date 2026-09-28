@@ -10,12 +10,13 @@ import { completedComponentIds, isComponentComplete, hasComponentContent, format
 import { DeferredStudentMaterial as StudentMaterial } from './DeferredStudentMaterial';
 import styles from './SubjectWorkspace.module.css';
 import { LearningCatalogue } from './LearningCatalogue';
+import { DEFAULT_MODULE_COVER } from './moduleCover';
 import { LearningMapHero, SubjectTimeline } from './SubjectTimeline';
 import { HolidayNoteHint } from '@/components/feature/HolidayNoteHint';
 import { weekHolidayNotes } from '@/pages/learner/training-plan-timeline/model';
 import { certificateEligible, learningDate, learningDeadlines, learningPlanSelection, learningHref, nextLearningWeek, continuingLearningWeek, currentLearningWeek, recommendedLearningSubject, resolveLearningSubject, subjectMapWeeks, subjectOpeningActivity } from './subjectLearning';
 import type { LearningSchedule } from '@/api/learnerOverview';
-import type { PlanModule } from '@/api/trainingPlanDashboard';
+import type { PlanModule, PlanSession } from '@/api/trainingPlanDashboard';
 
 type Schedule = Pick<StudentActivityItem, 'date' | 'month' | 'week_start' | 'week_end' | 'date_needs_review' | 'date_source'> & { due_timing?: string };
 export type SubjectEntry = { id: string; title: string; category: string; completed: boolean; position: number; schedule: Schedule; week?: string; legacy?: StudentActivityItem; native?: JourneyComponent; bestScorePercent?: number | null };
@@ -329,11 +330,12 @@ function ActivityGroup({ title, label = title, activities, level, children }: {
 const SUBJECT_CARD_TONES = ['purple', 'navy', 'green', 'gold', 'blue', 'rose'] as const;
 type SubjectCardTone = typeof SUBJECT_CARD_TONES[number];
 
-export function Cover({ title, url, large = false }: { title: string; url?: string; large?: boolean }) {
+export function Cover({ title, url, large = false, fallbackUrl }: { title: string; url?: string; large?: boolean; fallbackUrl?: string }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [url]);
+  const imageUrl = url && !failed ? url : fallbackUrl;
   return <div className={`${styles.cover} ${large ? styles.coverLarge : ''}`}>
-    {url && !failed ? <img src={url} alt={`${title} cover`} loading="lazy" decoding="async" onError={() => setFailed(true)} className="h-full w-full object-cover motion-safe:transition-transform motion-safe:duration-500 motion-safe:group-hover:scale-105" /> : <div className={`${styles.coverFallback} flex h-full ${large ? 'items-center justify-center' : 'items-end p-4'}`}>
+    {imageUrl ? <img src={imageUrl} alt={`${title} cover`} loading="lazy" decoding="async" onError={() => setFailed(true)} className={`h-full w-full object-cover motion-safe:transition-transform motion-safe:duration-500 motion-safe:group-hover:scale-105 ${imageUrl === fallbackUrl ? styles.defaultCoverImage : ''}`} /> : <div className={`${styles.coverFallback} flex h-full ${large ? 'items-center justify-center' : 'items-end p-4'}`}>
       <div aria-hidden="true" className={styles.coverOrbit} />
       <span className={`${styles.coverSymbol} relative flex items-center justify-center rounded-2xl border border-white/90 bg-white/85 text-primary-600 shadow-sm ${large ? 'h-16 w-16' : 'h-11 w-11'}`}><BookOpen className={large ? 'h-8 w-8' : 'h-5 w-5'} strokeWidth={1.7} aria-hidden="true" /></span>
     </div>}
@@ -451,16 +453,14 @@ function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfTo
   const startDate = planModule?.start_date ? learningDate(planModule.start_date) : 'Not scheduled';
   const endDate = planModule?.end_date ? learningDate(planModule.end_date) : 'Not scheduled';
   const sessionCount = planModule?.sessions_number;
-  return <article className={`group ${styles.card} ${styles.subjectTheme}`} data-tone={tone}>
+  return <article className={`group ${styles.card} ${styles.subjectTheme} ${styles.moduleCard}`} data-tone={tone}>
     <button type="button" onClick={onOpen} className={styles.cardButton}>
-      <div className="relative w-full">
-        <Cover title={subject.title} url={cover} />
-        <span className={styles.status} data-state={isComplete ? 'complete' : completed > 0 ? 'started' : 'new'}>
-          <span aria-hidden="true" className={styles.statusDot} />{status}
-        </span>
-      </div>
+      <div className="relative w-full"><Cover title={subject.title} url={cover} fallbackUrl={DEFAULT_MODULE_COVER} /></div>
       <div className={styles.cardBody}>
         <div className={styles.cardMetaRow}>
+          <span className={styles.status} data-state={isComplete ? 'complete' : completed > 0 ? 'started' : 'new'}>
+            <span aria-hidden="true" className={styles.statusDot} />{status}
+          </span>
           <p className={styles.cardEyebrow}><Layers3 size={13} aria-hidden="true" />{total} {subject.recordedHistory ? 'recorded activities' : total === 1 ? 'activity' : 'activities'}</p>
           {certificateReady && <span className={styles.certificateBadge}><Award size={13} aria-hidden="true" />Ready</span>}
         </div>
@@ -529,11 +529,11 @@ function ActivityRow({ entry, kind, learnerId, onProgress }: { entry: SubjectEnt
   </div>;
 }
 
-export function StudentActivityPanel({ data: incomingData, loading, error, onRetry, kind, learnerId, real: incomingReal = null, onProgress, metrics, view = 'catalogue', schedule, scheduleLoading = false }: {
+export function StudentActivityPanel({ data: incomingData, loading, error, onRetry, kind, learnerId, real: incomingReal = null, onProgress, metrics, view = 'catalogue', schedule, scheduleLoading = false, upcomingSessions }: {
   kind?: string; learnerId?: string; real?: LearnerDetail | null; data: StudentActivityResponse | null;
   loading: boolean; error: string | null; onRetry: () => void; onProgress?: () => void;
   metrics?: LearnerMetrics | null;
-  view?: 'catalogue' | 'map'; schedule?: LearningSchedule | null; scheduleLoading?: boolean;
+  view?: 'catalogue' | 'map'; schedule?: LearningSchedule | null; scheduleLoading?: boolean; upcomingSessions?: PlanSession[];
 }) {
   const [search, setSearch] = useState('');
   const location = useLocation();
@@ -679,11 +679,12 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
         deadlines={deadlines}
         moduleStartDate={subject => planModulesBySubject.get(subject.id)?.start_date}
         onContinue={subject => { setSearch(''); select(subject.id, 'current'); }}
+        covers={covers} upcomingSessions={upcomingSessions}
         renderCard={subject => <SubjectCard key={subject.id} subject={subject} cover={covers[subject.id]} tone={subjectTones.get(subject.id)} onOpen={() => select(subject.id)} template={certificateConfig.template} csrfToken={certificateConfig.csrfToken} kind={kind} learnerId={learnerId} planModule={planModulesBySubject.get(subject.id)} />} />
       {(data || metrics) && <><div className="flex flex-wrap gap-6 rounded-xl bg-background-100 px-4 py-3 text-xs"><div><span className="block text-foreground-500">Recorded OTJH</span><strong>{recordedOtjh == null ? 'Unavailable' : formatHoursMinutes(recordedOtjh)}</strong></div><div><span className="block text-foreground-500">Planned OTJH</span><strong>{plannedOtjh == null ? 'Unavailable' : formatHoursMinutes(plannedOtjh)}</strong></div></div>{hasProgrammeOtjh && <p className="text-[12px] text-foreground-500">Programme totals include accepted historical hours and new recorded learning. Planned hours come from your training plan.</p>}</>}
     </> : <>
       <div className="flex flex-wrap items-center justify-between gap-3"><button onClick={() => select()} className="flex items-center gap-1.5 text-sm font-semibold text-primary-700"><ChevronLeft size={17} />All subjects</button><Link to={learningHref('map', kind, learnerId, active.id)} className={styles.textLink}><MapIcon size={17} />View learning map<ArrowRight size={16} /></Link></div>
-      <div className={`${styles.subjectTheme} relative overflow-hidden rounded-2xl border bg-white`} data-tone={subjectTones.get(active.id)}><Cover title={active.title} url={covers[active.id]} large /><div className="p-5"><Progress done={active.activities.filter((entry) => entry.completed).length} total={active.activities.length} showFormula /></div></div>
+      <div className={`${styles.subjectTheme} relative overflow-hidden rounded-2xl border bg-white`} data-tone={subjectTones.get(active.id)}><Cover title={active.title} url={covers[active.id]} fallbackUrl={DEFAULT_MODULE_COVER} large /><div className="p-5"><Progress done={active.activities.filter((entry) => entry.completed).length} total={active.activities.length} showFormula /></div></div>
       {groups.map(({ month, weeks }) => {
         const monthTitle = month === 'introduction' ? 'Introduction' : month === 'extra' ? 'Extra activities' : month === 'undated' ? 'Undated activities' : new Date(`${month}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
         return <ActivityGroup key={`${active.id}:${month}`} title={monthTitle} activities={weeks.flatMap(({ activities }) => activities)} level={3}>

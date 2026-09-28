@@ -35,6 +35,26 @@ def counts(items, predicate):
     return {'completed': sum(bool(predicate(item)) for item in items), 'total': len(items)}
 
 
+def apply_canonical_home_metrics(home, metrics):
+    """Overlay the learner/coach shared metrics without replacing home-only data."""
+    if not metrics:
+        return home
+    result = {**home, 'otjh': {**home['otjh']}}
+    otjh = metrics.get('otjh') or {}
+    actual = otjh.get('completed_actual') if 'completed_actual' in otjh else otjh.get('actual')
+    planned = otjh.get('planned')
+    result['otjh'].update({
+        'actual': actual,
+        'planned': planned,
+        'percent': round(actual / planned * 100, 2) if actual is not None and planned else None,
+    })
+    programme = metrics.get('programme') or {}
+    result['activities'] = ({'completed': programme.get('completed'),
+                             'total': programme.get('total')}
+                            if programme.get('status') in {'ready', 'empty'} else None)
+    return result
+
+
 def summarise_home(activities, native, progress, submissions, assigned, start, end,
                    lectures, historical_hours=0):
     """Aggregate explicit activity identities; never infer identity from titles."""
@@ -133,7 +153,7 @@ def summarise_home(activities, native, progress, submissions, assigned, start, e
     }
 
 
-def read_home_progress(source, kind, activities, native, progress, assigned, end):
+def read_home_progress(source, kind, activities, native, progress, assigned, end, *, canonical_metrics=None):
     start, _, _ = _group_dates(source)
     with connections['enrolment'].cursor() as cur:
         cur.execute('''SELECT activity_id, component_ref, status, actual_time_hours,
@@ -155,6 +175,7 @@ def read_home_progress(source, kind, activities, native, progress, assigned, end
         log.warning('Home attendance unavailable for enrolment %s', source.pk, exc_info=True)
         lectures = None
     result = summarise_home(activities, native, progress, submissions, assigned, start, end, lectures, historical_hours)
+    result = apply_canonical_home_metrics(result, canonical_metrics)
     if journal_sources.enabled():
         from . import canonical_learning
         if not canonical_learning.enabled(source.pk):

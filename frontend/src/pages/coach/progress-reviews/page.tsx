@@ -18,6 +18,7 @@ import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { cn } from '@/lib/cn';
 import { statusTone } from '@/lib/statusTone';
 import { roleNavMap } from '@/mocks/navigation';
+import { coachSessionKey, readCoachSessionCache, writeCoachSessionCache } from '@/features/coach/shared/coachSessionCache';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 import { LearnerAvatar } from '../shared/LearnerIdentity';
 import { ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTimeInput } from '../shared/ScheduleControls';
@@ -191,6 +192,10 @@ function addDays(value: Date, days: number) {
 
 function startOfMonth(value = new Date()) {
   return new Date(value.getFullYear(), value.getMonth(), 1);
+}
+
+function endOfMonth(value: Date) {
+  return new Date(value.getFullYear(), value.getMonth() + 1, 0);
 }
 
 function monthKey(value: Date) {
@@ -975,9 +980,11 @@ export default function CoachProgressReviews() {
   const [currentPage, setCurrentPage] = useState(() => pageFromQuery(searchParams.get('page')));
   const [searchTerm, setSearchTerm] = useState(() => searchParams.get('q') || '');
   const [selectedMonth, setSelectedMonth] = useState(() => monthFromQuery(searchParams.get('month')));
-  const [events, setEvents] = useState<CoachCalendarEvent[]>([]);
-  const [ownerName, setOwnerName] = useState('Coach');
-  const [loading, setLoading] = useState(true);
+  const cacheKey = coachSessionKey('progress-reviews', coach.email, monthKey(selectedMonth));
+  const initialCache = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string }>(cacheKey);
+  const [events, setEvents] = useState<CoachCalendarEvent[]>(() => initialCache?.events || []);
+  const [ownerName, setOwnerName] = useState(() => initialCache?.ownerName || 'Coach');
+  const [loading, setLoading] = useState(() => !initialCache);
   const [error, setError] = useState<string | null>(null);
   const [scheduleForm, setScheduleForm] = useState<ScheduleFormState>(EMPTY_SCHEDULE_FORM);
   const [scheduleModalEvent, setScheduleModalEvent] = useState<CoachCalendarEvent | null>(null);
@@ -1012,17 +1019,31 @@ export default function CoachProgressReviews() {
       return;
     }
     const controller = new AbortController();
+    const cached = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string }>(cacheKey);
 
     const loadReviews = async () => {
-      setLoading(true);
+      if (cached) {
+        setEvents(cached.events);
+        setOwnerName(cached.ownerName);
+        setLoading(false);
+      } else {
+        setLoading(true);
+      }
       setError(null);
       try {
-        const data = await fetchCoachCalendarEvents(controller.signal);
+        const data = await fetchCoachCalendarEvents(controller.signal, {
+          start: toIsoDate(startOfMonth(selectedMonth)),
+          end: toIsoDate(endOfMonth(selectedMonth)),
+          includeLiveSessions: false,
+          includeSchedulerQueues: false,
+        });
         const reviews = sortEvents(normalizeResolvedReviews((data.events || []).filter(event => event.source === 'progress-review')));
+        writeCoachSessionCache(cacheKey, { events: reviews, ownerName: data.owner?.name || coach.name });
         setEvents(reviews);
         setOwnerName(data.owner?.name || coach.name);
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return;
+        if (cached) return;
         setEvents([]);
         setError(err instanceof Error ? err.message : 'Unable to load progress reviews.');
       } finally {
@@ -1032,7 +1053,7 @@ export default function CoachProgressReviews() {
 
     loadReviews();
     return () => controller.abort();
-  }, [coach.email, coach.isInitialized, coach.name]);
+  }, [cacheKey, coach.email, coach.isInitialized, coach.name, selectedMonth]);
 
   const selectedMonthLabel = monthLabel(selectedMonth);
   const selectedMonthIsCurrent = monthKey(selectedMonth) === monthKey(startOfMonth());

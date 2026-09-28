@@ -99,7 +99,8 @@ class JournalSourceTests(unittest.TestCase):
     def test_home_card_uses_new_hours_but_coach_keeps_previous_calculation(self):
         from datetime import date
         tree = ast.parse((Path(__file__).parent / 'home_progress.py').read_text())
-        function = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'read_home_progress')
+        functions = [n for n in tree.body if isinstance(n, ast.FunctionDef)
+                     and n.name in {'read_home_progress', 'apply_canonical_home_metrics'}]
         connection = MagicMock()
         scope = {'__package__': 'learner_api', 'journal_sources': sources,
             'connections': {'enrolment': connection}, 'rows': lambda cursor: [],
@@ -107,7 +108,7 @@ class JournalSourceTests(unittest.TestCase):
             'student_activity_available': lambda _: False,
             'lecture_register': lambda source: [], 'SUBMITTED': {'submitted'},
             'summarise_home': lambda *args: {'otjh': {'actual': 999, 'planned': 999}, 'activities': {'total': 7}}}
-        exec(compile(ast.Module(body=[function], type_ignores=[]), 'home_progress.py', 'exec'), scope)
+        exec(compile(ast.Module(body=functions, type_ignores=[]), 'home_progress.py', 'exec'), scope)
         canonical = SimpleNamespace(enabled=lambda _: True, entries=lambda _: [
             {'accepted': True, 'actual_seconds': 7200},
             {'accepted': False, 'activity_status': 'Submitted', 'actual_seconds': 1800}],
@@ -115,15 +116,37 @@ class JournalSourceTests(unittest.TestCase):
             recorded_seconds=lambda row: row['actual_seconds'])
         args = (SimpleNamespace(pk=1, aptem_id=None), 'commercial', [], [], [], [], date(2026, 1, 31))
         self.assertEqual(scope['read_home_progress'](*args)['otjh']['actual'], 999)
+        metrics = {'otjh': {'actual': 8, 'planned': 10},
+                   'programme': {'completed': 3, 'total': 7, 'status': 'ready'}}
+        coach = scope['read_home_progress'](*args, canonical_metrics=metrics)
+        self.assertEqual(coach['otjh']['actual'], 8)
+        self.assertEqual(coach['otjh']['planned'], 10)
         token = sources._current.set(True)
         try:
             with patch.dict(sys.modules, {'learner_api.canonical_learning': canonical}):
                 import learner_api
                 with patch.object(learner_api, 'canonical_learning', canonical, create=True):
-                    result = scope['read_home_progress'](*args)
+                    result = scope['read_home_progress'](*args, canonical_metrics=metrics)
             self.assertEqual(result['otjh'], {'actual': 2, 'submitted': .5, 'planned': 5,
                 'percent': 40, 'missingPlannedActivities': 0})
-            self.assertEqual(result['activities'], {'total': 7})
+            self.assertEqual(result['activities'], {'completed': 3, 'total': 7})
+        finally:
+            sources._current.reset(token)
+
+    def test_shared_metrics_use_supplied_targets_and_preserve_source_empty_semantics(self):
+        tree = ast.parse((Path(__file__).parent / 'canonical_learning.py').read_text())
+        function = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
+                        and n.name == 'metrics_from_records')
+        scope = {'recorded_seconds': lambda row: row['actual_seconds']}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), 'canonical_learning.py', 'exec'), scope)
+        metrics = scope['metrics_from_records']
+        records = [{'accepted': True, 'actual_seconds': 3600}]
+        self.assertEqual(metrics(records, {'2026-01': 2, '2026-02': 3})['otjh']['planned'], 5)
+        self.assertIsNone(metrics(records, {})['otjh']['planned'])
+        token = sources._current.set(True)
+        try:
+            self.assertEqual(metrics(records, {})['otjh']['planned'], 0)
+            self.assertEqual(metrics(records, {'2026-01': 2})['otjh']['actual'], 1)
         finally:
             sources._current.reset(token)
 

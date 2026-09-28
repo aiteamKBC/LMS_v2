@@ -355,7 +355,9 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None):
             'monthlyOtjh': monthly_otjh_summary(plan_activities, progress),
             'otjh': {'actual': round(old_hours + new_hours, 4) if old_hours is not None and not undated_hours else None,
                      'historical': old_hours, 'new': round(new_hours, 4), 'undatedHistoricalRows': undated_hours}}
-    if dashboard_kind:
+    metric_kind = dashboard_kind or home_kind
+    canonical_metrics = None
+    if metric_kind:
         with connections['enrolment'].cursor() as cur:
             cur.execute('''SELECT p.component_ref AS "componentId",p.quiz_ref AS "quizId",p.kind,p.passed
                 FROM "Learner".learners l JOIN "Learner".learner_progress_entries p ON p.learner_id=l.id
@@ -368,13 +370,16 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None):
                     WHERE enrolment_id=%s AND aptem_id=%s AND completed=true
                       AND submitted_at IS NOT NULL''', [source.pk, aptem_id])
                 metric_attempts = {(str(group), str(activity)) for group, activity in cur.fetchall()}
-        result['metrics'] = metrics_from_loaded(source, dashboard_kind, migrated=migrated, native=native,
+        canonical_metrics = metrics_from_loaded(source, metric_kind, migrated=migrated, native=native,
             progress=metric_progress, direct_progress=progress, historical=historical,
             attempts=metric_attempts, links=links, history_ready=True)
+        if dashboard_kind:
+            result['metrics'] = canonical_metrics
     if home_kind:
         from .home_progress import read_home_progress
         result['homeProgress'] = read_home_progress(source, home_kind,
-            merged_activities(historical, native, progress, attempts, links), native, progress, assigned, end)
+            merged_activities(historical, native, progress, attempts, links), native, progress, assigned, end,
+            canonical_metrics=canonical_metrics)
     if journal_sources.enabled():
         from . import canonical_learning
         if not canonical_learning.enabled(source.pk):
