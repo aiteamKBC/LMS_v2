@@ -55,6 +55,26 @@ beforeEach(() => {
   sessionStorage.clear();
 });
 
+it.each(['commercial', 'apprenticeship'] as const)('highlights Dashboard after opening it from %s Home', kind => {
+  const path = `/workspace/learner/${kind}/101/dashboard`;
+  const { rail } = showWorkspace('learner', path);
+  expect(within(rail).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('href', path);
+  expect(within(rail).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('aria-current', 'page');
+  expect(within(rail).getByRole('link', { name: 'Home' })).not.toHaveAttribute('aria-current');
+});
+
+it('keeps Home active on the learner landing page and Dashboard active on its other route', () => {
+  const { rail } = showWorkspace('learner', '/workspace/learner/commercial/101');
+  expect(within(rail).getByRole('link', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
+  expect(within(rail).getByRole('link', { name: 'Dashboard' })).not.toHaveAttribute('aria-current');
+});
+
+it('keeps the alternate learner Dashboard route active', () => {
+  const { rail } = showWorkspace('learner', '/workspace/learner/dashboard/commercial/101');
+  expect(within(rail).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('aria-current', 'page');
+  expect(within(rail).getByRole('link', { name: 'Home' })).not.toHaveAttribute('aria-current');
+});
+
 it('groups learner progress pages in the same menu while keeping direct destinations fixed', async () => {
   const { sidebar, rail, panel } = showWorkspace('learner', '/learner/clubs/events');
   expect(sidebar.style.width).toBe('240px');

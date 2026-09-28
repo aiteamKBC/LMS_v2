@@ -56,11 +56,32 @@ def endpoint(*methods):
     return decorate
 
 
+def is_own_learner_record(account, learner_id):
+    """A staff member or administrator who is also studying, on their own record.
+
+    Resolved on the server from the account's address, the same lookup that
+    offers them the Learner workspace (login.identity), never from a client id.
+    """
+    if account.role == 'learner' or account.subject_type != 'staff' or not account.is_active:
+        return False
+    from login.learner_enrolment import existing_learner_record
+    record = existing_learner_record(account.email)
+    return record is not None and str(record.pk) == str(learner_id)
+
+
 def scope(request, learner_id):
     account = request.login_account
     if account.role == 'learner':
         if not account.is_active or account.subject_type != 'learner' or str(account.subject_id) != str(learner_id):
             raise old.ServiceError('Learner not found.', 'not_found', 404)
+        role = 'learner'
+    elif request.GET.get('perspective') == 'learner' and is_own_learner_record(account, learner_id):
+        # Their own record in the learner workspace is the ordinary learner
+        # experience; every other record keeps the coach/admin rules below.
+        learner = old.resolve_record(learner_id)
+        if learner['aptem_id'] and (not old.normalize(account.email)
+                                    or old.normalize(account.email) != old.normalize(learner['email'])):
+            old.identity_error()
         role = 'learner'
     else:
         actor = old.coach_actor(account)
@@ -323,6 +344,83 @@ def detail_data(learner, month, *, include_open=False, demo=False):
     target = canonical.targets(learner['id']).get(month) if consolidated else sources.monthly_target(learner, month)
     return {**month_state(month, rows, signs, target, learner_id=learner['id']), 'rows': rows,
             'profile': report_profile}
+
+
+def mirror_mcm_learner_signature(learner, month, signature, name):
+    """Copy a learner's MCM signature into that MCM's monthly log.
+
+    The MCM and monthly-log records live in different parts of the LMS, so the
+    copy is deliberately idempotent and never replaces an existing monthly
+    learner signature.  ``include_open=True`` is intentional: an MCM may be
+    signed while its reporting month is still in progress, but the ordinary
+    monthly-log signing endpoint remains closed until month end.
+    """
+    valid_month(month)
+    if not str(signature or '').startswith('data:image/'):
+        raise old.ServiceError('A valid learner signature is required.')
+
+    if not canonical.enabled(learner['id']) and learner.get('aptem_id') and month <= old_repo.CUTOFF:
+        return {'status': 'skipped', 'reason': 'legacy_month', 'month': month}
+
+    try:
+        report = detail_data(learner, month, include_open=True)
+    except old.ServiceError as error:
+        # A month with no activity rows is still a valid MCM sign-off. Keep an
+        # empty, immutable snapshot so the signed month appears in the log list.
+        if error.code != 'not_found':
+            raise
+        report = {
+            'source': 'lms', 'rows': [], 'profile': None,
+            'snapshot_digest': old.digest([]),
+        }
+
+    if report.get('source') != 'lms':
+        return {'status': 'skipped', 'reason': 'legacy_month', 'month': month}
+
+    signed_name = str(name or '').strip() or str(learner.get('name') or '').strip() or 'Learner'
+    capture = json.dumps({
+        'url': signature,
+        'rows': report.get('rows') or [],
+        'profile': report.get('profile'),
+        'capture_method': 'mcm',
+    }, default=str)
+    snapshot_digest = report.get('snapshot_digest') or old.digest(report.get('rows') or [])
+    source_ref = f'lms-mcm:{learner["id"]}:{month}:{snapshot_digest}'
+
+    with transaction.atomic(using='enrolment'):
+        # The learner row lock serializes this copy with an ordinary monthly
+        # sign request, so a coach/learner race cannot overwrite history.
+        old_repo.query('SELECT id FROM enrolment."Created_users" WHERE id=%s FOR UPDATE', [learner['id']])
+        if canonical.enabled(learner['id']):
+            owner = canonical.profile(learner['id'])
+            existing = old_repo.query('''SELECT id FROM "Learner".learner_monthly_signatures
+                WHERE learner_id=%s AND report_month=%s AND signer_role='learner'
+                  AND review_confirmed IS TRUE LIMIT 1''', [owner['id'], month])
+            if existing:
+                return {'status': 'already-synced', 'month': month}
+            old_repo.query('''INSERT INTO "Learner".learner_monthly_signatures
+                (learner_id,report_month,signer_role,signer_name,review_confirmed,
+                 signature_url,signature_data,capture_method,signed_at,snapshot_digest,
+                 source_system,source_ref)
+                VALUES (%s,%s,'learner',%s,true,%s,%s,'mcm',now(),%s,'lms',%s)
+                ON CONFLICT (learner_id,report_month,signer_role) DO NOTHING''',
+                [owner['id'], month, signed_name, signature, capture, snapshot_digest, source_ref])
+        else:
+            learner_key = f'lms:{learner["id"]}'
+            existing = old_repo.query(f'''SELECT id FROM {old_repo.SIGNOFFS}
+                WHERE learner_id=%s AND report_month=%s AND signer_role='learner'
+                  AND audit_version=%s AND review_confirmed IS TRUE LIMIT 1''',
+                [learner_key, month, VERSION])
+            if existing:
+                return {'status': 'already-synced', 'month': month}
+            old_repo.query(f'''INSERT INTO {old_repo.SIGNOFFS}
+                (learner_id,programme_key,report_month,signer_role,signer_name,
+                 review_confirmed,signature_data,signed_at,snapshot_hash,audit_version)
+                VALUES (%s,%s,%s,'learner',%s,true,%s,now(),%s,%s)
+                ON CONFLICT (learner_id,programme_key,report_month,signer_role) DO NOTHING''',
+                [learner_key, source_ref, month, signed_name, capture, snapshot_digest, VERSION])
+
+    return {'status': 'synced', 'month': month, 'snapshot_digest': snapshot_digest}
 
 
 @endpoint('GET')

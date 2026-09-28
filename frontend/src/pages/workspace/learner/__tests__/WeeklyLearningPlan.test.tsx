@@ -1,8 +1,8 @@
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
-import { WeeklyLearningPlan } from '../WeeklyLearningPlan';
+import { KsbChips, WeeklyLearningPlan } from '../WeeklyLearningPlan';
 
 vi.mock('@/hooks/useLearnerDetailParam', () => ({
   useLearnerDetailParam: () => ({
@@ -14,6 +14,53 @@ vi.mock('@/hooks/useLearnerDetailParam', () => ({
 }));
 
 afterEach(cleanup);
+
+describe('activity KSB mapping', () => {
+  it('shows only two codes in the table and reveals the remaining codes in a dialog', () => {
+    const showModal = vi.fn(function (this: HTMLDialogElement) {
+      this.setAttribute('open', '');
+    });
+    const close = vi.fn(function (this: HTMLDialogElement) {
+      this.removeAttribute('open');
+      this.dispatchEvent(new Event('close'));
+    });
+    Object.defineProperties(HTMLDialogElement.prototype, {
+      showModal: { configurable: true, value: showModal },
+      close: { configurable: true, value: close },
+    });
+    try {
+      render(<KsbChips codes={['K15', 'K2', 'S13', 'B8']} />);
+      const trigger = screen.getByRole('button', { name: 'Show 2 more KSBs' });
+      expect(trigger).toHaveTextContent('+2');
+      expect(screen.getByText('K15')).toBeVisible();
+      expect(screen.getByText('K2')).toBeVisible();
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+      fireEvent.click(trigger);
+      const dialog = screen.getByRole('dialog', { name: 'More KSBs' });
+      expect(within(dialog).getByText('S13')).toBeVisible();
+      expect(within(dialog).getByText('B8')).toBeVisible();
+      expect(showModal).toHaveBeenCalledOnce();
+
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+      expect(close).toHaveBeenCalledOnce();
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+      expect(trigger).toHaveFocus();
+    } finally {
+      Reflect.deleteProperty(HTMLDialogElement.prototype, 'showModal');
+      Reflect.deleteProperty(HTMLDialogElement.prototype, 'close');
+    }
+  });
+
+  it('keeps zero and two KSB mappings readable without an extra control', () => {
+    const { rerender } = render(<KsbChips codes={[]} />);
+    expect(screen.getByText('No KSB mapped')).toBeVisible();
+    rerender(<KsbChips codes={['K1', 'S2']} />);
+    expect(screen.getByText('K1')).toBeVisible();
+    expect(screen.getByText('S2')).toBeVisible();
+    expect(screen.queryByRole('button', { name: /more KSBs/i })).not.toBeInTheDocument();
+  });
+});
 
 describe('weekly learning plan navigation', () => {
   it('shows every scheduled week in one internally scrollable list without pagination', () => {

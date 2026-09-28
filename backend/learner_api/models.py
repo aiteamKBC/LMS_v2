@@ -66,7 +66,7 @@ def learner_activity_events_relation_exists(using: str) -> bool:
 
 @lru_cache(maxsize=None)
 def learner_ksbs_relation_exists(using: str) -> bool:
-    """Is the legacy per-learner KSB snapshot table still present?
+    """Is the legacy per-learner KSB snapshot compatible with its ORM model?
 
     ``LearnerKsb`` / ``LearnerProfile.assigned_ksbs`` map the pre-normalisation
     snapshot, kept as a read/rollback fallback. It is absent from the current
@@ -77,13 +77,26 @@ def learner_ksbs_relation_exists(using: str) -> bool:
     ``prefetch_related("assigned_ksbs")`` raises before any of that runs, so
     callers probe here first — same shape as the activity-events check above.
     """
+    required_columns = {
+        "id", "learner_id", "position", "code", "number", "ksb_type", "description",
+    }
     try:
         with connections[using].cursor() as cursor:
-            cursor.execute("select to_regclass(%s)", [LEARNER_KSBS_RELATION])
+            cursor.execute(
+                """
+                select array_agg(attribute.attname)
+                from pg_attribute attribute
+                where attribute.attrelid = to_regclass(%s)
+                  and attribute.attnum > 0
+                  and not attribute.attisdropped
+                """,
+                [LEARNER_KSBS_RELATION],
+            )
             result = cursor.fetchone()
     except DatabaseError:
         return False
-    return bool(result and result[0])
+    available_columns = set(result[0] or []) if result else set()
+    return required_columns.issubset(available_columns)
 
 
 def _serialise_quiz_ref(value):

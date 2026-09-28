@@ -88,6 +88,9 @@ function payload(url: string): unknown {
     programme: {}, employment: {}, learningPlan: [], planModules: [], otjh: {}, epa: {}, contacts: {}, delivery: {}, costs: {},
   };
   if (/wizard-bootstrap|extended-ilr/.test(url)) return { board: null, ilr: {}, ksbProfile: null };
+  if (url.includes('/first-login-details/')) return { required: true, completedAt: null, signatoryName: 'Test learner',
+    details: { title: '', dateOfBirth: '', phone: '', country: 'United Kingdom', postcode: '', addressLine1: '', addressLine2: '', townCity: '', county: '' },
+    hasSavedSignature: false, programmeStatus: 'Fresh user', csrfToken: 'csrf' };
   throw new Error(`Missing fixture for ${url}`);
 }
 

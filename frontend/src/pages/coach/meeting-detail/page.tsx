@@ -54,6 +54,15 @@ function isMeetingDetailEvent(event: CoachCalendarEvent) {
     || event.source === 'student-support';
 }
 
+function meetingDisplayTitle(event: CoachCalendarEvent, isProgressReview: boolean) {
+  const fallback = isProgressReview ? 'Progress Review' : 'Monthly Coaching Meeting';
+  const title = event.title || fallback;
+  const occurrence = event.occurrenceNumber ?? event.sequence;
+  if (!['mcr', 'progress-review'].includes(event.source || '') || /\s#\d+$/i.test(title)) return title;
+  if (occurrence == null) return `${title} — Manual Review`;
+  return `${title} #${occurrence}`;
+}
+
 function HeaderFact({ icon, text }: { icon: string; text: string }) {
   return (
     <span className="inline-flex min-h-7 items-center gap-1.5 rounded-md border border-primary-100 bg-white/80 px-2.5 text-[12px] font-medium text-foreground-700">
@@ -391,7 +400,7 @@ export default function CoachMeetingDetail() {
           <>
             <PageHeader
               title={event.learner || (isProgressReview ? 'Progress Review' : 'Coaching Meeting')}
-              description={event.title || (isProgressReview ? 'Progress Review' : 'Monthly Coaching Meeting')}
+              description={meetingDisplayTitle(event, isProgressReview)}
               icon="ri-calendar-event-line"
               backTo={{ to: returnTo, label: backLabel }}
               meta={(

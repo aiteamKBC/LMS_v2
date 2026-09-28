@@ -172,9 +172,9 @@ export function LearnerReviewInstanceForm({
   }, [definition]);
 
   useEffect(() => {
-    setSavedSignature(readSavedLearnerSignature(signatoryName));
+    setSavedSignature(definition.savedSignature || readSavedLearnerSignature(signatoryName));
     setDrawingSignature(false);
-  }, [signatoryName]);
+  }, [definition.savedSignature, signatoryName]);
 
   // The renderer draws from `answers`, not from the field rows, so the saved
   // answers are seeded the same way ReviewInstanceModal seeds them. Kept as

@@ -8,6 +8,11 @@ export type MonthlyHours = {
   completed: number | null;
 };
 
+export function monthlyTargetHours(logTarget: number | string | null | undefined, planTarget: number | null | undefined): number | null {
+  const stored = typeof logTarget === 'string' ? (logTarget.trim() ? Number(logTarget) : null) : logTarget;
+  return stored != null && Number.isFinite(stored) ? stored : planTarget ?? null;
+}
+
 function isMonthKey(key: string) {
   return /^\d{4}-(0[1-9]|1[0-2])$/.test(key);
 }
@@ -58,7 +63,7 @@ export function monthlyHours(data: TrainingPlanDashboard, programmeStartMonth = 
     return {
       key,
       label: new Date(`${key}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }),
-      target: monthlyLog?.target ?? planned,
+      target: monthlyTargetHours(monthlyLog?.target, planned),
       submitted,
       completed,
     };

@@ -106,13 +106,15 @@ describe('progress review list navigation and filters', () => {
 
   it('restores Schedule and Reschedule popups for imported Aptem reviews', async () => {
     fetchEvents.mockResolvedValue({ events: [
-      review(20, { id: 'imported-review:20', eventKey: 'imported-review:20', learner: 'Imported Unscheduled', status: 'not-scheduled', reviewSource: 'aptem', aptemReviewId: '20', hasReviewForm: true }),
-      review(21, { id: 'imported-review:21', eventKey: 'imported-review:21', learner: 'Imported Scheduled', status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00', reviewSource: 'aptem', aptemReviewId: '21', hasReviewForm: true }),
+      review(20, { id: 'imported-review:20', eventKey: 'imported-review:20', learner: 'Imported Unscheduled', status: 'not-scheduled', reviewSource: 'aptem', aptemReviewId: '20', hasReviewForm: false, reviewTemplateId: undefined }),
+      review(21, { id: 'imported-review:21', eventKey: 'imported-review:21', learner: 'Imported Scheduled', status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00', reviewSource: 'aptem', aptemReviewId: '21', hasReviewForm: false, reviewTemplateId: undefined }),
     ] });
     mount();
     await screen.findByText('Imported Scheduled');
 
-    fireEvent.click(within(screen.getByText('Imported Unscheduled').closest('tr')!).getByRole('button', { name: 'Schedule' }));
+    const unscheduledRow = within(screen.getByText('Imported Unscheduled').closest('tr')!);
+    expect(unscheduledRow.getByRole('button', { name: 'View Form' })).toBeVisible();
+    fireEvent.click(unscheduledRow.getByRole('button', { name: 'Schedule' }));
     expect(screen.getByRole('dialog', { name: 'Schedule progress review' })).toBeVisible();
     fireEvent.click(within(screen.getByRole('dialog', { name: 'Schedule progress review' })).getByRole('button', { name: 'Cancel' }));
 
@@ -124,8 +126,9 @@ describe('progress review list navigation and filters', () => {
     expect(scheduledRow.getAllByRole('button').map(button => button.textContent)).toEqual([
       'Reschedule', 'View', 'View Form', 'Create Slides',
     ]);
-    fireEvent.click(scheduledRow.getByRole('button', { name: 'View' }));
-    expect(screen.getByTestId('route')).toHaveTextContent('/coach/progress-reviews/imported-review%3A21');
+    fireEvent.click(scheduledRow.getByRole('button', { name: 'View Form' }));
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A21');
+    expect(openReview).not.toHaveBeenCalled();
   });
 
   it('opens an imported Aptem View Form directly instead of the learner profile', async () => {

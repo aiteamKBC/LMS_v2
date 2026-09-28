@@ -520,6 +520,10 @@ body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-sidebar-panel 
   color: #ffffff;
 }
 
+body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-sidebar-panel:not([data-collapsed]) nav[aria-label="Learner primary navigation"] :is(a, button) {
+  border-radius: 0;
+}
+
 body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-sidebar-panel :is(a, button):not([aria-current="page"]):not([aria-current="true"]) {
   background: transparent;
 }

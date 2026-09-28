@@ -49,6 +49,67 @@ function mount(overrides: Partial<ReviewsHomeProps> = {}, search = '?kind=appren
 afterEach(cleanup);
 
 describe('review learner navigation and safe actions', () => {
+  it('selects a future programme review in the summary card without opening its detail page', () => {
+    const props = mount({ sessions: [
+      session('attended', { scheduledDate: '2026-09-01', meetingOutcome: 'completed' }),
+      session('next', { scheduledDate: '2026-09-15' }),
+      session('future', { date: '2027-01-01', targetDate: '2027-01-01', scheduledDate: null, status: 'not-scheduled' }),
+    ] });
+    const timeline = within(screen.getByRole('region', { name: 'Progress review programme timeline' }));
+    expect(timeline.getAllByRole('button')).toHaveLength(3);
+    expect(timeline.getByRole('button', { name: /Progress Review attended, 1 Sept 2026, Attended/ }).closest('[data-status]')).toHaveAttribute('data-status', 'attended');
+    const next = timeline.getByRole('button', { name: /Progress Review next, 15 Sept 2026, Scheduled/ });
+    expect(next).toHaveAttribute('aria-pressed', 'true');
+    const future = timeline.getByRole('button', { name: /Progress Review future, 1 Jan 2027, Planned/ });
+    expect(screen.queryByRole('heading', { name: 'Progress Review future' })).not.toBeInTheDocument();
+    fireEvent.click(future);
+    expect(future).toHaveAttribute('aria-pressed', 'true');
+    expect(next).toHaveAttribute('aria-pressed', 'false');
+    const selected = within(screen.getByRole('article', { name: 'Selected review' }));
+    expect(selected.getByRole('heading', { name: 'Progress Review future' })).toBeInTheDocument();
+    fireEvent.click(selected.getByRole('button', { name: 'Book a time' }));
+    expect(props.onSchedule).toHaveBeenCalledExactlyOnceWith(props.sessions[2]);
+    expect(screen.getByTestId('location')).toHaveTextContent('/learner/progress-reviews?kind=apprenticeship&learner=12');
+  });
+
+  it('shows a closed, fully signed progress review as attended in the timeline without recording attendance', () => {
+    const definition = signatureDefinition();
+    definition.instance!.status = 'completed';
+    definition.signatures.participant.signed = true;
+    const closed = session('closed:4', { reviewTemplateId: 'template-1' });
+    const props = mount({ sessions: [closed], definitions: { [closed.eventKey]: definition } });
+    const timeline = within(screen.getByRole('region', { name: 'Progress review programme timeline' }));
+    const review = timeline.getByRole('button', { name: /Progress Review closed:4, 14 Sept 2026, Attended/ });
+    expect(review.closest('[data-status]')).toHaveAttribute('data-status', 'attended');
+    expect(props.onAttend).not.toHaveBeenCalled();
+  });
+
+  it('shows a completed progress review status in green before signature details load', () => {
+    const closed = session('closed:4', { status: 'completed' });
+    mount({ sessions: [closed] });
+    const timeline = within(screen.getByRole('region', { name: 'Progress review programme timeline' }));
+    expect(timeline.getByRole('button', { name: /Progress Review closed:4, 14 Sept 2026, Attended/ }).closest('[data-status]')).toHaveAttribute('data-status', 'attended');
+  });
+
+  it('lets a completed progress review status override a stale missed flag', () => {
+    const definition = signatureDefinition();
+    definition.instance!.status = 'completed';
+    definition.signatures.participant.signed = true;
+    const closed = session('closed:4', { reviewTemplateId: 'template-1' });
+    mount({ sessions: [closed], definitions: { [closed.eventKey]: definition }, attendance: [attendance(closed.id, { missed: true })] });
+    const timeline = within(screen.getByRole('region', { name: 'Progress review programme timeline' }));
+    expect(timeline.getByRole('button', { name: /Progress Review closed:4, 14 Sept 2026, Attended/ }).closest('[data-status]')).toHaveAttribute('data-status', 'attended');
+  });
+
+  it('opens the overview card when selecting a review from the full list view', () => {
+    mount({ sessions: [session('next', { scheduledDate: '2026-09-15' }), session('later', { date: '2026-11-01', targetDate: '2026-11-01', scheduledDate: null, status: 'not-scheduled' })] }, '?kind=apprenticeship&learner=12&view=all');
+    fireEvent.click(within(screen.getByRole('region', { name: 'Progress review programme timeline' })).getByRole('button', { name: /Progress Review later, 1 Nov 2026, Planned/ }));
+    expect(within(screen.getByRole('article', { name: 'Selected review' })).getByRole('heading', { name: 'Progress Review later' })).toBeInTheDocument();
+    expect(screen.getByTestId('location')).toHaveTextContent('/learner/progress-reviews?kind=apprenticeship&learner=12');
+    fireEvent.click(screen.getByRole('link', { name: 'View all reviews (2)' }));
+    fireEvent.click(screen.getByRole('link', { name: 'Back to current review' }));
+    expect(within(screen.getByRole('article', { name: 'Current review' })).getByRole('heading', { name: 'Progress Review next' })).toBeInTheDocument();
+  });
   it('keeps the next booked review and older required signature visible without listing every future review', () => {
     const sign = session('sign:1', { status: 'awaiting-signature', scheduledDate: '2026-09-01', reviewTemplateId: 'template-1' });
     mount({ sessions: [sign, session('next:2', { scheduledDate: '2026-09-15' }), session('far-future', { scheduledDate: '2027-01-01' })],
@@ -151,7 +212,7 @@ describe('review learner navigation and safe actions', () => {
     mount({ sessions }, '?kind=bootcamp&learner=999&view=all&filter=upcoming');
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));
     expect(screen.getByText('Page 2 of 2')).toBeInTheDocument();
-    const href = within(screen.getAllByRole('listitem')[0]).getByRole('link', { name: 'View review' }).getAttribute('href')!;
+    const href = within(within(screen.getByRole('region', { name: 'All reviews' })).getAllByRole('listitem')[0]).getByRole('link', { name: 'View review' }).getAttribute('href')!;
     const url = new URL(href, 'http://localhost');
     expect(url.pathname).toBe('/learner/progress-reviews/review%3A9');
     expect(Object.fromEntries(url.searchParams)).toEqual({ kind: 'apprenticeship', learner: '12', view: 'all', filter: 'upcoming', page: '2' });
@@ -166,7 +227,8 @@ describe('review learner navigation and safe actions', () => {
     const props = mount({ sessions: [session('closed', { status, learnerSigned: true })],
       attendance: [attendance('closed', { canAttend: true, canReportAbsence: true, missed: true })] }, '?view=all');
     fireEvent.click(screen.getByText('More options'));
-    expect(screen.queryByRole('button', { name: /Attend|Report Absence|Reschedule meeting|Book a time/ })).not.toBeInTheDocument();
+    const archive = within(screen.getByRole('region', { name: 'All reviews' }));
+    expect(archive.queryByRole('button', { name: /Attend|Report Absence|Reschedule meeting|Book a time/ })).not.toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'View in calendar' })).toBeInTheDocument();
     expect(props.onAttend).not.toHaveBeenCalled();
     expect(props.onSchedule).not.toHaveBeenCalled();
