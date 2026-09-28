@@ -17,15 +17,6 @@ import type {
 } from '../types';
 import { COACHING_DELIVERY_ORDER } from './constants';
 
-export async function readJson<T>(response: Response): Promise<T> {
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const detail = typeof data.detail === 'string' ? data.detail : `Request failed with ${response.status}`;
-    throw new Error(detail);
-  }
-  return data as T;
-}
-
 export function currentMonthKey(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
 }
@@ -39,11 +30,6 @@ export function shiftMonthKey(monthKey: string, offset: number) {
 export function formatMonthLabel(monthKey: string) {
   const [year, month] = monthKey.split('-').map(Number);
   return new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' }).format(new Date(year, month - 1, 1));
-}
-
-export function monthlyActivityEndpoint(monthKey: string) {
-  const params = new URLSearchParams({ month: monthKey });
-  return `/coach_api/coach/monthly-activity?${params.toString()}`;
 }
 
 export function activityIcon(type: string) {

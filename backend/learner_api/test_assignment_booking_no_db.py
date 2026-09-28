@@ -88,6 +88,7 @@ class AssignmentBookingTests(unittest.TestCase):
         self.resolver = Mock(return_value=(self.event['eventKey'], None))
         self.mark_imported = Mock()
         self.ns = dict(__package__='learner_api', json=json, datetime=datetime,
+                       FIRST_SESSION_TYPE='first-session',
                        _s=lambda value: str(value or '').strip(), JsonResponse=Response,
                        DatabaseError=type('DatabaseError', (Exception,), {}), logger=logging.getLogger(__name__),
                        SOURCE_MODELS={'commercial': self.source, 'apprenticeship': self.source},
@@ -96,6 +97,7 @@ class AssignmentBookingTests(unittest.TestCase):
                        _resolve_assignment_month_mcm_occurrence=self.resolver,
                        _resolve_assignment_month_progress_review_occurrence=self.resolver,
                        _mark_imported_review_scheduled=self.mark_imported, _friendly_sync_warning=lambda warning: warning,
+                       _follow_first_session_start_date=Mock(),
                        _serialize_event=lambda record: {'eventKey': record.event_key, 'reviewInstanceId': record.review_instance_id},
                        CoachCalendarEvent=types.SimpleNamespace(objects=self.manager, STATUS_AWAITING_SIGNATURE='awaiting-signature',
                                                                STATUS_COMPLETED='completed', STATUS_SCHEDULED='scheduled'))

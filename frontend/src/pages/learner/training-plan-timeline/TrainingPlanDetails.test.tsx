@@ -365,9 +365,9 @@ describe('Dashboard training plan controls', () => {
   it('allows desktop mouse dragging across the OTJH chart', () => {
     const data = fixture();
     data.monthlyOtjh = {
-      '2026-09': { planned: 18, submitted: 14, actual: 11.5, missingPlannedHours: 0 },
-      '2026-10': { planned: 20, submitted: 8, actual: 6, missingPlannedHours: 0 },
-    } as typeof data.monthlyOtjh;
+      '2026-09': { planned: 18, submitted: 14, actual: 11.5, missingPlannedActivities: 0 },
+      '2026-10': { planned: 20, submitted: 8, actual: 6, missingPlannedActivities: 0 },
+    };
     data.actual = [];
     renderBoard(data, summarySubjects);
     const scroll = within(screen.getByRole('region', { name: 'Off-the-job hours by month' }))

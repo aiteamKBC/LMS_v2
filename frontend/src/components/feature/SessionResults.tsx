@@ -21,8 +21,6 @@ const outcomeLabels: Record<FinalOutcome, string> = {
 };
 const rawStatusOf = (person: SessionPerson): RawStatus => person.rawStatus
   || (person.status === 'recovered' || person.status === 'excused' ? 'absent' : person.status);
-const rawAttendanceOf = (person: SessionPerson) => person.rawAttendance
-  ?? (person.status === 'recovered' || person.status === 'excused' ? 0 : person.attendance);
 const finalOutcomeOf = (person: SessionPerson): FinalOutcome => person.finalOutcome
   || (person.status === 'recovered' ? 'made_up' : person.status === 'excused' ? 'absent_excused' : person.status);
 const recoveryLabel = (person: SessionPerson) => {

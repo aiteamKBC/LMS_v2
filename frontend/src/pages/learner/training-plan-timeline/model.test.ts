@@ -41,7 +41,7 @@ describe('Training Plan calculations', () => {
     expect(uniquePlanSessions(modules)).toHaveLength(1);
   });
   it('shares newly authored module content and completion with My Learning by id', () => {
-    const real = { modules: ['New module'], components: [
+    const real = { modules: [], components: [
       { moduleId: 'MOD-NEW', module: 'New module', componentId: 'C-NEW', component: 'New activity', type: 'reading' },
     ], componentProgress: [{ componentId: 'C-NEW', kind: 'component' }] } as LearnerDetail;
     const subjects = subjectsFrom(null, real, { covers: {}, current_subjects: [{ id: 'MOD-NEW', title: 'New module' }],
