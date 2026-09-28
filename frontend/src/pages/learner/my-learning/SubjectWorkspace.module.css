@@ -693,3 +693,243 @@
   .weekCard:hover { transform: none; }
   .skeletonLine, .skeletonTrack, .skeletonAction, .skeletonIcon, .skeletonBadge { animation: none; }
 }
+
+/* Compact catalogue layout keeps the subject list and shortcuts together. */
+.learningPage .hero { gap: 14px; }
+.learningPage .heroIntro {
+  min-height: 118px;
+  aspect-ratio: auto;
+  padding: 18px 30px;
+  border-radius: 14px;
+}
+.learningPage .hero h1 { margin-top: 3px; font-size: clamp(25px, 2.5cqi, 35px); }
+.learningPage .hero h1::before { left: -14px; width: 3px; }
+.learningPage .heroIntro > p:last-child { margin-top: 5px; font-size: 13px; line-height: 1.4; }
+.learningPage .heroJourney {
+  min-height: 118px;
+  padding: 18px 24px;
+  border-radius: 14px;
+  background-position: center;
+}
+.learningPage .heroJourney p { font-size: 15px; }
+.learningPage .heroTag { top: 16px; right: 16px; font-size: 8px; }
+.learningPage .journeyDots { bottom: 13px; left: 24px; }
+.learningPage .catalogueTabs { margin: 8px 0 12px; }
+.learningPage .stats { gap: 10px; margin-bottom: 12px; }
+.learningPage .stat {
+  min-height: 78px;
+  gap: 11px;
+  padding: 12px;
+  border-radius: 10px;
+}
+.learningPage .statIcon { width: 44px; height: 44px; border-radius: 10px; }
+.learningPage .stat strong { font-size: 20px; line-height: 1.1; color: #1d2266; }
+.learningPage .stat p { margin-top: 2px; font-size: 11px; line-height: 1.3; }
+.learningPage .stat small { margin-top: 1px; font-size: 10px; line-height: 1.25; }
+.learningPage .stat .progressRing { width: 44px; height: 44px; }
+.learningPage .progressRing span { width: 34px; height: 34px; }
+.learningPage .catalogueLayout { gap: 16px; grid-template-columns: minmax(0, 1fr) minmax(250px, 280px); }
+.learningPage .catalogueAside { gap: 12px; }
+.learningPage .toolbar { gap: 9px; margin-bottom: 14px; grid-template-columns: minmax(170px, 1fr) minmax(130px, .52fr) minmax(145px, .56fr) auto; }
+.learningPage .search { height: 38px; }
+.learningPage .selectLabel { gap: 2px; font-size: 10px; }
+.learningPage .selectLabel select { height: 38px; font-size: 11px; }
+.learningPage .viewToggle button { min-height: 30px; padding: 6px 9px; }
+.learningPage .subjectHeading { margin-bottom: 10px; }
+.learningPage .subjectHeading h2 { font-size: 17px !important; }
+.learningPage .list { gap: 7px; }
+.learningPage .list .card { border-radius: 9px; }
+.learningPage .list .cardButton { height: 120px; flex-basis: 120px; }
+.learningPage .list .cardButton > div:first-child { width: 120px; }
+.learningPage .list .cardBody {
+  grid-template-areas: "eyebrow progress action" "title progress action" "details progress action";
+  grid-template-columns: minmax(0, 1fr) minmax(130px, 160px) minmax(165px, 180px);
+  align-content: center;
+  gap: 5px 14px;
+  padding: 10px 14px 10px 24px;
+}
+.learningPage .list .cardMetaRow { justify-content: flex-start; gap: 9px; }
+.learningPage .list .cardEyebrow { font-size: 11px; }
+.learningPage .list .status {
+  position: static;
+  padding: 3px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: #eef1f6;
+  font-size: 11px;
+  box-shadow: none;
+}
+.learningPage .list .status[data-state='started'] { color: #079968; background: #e4f7ee; }
+.learningPage .list .status[data-state='complete'] { color: #10734c; background: #e4f7ee; }
+.learningPage .list .cardTitle { height: auto; max-height: 40px; font-size: 14px !important; line-height: 1.35; -webkit-line-clamp: 2; }
+.learningPage .list .moduleDetails {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  min-width: 0;
+  align-self: auto;
+  gap: 0;
+  overflow: visible;
+  border: 0;
+  background: transparent;
+}
+.learningPage .list .moduleDetails > div {
+  display: flex;
+  min-width: 0;
+  padding: 0 7px;
+  border: 0;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.learningPage .list .moduleDetails > div:first-child { padding-left: 4px; }
+.learningPage .list .moduleDetails > div + div { border-left: 1px solid #dde3eb; }
+.learningPage .list .moduleDetails dt,
+.learningPage .list .moduleDetails dd { margin: 0; font-size: 10.5px; font-weight: 500; line-height: 1.3; text-transform: none; letter-spacing: 0; white-space: normal; overflow-wrap: anywhere; }
+.learningPage .list .moduleDetails dd { color: #4e5f7e; }
+.learningPage .list .nextActivity { display: none; }
+.learningPage .list .cardProgress { align-self: center; }
+.learningPage .list .cardProgress > div > div:first-child { font-size: 13px; }
+.learningPage .list .card:has(.cardProgress p) .cardButton { height: auto; min-height: 126px; flex-basis: auto; }
+.learningPage .list .cardAction { min-height: 38px; align-self: center; font-size: 11px; }
+.learningPage .asidePanel { padding: 13px; border-radius: 10px; }
+.learningPage .asidePanel h2 { font-size: 12px !important; }
+.learningPage .asidePanel h2 svg { color: var(--learner-purple, #673ab7); }
+.learningPage .asideTextButton { display: inline-flex; align-items: center; gap: 3px; color: var(--learner-purple, #673ab7); font-size: 10px; font-weight: 650; }
+.learningPage .continueSubject { gap: 9px; margin-top: 10px; padding-top: 10px; }
+.learningPage .continueSubject img { width: 56px; height: 60px; flex: 0 0 auto; object-fit: cover; border-radius: 6px; }
+.learningPage .continueSubject img.defaultCoverImage { object-fit: contain; background: #faf8fc; }
+.learningPage .continueSubject > div { min-width: 0; flex: 1; }
+.learningPage .continueSubject b { flex: 0 0 auto; font-size: 11px; color: #22256f; }
+.learningPage .continueSubject strong { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 3; font-size: 10px; line-height: 1.3; }
+.learningPage .continueSubject p { margin-top: 3px; font-size: 10px; }
+.learningPage .continueSubject .miniTrack { margin-top: 7px; }
+.learningPage .primaryButton { min-height: 34px; margin-top: 11px; padding: 8px; font-size: 10px; }
+.learningPage .deadline { gap: 8px; padding: 9px 0; margin-top: 5px; }
+.learningPage .deadlineIcon { display: grid; width: 34px; height: 34px; flex: 0 0 auto; place-items: center; border-radius: 7px; color: #743ee5; background: #f1eaff; }
+.learningPage .deadlineIcon[data-kind='assignment'] { color: #e43a5c; background: #ffecf1; }
+.learningPage .deadline strong { font-size: 10px; }
+.learningPage .deadline small { margin-top: 2px; }
+.learningPage .onlineBadge { align-self: center; flex: 0 0 auto; padding: 3px 5px; border-radius: 5px; background: #e4f7ee; color: #07895c; font-size: 9px; font-weight: 650; }
+.learningPage .mapShortcut { padding: 11px 13px; border-radius: 10px; }
+.learningPage .helpLinks { display: grid; margin-top: 10px; }
+.learningPage .helpLinks a { display: flex; align-items: center; gap: 9px; min-height: 32px; border-top: 1px solid #edf1f6; color: #344b66; font-size: 10px; }
+.learningPage .helpLinks a svg:last-child { margin-left: auto; }
+.learningPage .encouragement { gap: 10px; padding: 14px; border-radius: 10px; }
+.learningPage .encouragement strong { color: #167853; font-size: 11px; }
+.learningPage .encouragement p { margin-top: 1px; }
+
+@container learning (max-width: 1280px) {
+  .learningPage .catalogueLayout { grid-template-columns: minmax(0, 1fr); }
+  .learningPage .catalogueAside { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container learning (max-width: 940px) {
+  .learningPage .toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .learningPage .toolbar .search, .learningPage .viewToggle { grid-column: 1 / -1; }
+}
+@container learning (min-width: 1281px) {
+  .learningPage .catalogueLayout { grid-template-columns: minmax(0, 1fr) minmax(250px, 280px); }
+  .learningPage .catalogueAside { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 1280px) {
+  .learningPage .catalogueLayout { grid-template-columns: minmax(0, 1fr); }
+  .learningPage .catalogueAside { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container learning (max-width: 700px) {
+  .learningPage .hero { flex-direction: column; }
+  .learningPage .heroIntro, .learningPage .heroJourney { width: 100%; min-height: 105px; }
+  .learningPage .catalogueAside { grid-template-columns: minmax(0, 1fr); }
+  .learningPage .list .cardButton { height: auto; min-height: 0; flex-basis: auto; }
+  .learningPage .list .cardButton > div:first-child { width: 100%; height: 140px; }
+  .learningPage .list .cardBody { grid-template-areas: "eyebrow" "title" "details" "progress" "action"; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .learningPage .list .moduleDetails { flex-wrap: wrap; gap: 5px 0; }
+  .learningPage .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container learning (max-width: 500px) {
+  .learningPage .stats { grid-template-columns: minmax(0, 1fr); }
+  .learningPage .toolbar { grid-template-columns: minmax(0, 1fr); }
+  .learningPage .toolbar .search, .learningPage .viewToggle { grid-column: 1; }
+}
+@media (max-width: 700px) {
+  .learningPage .hero { flex-direction: column; }
+  .learningPage .heroIntro, .learningPage .heroJourney { width: 100%; min-height: 105px; }
+  .learningPage .catalogueAside { grid-template-columns: minmax(0, 1fr); }
+  .learningPage .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .learningPage .toolbar { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .learningPage .toolbar .search, .learningPage .viewToggle { grid-column: 1 / -1; }
+  .learningPage .list .cardButton { height: auto; min-height: 0; flex-basis: auto; }
+  .learningPage .list .cardButton > div:first-child { width: 100%; height: 140px; }
+  .learningPage .list .cardBody { grid-template-areas: "eyebrow" "title" "details" "progress" "action"; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .learningPage .list .moduleDetails { flex-wrap: wrap; gap: 5px 0; }
+}
+@media (max-width: 500px) {
+  .learningPage .stats, .learningPage .toolbar { grid-template-columns: minmax(0, 1fr); }
+  .learningPage .toolbar .search, .learningPage .viewToggle { grid-column: 1; }
+}
+
+/* Programme module cards need room for readable text without stretching empty space. */
+.learningPage .grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); grid-auto-rows: 1fr; align-items: stretch; }
+.learningPage .grid .moduleCard { height: 100%; }
+.learningPage .grid .moduleCard .cardButton { height: 100%; }
+.learningPage .grid .moduleCard .cover { height: 160px; }
+.learningPage .defaultCoverImage { object-fit: contain; background: #faf8fc; }
+.learningPage .grid .moduleCard .cardBody { gap: 0; padding: 20px; }
+.learningPage .grid .moduleCard .cardEyebrow { font-size: 14px; line-height: 1.4; }
+.learningPage .grid .moduleCard .cardEyebrow svg { width: 17px; height: 17px; }
+.learningPage .grid .moduleCard .cardTitle { height: auto; min-height: 0; max-height: 2.7em; margin: 10px 0; font-size: 21px !important; line-height: 1.35; }
+.learningPage .grid .moduleCard .cardDescription { min-height: 0; margin: 0 0 22px; font-size: 15px; line-height: 1.55; }
+.learningPage .grid .moduleCard .cardProgress { margin-top: auto; padding: 0; }
+.learningPage .grid .moduleCard .cardProgress > div > div:first-child { font-size: 15px; line-height: 1.5; }
+.learningPage .grid .moduleCard .cardProgress strong { font-size: 17px; }
+.learningPage .grid .moduleCard .cardProgress [role='progressbar'] { height: 8px; }
+.learningPage .grid .moduleCard .nextActivity { min-height: 76px; margin-top: 20px; padding: 13px 14px; gap: 12px; }
+.learningPage .grid .moduleCard .nextActivity > svg:first-child { width: 23px; height: 23px; }
+.learningPage .grid .moduleCard .nextActivity small { font-size: 13px; }
+.learningPage .grid .moduleCard .nextActivity strong { font-size: 15px; line-height: 1.4; }
+.learningPage .grid .moduleCard .cardAction { min-height: 50px; margin-top: 15px; font-size: 15px; }
+.learningPage .grid .moduleCard .status { font-size: 14px; }
+
+/* The list uses the same readable hierarchy while keeping its compact rows. */
+.learningPage .list .cardButton { height: 157px; flex-basis: 157px; }
+.learningPage .list .cardButton > div:first-child { width: 136px; }
+.learningPage .list .cover { height: 100%; min-height: 0; }
+.learningPage .list .cover img { display: block; width: 100%; height: 100%; }
+.learningPage .list .cardEyebrow { font-size: 14px; }
+.learningPage .list .status { font-size: 13px; }
+.learningPage .list .cardTitle { max-height: 50px; font-size: 18px !important; }
+.learningPage .list .moduleDetails dt { font-size: 10px; }
+.learningPage .list .moduleDetails dd { font-size: 11px; }
+.learningPage .list .cardProgress > div > div:first-child { font-size: 14px; }
+.learningPage .list .cardProgress strong { font-size: 16px; }
+.learningPage .list .cardAction { min-height: 42px; font-size: 14px; white-space: nowrap; }
+@container subjects (max-width: 900px) {
+  .learningPage .list .cardButton { flex-direction: row; }
+  .learningPage .list .cardButton > div:first-child { width: 120px; height: auto; }
+  .learningPage .list .cardBody {
+    grid-template-areas: "eyebrow progress action" "title progress action" "details details details";
+    grid-template-columns: minmax(0, 1fr) minmax(120px, 150px) minmax(150px, 170px);
+    gap: 8px 10px;
+  }
+  .learningPage .list .cardProgress > div > div:first-child { font-size: 12px; }
+  .learningPage .list .cardProgress strong { font-size: 14px; }
+  .learningPage .list .cardAction { font-size: 12px; }
+}
+@container subjects (max-width: 650px) {
+  .learningPage .list .cardButton { height: auto; flex-basis: auto; flex-direction: column; }
+  .learningPage .list .cardButton > div:first-child { width: 100%; height: 140px; }
+  .learningPage .list .cardBody {
+    grid-template-areas: "eyebrow" "title" "details" "progress" "action";
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .learningPage .list .moduleDetails { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 0; }
+  .learningPage .list .moduleDetails > div:nth-child(3) { border-left: 0; }
+}
+@container learning (max-width: 700px) {
+  .learningPage .list .cardButton { height: auto; flex-basis: auto; flex-direction: column; }
+  .learningPage .list .cardButton > div:first-child { width: 100%; }
+  .learningPage .list .cardBody { grid-template-areas: "eyebrow" "title" "details" "progress" "action"; grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 700px) {
+  .learningPage .list .cardButton { height: auto; flex-basis: auto; flex-direction: column; }
+  .learningPage .list .cardButton > div:first-child { width: 100%; }
+  .learningPage .list .cardBody { grid-template-areas: "eyebrow" "title" "details" "progress" "action"; grid-template-columns: minmax(0, 1fr); }
+}
