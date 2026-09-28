@@ -11,10 +11,10 @@ from .enrolment_documents import (
     coach_sign_enrolment_document,
 )
 from .review_pdf import coach_mcm_pdf
+from .dashboard_view import coach_dashboard
 from .views import (
     coach_attendance,
     coach_attendance_details,
-    coach_dashboard,
     coach_learner_case_file,
     coach_learner_case_file_next_session,
     coach_learner_case_file_reviews,

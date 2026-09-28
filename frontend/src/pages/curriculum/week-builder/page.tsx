@@ -12,6 +12,8 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { formatHoursMinutes, hoursMinutesToHours, splitHoursMinutes } from '@/lib/format';
+import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
+import { mergeWeekTemplates } from './weekTemplateMerge';
 // Deck preview below: the same one the learner's page uses, so an author sees
 // what the learner will (see UploadedDeckPreview).
 import { resolveDocEmbed } from '@/lib/docEmbed';
@@ -598,6 +600,53 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
 
   const dirty = JSON.stringify(template) !== savedSnapshot.current;
 
+  /**
+   * Somebody else's save landing on the template this editor is holding.
+   *
+   * The editor read this template once, when it opened, and until now that was
+   * the only read it ever did: a colleague's save was invisible here and the
+   * next save from this screen replaced it outright, because the endpoint takes
+   * the whole template and there is no revision on it to refuse with.
+   *
+   * So the stored copy is re-read and merged. `savedSnapshot` is the base --
+   * the copy this editor last agreed with the server on -- which is what tells
+   * a component the reader edited apart from one their colleague edited. Their
+   * components arrive, the reader's stay, and a field both of them changed
+   * keeps the reader's and is named on screen.
+   */
+  const [coEditNotices, setCoEditNotices] = useState<string[]>([]);
+  const templateRef = useRef(template);
+  templateRef.current = template;
+  /**
+   * Which read is the newest one to have been started. Two can be in the air at
+   * once when a colleague saves twice in quick succession, and the older reply
+   * landing last would reinstate what the newer one had just corrected.
+   */
+  const readSequence = useRef(0);
+  const mergeStoredTemplate = useCallback(async () => {
+    if (!persistedId || saving) return;
+    const sequence = readSequence.current + 1;
+    readSequence.current = sequence;
+    const stored = await fetchWeekTemplateDetail(persistedId).catch(() => null);
+    // A later read has already answered; this reply is a version of the
+    // template that has since been superseded.
+    if (readSequence.current !== sequence) return;
+    if (!stored) return;
+    const storedJson = JSON.stringify(stored);
+    // Nothing moved: the write that woke this up was somewhere else in the
+    // curriculum, and there is nothing to merge or to mention.
+    if (storedJson === savedSnapshot.current) return;
+    const base = JSON.parse(savedSnapshot.current) as WeekTemplate;
+    const { template: merged, notices } = mergeWeekTemplates(base, templateRef.current, stored);
+    savedSnapshot.current = storedJson;
+    setTemplate(merged);
+    // A component the other editor deleted takes the selection with it, rather
+    // than leaving the panel on the right editing something that is gone.
+    setSelectedId(prev => (prev && merged.components.some(component => component.id === prev) ? prev : null));
+    setCoEditNotices(notices);
+  }, [persistedId, saving]);
+  useLiveRefresh(mergeStoredTemplate, { enabled: Boolean(persistedId) });
+
   const update = useCallback((updater: (prev: WeekTemplate) => WeekTemplate) => {
     setTemplate(prev => recalcWeekTemplate(updater(prev)));
   }, []);
@@ -703,6 +752,27 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
 
   return (
     <div className="px-5 lg:px-8 py-6 space-y-6">
+      {/* The receipt for a merge that has already happened: their components
+          are in the rail by the time this renders, and the ones the reader had
+          also changed still hold what they typed. It reports rather than asks,
+          so dismissing is the only button it needs. */}
+      {coEditNotices.length > 0 && (
+        <div
+          data-testid="week-builder-co-edit"
+          className="flex items-start justify-between gap-3 rounded-xl border border-amber-200/70 bg-amber-50 px-4 py-3 text-[12px] font-medium text-amber-800"
+        >
+          <span className="flex min-w-0 items-start gap-2">
+            <AppIcon className="ri-refresh-line mt-0.5 shrink-0 text-base"></AppIcon>
+            <span className="min-w-0">
+              <span className="block font-bold">Someone else saved this week template while you were editing. Their changes are on this screen; yours are still here.</span>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                {coEditNotices.map(notice => <li key={notice}>{notice}</li>)}
+              </ul>
+            </span>
+          </span>
+          <button type="button" onClick={() => setCoEditNotices([])} className="shrink-0 rounded-lg px-2 py-1 font-bold text-amber-700 hover:bg-amber-100">Got it</button>
+        </div>
+      )}
       {/* Header band — the hero identity + at-a-glance flow */}
       <div className="relative rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
         <span className={`absolute left-0 top-0 bottom-0 w-1.5 ${course.bar}`} />
@@ -1001,11 +1071,11 @@ function RailNodeCard({ component, index, selected, focused = false, issues, wee
                 in the session's own settings would. */}
             {dateDrift && (
               <span
-                title={`Teams has this meeting on ${formatDateLabel(dateDrift.storedDate)}, but this week now runs on ${dateDrift.weekDates.map(formatDateLabel).join(' and ')}. Every other live session follows its week automatically; this one is held here because real attendees were invited to the booked date. Move it from the Teams Meetings page, which asks Microsoft and mails the change.`}
+                title={`Teams calendar currently has this meeting on ${formatDateLabel(dateDrift.storedDate)}. This week is now planned for ${dateDrift.weekDates.map(formatDateLabel).join(' and ')}. Every other live session follows its week automatically; this one stays put because real attendees were invited to the booked date. Go to the Teams Meetings page and run Update there so the Teams calendar matches the date planned here -- that is what actually moves the Microsoft meeting and mails attendees the change.`}
                 className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
               >
                 <AppIcon className="ri-calendar-schedule-line text-[10px]"></AppIcon>
-                Teams holds this date · week runs {formatDateLabel(dateDrift.weekDates[0])}
+                Teams calendar: {formatDateLabel(dateDrift.storedDate)} · planned here: {formatDateLabel(dateDrift.weekDates[0])} · update Teams to match
               </span>
             )}
             {/* Says what is missing rather than filling it in: this session is

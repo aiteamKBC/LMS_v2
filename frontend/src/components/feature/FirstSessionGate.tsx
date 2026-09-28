@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import {
   bookLearnerCalendarSession,
@@ -80,7 +80,7 @@ function LearnerFirstSessionGate({ children }: { children: ReactNode }) {
   const { auth, logout } = useAuth();
   const { pathname } = useLocation();
   const account = auth.account;
-  const kind = account?.learnerType || 'apprenticeship';
+  const kind: LearnerKind = account?.learnerType === 'commercial' ? 'commercial' : 'apprenticeship';
   const learnerId = String(account?.subjectId ?? '');
 
   const [state, setState] = useState<LearnerFirstSession | null>(null);
@@ -139,7 +139,7 @@ function Holding({ state, kind, learnerId, onBooked, onSignOut }: {
           ? <Waiting state={state} />
           : <Booking state={state} kind={kind} learnerId={learnerId} onBooked={onBooked} />}
         <div className="mt-6 flex flex-wrap items-center gap-4 border-t border-foreground-100 pt-4 text-[13px]">
-          <a href="/learner/support" className="text-primary-600 hover:underline">Contact support</a>
+          <Link to="/learner/support" className="text-primary-600 hover:underline">Contact support</Link>
           <button type="button" onClick={onSignOut} className="text-foreground-500 hover:underline">
             Sign out
           </button>

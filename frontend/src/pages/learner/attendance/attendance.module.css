@@ -5,7 +5,7 @@
   --attendance-surface: var(--kbc-surface, #fff);
   --attendance-soft: var(--kbc-page-bg, #f6f8fb);
   --attendance-accent: var(--learner-purple, #673ab7);
-  --lecture-columns: minmax(0, 20fr) minmax(0, 12fr) minmax(0, 4fr) minmax(0, 13fr) minmax(0, 9fr) minmax(0, 11fr) minmax(0, 17fr) minmax(0, 14fr);
+  --lecture-columns: minmax(0, 20fr) minmax(0, 12fr) minmax(0, 4fr) minmax(0, 13fr) minmax(0, 9fr) minmax(0, 11fr) minmax(0, 15fr) minmax(0, 15fr);
 }
 
 .page .featuredLecture { padding: 22px 24px; border-top: 4px solid var(--kbc-primary, #182d48); }
@@ -31,15 +31,28 @@
 .featuredFooter > div:first-child { font-size: 12px; line-height: 1.6; }
 .featuredTimezone { margin-top: 3px; color: var(--attendance-muted); font-size: 10px; }
 .featuredActions { flex-wrap: wrap; gap: 10px; flex-shrink: 0; }
-.reportButton, .catchupButton { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; min-height: 42px; padding: 9px 10px; border: 1px solid var(--attendance-border); border-radius: 7px; font-size: 12px; font-weight: 600; line-height: 1.4; text-align: center; white-space: normal; }
+.reportButton, .catchupButton { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; min-height: 36px; padding: 7px 8px; border: 1px solid var(--attendance-border); border-radius: 6px; font-size: 11px; font-weight: 600; line-height: 1.4; text-align: center; white-space: normal; }
 .reportButton { color: var(--learner-danger, #b93737); border-color: color-mix(in srgb, currentColor 25%, var(--attendance-surface)); background: color-mix(in srgb, currentColor 4%, var(--attendance-surface)); }
 .catchupButton { color: var(--attendance-accent); border-color: color-mix(in srgb, currentColor 25%, var(--attendance-surface)); background: color-mix(in srgb, currentColor 5%, var(--attendance-surface)); }
 .reportButton:hover:not(:disabled), .catchupButton:hover:not(:disabled) { background: color-mix(in srgb, currentColor 10%, var(--attendance-surface)); }
 .reportButton:focus-visible, .catchupButton:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
 .reportButton:disabled, .attendButton:disabled { opacity: .55; cursor: not-allowed; }
 .reportButton svg, .catchupButton svg { width: 16px; height: 16px; flex-shrink: 0; }
+.alternativeLink { display: flex; align-items: flex-start; gap: 7px; box-sizing: border-box; width: 100%; min-width: 0; padding: 7px 8px; border: 1px solid color-mix(in srgb, var(--attendance-accent) 25%, var(--attendance-surface)); border-radius: 7px; color: var(--attendance-accent); background: color-mix(in srgb, var(--attendance-accent) 5%, var(--attendance-surface)); font-size: 11px; line-height: 1.35; text-align: left; text-decoration: none; }
+.alternativeLink:hover { background: color-mix(in srgb, var(--attendance-accent) 10%, var(--attendance-surface)); }
+.alternativeLink:focus-visible { outline: 2px solid var(--attendance-accent); outline-offset: 3px; }
+.alternativeLink svg { width: 15px; height: 15px; margin-top: 1px; flex-shrink: 0; }
+.alternativeText { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.alternativeText strong, .alternativeText span { overflow-wrap: anywhere; white-space: normal; }
+.alternativeText strong { font-size: 11px; font-weight: 650; }
+.alternativeText span { color: var(--attendance-muted); font-size: 10px; }
+.alternativeText .watchProgress { color: var(--attendance-accent); font-weight: 600; }
+.planStack { display: flex; flex-direction: column; align-items: stretch; gap: 4px; width: 100%; min-width: 0; }
+.planSecondary { align-self: flex-start; padding: 2px 0; color: var(--attendance-accent); font-size: 11px; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
+.planSecondary:focus-visible { outline: 2px solid var(--attendance-accent); outline-offset: 2px; }
 :global(body .dashboard-theme[data-workspace-role="learner"] .workspace-main) .featuredActions > button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; width: auto; padding: 10px 18px; border-radius: 8px; font-size: 13px; font-weight: 600; }
-:global(body .dashboard-theme[data-workspace-role="learner"] .workspace-main) .lectureAttendanceAction > button { display: flex; width: 100%; min-height: 42px; padding: 9px 8px; font-size: 11px; white-space: normal; }
+.lectureAttendanceAction { min-width: 0; }
+:global(body .dashboard-theme[data-workspace-role="learner"] .workspace-main) .lectureAttendanceAction > button { display: flex; width: 100%; min-height: 36px; padding: 7px 8px; font-size: 11px; white-space: normal; }
 .joinSession { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; text-decoration: underline; text-underline-offset: 3px; }
 .attendError, .attendNotice { margin-top: 12px; font-size: 12px; line-height: 1.6; }
 .attendError { color: var(--learner-danger, #b93737); }
@@ -147,7 +160,7 @@
 .lectureIcon { display: grid; place-items: center; width: 32px; height: 32px; flex: 0 0 auto; border: 3px solid var(--attendance-surface); border-radius: 50%; background: var(--kbc-primary, #182d48); color: #fff; outline: 1px solid var(--attendance-border); }
 .lectureIcon svg { width: 16px; height: 16px; }
 .moduleName { margin-top: 3px; color: var(--attendance-muted); font-size: 9px; line-height: 1.4; }
-.lectureDate { font-variant-numeric: tabular-nums; font-size: 10px; }
+.lectureDate { font-variant-numeric: tabular-nums; font-size: 11px; }
 .sessionTime { display: block; margin-top: 3px; color: var(--attendance-muted); }
 .lectureHours { text-align: center; font-variant-numeric: tabular-nums; }
 .lectureContent { color: var(--attendance-muted); font-size: 10px; }
@@ -159,9 +172,9 @@
 .ksbToggle { min-width: 26px; min-height: 26px; padding: 2px 4px; border-radius: 4px; background: var(--attendance-soft); font-size: 10px; font-weight: 600; }
 .unmapped { font-size: 10px; color: var(--attendance-muted); }
 .lectureStatus { display: flex; align-items: flex-start; flex-direction: column; gap: 4px; }
-.page .lectureStatus :global(.ui-status-badge) { max-width: 100%; padding: 3px 5px; white-space: normal; font-size: 9px; line-height: 1.4; }
+.page .lectureStatus :global(.ui-status-badge) { max-width: 100%; padding: 3px 6px; white-space: normal; font-size: 10px; line-height: 1.4; }
 .lectureActions { display: flex; align-items: stretch; flex-direction: column; gap: 3px; }
-:global(body .dashboard-theme[data-workspace-role="learner"] .workspace-main) .activityButton { display: flex; align-items: center; justify-content: center; gap: 3px; min-height: 30px; width: 100%; padding: 6px; border-radius: 6px; font-size: 10px; font-weight: 500; line-height: 1.3; white-space: normal; }
+:global(body .dashboard-theme[data-workspace-role="learner"] .workspace-main) .activityButton { display: flex; align-items: center; justify-content: center; gap: 4px; min-height: 36px; width: 100%; padding: 7px 8px; border-radius: 6px; font-size: 11px; font-weight: 500; line-height: 1.3; white-space: normal; }
 .activityButton svg { flex-shrink: 0; width: 13px; height: 13px; }
 .learningNote { display: flex; align-items: flex-start; gap: 7px; padding: 0 5px; color: var(--attendance-muted); font-size: 10px; line-height: 1.6; }
 .learningNote svg { flex-shrink: 0; margin-top: 2px; }

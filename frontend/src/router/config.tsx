@@ -77,6 +77,8 @@ const CurriculumDeliveryHub = lazyRoute(() => import("../pages/curriculum/hubs/p
 const CurriculumQualityHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumQualityHub })));
 const CurriculumFreeCourses = lazyRoute(() => import("../pages/curriculum/free-courses/page"));
 const CurriculumKsbFrameworksPage = lazyRoute(() => import("../pages/curriculum/ksb-frameworks/page"));
+const CoachAuditTrailPage = lazyRoute(() => import("../pages/coach/audit-trail/page"));
+const CoachAuditTrailPersonPage = lazyRoute(() => import("../pages/coach/audit-trail/person/page"));
 const CurriculumAuditTrailPage = lazyRoute(() => import("../pages/curriculum/audit-trail/page"));
 const CurriculumAuditTrailPersonPage = lazyRoute(() => import("../pages/curriculum/audit-trail/person/page"));
 const CurriculumArchive = lazyRoute(() => import("../pages/curriculum/archive/page"));
@@ -180,7 +182,6 @@ const ProgressReviewsListPage = lazyRoute(() => import("../pages/learner/progres
 const CurriculumReviewsPage = lazyRoute(() => import("../pages/learner/reviews/curriculumReviews").then(m => ({ default: m.CurriculumReviewPage })));
 const CurriculumReviewsListPage = lazyRoute(() => import("../pages/learner/reviews/curriculumReviews").then(m => ({ default: m.CurriculumReviewsListPage })));
 const ManualQuizPage = lazyRoute(() => import("../pages/curriculum/quiz-xml/manual/page"));
-const MessagesPage = lazyRoute(() => import("../pages/learner/messages/page"));
 const MisAttendanceModesPage = lazyRoute(() => import("../pages/mis/attendance-modes/page"));
 const MisCalendarPage = lazyRoute(() => import("../pages/mis/calendar/page"));
 const MisCoachAssignmentPage = lazyRoute(() => import("../pages/mis/coach-assignment/page"));
@@ -883,6 +884,20 @@ const routes: RouteObject[] = [
   {
     path: "/coach/evidence-validation",
     element: <CoachEvidenceValidation />,
+  },
+  {
+    // The Coach workspace's own scoped door onto the Audit Trail. Same
+    // component as /admin/audit-trail and /curriculum/audit-trail, fixed to the
+    // coach workspace.
+    path: "/coach/audit-trail",
+    element: <CoachAuditTrailPage />,
+  },
+  {
+    // One person's own page rather than a panel over the list: an audit finding
+    // is something people send each other, and a link to it has to survive
+    // being pasted into a message.
+    path: "/coach/audit-trail/people/:email",
+    element: <CoachAuditTrailPersonPage />,
   },
   {
     path: "/admin/access-logs",

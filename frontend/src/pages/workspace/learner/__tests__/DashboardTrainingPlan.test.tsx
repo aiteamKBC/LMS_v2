@@ -55,16 +55,16 @@ describe('dashboard learning layout', () => {
     const calendar = { ...schedule(), actualAvailable: false };
     setup(calendar, '', overview);
     const panel = await screen.findByRole('region', { name: 'Monthly study plan' });
-    for (const [label, value] of [['Planned', '5'], ['Completed', '2'], ['Remaining', '3'], ['Weekly target', '5']]) {
+    for (const [label, value] of [['Required hours', '5'], ['Achieved hours', '2'], ['Difference', '-3']]) {
       expect(within(panel).getByText(label).nextElementSibling).toHaveTextContent(`${value} hrs`);
     }
   });
 
-  it('places the combined card next to weekly learning and keeps the timeline beside its overview', async () => {
+  it('places monthly focus next to weekly learning and keeps the timeline beside its overview', async () => {
     setup();
-    const combined = await screen.findByRole('region', { name: 'Live sessions and programme reviews' });
-    const weekly = screen.getByRole('region', { name: 'This week' });
-    expect(weekly.parentElement?.parentElement).toBe(combined.parentElement);
+    const monthly = await screen.findByRole('region', { name: 'Monthly study plan' });
+    const weekly = screen.getByRole('region', { name: 'Weekly learning plan' });
+    expect(weekly.parentElement).toBe(monthly.parentElement);
     expect(screen.queryByRole('region', { name: 'Upcoming' })).not.toBeInTheDocument();
     const timeline = screen.getByRole('region', { name: 'Module timeline' });
     expect(timeline.parentElement?.parentElement).toBe(screen.getByRole('region', { name: 'Module overview' }).parentElement);
@@ -72,38 +72,39 @@ describe('dashboard learning layout', () => {
     expect(screen.getByRole('region', { name: 'Programme module progress' })).toBeVisible();
     const rewards = screen.getByRole('region', { name: 'Rewards and points' });
     expect(timeline.compareDocumentPosition(rewards) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(combined.compareDocumentPosition(timeline) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(monthly.compareDocumentPosition(timeline) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it('retains weekly learning when the training plan cannot load', async () => {
+  it('shows a retry without fabricating a weekly plan when the schedule cannot load', async () => {
     setup(schedule(), 'training-plan-dashboard');
-    expect(await screen.findByRole('progressbar', { name: "This week's activity progress" })).toHaveAttribute('aria-valuenow', '50');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Your monthly learning could not refresh. Offline');
     expect(await screen.findByRole('button', { name: 'Retry monthly learning' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Weekly learning plan' })).not.toBeInTheDocument();
   });
 
-  it('refreshes bookings and cancellations in Reviews while preserving the selected tab and filters', async () => {
+  it('refreshes monthly reviews while preserving the selected module and month filters', async () => {
     const calendar = schedule();
     const fetch = setup(calendar);
-    fireEvent.click(await screen.findByRole('tab', { name: 'Reviews' }));
-    fireEvent.change(screen.getByRole('combobox', { name: 'Focus module' }), { target: { value: 'current:M1' } });
-    const panel = within(screen.getByRole('region', { name: 'Programme reviews' }));
-    expect(panel.getByRole('link', { name: 'Schedule' })).toHaveAttribute('href', '/learner/calendar?kind=commercial&learner=125&event=mcr%3A1&action=schedule');
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Focus module' }), { target: { value: 'current:M1' } });
+    const panel = within(screen.getByRole('region', { name: 'Reviews this month' }));
+    expect(panel.getByRole('button', { name: 'Schedule' })).toBeVisible();
     Object.assign(calendar.reviews[0], { status: 'scheduled', scheduledDate: '2026-09-28', scheduledTime: '14:00' });
     await act(async () => { invalidateLearnerReads(); });
     expect(panel.getByText('Booking pending')).toBeVisible();
-    expect(panel.getByText(/28 Sept.*14:00/)).toBeVisible();
+    expect(panel.getByText('28 Sept')).toBeVisible();
+    expect(panel.getByText(/14:00.*UK time/)).toBeVisible();
     Object.assign(calendar.reviews[0], { scheduledDate: '2026-09-20', scheduledTime: '10:30', invited: true });
     await act(async () => { invalidateLearnerReads(); });
     expect(panel.getByText('Booked')).toBeVisible();
-    expect(panel.getByText(/20 Sept.*10:30/)).toBeVisible();
+    expect(panel.getByText('20 Sept')).toBeVisible();
+    expect(panel.getByText(/10:30.*UK time/)).toBeVisible();
     expect(panel.getAllByRole('article')).toHaveLength(1);
     expect(screen.getByRole('combobox', { name: 'Focus module' })).toHaveValue('current:M1');
     expect(screen.getByLabelText('Focus month')).toHaveValue('2026-09');
-    expect(screen.getByRole('tab', { name: 'Reviews' })).toHaveAttribute('aria-selected', 'true');
     Object.assign(calendar.reviews[0], { status: 'cancelled' });
     await act(async () => { invalidateLearnerReads(); });
     expect(panel.queryByRole('article')).not.toBeInTheDocument();
-    expect(panel.getByText('Your reviews will appear here once planned.')).toBeVisible();
+    expect(panel.getByText('No reviews planned for this month.')).toBeVisible();
     expect(fetch.mock.calls.filter(([url]) => String(url).includes('section=overview')).length).toBeGreaterThanOrEqual(4);
   });
 });

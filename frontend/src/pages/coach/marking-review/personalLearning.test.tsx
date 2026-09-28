@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import CoachMarkingReviewPage from './page';
@@ -66,27 +66,22 @@ describe('personal coursework review', () => {
   });
 
   it('keeps official and personal queues separate and carries scope into the review link', async () => {
-    render(<MemoryRouter initialEntries={['/coach/marking-queue']}><Routes>
+    render(<MemoryRouter initialEntries={['/coach/marking-queue?scope=personal']}><Routes>
       <Route path="/coach/marking-queue" element={<CoachMarkingQueue />} />
       <Route path="/coach/marking-queue/:submissionId" element={<CoachMarkingReviewPage />} />
     </Routes></MemoryRouter>);
-    await waitFor(() => expect(coachFetch).toHaveBeenCalledWith(expect.stringContaining('/coach_api/coach/marking-queue?')));
-    fireEvent.click(screen.getByRole('button', { name: 'Personal learning' }));
     await waitFor(() => expect(coachFetch).toHaveBeenCalledWith(expect.stringContaining('/coach_api/coach/personal-marking?')));
+    expect(vi.mocked(coachFetch).mock.calls.some(([url]) => String(url).includes('/coach_api/coach/marking-queue?'))).toBe(false);
     fireEvent.click(await screen.findByRole('button', { name: 'View' }));
     await screen.findByText('The complete personal assignment answer.');
     expect(coachFetch).toHaveBeenCalledWith('/coach_api/coach/personal-marking/sub-1');
   });
 
-  it('ignores an old queue response after switching to personal learning', async () => {
-    let resolveOld!: (response: Response) => void;
-    vi.mocked(coachFetch).mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve; }));
-    render(<MemoryRouter initialEntries={['/coach/marking-queue']}><CoachMarkingQueue /></MemoryRouter>);
-    await waitFor(() => expect(coachFetch).toHaveBeenCalledTimes(1));
-    fireEvent.click(screen.getByRole('button', { name: 'Personal learning' }));
+  it('does not mix official queue data into a direct personal queue', async () => {
+    render(<MemoryRouter initialEntries={['/coach/marking-queue?scope=personal']}><CoachMarkingQueue /></MemoryRouter>);
     await screen.findByText('Synthetic Admin');
-    await act(async () => resolveOld(new Response(JSON.stringify({ items: [{ ...item, learner: 'Stale official learner' }] }))));
     expect(screen.queryByText('Stale official learner')).not.toBeInTheDocument();
     expect(screen.getByText('Synthetic Admin')).toBeVisible();
+    expect(vi.mocked(coachFetch).mock.calls.some(([url]) => String(url).includes('/coach_api/coach/marking-queue?'))).toBe(false);
   });
 });

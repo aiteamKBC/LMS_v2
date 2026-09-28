@@ -443,21 +443,78 @@ class UnreportedLectureCatchupTests(SimpleTestCase):
         self.assertEqual(ledger.call_args.args, (12, {'OCC-1', 'OCC-2'}))
 
 
+class RecordingPlanViewsTests(SimpleTestCase):
+    def test_recording_plan_shows_how_much_of_the_lecture_recording_was_watched(self):
+        from .attendance_lectures import _attach_recording_views
+        lectures = [
+            {'sessionId': 'teams:OCC-1', 'source': 'microsoft-teams', 'recovery': {'method': 'recorded'}},
+            {'sessionId': 'teams:OCC-2', 'source': 'microsoft-teams', 'recovery': {'method': 'recorded'}},
+            {'sessionId': 'teams:OCC-3', 'source': 'microsoft-teams', 'recovery': {'method': 'catch-up'}},
+        ]
+        with patch('curriculum_api.recording_views.watched_by_occurrence',
+                   return_value={'OCC-1': (2820, 7200)}) as watched:
+            _attach_recording_views(lectures, 'apprenticeship', 101)
+        watched.assert_called_once_with('apprenticeship', 101, ['OCC-1', 'OCC-2'])
+        self.assertEqual(lectures[0]['recovery'], {'method': 'recorded', 'watchedSeconds': 2820, 'recordingSeconds': 7200})
+        self.assertEqual(lectures[1]['recovery'], {'method': 'recorded', 'watchedSeconds': 0, 'recordingSeconds': 0})
+        self.assertEqual(lectures[2]['recovery'], {'method': 'catch-up'})
+
+
+class AlternativeRecoveryDetailsTests(SimpleTestCase):
+    TARGET = {'dateIso': '2026-09-30', 'startTime': '09:00', 'endTime': '11:00', 'group': 'Group B',
+              'title': 'MM21 — Session 9', 'joinUrl': 'https://teams.example/alt'}
+
+    def details(self, local_now):
+        from .attendance_lectures import _alternative_recovery
+        with patch('learner_api.alternative_recovery.alternative_target_details', return_value=dict(self.TARGET)):
+            return _alternative_recovery({'id': 4, 'catchup_event_key': 'alternative:OCC-9'},
+                                         now=timezone.make_aware(local_now))
+
+    def test_upcoming_alternative_links_to_the_calendar_without_a_join_link(self):
+        recovery = self.details(datetime(2026, 9, 29, 12, 0))
+        self.assertEqual(recovery['calendarKey'], 'absence-alternative:4')
+        self.assertEqual((recovery['date'], recovery['startTime'], recovery['endTime'], recovery['group']),
+                         ('2026-09-30', '09:00', '11:00', 'Group B'))
+        self.assertNotIn('joinUrl', recovery)
+        self.assertFalse(recovery['ended'])
+
+    def test_join_link_opens_ten_minutes_before_and_closes_after_the_end(self):
+        self.assertEqual(self.details(datetime(2026, 9, 30, 8, 50))['joinUrl'], 'https://teams.example/alt')
+        self.assertNotIn('joinUrl', self.details(datetime(2026, 9, 30, 8, 49)))
+        ended = self.details(datetime(2026, 9, 30, 11, 1))
+        self.assertNotIn('joinUrl', ended)
+        self.assertTrue(ended['ended'])
+
+
 class AttendanceRecoveryDisplayTests(SimpleTestCase):
-    def test_each_reported_lecture_carries_its_recovery_method_and_catchup_date(self):
+    def test_each_reported_lecture_carries_its_plan_and_where_to_open_it(self):
+        from datetime import time
         from .attendance_lectures import _attach_recovery
-        lectures = [{'reportId': '1'}, {'reportId': '2'}, {'reportId': '3'}]
+        lectures = [{'reportId': str(n)} for n in range(1, 5)]
         reported = {
-            '1': {'recovery_method': 'catch-up', 'catchup_event_key': 'catch-up:6'},
-            '2': {'recovery_method': 'alternative', 'catchup_event_key': 'alternative:9'},
+            '1': {'id': 11, 'recovery_method': 'catch-up', 'catchup_event_key': 'catch-up:6'},
+            '2': {'id': 22, 'recovery_method': 'alternative', 'catchup_event_key': 'alternative:9'},
+            '3': {'id': 33, 'recovery_method': 'recorded', 'catchup_event_key': ''},
         }
-        with patch('coach_api.models.CoachCalendarEvent.objects') as events:
-            events.filter.return_value.values_list.return_value = [('catch-up:6', date(2026, 9, 26))]
-            _attach_recovery(lectures, reported)
-        self.assertEqual(lectures[0]['recovery'], {'method': 'catch-up', 'date': '2026-09-26'})
-        self.assertEqual(lectures[1]['recovery'], {'method': 'alternative', 'date': None})
-        self.assertIsNone(lectures[2]['recovery'])
-        events.filter.assert_called_once_with(event_key__in=['catch-up:6'])
+        rows = [
+            {'event_key': 'catch-up:6', 'scheduled_date': date(2026, 9, 26), 'scheduled_time': time(10, 40),
+             'duration_minutes': 30, 'meeting_link': 'https://teams.example/catch-up', 'status': 'scheduled'},
+            {'event_key': 'absence-recording:33', 'scheduled_date': date(2026, 9, 27), 'scheduled_time': time(18, 0),
+             'duration_minutes': 60, 'meeting_link': '', 'status': 'scheduled'},
+        ]
+        with patch('coach_api.models.CoachCalendarEvent.objects') as events,                 patch('learner_api.alternative_recovery.alternative_target_details', return_value=None):
+            events.filter.return_value.values.return_value = rows
+            _attach_recovery(lectures, reported, now=timezone.make_aware(datetime(2026, 9, 26, 10, 35)))
+        self.assertEqual(lectures[0]['recovery'], {
+            'method': 'catch-up', 'date': '2026-09-26', 'calendarKey': 'catch-up:6', 'startTime': '10:40',
+            'endTime': '11:10', 'ended': False, 'joinUrl': 'https://teams.example/catch-up'})
+        self.assertEqual(lectures[1]['recovery'],
+                         {'method': 'alternative', 'date': None, 'calendarKey': 'absence-alternative:22'})
+        self.assertEqual(lectures[2]['recovery'], {
+            'method': 'recorded', 'date': '2026-09-27', 'calendarKey': 'absence-recording:33',
+            'startTime': '18:00', 'endTime': '19:00', 'ended': False})
+        self.assertIsNone(lectures[3]['recovery'])
+        self.assertEqual(set(events.filter.call_args.kwargs['event_key__in']), {'catch-up:6', 'absence-recording:33'})
 
 
 class AttendanceAbsenceTests(SimpleTestCase):

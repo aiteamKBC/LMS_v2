@@ -194,9 +194,11 @@ class TrainingPlanDashboardTests(SimpleTestCase):
              patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {'current:M1': {'id': 'M1'}})), \
              patch('learner_api.training_plan_dashboard.rows', side_effect=[[module], [
                  {'id': 'W1', 'module_catalogue_id': 'M1', 'week_number': 1, 'title': 'Week 1',
-                  'learning_outcomes': '["<b>Plan a campaign</b>", ""]'},
+                  'learning_outcomes': '["<b>Plan a campaign</b>", ""]',
+                  'holiday_note_enabled': False, 'holiday_note': ''},
                  {'id': 'W2', 'module_catalogue_id': 'M1', 'week_number': 2, 'title': 'Week 2',
-                  'learning_outcomes': ['Plan a campaign', 'Measure results', None]},
+                  'learning_outcomes': ['Plan a campaign', 'Measure results', None],
+                  'holiday_note_enabled': False, 'holiday_note': ''},
              ], []]), \
              patch('learner_api.calendar.coaching_events_for_learner', return_value=[]):
             profiles.objects.filter.return_value.first.return_value = None
@@ -225,6 +227,7 @@ class TrainingPlanDashboardTests(SimpleTestCase):
         with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
              patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
              patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
+             patch('learner_api.training_plan_dashboard.coach_phone', return_value=''), \
              patch('learner_api.calendar.CoachCalendarEvent.objects.filter') as stored:
             profiles.objects.filter.return_value.first.return_value = profile
             stored.return_value.order_by.return_value = records
@@ -334,6 +337,31 @@ class TrainingPlanDashboardTests(SimpleTestCase):
         self.assertEqual(result['programmeStartDate'], '2026-01-19')
         self.assertEqual(result['programmeEndDate'], '2027-01-31')
         self.assertEqual(result['contractStatus'], 'ready')
+
+    def test_contract_cache_version_changes_only_with_source_contract(self):
+        contract = {
+            'id': 77,
+            'azure_path': 'az://contracts/training-plan.pdf',
+            'training_plan_planned_hours': 30,
+            'fetched_at': datetime(2026, 1, 20, tzinfo=timezone.utc),
+            'date': datetime(2026, 1, 19, tzinfo=timezone.utc),
+            'fully_signed_date': date(2026, 1, 18),
+            'extraction_metadata': None,
+            'program_start_date': date(2026, 1, 19),
+            'planned_end_date': date(2027, 1, 31),
+        }
+        with patch('learner_api.training_plan_dashboard.read_contract', return_value={}) as extract:
+            contract_plan(SimpleNamespace(pk=125), contract)
+            contract_plan(SimpleNamespace(pk=125), contract)
+
+        first_version = extract.call_args_list[0].args[2]
+        self.assertEqual(extract.call_args_list[1].args[2], first_version)
+        self.assertIn('77', first_version)
+        self.assertIn('training-plan.pdf', first_version)
+
+        with patch('learner_api.training_plan_dashboard.read_contract', return_value={}) as replaced:
+            contract_plan(SimpleNamespace(pk=125), {**contract, 'id': 78})
+        self.assertNotEqual(replaced.call_args.args[2], first_version)
 
     def test_contract_download_uses_one_size_check_and_reuses_versioned_extract(self):
         read_contract.cache_clear()

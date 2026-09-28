@@ -7,6 +7,7 @@ from . import monthly_reflection_ai
 from .assignment_ai_check import assignment_ai_check
 from . import ksb_generation
 from django.urls import path
+from curriculum_api import recording_views
 from . import monthly_logs
 from .dashboard_metrics import learner_metrics
 from .overview_week import overview_week
@@ -35,6 +36,7 @@ urlpatterns = [
     path('session-catchup/<str:kind>/<int:learner_id>/', link_catchup),
     path('session-results/<str:kind>/<int:learner_id>/<str:series_id>/sessions/<int:session_number>/', session_results.learner_results),
     path('session-results/<str:kind>/<int:learner_id>/<str:series_id>/artifacts/<str:artifact_id>/', session_results.learner_content),
+    path('session-results/<str:kind>/<int:learner_id>/<str:series_id>/artifacts/<str:artifact_id>/watch/', recording_views.learner_recording_watch),
     path("calendar/<str:kind>/<int:pk>/coach-availability/", coach_available_slots, name="coach-available-slots"),
     # Enrolment: no learner exists yet, so the case owner is named directly.
     path("calendar/case-owner-availability/", case_owner_available_slots, name="case-owner-availability"),
@@ -181,6 +183,7 @@ urlpatterns = [
     path("certificates/<str:kind>/<int:pk>/issue/", certificates.issue_learner_certificate, name="learner-certificate-issue"),
     path("kbc-lms/all-students-schema/", lms_schema.all_students_schema, name="kbc-lms-all-students-schema"),
     path('student-activity/<str:kind>/<int:pk>/<int:group_id>/<int:activity_id>/files/<int:attachment_id>/', student_activity.subject_file, name='subject-file'),
+    path('student-activity/<str:kind>/<int:pk>/<int:group_id>/<int:activity_id>/source-file/', student_activity.source_material_file, name='source-material-file'),
     path("media/google-drive/<str:file_id>/", media_proxy.google_drive_media, name="google-drive-media"),
     path("attendance/<str:kind>/<int:learner_id>/", attendance.learner_attendance, name="learner-attendance"),
     path("learners/<int:pk>/coach/", views.learner_coach, name="learner-coach"),

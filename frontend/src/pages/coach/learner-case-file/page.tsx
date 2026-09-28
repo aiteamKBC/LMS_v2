@@ -1,4 +1,4 @@
-﻿import { useEffect, useState } from 'react';
+﻿import { useState } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -20,17 +20,10 @@ import {
   formatFraction,
   formatPercent,
   selectCaseFileOtjh,
-  useCoachLearnerCaseFileData,
 } from './data';
-import type { CaseFileReviewMeeting, CoachLearnerCaseFileData } from './types';
+import type { CaseFileReviewMeeting } from './types';
 import styles from './learnerCaseFile.module.css';
-import { useCaseFileDashboardPlan } from './useCaseFileDashboardPlan';
-import { useCaseFileAttendance } from './useCaseFileAttendance';
-import { useCaseFileNextSession } from './useCaseFileNextSession';
-import { useCaseFileReviews } from './useCaseFileReviews';
-import { useCaseFileMarking } from './useCaseFileMarking';
 import { CaseFileTabs } from './components/CaseFileTabs';
-import { caseFileTabs, type CaseFileTabId } from './components/caseFileTabs.config';
 import { LearnerCaseFileHeader } from './components/LearnerCaseFileHeader';
 import { AttendanceTab } from './tabs/AttendanceTab';
 import { ReviewsTab } from './tabs/ReviewsTab';
@@ -38,10 +31,12 @@ import { EnrolmentDocumentsTab } from './tabs/EnrolmentDocumentsTab';
 import { EvidencePreviewModal, ProgressTab } from './tabs/ProgressTab';
 import { selectCaseFileKsbRows, selectCaseFileKsbSummary, type EvidencePreviewTarget } from './domain/ksbSelectors';
 import { formatAttendanceFraction } from './formatters';
+import { useLearnerProfile } from '@/features/coach/learner-profile/hooks/useLearnerProfile';
+import { useLearnerProfileTabs } from '@/features/coach/learner-profile/hooks/useLearnerProfileTabs';
+import { selectLearnerProfileSubtitle } from '@/features/coach/learner-profile/selectors/learnerProfileSelectors';
 
 const coachNav = roleNavMap.coach;
 
-type TabId = CaseFileTabId;
 type LocationState = {
   learnerId?: string;
   learnerName?: string;
@@ -51,11 +46,6 @@ type LocationState = {
   tab?: string;
 };
 
-function resolveCaseFileTab(tab?: string | null): TabId {
-  const normalized = tab === 'learning-plan' ? 'support' : tab;
-  return caseFileTabs.some(candidate => candidate.id === normalized) ? normalized as TabId : 'overview';
-}
-
 export default function LearnerCaseFile() {
   const coach = useCoachIdentity();
   const navigate = useNavigate();
@@ -64,8 +54,7 @@ export default function LearnerCaseFile() {
   const state = (location.state || {}) as LocationState;
 
   const requestedTab = searchParams.get('tab') || state.tab;
-  const initialTab = resolveCaseFileTab(requestedTab);
-  const [activeTab, setActiveTab] = useState<TabId>(initialTab);
+  const { activeTab, setActiveTab } = useLearnerProfileTabs(requestedTab);
   const [evidencePreview, setEvidencePreview] = useState<EvidencePreviewTarget | null>(null);
   const requestedReviewId = searchParams.get('reviewId') || undefined;
   const learnerId = searchParams.get('id') || state.learnerId;
@@ -73,46 +62,22 @@ export default function LearnerCaseFile() {
   const explicitKind = parseLearnerKind(searchParams.get('kind') || state.kind);
   const enrolmentId = searchParams.get('enrolmentId') || state.enrolmentId;
 
-  const { data, loading, error, refresh } = useCoachLearnerCaseFileData({
+  const profile = useLearnerProfile({
     learnerId,
     learnerName,
     kind: explicitKind,
     enrolmentId,
     enabled: coach.isInitialized && coach.hasCoachAccess,
+    activeTab,
   });
-  const dashboardKind = data?.kind || explicitKind;
-  const dashboardLearnerId = data?.enrolmentId || enrolmentId;
-  const dashboardPlan = useCaseFileDashboardPlan(
-    dashboardKind,
-    dashboardLearnerId,
-    coach.isInitialized && coach.hasCoachAccess && !!dashboardKind && !!dashboardLearnerId,
-    activeTab === 'overview' || activeTab === 'support',
-  );
-  const caseFileAttendance = useCaseFileAttendance(
-    data?.kind,
-    data?.enrolmentId,
-    coach.isInitialized && coach.hasCoachAccess && !!data?.kind && !!data?.enrolmentId,
-  );
-  const caseFileNextSession = useCaseFileNextSession(
-    data?.learnerId,
-    coach.isInitialized && coach.hasCoachAccess && !!data?.learnerId,
-  );
-  const caseFileReviews = useCaseFileReviews(
-    data?.learnerId,
-    coach.isInitialized && coach.hasCoachAccess && !!data?.learnerId && activeTab === 'reviews',
-  );
-  const caseFileMarking = useCaseFileMarking(
-    data?.enrolmentId,
-    coach.isInitialized && coach.hasCoachAccess && !!data?.enrolmentId && activeTab === 'assignments',
-  );
+  const { data, loading, error, refresh, resolvedKind: dashboardKind, resolvedEnrolmentId: dashboardLearnerId } = profile;
+  const dashboardPlan = profile.plan;
+  const caseFileAttendance = profile.attendance;
+  const caseFileNextSession = profile.nextSession;
+  const caseFileReviews = profile.reviews;
+  const caseFileMarking = profile.marking;
 
-  useEffect(() => {
-    if (requestedTab === 'learning-plan' || caseFileTabs.some(tab => tab.id === requestedTab)) {
-      setActiveTab(resolveCaseFileTab(requestedTab));
-    }
-  }, [requestedTab]);
-
-  const subtitle = buildSubtitle(data);
+  const subtitle = selectLearnerProfileSubtitle(data);
   const pageTitle = data?.displayName || learnerName || 'Learner case file';
   const pageSubtitle = subtitle || 'Live learner view for coaching support';
   const nextLiveSession = caseFileNextSession.data;
@@ -275,16 +240,6 @@ export default function LearnerCaseFile() {
       )}
     </WorkspaceShell>
   );
-}
-
-function buildSubtitle(data: CoachLearnerCaseFileData | null) {
-  if (!data) {
-    return '';
-  }
-
-  return [data.programme, data.cohort ? `Cohort ${data.cohort}` : '', data.group ? `Group ${data.group}` : '']
-    .filter(Boolean)
-    .join(' - ');
 }
 
 function parseLearnerKind(value?: string | null) {

@@ -17,7 +17,7 @@ export function DashboardTrainingPlan({ kind, learnerId, plan, canOpenActivities
   showRewards?: boolean; activityOverviewOnly?: boolean; timelineOnly?: boolean;
   programmeSnapshot?: ProgrammeProgressSnapshot;
 }) {
-  const { data, subjects: summaries, loading, error, refresh, retryContract, week, schedule } = plan;
+  const { data, subjects: summaries, loading, error, refresh, retryContract, schedule } = plan;
   const [params] = useSearchParams();
   const { hash } = useLocation();
   const initialSubjectId = params.get('subject') || '';

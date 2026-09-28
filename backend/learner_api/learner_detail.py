@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 from django.db import DatabaseError, connections
 from django.db.models import prefetch_related_objects
 from django.http import JsonResponse
+from .projection_performance import measure_projection
 from django.utils import timezone
 
 from login.permissions import learner_self_or_staff
@@ -1874,7 +1875,12 @@ def learner_detail(request, kind, pk):
             response['Cache-Control'] = 'private, no-store'
             return response
         options = {"compact": True} if request.GET.get("content") == "summary" else {}
-        return JsonResponse(build_learner_detail(source, pk, **options))
+        with measure_projection(
+            'learner-detail', kind=kind, learner_id=pk,
+            section=request.GET.get('content') or 'complete',
+        ) as measurement:
+            with measurement.stage('detail'):
+                return JsonResponse(build_learner_detail(source, pk, **options))
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
 

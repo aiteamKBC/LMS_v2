@@ -42,6 +42,18 @@ describe('resolved review stream dashboard helpers', () => {
     expect(reviewActionMatrix(native)).toMatchObject({ schedule: null, view: true, viewForm: true });
   });
 
+  it('keeps summary-only imported history visible without offering a form action', () => {
+    const summaryOnly = event({
+      id: 'imported-review:14010',
+      eventKey: 'imported-review:14010',
+      reviewSource: 'aptem',
+      aptemReviewId: '14010',
+      hasReviewForm: false,
+    });
+
+    expect(reviewActionMatrix(summaryOnly)).toMatchObject({ view: true, viewForm: false });
+  });
+
   it('shows Schedule consistently for unbooked rows and never treats confirmed as completed', () => {
     const aptem = event({ status: 'confirmed', scheduledDate: '2026-09-20', scheduledTime: null });
     const native = event({ status: 'not-scheduled', scheduledDate: null, scheduledTime: null });

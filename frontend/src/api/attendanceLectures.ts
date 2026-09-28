@@ -23,7 +23,14 @@ export interface AttendanceLecture {
   finalOutcome?: string;
   updatedAt: string | null; canReportAbsence: boolean; excused?: boolean;
   absenceReport: { id: number; status: string } | null;
-  recovery?: { method: string; date: string | null } | null;
+  recovery?: {
+    method: string; date: string | null;
+    /** Alternative session only: when and where the learner makes the lecture up. */
+    startTime?: string; endTime?: string; group?: string; title?: string;
+    calendarKey?: string; joinUrl?: string; ended?: boolean;
+    /** Recording plan only: seconds of the lecture recording watched, and its length. */
+    watchedSeconds?: number; recordingSeconds?: number;
+  } | null;
   monthlyLog?: { month: string; sourceRef: string };
 }
 export interface AttendanceMode {

@@ -160,6 +160,9 @@ export interface ReviewInstanceFormDefinition {
   /** Historical adapters can reuse the Review Workspace without enabling writes. */
   readOnly?: boolean;
   source?: 'curriculum' | 'aptem' | string;
+  /** Imported records can contain summary metadata without any form fields. */
+  formAvailable?: boolean;
+  summaryOnly?: boolean;
   pdf?: { available: boolean; reason: string } | null;
   /** Progress Review only, and null until a coach calculates it. */
   progressSnapshot?: ReviewProgressSnapshot | null;

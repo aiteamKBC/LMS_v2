@@ -3,7 +3,6 @@ from collections import defaultdict
 from datetime import datetime, timezone
 import logging
 import math
-import time
 
 from django.db import DatabaseError, connections
 from django.http import JsonResponse
@@ -18,6 +17,7 @@ from .coach_assignment import current_coach, source_coach
 from .student_activity import _builder_subject_metadata
 from .subject_content import as_list, clean_text, safe_url
 from .training_plan_contract import read_contract, contract_extract_metadata, selected_contract
+from .projection_performance import measure_projection
 
 log = logging.getLogger(__name__)
 
@@ -202,7 +202,12 @@ def contract_plan(source, contract):
     months, status = {}, 'not-available'
     if contract and contract['azure_path']:
         try:
-            version = f"{contract['fetched_at']}:{int(time.time() // 1800)}"
+            # Keep the expensive extraction until this exact source contract
+            # changes instead of discarding it on an arbitrary time bucket.
+            version = ':'.join(str(value or '') for value in (
+                contract.get('id'), contract.get('azure_path'), contract.get('fetched_at'),
+                contract.get('date'), contract.get('fully_signed_date'),
+            ))
             extracted = read_contract(contract['azure_path'], contract['training_plan_planned_hours'], version,
                                       contract_extract_metadata(contract.get('extraction_metadata')))
             if extracted:
@@ -370,21 +375,30 @@ def training_plan_dashboard(request, kind, pk):
     model = SOURCE_MODELS.get(kind)
     if model is None:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
+    section = request.GET.get('section')
+    measurement = None
     try:
-        source = model.all_learners.get(pk=pk)
-        section = request.GET.get('section')
+        with measure_projection('training-plan-dashboard', kind=kind, learner_id=pk, section=section) as measurement:
+            source = model.all_learners.get(pk=pk)
         # ``learning`` is the detailed weekly dashboard projection.  Keep it
         # on the same read path as overview so clients can request the weekly
         # modules/sessions without being rejected by the section guard.
-        if section not in (None, 'overview', 'learning', 'contract'):
-            return JsonResponse({'error': 'Invalid training plan section.'}, status=400)
-        payload = read_dashboard(source, section=section)
+            if section not in (None, 'overview', 'learning', 'contract'):
+                return JsonResponse({'error': 'Invalid training plan section.'}, status=400)
+            with measurement.stage(section or 'complete'):
+                payload = read_dashboard(source, section=section)
     except model.DoesNotExist:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     except LookupError as error:
         return JsonResponse({'error': str(error)}, status=404)
-    except DatabaseError:
-        log.exception('Could not read training-plan dashboard')
+    except DatabaseError as error:
+        cause = getattr(error, '__cause__', None)
+        sqlstate = getattr(error, 'sqlstate', None) or getattr(cause, 'sqlstate', None)
+        log.exception(
+            'Could not read training-plan dashboard exception_class=%s sqlstate=%s section=%s kind=%s learner_id=%s stage=%s',
+            type(error).__name__, sqlstate, section, kind, pk,
+            (measurement.failed_stage or measurement.current_stage) if measurement else 'source',
+        )
         return JsonResponse({'error': 'Could not load your training plan. Please try again.'}, status=503)
     response = JsonResponse(payload)
     response['Cache-Control'] = 'private, no-store'
