@@ -19,6 +19,7 @@ from .student_activity_data import read_curriculum_schedules, apply_curriculum_s
 from .subject_dates import activity_schedule, as_date
 from .subject_content import clean_text
 from .training_plan_dashboard import number, rows
+from .projection_performance import measure_projection
 
 log = logging.getLogger(__name__)
 UK = ZoneInfo('Europe/London')
@@ -382,17 +383,19 @@ def overview_week(request, kind, pk):
     model = SOURCE_MODELS.get(kind)
     if model is None:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
+    section = request.GET.get('section')
     try:
-        section = request.GET.get('section')
-        if section not in (None, 'home', 'dashboard'):
-            return JsonResponse({'error': 'Invalid overview section.'}, status=400)
-        home = section == 'home'
-        fields = ['id', 'aptem_id', 'email']
-        if home:
-            fields.extend(['username', 'employer_id', 'start_date', 'end_date', 'programme', 'cohort'])
-        source = model.all_learners.only(*fields).get(pk=pk)
-        payload = read_week(source, home_kind=kind) if home else read_week(
-            source, dashboard_kind=kind if section == 'dashboard' else None)
+        with measure_projection('overview-week', kind=kind, learner_id=pk, section=section) as measurement:
+            if section not in (None, 'home', 'dashboard'):
+                return JsonResponse({'error': 'Invalid overview section.'}, status=400)
+            home = section == 'home'
+            fields = ['id', 'aptem_id', 'email']
+            if home:
+                fields.extend(['username', 'employer_id', 'start_date', 'end_date', 'programme', 'cohort'])
+            source = model.all_learners.only(*fields).get(pk=pk)
+            with measurement.stage(section or 'overview'):
+                payload = read_week(source, home_kind=kind) if home else read_week(
+                    source, dashboard_kind=kind if section == 'dashboard' else None)
     except model.DoesNotExist:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     except LookupError as error:

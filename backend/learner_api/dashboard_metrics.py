@@ -7,6 +7,7 @@ import psycopg
 from django.db import DatabaseError, connections
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
+from .projection_performance import measure_projection
 
 from audit_api.last_audit_ledger_views import _is_completed
 from login.permissions import learner_self_or_staff
@@ -478,8 +479,10 @@ def learner_metrics(request, kind, pk):
     if model is None:
         return JsonResponse({'error': 'Unknown learner kind.'}, status=404)
     try:
-        source = model.all_learners.only('id', 'aptem_id', 'email').get(pk=pk)
-        payload = read_metrics(source, kind)
+        with measure_projection('metrics', kind=kind, learner_id=pk) as measurement:
+            source = model.all_learners.only('id', 'aptem_id', 'email').get(pk=pk)
+            with measurement.stage('metrics'):
+                payload = read_metrics(source, kind)
     except model.DoesNotExist:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     except ServiceError as error:

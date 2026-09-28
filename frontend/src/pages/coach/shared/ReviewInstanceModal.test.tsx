@@ -79,21 +79,34 @@ beforeEach(() => {
 });
 
 describe('review reopen flow', () => {
-  it('renders an imported Aptem definition in the same workspace without write actions', async () => {
-    vi.mocked(fetchReviewInstanceForm).mockResolvedValue({
-      ...definition('scheduled'),
-      readOnly: true,
+  it('edits and saves an imported Aptem definition in the same workspace', async () => {
+    const importedDefinition = {
+      ...definition('in-progress'),
+      readOnly: false,
       source: 'aptem',
-      instance: { ...definition('scheduled').instance, id: 'imported-review:A-1', reviewTemplateId: '' },
-      template: { ...definition('scheduled').template, id: '', name: 'Imported progress review', reviewTypeCode: 'aptem_progress_review' },
-    });
+      instance: { ...definition('in-progress').instance, id: 'imported-review:A-1', reviewTemplateId: '' },
+      template: { ...definition('in-progress').template, id: '', name: 'Imported progress review', reviewTypeCode: 'aptem_progress_review' },
+      signatures: {
+        advisor: { required: false, signed: false },
+        participant: { required: false, signed: false },
+        manager: { required: false, signed: false },
+        employer: { required: false, signed: false },
+        referrer: { required: false, signed: false },
+      },
+    };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(importedDefinition);
+    vi.mocked(saveReviewInstanceAnswers).mockResolvedValue(importedDefinition);
     mount();
-    expect(await screen.findByText('Historical Aptem review')).toBeVisible();
-    expect(screen.getByDisplayValue('Review the next module')).toBeDisabled();
-    expect(screen.queryByRole('button', { name: 'Save draft' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Complete review' })).toBeNull();
+    expect(await screen.findByText('Imported Aptem review')).toBeVisible();
+    expect(screen.getByDisplayValue('Review the next module')).toBeEnabled();
+    expect(screen.getByText(/The original Aptem import remains unchanged\./)).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(saveReviewInstanceAnswers).toHaveBeenCalledWith(
+      'imported-review:A-1',
+      expect.objectContaining({ 'field-1': 'Review the next module' }),
+    ));
+    expect(screen.getByRole('button', { name: 'Complete review' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
-    expect(saveReviewInstanceAnswers).not.toHaveBeenCalled();
   });
 
   it('reopens a completed review with a reason and returns it to editing', async () => {

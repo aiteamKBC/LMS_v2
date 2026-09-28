@@ -582,10 +582,10 @@ export function ReviewInstanceModal({
 
         {!loading && definition ? (
           <>
-            {isImportedReadOnly ? (
+            {definition.source === 'aptem' ? (
               <section className="rounded-2xl border border-primary-200 bg-primary-50 p-4" aria-label="Imported review">
-                <p className="text-sm font-bold text-primary-950">Historical Aptem review</p>
-                <p className="mt-1 text-xs leading-5 text-primary-900">This imported review is read-only. Its sections and answers are shown exactly as stored.</p>
+                <p className="text-sm font-bold text-primary-950">Imported Aptem review</p>
+                <p className="mt-1 text-xs leading-5 text-primary-900">Changes are saved to this LMS review. The original Aptem import remains unchanged.</p>
               </section>
             ) : isSignatureStage ? (
               <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4" aria-label="Edit completed review">

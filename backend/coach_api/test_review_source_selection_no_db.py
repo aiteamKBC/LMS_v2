@@ -1,8 +1,10 @@
+import json
 from datetime import date, time
+from inspect import unwrap
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from django.test import SimpleTestCase
+from django.test import RequestFactory, SimpleTestCase
 
 from coach_api import views
 from coach_api.models import CoachCalendarEvent
@@ -361,12 +363,14 @@ class AptemEventVerificationTests(SimpleTestCase):
         self.assertNotIn("reviewInstanceId", events[0])
         self.assertNotIn("reviewTemplateId", events[0])
 
+    @patch("coach_api.views.ImportedReviewInstance.objects.filter")
     @patch("coach_api.views._sections_by_review")
     @patch("coach_api.views.connections")
     @patch("coach_api.views.fetch_caseload_dashboard_profiles")
     def test_imported_definition_reuses_native_form_contract_without_curriculum_identity(
-        self, fetch_profiles, connections, sections_by_review,
+        self, fetch_profiles, connections, sections_by_review, imported_instances,
     ):
+        imported_instances.return_value.first.return_value = None
         fetch_profiles.return_value = [learner(1, aptem_id=101, source_aptem_id=101)]
         cursor = connections["default"].cursor.return_value.__enter__.return_value
         columns = [
@@ -386,15 +390,86 @@ class AptemEventVerificationTests(SimpleTestCase):
         }]}
 
         definition = views._imported_review_definition(
-            "coach@example.invalid", "imported-review:R-1",
+            "coach@example.invalid", "imported-review:11",
         )
 
-        self.assertTrue(definition["readOnly"])
+        self.assertFalse(definition["readOnly"])
         self.assertEqual(definition["source"], "aptem")
+        # Old history links use the import row id. The returned identity is
+        # canonical so every later save/open path reaches the same draft.
         self.assertEqual(definition["instance"]["id"], "imported-review:R-1")
+        self.assertEqual(definition["instance"]["status"], "in-progress")
         self.assertEqual(definition["instance"]["reviewTemplateId"], "")
         self.assertEqual(definition["sections"][0]["displayOrder"], 2)
         self.assertEqual(definition["sections"][0]["fields"][0]["answer"], "Good progress")
+
+
+class ImportedReviewWriteTests(SimpleTestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+        self.definition = {
+            "source": "aptem",
+            "instance": {"id": "imported-review:R-1", "learnerId": 1},
+            "sections": [{"fields": [{"id": "aptem-field:501:0"}]}],
+        }
+
+    @patch("coach_api.views.authenticated_coach_email", return_value="coach@example.invalid")
+    @patch("coach_api.views.ImportedReviewInstance.objects.get_or_create")
+    @patch("coach_api.views._imported_review_definition")
+    def test_save_uses_the_canonical_imported_identity(
+        self, imported_definition, get_or_create, _coach_email,
+    ):
+        imported_definition.return_value = self.definition
+        imported = MagicMock(
+            event_key="imported-review:R-1",
+            status=views.ImportedReviewInstance.STATUS_IN_PROGRESS,
+            answers={},
+        )
+        get_or_create.return_value = (imported, True)
+        request = self.factory.post(
+            "/coach/reviews/imported-review%3A11/answers",
+            data=json.dumps({"answers": {"aptem-field:501:0": "Updated locally"}}),
+            content_type="application/json",
+        )
+
+        response = unwrap(views.coach_review_instance_answers)(request, "imported-review:11")
+
+        self.assertEqual(response.status_code, 200)
+        get_or_create.assert_called_once_with(
+            owner_email="coach@example.invalid",
+            event_key="imported-review:R-1",
+            defaults={"learner_id": 1},
+        )
+        self.assertEqual(imported.answers, {"aptem-field:501:0": "Updated locally"})
+        imported.save.assert_called_once_with(update_fields=["answers", "updated_at"])
+
+    @patch("coach_api.views.timezone.now")
+    @patch("coach_api.views.authenticated_coach_email", return_value="coach@example.invalid")
+    @patch("coach_api.views.ImportedReviewInstance.objects.get_or_create")
+    @patch("coach_api.views._imported_review_definition")
+    def test_complete_persists_answers_and_completed_state(
+        self, imported_definition, get_or_create, _coach_email, now,
+    ):
+        imported_definition.return_value = self.definition
+        imported = MagicMock(event_key="imported-review:R-1", answers={})
+        get_or_create.return_value = (imported, False)
+        completed_at = MagicMock(name="completed_at")
+        now.return_value = completed_at
+        request = self.factory.post(
+            "/coach/reviews/imported-review%3AR-1/complete",
+            data=json.dumps({"answers": {"aptem-field:501:0": "Final answer"}}),
+            content_type="application/json",
+        )
+
+        response = unwrap(views.coach_review_instance_complete)(request, "imported-review:R-1")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(imported.answers, {"aptem-field:501:0": "Final answer"})
+        self.assertEqual(imported.status, views.ImportedReviewInstance.STATUS_COMPLETED)
+        self.assertIs(imported.completed_at, completed_at)
+        imported.save.assert_called_once_with(
+            update_fields=["answers", "status", "completed_at", "updated_at"],
+        )
 
 
 class TimetableResolvedReviewStreamTests(SimpleTestCase):
