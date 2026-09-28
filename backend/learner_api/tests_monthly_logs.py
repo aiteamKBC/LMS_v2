@@ -252,6 +252,46 @@ class MonthlyLogsTests(SimpleTestCase):
                 logs.scope(self.request(perspective='learner'), 7)
             self.assertEqual(result.exception.status, 404)
 
+    def studying_staff(self, record_id=7):
+        self.account.role = 'staff'
+        self.account.subject_type = 'staff'
+        self.account.subject_id = 3
+        self.account.is_active = True
+        return patch('login.learner_enrolment.existing_learner_record',
+                     return_value=SimpleNamespace(pk=record_id))
+
+    def test_staff_member_is_the_learner_on_their_own_record(self):
+        with self.studying_staff(), \
+             patch.object(logs.old, 'coach_actor') as coach_actor, \
+             patch.object(logs.old, 'resolve_record', return_value=self.learner), \
+             patch.object(sources, 'profile', return_value=None):
+            request = self.request('post')
+            request.GET = {'perspective': 'learner'}
+            learner, role = logs.scope(request, 7)
+        self.assertEqual(role, 'learner')
+        self.assertFalse(learner['_view_as'])
+        self.assertFalse(request.admin_learner_action)
+        coach_actor.assert_not_called()
+
+    def test_staff_member_keeps_coach_rules_on_another_learner(self):
+        with self.studying_staff(record_id=9), \
+             patch.object(logs.old, 'coach_actor', return_value={'role': 'coach', 'email': 'other@example.test'}), \
+             patch.object(logs.old, 'resolve_record', return_value=self.learner), \
+             patch.object(sources, 'profile', return_value=None):
+            with self.assertRaises(ServiceError) as result:
+                logs.scope(self.request(perspective='learner'), 7)
+        self.assertEqual(result.exception.status, 404)
+
+    def test_own_record_outside_the_learner_workspace_is_not_learner_access(self):
+        with self.studying_staff() as lookup, \
+             patch.object(logs.old, 'coach_actor', return_value={'role': 'coach', 'email': 'other@example.test'}), \
+             patch.object(logs.old, 'resolve_record', return_value=self.learner), \
+             patch.object(sources, 'profile', return_value=None):
+            with self.assertRaises(ServiceError) as result:
+                logs.scope(self.request(), 7)
+        self.assertEqual(result.exception.status, 404)
+        lookup.assert_not_called()
+
     def test_month_end_rollover_does_not_create_empty_months(self):
         with patch.object(sources, 'activity_rows', return_value=[self.row]), \
              patch.object(logs.timezone, 'localdate', return_value=date(2027, 1, 1)):

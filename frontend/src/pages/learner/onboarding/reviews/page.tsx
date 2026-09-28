@@ -3,18 +3,25 @@ import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { useMyLearner } from '@/hooks/useMyLearner';
-import { ONBOARDING_NAV_ITEMS } from '@/hooks/useOnboardingRedirect';
+import { ONBOARDING_NAV_ITEMS, ONBOARDING_ROUTE } from '@/hooks/useOnboardingRedirect';
+import { useEnrolmentSubmitted } from '@/hooks/useLearnerNavGate';
 import {
   bookLearnerCalendarSession,
   cancelLearnerCalendarSession,
+  fetchFirstSessionSlots,
   fetchOnboardingReviews,
+  ukOffsetForDate,
   type OnboardingReview,
   type OnboardingReviewsResponse,
   type OnboardingReviewType,
+  type SessionSlot,
 } from '@/api/learnerCalendar';
+import { SessionSlotPicker, slotLabel } from '@/components/feature/SessionSlotPicker';
 import { fetchReviewForm, type ReviewFormResponse } from '@/api/reviewForm';
 import { btnPrimary, btnSecondary } from '@/pages/users/components/ui';
 import SignReviewModal from './SignReviewModal';
+import { downloadReviewPdf } from './reviewDocument';
+import { REVIEW_QUESTION_LABELS } from './questions';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 
 const learnerNav = roleNavMap.learner;
@@ -46,8 +53,15 @@ function ReviewCard({
   const icon = REVIEW_ICONS[review.type];
   const [open, setOpen] = useState(false);
   const [date, setDate] = useState(todayIso());
-  const [time, setTime] = useState('10:00');
+  const [time, setTime] = useState('');
   const [duration, setDuration] = useState('60');
+  // The case owner's free hours for the chosen day -- the same college-day
+  // slots the first learning session offers, read from the same mailbox the
+  // review is booked on.
+  const [slots, setSlots] = useState<SessionSlot[]>([]);
+  const [unconfirmed, setUnconfirmed] = useState('');
+  const [slotsLoading, setSlotsLoading] = useState(false);
+  const [slotsError, setSlotsError] = useState('');
   const [notes, setNotes] = useState('');
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -56,6 +70,23 @@ function ReviewCard({
   // it has to be shown rather than silently swallowed.
   const [warning, setWarning] = useState<string | null>(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadErr, setDownloadErr] = useState('');
+
+  // The same document the review's own Export PDF produces, built from the
+  // saved review — so it is offered on the same terms: once the form is done.
+  const download = async () => {
+    if (!review.event || downloading) return;
+    setDownloading(true);
+    setDownloadErr('');
+    try {
+      downloadReviewPdf(await fetchReviewForm(kind, id, review.event.eventKey), REVIEW_QUESTION_LABELS);
+    } catch (e) {
+      setDownloadErr(e instanceof Error ? e.message : 'Could not download the review.');
+    } finally {
+      setDownloading(false);
+    }
+  };
   // The list payload carries only whether each side has signed, so the full
   // signature (needed to show/replace it) is fetched when the dialog opens.
   const [signing, setSigning] = useState(false);
@@ -70,8 +101,41 @@ function ReviewCard({
     return () => { cancelled = true; };
   }, [signing, signData, kind, id, review.event]);
 
+  // Reloaded whenever the day changes, and the picked hour dropped: the new day
+  // has its own free hours, and keeping the old pick could book a time the case
+  // owner is busy for.
+  useEffect(() => {
+    setTime('');
+    if (!open || !date) {
+      setSlots([]);
+      setUnconfirmed('');
+      setSlotsError('');
+      setSlotsLoading(false);
+      return;
+    }
+    const controller = new AbortController();
+    setSlotsLoading(true);
+    setSlotsError('');
+    fetchFirstSessionSlots(kind, id, date, controller.signal)
+      .then((result) => {
+        if (controller.signal.aborted) return;
+        setSlots(result.slots);
+        setUnconfirmed(result.unconfirmed);
+      })
+      .catch((e: Error) => {
+        if (controller.signal.aborted) return;
+        setSlots([]);
+        setUnconfirmed('');
+        setSlotsError(e.message || 'Could not check your case owner’s calendar.');
+      })
+      .finally(() => { if (!controller.signal.aborted) setSlotsLoading(false); });
+    return () => controller.abort();
+  }, [open, kind, id, date]);
+
+  const bookable = slots.some((slot) => slot.time === time && slot.available);
+
   const submit = async () => {
-    if (saving) return;
+    if (saving || !bookable) return;
     setSaving(true);
     setErr(null);
     setWarning(null);
@@ -81,6 +145,8 @@ function ReviewCard({
         scheduledDate: date,
         scheduledTime: time,
         durationMinutes: parseInt(duration, 10),
+        // The slots are UK wall clock, as for the first session.
+        timezoneOffsetMinutes: ukOffsetForDate(date),
         notes: notes.trim() || undefined,
       });
       setOpen(false);
@@ -192,25 +258,32 @@ function ReviewCard({
                         : <><i className="ri-pen-nib-line" />Sign review</>}
                     </button>
                   )}
+                  {review.formCompleted && (
+                    <button onClick={() => { void download(); }} disabled={downloading} className={btnSecondary}>
+                      {downloading
+                        ? <><i className="ri-loader-4-line animate-spin" />Preparing…</>
+                        : <><i className="ri-download-2-line" />Download review</>}
+                    </button>
+                  )}
                   <button onClick={() => setConfirmCancel(true)}
                     className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-red-600 hover:text-red-700 hover:underline">
                     <i className="ri-close-circle-line" />Cancel booking
                   </button>
+                  {downloadErr && (
+                    <p role="alert" className="w-full text-[11px] text-red-600"><i className="ri-error-warning-line mr-1" />{downloadErr}</p>
+                  )}
                 </div>
               )}
             </div>
           ) : open ? (
             <div className="mt-3 space-y-3">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <label className="block">
                   <span className="text-[10px] font-semibold text-foreground-500 block mb-1">Date</span>
-                  <input type="date" value={date} min={todayIso()} onChange={(e) => setDate(e.target.value)}
-                    className="w-full bg-background-100 border border-foreground-200 rounded-lg px-2 py-1.5 text-[12px] text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40" />
-                </label>
-                <label className="block">
-                  <span className="text-[10px] font-semibold text-foreground-500 block mb-1">Time</span>
-                  <input type="time" value={time} onChange={(e) => setTime(e.target.value)}
-                    className="w-full bg-background-100 border border-foreground-200 rounded-lg px-2 py-1.5 text-[12px] text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40" />
+                  <input type="date" value={date} min={todayIso()} disabled={saving}
+                    onChange={(e) => { setDate(e.target.value); setErr(null); }}
+                    className="w-full bg-background-100 border border-foreground-200 rounded-lg px-2 py-1.5 text-[12px] text-foreground-800 focus:outline-none focus:ring-1 focus:ring-primary-400/40 disabled:opacity-60" />
+                  <span className="text-[10px] text-foreground-400 block mt-1">Weekdays only — not weekends or UK bank holidays.</span>
                 </label>
                 <label className="block">
                   <span className="text-[10px] font-semibold text-foreground-500 block mb-1">Duration</span>
@@ -222,6 +295,30 @@ function ReviewCard({
                   </select>
                 </label>
               </div>
+              <div className="block">
+                <span id={`review-time-label-${review.type}`} className="text-[10px] font-semibold text-foreground-500 block mb-1">Time (UK)</span>
+                {date ? (
+                  <SessionSlotPicker
+                    slots={slots}
+                    value={time}
+                    onChange={(next) => { setTime(next); setErr(null); }}
+                    labelledBy={`review-time-label-${review.type}`}
+                    disabled={saving}
+                    loading={slotsLoading}
+                    error={slotsError}
+                    unconfirmed={unconfirmed}
+                  />
+                ) : (
+                  <p className="text-[12px] text-foreground-500">
+                    Choose a date to see the times {coachName || 'your case owner'} is free.
+                  </p>
+                )}
+                {time && (
+                  <p className="text-[11px] text-foreground-500 mt-2">
+                    Review at <span className="font-semibold">{slotLabel(time)}</span> UK time.
+                  </p>
+                )}
+              </div>
               <label className="block">
                 <span className="text-[10px] font-semibold text-foreground-500 block mb-1">Notes (optional)</span>
                 <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Anything you'd like to cover?"
@@ -229,7 +326,7 @@ function ReviewCard({
               </label>
               {err && <p className="text-[11px] text-red-600"><i className="ri-error-warning-line mr-1" />{err}</p>}
               <div className="flex items-center gap-2">
-                <button onClick={submit} disabled={saving} className={btnPrimary}>
+                <button onClick={submit} disabled={saving || !bookable} className={btnPrimary}>
                   {saving ? <><i className="ri-loader-4-line animate-spin" />Booking…</> : <><i className="ri-calendar-check-line" />Confirm booking</>}
                 </button>
                 <button onClick={() => { setOpen(false); setErr(null); }} disabled={saving} className={btnSecondary}>Cancel</button>
@@ -289,6 +386,10 @@ function ReviewCard({
 export default function OnboardingReviewsPage() {
   const { kind, id } = useMyLearner();
   const isCommercial = kind === 'commercial';
+  const navigate = useNavigate();
+  // Locked until the enrolment is submitted; the sidebar item is locked too, so
+  // this covers a bookmark or a typed address.
+  const submitted = useEnrolmentSubmitted(isCommercial ? undefined : kind, id);
   const [data, setData] = useState<OnboardingReviewsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -300,11 +401,12 @@ export default function OnboardingReviewsPage() {
       setLoading(false);
       return;
     }
+    if (submitted !== true) return;
     fetchOnboardingReviews(kind, id)
       .then(setData)
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [kind, id, isCommercial]);
+  }, [kind, id, isCommercial, submitted]);
 
   useEffect(load, [load]);
 
@@ -332,6 +434,39 @@ export default function OnboardingReviewsPage() {
             <h2 className="mt-3 text-lg font-heading font-semibold text-foreground-900">No onboarding reviews are required</h2>
             <p className="mt-2 text-[13px] leading-relaxed text-foreground-600">Commercial learners go straight to programme delivery without apprenticeship onboarding reviews.</p>
           </div>
+        </main>
+      </WorkspaceShell>
+    );
+  }
+
+  if (submitted !== true) {
+    return (
+      <WorkspaceShell
+        role="learner"
+        roleLabel={learnerNav.label}
+        navItems={ONBOARDING_NAV_ITEMS}
+        workspaceLabel={learnerNav.workspaceLabel}
+        pageTitle="Reviews"
+        pageSubtitle="Available once you submit your enrolment"
+        userName="Learner"
+        userRole="Learner"
+      >
+        <main className="page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
+          {submitted === null ? (
+            <div className="rounded-2xl border border-foreground-200/60 bg-background-50 p-5"><RowsSkeleton rows={3} /></div>
+          ) : (
+            <div className="mx-auto max-w-2xl rounded-2xl border border-foreground-200/60 bg-background-50 p-8 text-center">
+              <i className="ri-lock-line text-3xl text-primary-600" aria-hidden="true" />
+              <h2 className="mt-3 text-lg font-heading font-semibold text-foreground-900">Reviews open once your enrolment is submitted</h2>
+              <p className="mt-2 text-[13px] leading-relaxed text-foreground-600">
+                Please complete every step of your enrolment and press Submit enrolment. You can then book your three
+                enrolment reviews here.
+              </p>
+              <button className={`${btnPrimary} mt-5`} onClick={() => navigate(ONBOARDING_ROUTE)}>
+                <i className="ri-file-user-line" aria-hidden="true" />Go to My Enrolment
+              </button>
+            </div>
+          )}
         </main>
       </WorkspaceShell>
     );

@@ -38,7 +38,7 @@ vi.mock('@/api/curriculum', () => ({
 import { ToastProvider } from '@/hooks/useToast';
 import { WizardProvider } from '../WizardContext';
 import { WizardShell } from '../WizardShell';
-import type { EnrolmentBoard, PersonalDetails } from '../../types';
+import type { EnrolmentBoard, IlrForm, IlrLearnerDetails, PersonalDetails } from '../../types';
 
 // Only the branches the wizard reads are populated; the board type is far wider
 // than anything under test here.
@@ -60,12 +60,45 @@ const COMPLETE_PERSONAL_DETAILS: PersonalDetails = {
   signature: 'data:image/png;base64,AAAA',
 };
 
+const COMPLETE_ILR_DETAILS: IlrLearnerDetails = {
+  yearsAtAddress: 3, sinceBirth: false, postcodePriorToEnrolment: 'CT1 1AA', niNumber: 'AB 12 34 56 C', niApplied: null,
+  legalSex: 'Female', pronouns: '', ethnicity: 'Irish', longTermDisability: false, highestQualification: 'Full level 3',
+  employmentStatus: 'In paid employment', employmentStartDate: '2024-01-15', fullTimeEducation: false, stateBenefits: 'None',
+  signature: 'data:image/png;base64,AAAA', signatureDate: '2026-09-27',
+};
+
+/** Every Extended ILR answer the learner can give, filled in. */
+const COMPLETE_EXTENDED_ILR: IlrForm = {
+  contact: { byPost: false, byPhone: true, byEmail: true },
+  nextOfKin: { fullName: 'Next Of Kin', relationship: 'Parent', email: 'kin@example.com', phone: '07123456780', sameAddressAsLearner: true },
+  eligibility: {
+    employedInEngland: true, countryOfResidence: 'United Kingdom', ukEeaNational: true, nationality: 'British',
+    residentPrev3Years: true, yearsInUk: undefined, requiresWorkPermit: null, evidenceDescription: '', evidenceFiles: [],
+  },
+  employer: {
+    organisationName: 'Employer Ltd', postcode: 'CT1 1AA', address: '1 Office Park', city: 'Canterbury',
+    lineManagerName: 'Line Manager', lineManagerEmail: 'manager@example.com', lineManagerPhone: '07123456781',
+  },
+  otherTraining: { attended12m: false, completedWhen: '' },
+  circumstances: { caringResponsibilities: 'None', other: '', careLeaver: false },
+  understanding: { programmeUnderstanding: 'Marketing', careerProgression: 'Manager' },
+  additionalInformation: { jobRoleRelevance: 'Marketing assistant', residenceNotForFullTimeEducation: 'Yes', ehcp: 'No', otherNames: '' },
+  additional: { aged16to18: false, aged19to24: false },
+  media: { consent: true },
+  declarations: {
+    plrShared: true, dfeContact: true, epaoDetails: true, kbcHoldsCerts: true, infoAccurate: true,
+    over50PercentEngland: true, wageRateBand: 'Band 1', knownByOtherName: false, plrAccessAware: true,
+  },
+  learnerSignature: { firstNames: 'Test', surname: 'Learner', date: '2026-09-27', signatureUrl: 'data:image/png;base64,AAAA' },
+  providerSignature: { printName: '', date: '' },
+} as IlrForm;
+
 function renderShell(mode: 'learner' | 'staff', onNavigateStep = vi.fn(), children?: ReactNode) {
   render(
     <ToastProvider>
       <WizardProvider userId="20" board={BOARD}>
-        {/* Step 1 — Personal Details, the first step with anything to fill in. */}
-        <WizardShell currentIndex={1} mode={mode} onNavigateStep={onNavigateStep} onFinish={vi.fn()} />
+        {/* Step 2 — Personal Details, the first step with anything to fill in. */}
+        <WizardShell currentIndex={2} mode={mode} onNavigateStep={onNavigateStep} onFinish={vi.fn()} />
         {children}
       </WizardProvider>
     </ToastProvider>
@@ -127,7 +160,7 @@ describe('learner step gating', () => {
     const onNavigateStep = renderShell('learner');
     await waitForHydration();
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Introduction' }));
+    await userEvent.click(screen.getByRole('tab', { name: 'Welcome' }));
     expect(onNavigateStep).toHaveBeenCalledWith(0);
     // Backwards saves but never blocks — the learner has no Save button of their own.
     await waitFor(() => expect(saveExtendedIlr).toHaveBeenCalled());
@@ -165,7 +198,7 @@ describe('learner step gating', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Next' }));
 
-    await waitFor(() => expect(onNavigateStep).toHaveBeenCalledWith(2));
+    await waitFor(() => expect(onNavigateStep).toHaveBeenCalledWith(3));
     // Requested on the way out, and the step changed while it was unresolved.
     expect(saveExtendedIlr).toHaveBeenCalled();
     expect(saveExtendedIlr.mock.invocationCallOrder[0]).toBeLessThan(onNavigateStep.mock.invocationCallOrder[0]);
@@ -187,7 +220,7 @@ describe('learner step gating', () => {
     await userEvent.type(screen.getByDisplayValue(COMPLETE_PERSONAL_DETAILS.address), ', Flat 2');
     await userEvent.click(screen.getByRole('button', { name: 'Next' }));
 
-    await waitFor(() => expect(onNavigateStep).toHaveBeenCalledWith(2));
+    await waitFor(() => expect(onNavigateStep).toHaveBeenCalledWith(3));
   });
 
   it('writes nothing when moving off a step the learner never touched', async () => {
@@ -204,7 +237,7 @@ describe('learner step gating', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Next' }));
 
-    await waitFor(() => expect(onNavigateStep).toHaveBeenCalledWith(2));
+    await waitFor(() => expect(onNavigateStep).toHaveBeenCalledWith(3));
     expect(saveExtendedIlr).not.toHaveBeenCalled();
   });
 
@@ -214,7 +247,7 @@ describe('learner step gating', () => {
     const onNavigateStep = renderShell('learner');
     await waitForHydration();
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Introduction' }));
+    await userEvent.click(screen.getByRole('tab', { name: 'Welcome' }));
 
     expect(onNavigateStep).toHaveBeenCalledWith(0);
     await waitFor(() => expect(saveExtendedIlr).toHaveBeenCalled());
@@ -225,17 +258,28 @@ describe('learner step gating', () => {
       results: [{ id: 'ksb-1', codes: ['K1'], title: 'A competency', theme: 'Theme', kind: 'Knowledge' }],
     });
     fetchExtendedIlr.mockResolvedValue({
-      answers: null,
-      draft: { personalDetails: COMPLETE_PERSONAL_DETAILS },
+      answers: COMPLETE_EXTENDED_ILR,
+      draft: {
+        personalDetails: COMPLETE_PERSONAL_DETAILS,
+        ilrDetails: COMPLETE_ILR_DETAILS,
+        // CV/Job Description and the PLR now come before the Skills Radar.
+        cvJob: {
+          pmQualifications: '', experienceText: 'N/A', functionalSkillsEnrol: 'No, I would prefer to opt out',
+          highestQualification: 'BA (Hons)', highestQualificationField: 'Business', hasFieldQualification: false,
+          highestFieldQualification: '', gcseEnglish: true, gcseMaths: true,
+        },
+        plr: { uln: '1234567890', records: [] },
+      },
       meta: { updatedAt: '2026-08-01T00:00:00Z' },
     });
     const onNavigateStep = renderShell('learner');
 
-    // Personal Details is finished, so Skills Radar opens — but nothing beyond it.
-    await waitFor(() => expect(screen.getByRole('tab', { name: 'Extended ILR' })).toHaveAttribute('aria-disabled', 'true'));
+    // Every step before the Skills Radar is finished, so it opens — but its
+    // unrated competencies hold back everything beyond it.
+    await waitFor(() => expect(screen.getByRole('tab', { name: 'Policies' })).toHaveAttribute('aria-disabled', 'true'));
     expect(screen.getByRole('tab', { name: 'Skills Radar' })).not.toHaveAttribute('aria-disabled');
 
-    await userEvent.click(screen.getByRole('tab', { name: 'Extended ILR' }));
+    await userEvent.click(screen.getByRole('tab', { name: 'Policies' }));
     expect(onNavigateStep).not.toHaveBeenCalled();
   });
 
@@ -266,10 +310,13 @@ describe('learner step gating', () => {
     release();
 
     // Personal Details was already filled in, so it reports itself complete on
-    // the first status the learner is ever shown. Four in total: the two steps
-    // with nothing to answer (Introduction, Next Steps) and the Skills Radar,
-    // which this programme seeds no competencies for.
-    await waitFor(() => expect(screen.getByText(/4 of 8 steps complete/i)).toBeInTheDocument());
+    // the first status the learner is ever shown. Five in total: the
+    // Introduction and Before You Begin (nothing to answer), the Personal
+    // Learning Record (nothing required since the ULN was dropped) and the
+    // Skills Radar, which this programme seeds no competencies for. ILR Learner
+    // Details is still unanswered. Next Steps is not counted: it only counts
+    // once the learner has reached it with every earlier step done.
+    await waitFor(() => expect(screen.getByText(/5 of 10 steps complete/i)).toBeInTheDocument());
     expect(screen.getByText('50%')).toBeInTheDocument();
   });
 
@@ -277,7 +324,8 @@ describe('learner step gating', () => {
     // The second async wave, and the one the first fix missed. Competencies are
     // fetched *after* hydration, and an unseeded Skills Radar has nothing unrated
     // in it — so between the two the step counted as complete and the total
-    // ticked up a second time (the 3-of-8 → 4-of-8 jump in the bug report).
+    // ticked up a second time (the 3-of-8 → 4-of-8 jump in the bug report; one
+    // lower now that Next Steps is no longer counted before it is reached).
     fetchExtendedIlr.mockResolvedValue({
       answers: null,
       draft: { personalDetails: COMPLETE_PERSONAL_DETAILS },
@@ -305,9 +353,9 @@ describe('learner step gating', () => {
     releaseKsbs();
 
     // Now measurable — and the Skills Radar is correctly outstanding, so the
-    // count settles at 3, never having shown 4.
-    await waitFor(() => expect(screen.getByText(/3 of 8 steps complete/i)).toBeInTheDocument());
-    expect(screen.queryByText(/4 of 8 steps complete/i)).not.toBeInTheDocument();
+    // count settles at 4 (the PLR has nothing required), never having shown 5.
+    await waitFor(() => expect(screen.getByText(/4 of 10 steps complete/i)).toBeInTheDocument());
+    expect(screen.queryByText(/5 of 10 steps complete/i)).not.toBeInTheDocument();
   });
 
   it('does not gate the staff wizard, and keeps its Save progress button', async () => {
@@ -317,6 +365,6 @@ describe('learner step gating', () => {
     expect(screen.getByRole('button', { name: /Save progress/i })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole('tab', { name: 'Policies' }));
-    await waitFor(() => expect(onNavigateStep).toHaveBeenCalledWith(6));
+    await waitFor(() => expect(onNavigateStep).toHaveBeenCalledWith(8));
   });
 });

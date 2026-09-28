@@ -11,14 +11,14 @@ export default function PersonalDetails() {
     <div>
       <StepHeading title="Personal Details" />
       <div className="max-w-3xl">
-        <LabeledInput label="First Name" value={pd.firstName} onChange={(v) => set({ firstName: v })} />
-        <LabeledInput label="Last Name" value={pd.lastName} onChange={(v) => set({ lastName: v })} />
-        <LabeledInput label="Email" type="email" value={pd.email} onChange={(v) => set({ email: v })} />
-        <LabeledInput label="Phone" type="tel" value={pd.phone} onChange={(v) => set({ phone: v })} />
-        <LabeledInput label="Address" value={pd.address} onChange={(v) => set({ address: v })} />
+        <LabeledInput label="First Name" missingKey="First Name" value={pd.firstName} onChange={(v) => set({ firstName: v })} />
+        <LabeledInput label="Last Name" missingKey="Last Name" value={pd.lastName} onChange={(v) => set({ lastName: v })} />
+        <LabeledInput label="Email" missingKey="Email" type="email" value={pd.email} onChange={(v) => set({ email: v })} />
+        <LabeledInput label="Phone" missingKey="Phone" type="tel" value={pd.phone} onChange={(v) => set({ phone: v })} />
+        <LabeledInput label="Address" missingKey="Address" value={pd.address} onChange={(v) => set({ address: v })} />
         {/* Age is derived from the date of birth, never typed — the two can't
             disagree, and there is nothing to keep in step by hand. */}
-        <LabeledInput label="Date of Birth" type="date" value={pd.dob} onChange={(v) => set({ dob: v, age: ageFromDob(v) })} />
+        <LabeledInput label="Date of Birth" missingKey="Date of Birth" type="date" value={pd.dob} onChange={(v) => set({ dob: v, age: ageFromDob(v) })} />
         <LabeledInput
           label="Age"
           type="number"
@@ -28,13 +28,14 @@ export default function PersonalDetails() {
           placeholder="—"
           helper="Calculated from your date of birth"
         />
-        <LabeledSelect label="Sex" value={pd.sex} options={SEX_OPTIONS} onChange={(v) => set({ sex: v })} />
+        <LabeledSelect label="Sex" missingKey="Sex" value={pd.sex} options={SEX_OPTIONS} onChange={(v) => set({ sex: v })} />
 
         {/* Signature — the learner's own name in a script face; stored on
             Wizard_Personal_Details. */}
         <div className="pt-2 border-t border-foreground-100 mt-2">
           <SignatureField
             label="Your signature"
+            missingKey="Your signature"
             signatoryName={[pd.firstName, pd.lastName].filter(Boolean).join(' ')}
             value={pd.signature}
             onChange={(v) =>

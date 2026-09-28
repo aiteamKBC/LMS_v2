@@ -56,11 +56,32 @@ def endpoint(*methods):
     return decorate
 
 
+def is_own_learner_record(account, learner_id):
+    """A staff member or administrator who is also studying, on their own record.
+
+    Resolved on the server from the account's address, the same lookup that
+    offers them the Learner workspace (login.identity), never from a client id.
+    """
+    if account.role == 'learner' or account.subject_type != 'staff' or not account.is_active:
+        return False
+    from login.learner_enrolment import existing_learner_record
+    record = existing_learner_record(account.email)
+    return record is not None and str(record.pk) == str(learner_id)
+
+
 def scope(request, learner_id):
     account = request.login_account
     if account.role == 'learner':
         if not account.is_active or account.subject_type != 'learner' or str(account.subject_id) != str(learner_id):
             raise old.ServiceError('Learner not found.', 'not_found', 404)
+        role = 'learner'
+    elif request.GET.get('perspective') == 'learner' and is_own_learner_record(account, learner_id):
+        # Their own record in the learner workspace is the ordinary learner
+        # experience; every other record keeps the coach/admin rules below.
+        learner = old.resolve_record(learner_id)
+        if learner['aptem_id'] and (not old.normalize(account.email)
+                                    or old.normalize(account.email) != old.normalize(learner['email'])):
+            old.identity_error()
         role = 'learner'
     else:
         actor = old.coach_actor(account)

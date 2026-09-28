@@ -12,7 +12,7 @@
  */
 import { POLICY_DOCS_KBC } from '@/mocks/enrolment-console';
 import { formatError } from './steps/fields';
-import type { WizardDraft } from '../types';
+import { WIZARD_STEPS, type WizardDraft } from '../types';
 
 /** One unfilled field, named so the UI can point the learner straight at it. */
 export interface MissingField {
@@ -57,6 +57,37 @@ function personalDetailsMissing(d: WizardDraft): string[] {
   return out;
 }
 
+/* ── ILR Learner Details ───────────────────────────────────────────────── */
+// Same loose check as the input (steps/IlrLearnerDetails.tsx).
+const NI_RE = /^[A-CEGHJ-PR-TW-Z]{2}\s?\d{2}\s?\d{2}\s?\d{2}\s?[A-D]$/i;
+
+/** The ILR step's missing label for its certification signature. */
+export const ILR_SIGNATURE_LABEL = 'Declaration signature';
+
+export function ilrDetailsMissing(d: WizardDraft): string[] {
+  const i = d.ilrDetails;
+  // Drafts saved before this step existed have no section at all.
+  if (!i) return ['Postcode prior to enrolment'];
+  const out: string[] = [];
+  if (isBlank(i.postcodePriorToEnrolment)) out.push('Postcode prior to enrolment');
+  // An NI number, or confirmation that the learner has applied for one.
+  if (isBlank(i.niNumber)) {
+    if (i.niApplied !== true) out.push('National Insurance number, or confirm you have applied for one');
+  } else if (!NI_RE.test(i.niNumber.trim())) {
+    out.push('National Insurance number — enter a valid number, for example AB 12 34 56 C');
+  }
+  if (isBlank(i.legalSex)) out.push('Legal Sex');
+  if (isBlank(i.ethnicity)) out.push('Ethnicity');
+  if (isUnanswered(i.longTermDisability)) out.push('Long-term disability, health problem or learning difficulty');
+  if (isBlank(i.highestQualification)) out.push('Highest qualification achieved');
+  if (isBlank(i.employmentStatus)) out.push('Employment status');
+  // Only asked of learners in paid employment.
+  if (i.employmentStatus === 'In paid employment' && isBlank(i.employmentStartDate)) out.push('Start date with employer');
+  if (isUnanswered(i.fullTimeEducation)) out.push('Full-time education or training');
+  if (isBlank(i.signature)) out.push(ILR_SIGNATURE_LABEL);
+  return out;
+}
+
 /* ── Step 2 — Skills Radar ────────────────────────────────────────────── */
 /**
  * Every KSB needs a level. The KSB list itself is fetched by the step from the
@@ -92,6 +123,10 @@ function ilrMissing(d: WizardDraft): string[] {
   if (isBlank(i.nextOfKin.phone)) out.push('Next of kin — phone');
   else { const e = badFormat('tel', i.nextOfKin.phone, 'Next of kin — phone'); if (e) out.push(e); }
   if (isUnanswered(i.nextOfKin.sameAddressAsLearner)) out.push('Next of kin — same address');
+  if (i.nextOfKin.sameAddressAsLearner === false) {
+    if (isBlank(i.nextOfKin.postcode)) out.push('Next of kin — postcode');
+    if (isBlank(i.nextOfKin.address)) out.push('Next of kin — address');
+  }
 
   // Eligibility
   if (isUnanswered(i.eligibility.employedInEngland)) out.push('Employed in England');
@@ -133,52 +168,51 @@ function ilrMissing(d: WizardDraft): string[] {
   if (isBlank(i.understanding.programmeUnderstanding)) out.push('Understanding of the programme');
   if (isBlank(i.understanding.careerProgression)) out.push('Career progression');
 
-  // Additional information
-  if (isUnanswered(i.additional.aged16to18)) out.push('Aged 16–18');
-  if (isUnanswered(i.additional.aged19to24)) out.push('Aged 19–24');
-
-  // Media consent
-  if (isUnanswered(i.media.consent)) out.push('Media consent');
-
-  // Declarations
-  if (isUnanswered(i.declarations.plrShared)) out.push('Declaration — PLR shared');
-  if (isUnanswered(i.declarations.dfeContact)) out.push('Declaration — DfE contact');
-  if (isUnanswered(i.declarations.epaoDetails)) out.push('Declaration — EPAO details');
-  if (isUnanswered(i.declarations.kbcHoldsCerts)) out.push('Declaration — KBC holds certificates');
-  if (isUnanswered(i.declarations.infoAccurate)) out.push('Declaration — information accurate');
+  // Additional Information. It replaced the age questions, media consent, the
+  // other declarations and both signature blocks, so none of those is required
+  // any more. Read defensively: answers saved before the section existed have
+  // no `additionalInformation` until the wizard's defaults are merged in.
+  const ai = i.additionalInformation;
+  if (isBlank(ai?.jobRoleRelevance)) out.push('Job role and the programme');
+  if (isBlank(ai?.residenceNotForFullTimeEducation)) out.push('Residence not for full-time education');
+  if (isBlank(ai?.ehcp)) out.push('EHCP');
   if (isUnanswered(i.declarations.over50PercentEngland)) out.push('Declaration — over 50% in England');
   if (isBlank(i.declarations.wageRateBand)) out.push('Wage rate band');
   if (isUnanswered(i.declarations.knownByOtherName)) out.push('Known by another name');
   if (isUnanswered(i.declarations.plrAccessAware)) out.push('Aware provider will access PLR');
 
-  // Learning declaration — the learner's own signature block. The provider
-  // block is deliberately NOT required: staff countersign it after review.
-  if (isBlank(i.learnerSignature.firstNames)) out.push('Declaration — first names');
-  if (isBlank(i.learnerSignature.surname)) out.push('Declaration — surname');
-  if (isBlank(i.learnerSignature.date)) out.push('Declaration — date');
-  if (isBlank(i.learnerSignature.signatureUrl)) out.push('Learner signature');
-
   return out;
 }
 
 /* ── Step 4 — Personal Learning Record ────────────────────────────────── */
-function plrMissing(d: WizardDraft): string[] {
-  return isBlank(d.plr.uln) ? ['ULN'] : [];
+/**
+ * Nothing is required: the ULN is no longer asked, and a learner may have no
+ * prior learning to record. Each entry's own required fields are checked by the
+ * Add/Edit PLR form before it is saved.
+ */
+function plrMissing(_d: WizardDraft): string[] {
+  return [];
 }
 
 /* ── Step 5 — CV / Job Description ────────────────────────────────────── */
 /**
- * The CV upload and the free-text experience box are alternatives — the form
- * says "if you do not have a CV to upload, please list your experience" — so
- * one of the two satisfies the requirement.
+ * The experience box is always answered — the form asks for "N/A" when a CV was
+ * uploaded — so it alone stands for "CV or experience". Uploads are not in the
+ * draft (they are stored in Azure), so none of them is required here. The
+ * project management question is no longer asked.
  */
 function cvJobMissing(d: WizardDraft): string[] {
   const cv = d.cvJob;
   const out: string[] = [];
-  if (isBlank(cv.cvFile) && isBlank(cv.experienceText)) {
-    out.push('CV upload or a description of your experience');
+  if (isBlank(cv.experienceText)) out.push('Previous experience (or N/A)');
+  if (isBlank(cv.highestQualification)) out.push('Highest-level qualification');
+  if (isBlank(cv.highestQualificationField)) out.push('Field of highest qualification');
+  if (isUnanswered(cv.hasFieldQualification)) out.push('Qualifications in your programme field');
+  if (cv.hasFieldQualification === true && isBlank(cv.highestFieldQualification)) {
+    out.push('Highest qualification in your programme field');
   }
-  if (isBlank(cv.pmQualifications)) out.push('Project management qualifications');
+  if (isUnanswered(cv.gcseEnglish)) out.push('GCSE in English');
+  if (isUnanswered(cv.gcseMaths)) out.push('GCSE in Maths');
   if (isBlank(cv.functionalSkillsEnrol)) out.push('Functional Skills enrolment');
   return out;
 }
@@ -193,17 +227,20 @@ function policiesMissing(d: WizardDraft): string[] {
 }
 
 /**
- * Unfilled fields for one step, by WIZARD_STEPS index. Introduction (0) and
- * Next Steps (7) are read-only and always complete.
+ * Unfilled fields for one step, by WIZARD_STEPS index. Matched on the step's
+ * slug rather than its position, so adding a step cannot shift which rules
+ * apply to which step. Introduction, Before You Begin and Next Steps are
+ * read-only and always complete.
  */
 export function missingForStep(stepIndex: number, draft: WizardDraft): string[] {
-  switch (stepIndex) {
-    case 1: return personalDetailsMissing(draft);
-    case 2: return skillsRadarMissing(draft);
-    case 3: return ilrMissing(draft);
-    case 4: return plrMissing(draft);
-    case 5: return cvJobMissing(draft);
-    case 6: return policiesMissing(draft);
+  switch (WIZARD_STEPS[stepIndex]?.slug) {
+    case 'personal-details': return personalDetailsMissing(draft);
+    case 'ilr-details': return ilrDetailsMissing(draft);
+    case 'skills-radar': return skillsRadarMissing(draft);
+    case 'ilr': return ilrMissing(draft);
+    case 'plr': return plrMissing(draft);
+    case 'cv-job': return cvJobMissing(draft);
+    case 'policies': return policiesMissing(draft);
     default: return [];
   }
 }

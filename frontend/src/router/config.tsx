@@ -168,6 +168,7 @@ const LearnerKnowledgeBase = lazyRoute(() => import("../pages/learner/knowledge-
 const LearnerLearningPlanPage = lazyRoute(() => import("../pages/learner/learning-plan/page"));
 const LearnerLearningPlanModulesPage = lazyRoute(() => import("../pages/learner/learning-plan/modules/page"));
 const LearnerOnboardingPage = lazyRoute(() => import("../pages/learner/onboarding/page"));
+const LearnerWelcomePage = lazyRoute(() => import("../pages/learner/welcome/page"));
 const LearnerCompliancePage = lazyRoute(() => import("../pages/learner/compliance/page"));
 const LearnerOnboardingReviewsPage = lazyRoute(() => import("../pages/learner/onboarding/reviews/page"));
 const LearnerReviewFormPage = lazyRoute(() => import("../pages/learner/onboarding/reviews/form"));
@@ -344,6 +345,13 @@ const routes: RouteObject[] = [
     // Target of the password-reset email. Same component, different endpoints.
     path: "/reset-password",
     element: <SetPasswordPage mode="reset" />,
+  },
+  {
+    // A new apprentice's first sign-in: address and personal details, then an
+    // electronic signature. Sent here by useFirstLoginDetailsRedirect; finishing
+    // moves them to Onboarding and on to the wizard below.
+    path: "/learner/welcome",
+    element: <LearnerWelcomePage />,
   },
   {
     // The learner's own enrolment wizard. Onboarding learners are redirected

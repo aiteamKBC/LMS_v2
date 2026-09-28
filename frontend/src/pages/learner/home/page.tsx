@@ -4,7 +4,8 @@ import { ArrowRight, CalendarCheck2, MapPin, ShieldCheck } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useLearnerSummaryParam } from '@/hooks/useLearnerSummaryParam';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
-import { isFreshStatus, isOnboardingStatus } from '@/hooks/useOnboardingRedirect';
+import { apprenticeHomeRedirect, isFreshStatus, isOnboardingStatus } from '@/hooks/useOnboardingRedirect';
+import { useFirstLoginDetailsRedirect } from '@/hooks/useFirstLoginDetailsRedirect';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { overviewSchedule, overviewHome } from '@/api/learnerOverview';
 import type { LearnerKind } from '@/api/learnerDetail';
@@ -80,6 +81,11 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
   // enrolment/learning prerequisites are still checked by destination pages.
   const onboarding = kind !== 'commercial' && isOnboardingStatus(profile.real?.programmeStatus);
   const fresh = isFreshStatus(profile.real?.programmeStatus);
+  // A new apprentice gives their details and signature before anything else.
+  // Their own sign-in only: a staff preview never redirects.
+  const checkingFirstLogin = useFirstLoginDetailsRedirect(
+    kind, id, profile.real?.programmeStatus, ready && !preview && account.role === 'learner',
+  );
   const loadCards = ready && !onboarding && !fresh;
   const schedule = useLiveLearnerRead(kind, id, loadCards, overviewSchedule.read, overviewSchedule.peek);
   const week = useLiveLearnerRead(kind, id, loadCards, overviewHome.read, overviewHome.peek);
@@ -87,7 +93,13 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
 
   if (!kind || !id) return <LearnerLoadError error="We could not verify your learner profile. Please try again." onRetry={retryInitialization}/>;
   if (profile.loadError) return <LearnerLoadError error={profile.loadError} onRetry={profile.refresh}/>;
-  if (!profile.real) return <div className={styles.loading} role="status">Loading your student home…</div>;
+  if (!profile.real || checkingFirstLogin) return <div className={styles.loading} role="status">Loading your student home…</div>;
+  // Student Home opens once an apprentice's programme has started; until then
+  // each enrolment stage has its own page. Their own sign-in only — a staff
+  // preview still shows the page, and commercial learners keep it throughout.
+  const beforeActive = !preview && account.role === 'learner' && kind === 'apprenticeship'
+    ? apprenticeHomeRedirect(profile.real.programmeStatus) : null;
+  if (beforeActive) return <Navigate to={beforeActive} replace />;
   const name = profile.real.name?.trim() || (!preview && account.displayName?.trim()) || 'Learner';
   const firstName = name.split(/\s+/)[0];
   const events = upcomingEvents(schedule.error ? null : schedule.data, week.error ? null : week.data, now);
