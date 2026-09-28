@@ -40,7 +40,14 @@ from coach_api.auth import (
     is_coach_view_as,
 )
 from coach_api.errors import coach_error
-from coach_api.cache.learners import coach_caseload_cache_key, coach_caseload_lock_key
+from coach_api.cache.learners import (
+    acquire_caseload_lock,
+    cache_caseload,
+    coach_caseload_cache_key,
+    coach_caseload_lock_key,
+    get_cached_caseload,
+    release_caseload_lock,
+)
 from coach_api.models import CoachAbsenceReport, CoachCalendarEvent, CoachCalendarSequence, ImportedReviewInstance
 from coach_api.services.learners.context import CaseloadRequestContext
 from coach_api.validation import (
@@ -100,6 +107,7 @@ from learner_api.attendance import (
     _summarize_attendance,
     combined_attendance_rows,
     fetch_kbc_attendance_rates,
+    fetch_recent_kbc_attendance_rows,
 )
 from learner_api.review_history import REVIEW_TYPES, _sections_by_review, _serialize_review
 from learner_api.teams_attendance import fetch_verified_teams_attendance_rows
@@ -11295,6 +11303,53 @@ def coach_attendance_register_rows(caseload_rows) -> list[dict]:
     return result
 
 
+def coach_verified_teams_attendance_rows(attendance_data: dict) -> list[dict]:
+    """Project verified Teams occurrences into the overview's stable contract."""
+    result: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for row in attendance_data.get("rows") or []:
+        serialized = serialize_attendance_register_row(row)
+        if serialized["status"] not in {"present", "absent"}:
+            continue
+        identity = (serialized["learnerId"], serialized["sessionId"])
+        if not all(identity) or identity in seen:
+            continue
+        seen.add(identity)
+        result.append(serialized)
+    return result
+
+
+def coach_last_four_attendance_rows(attendance_data: dict, caseload_rows, aptem_by_profile: dict[int, int]) -> list[dict]:
+    """Use KBC for Aptem-linked learners and verified Teams for everyone else."""
+    aptem_profile_ids = {str(profile_id) for profile_id in aptem_by_profile}
+    result = [
+        row for row in coach_verified_teams_attendance_rows(attendance_data)
+        if row["learnerId"] not in aptem_profile_ids
+    ]
+    rows_by_profile = {int(row.id): row for row in caseload_rows or []}
+    kbc_learners = []
+    for profile_id, aptem_id in aptem_by_profile.items():
+        profile = rows_by_profile.get(profile_id)
+        if profile is None:
+            continue
+        kbc_learners.append({
+            "aptem_id": aptem_id,
+            "learner_id": profile_id,
+            "learner_name": clean_text(getattr(profile, "full_name", None)),
+            "learner_email": normalize_email(getattr(profile, "email", None)),
+        })
+    try:
+        result.extend(
+            serialize_attendance_register_row(row)
+            for row in fetch_recent_kbc_attendance_rows(kbc_learners, limit=4)
+        )
+    except Exception as exc:  # noqa: BLE001
+        # KBC is an optional read source for this projection. Do not replace a
+        # failed/missing KBC result with another learner identity or Teams data.
+        logger.warning("Could not read recent KBC attendance for coach caseload: %s", exc)
+    return result
+
+
 def fetch_attendance_detail_rows(learner: dict) -> list[dict]:
     rows = fetch_verified_teams_attendance_rows(
         [to_int(learner.get("id"))],
@@ -11855,7 +11910,7 @@ def coach_caseload(request):
         query_string=request_context.query_string,
     )
     if not refresh_live_snapshots:
-        cached_caseload = cache.get(caseload_cache_key)
+        cached_caseload = get_cached_caseload(caseload_cache_key)
         if cached_caseload is not None:
             return JsonResponse(cached_caseload)
     # A cold page can span several remote databases. React remounts, retries or
@@ -11865,15 +11920,15 @@ def coach_caseload(request):
     caseload_lock_key = coach_caseload_lock_key(caseload_cache_key)
     owns_caseload_lock = True
     if paginated and not refresh_live_snapshots:
-        owns_caseload_lock = cache.add(caseload_lock_key, "1", 120)
+        owns_caseload_lock = acquire_caseload_lock(caseload_lock_key)
         if not owns_caseload_lock:
             wait_deadline = perf_counter() + 120
             while perf_counter() < wait_deadline:
                 _sleep(0.1)
-                cached_caseload = cache.get(caseload_cache_key)
+                cached_caseload = get_cached_caseload(caseload_cache_key)
                 if cached_caseload is not None:
                     return JsonResponse(cached_caseload)
-                if cache.add(caseload_lock_key, "1", 120):
+                if acquire_caseload_lock(caseload_lock_key):
                     owns_caseload_lock = True
                     break
 
@@ -12022,7 +12077,7 @@ def coach_caseload(request):
     except Exception:
         logger.exception("coach_caseload_load_failed coach_account_id=%s", owner_email)
         if paginated and not refresh_live_snapshots and owns_caseload_lock:
-            cache.delete(caseload_lock_key)
+            release_caseload_lock(caseload_lock_key)
         return coach_error(
             request,
             code="database_unavailable",
@@ -12041,9 +12096,9 @@ def coach_caseload(request):
     if paginated:
         response_payload = {"owner": response_payload["owner"], "results": learners, "pagination": pagination, "filterOptions": filter_options}
     if not refresh_live_snapshots:
-        cache.set(caseload_cache_key, response_payload, 300 if paginated else 30)
+        cache_caseload(caseload_cache_key, response_payload, 300 if paginated else 30)
     if paginated and not refresh_live_snapshots and owns_caseload_lock:
-        cache.delete(caseload_lock_key)
+        release_caseload_lock(caseload_lock_key)
     _coach_perf("caseload", "total", endpoint_started, learner_count=len(learners))
     return JsonResponse(response_payload)
 
@@ -12134,7 +12189,6 @@ def coach_attendance(request):
         attendance_data = fetch_attendance_detail_summary_data(
             learner_ids, email_keys, include_reported_participants=True,
         )
-        attendance_records = coach_attendance_register_rows(caseload_rows)
         active_attendance_data = filter_attendance_detail_summary_data(
             attendance_data,
             active_learner_ids,
@@ -12154,6 +12208,11 @@ def coach_attendance(request):
         fallback_attendance_data = fetch_learner_absence_data(missing_fallback_emails)
         fallback_metrics_by_email = fallback_attendance_data["metrics"]
         aptem_by_profile, kbc_attendance_by_profile = caseload_kbc_attendance_rates(caseload_rows)
+        # Aptem-linked learners use dated KBC register evidence. Everyone else
+        # uses completed occurrences with a verified Teams attendance report.
+        attendance_records = coach_last_four_attendance_rows(
+            attendance_data, caseload_rows, aptem_by_profile,
+        )
         non_aptem_rows = [row for row in caseload_rows if int(row.id) not in aptem_by_profile]
         canonical_attendance_by_profile = caseload_canonical_attendance(non_aptem_rows)
         catchup_records = list(

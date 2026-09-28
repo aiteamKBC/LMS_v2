@@ -33,11 +33,11 @@ describe('coach attendance overview', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Load students' }));
     expect(screen.getByText('Aya Khater')).toBeInTheDocument();
     expect(screen.queryByText('Ayman Learner')).not.toBeInTheDocument();
-    expect(screen.getByText('P 09-16')).toBeInTheDocument();
-    expect(screen.getByText('A 09-09')).toBeInTheDocument();
-    expect(screen.getByText('P 09-02')).toBeInTheDocument();
-    expect(screen.getByText('P 08-26')).toBeInTheDocument();
-    expect(screen.queryByText('A 08-19')).not.toBeInTheDocument();
+    expect(screen.getByText('Present · 16 Sept 2026')).toBeInTheDocument();
+    expect(screen.getByText('Absent · 09 Sept 2026')).toBeInTheDocument();
+    expect(screen.getByText('Present · 02 Sept 2026')).toBeInTheDocument();
+    expect(screen.getByText('Present · 26 Aug 2026')).toBeInTheDocument();
+    expect(screen.queryByText('Absent · 19 Aug 2026')).not.toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Last 4' })).toBeInTheDocument();
   });
   it('shows paused attendance instead of historical chips', async () => {
@@ -46,7 +46,7 @@ describe('coach attendance overview', () => {
     fireEvent.change(screen.getByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-2' } });
     fireEvent.click(screen.getByRole('button', { name: 'Load students' }));
     expect(screen.getByText('Attendance paused')).toBeInTheDocument();
-    expect(screen.queryByText('P 09-16')).not.toBeInTheDocument();
+    expect(screen.queryByText('Present · 16 Sept 2026')).not.toBeInTheDocument();
   });
   it('supports selection, clear, and prepared days', async () => {
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
