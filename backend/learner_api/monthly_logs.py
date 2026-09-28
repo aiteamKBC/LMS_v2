@@ -59,19 +59,25 @@ def endpoint(*methods):
 def scope(request, learner_id):
     account = request.login_account
     if account.role == 'learner':
-        if account.subject_type != 'learner' or str(account.subject_id) != str(learner_id):
+        if not account.is_active or account.subject_type != 'learner' or str(account.subject_id) != str(learner_id):
             raise old.ServiceError('Learner not found.', 'not_found', 404)
-        learner = old.resolve_authenticated_learner(account)
         role = 'learner'
     else:
         actor = old.coach_actor(account)
         if actor['role'] == 'monitor':
             raise old.ServiceError('Coach access is required.', 'forbidden', 403)
-        learner = old.resolve_record(learner_id)
         role = actor['role']
-    profile = sources.profile(learner_id)
-    if canonical.enabled(learner_id):
-        profile = canonical.profile(learner_id)
+    canonical_profile = canonical.profile(learner_id)
+    if canonical_profile is not None:
+        learner = {**canonical_profile, 'id': learner_id}
+    elif role == 'learner':
+        learner = old.resolve_authenticated_learner(account)
+    else:
+        learner = old.resolve_record(learner_id)
+    if role == 'learner' and old.normalize(account.email) != old.normalize(learner.get('email')):
+        raise old.ServiceError('Learner not found.', 'not_found', 404)
+    profile = canonical_profile or sources.profile(learner_id)
+    if canonical_profile is not None:
         learner = {**learner, 'aptem_id': profile['aptem_id'], 'name': profile['name'],
                    'programme': profile['programme']}
     coach_email = old.normalize((profile or {}).get('coach_email') or learner.get('coach_email'))
@@ -370,8 +376,7 @@ def canonical_document(request, learner_id, file_id):
         FROM "Learner".learner_activity_documents d
         JOIN "Learner".learner_progress_entries p ON p.id=d.progress_id AND p.learner_id=d.learner_id
         WHERE d.id=%s AND d.learner_id=%s AND d.deleted_at IS NULL AND p.deleted_at IS NULL
-          AND p.enrolment_id=%s AND p.programme_id=%s''',
-        [file_id, owner['id'], learner_id, owner['programme_id']])
+          ''', [file_id, owner['id']])
     if not records:
         raise old.ServiceError('Document not found.', 'not_found', 404)
     from .evidence_storage import download_blob_bytes
