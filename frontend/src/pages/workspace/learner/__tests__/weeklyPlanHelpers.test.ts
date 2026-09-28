@@ -20,9 +20,9 @@ describe('weekWindow', () => {
     expect(weekWindow(weeks, 0)).toEqual({ start: '2026-09-07', end: '2026-09-13' });
     expect(weekWindow(weeks, 1)).toEqual({ start: '2026-09-14', end: '2026-09-20' });
   });
-  it('leaves the last week open-ended', () => {
+  it('ends the last week six days after its start', () => {
     const weeks = [session(1, '2026-09-07'), session(2, '2026-09-14')];
-    expect(weekWindow(weeks, 1)).toEqual({ start: '2026-09-14', end: null });
+    expect(weekWindow(weeks, 1)).toEqual({ start: '2026-09-14', end: '2026-09-20' });
   });
 });
 
