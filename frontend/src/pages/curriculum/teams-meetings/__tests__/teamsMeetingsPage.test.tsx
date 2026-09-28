@@ -175,6 +175,10 @@ const updateTeamsMeetingSchedule = vi.fn(async () => ({
   meeting: {} as never,
   warnings: [],
 }));
+const fetchModuleMeetingInvitees = vi.fn(async (_moduleId: string) => ({
+  attendees: [],
+  presenters: ['mahmoudfouda015@gmail.com'],
+}));
 const createTeamsMeeting = vi.fn(async () => ({ created: true, meeting: {} as never, warnings: [] }));
 const fetchTeamsCreateStatus = vi.fn(async () => ({ state: 'none', claim: null, calendar: null }));
 const restoreModuleTeamsMeeting = vi.fn(async () => ({
@@ -208,6 +212,7 @@ vi.mock('../../module-builder/moduleAuthoringData', async importOriginal => ({
   })),
   loadTeamsMeetingArtifacts: vi.fn(async () => artifacts),
   fetchModuleSessionPlan: (...args: unknown[]) => fetchModuleSessionPlan(...(args as [string])),
+  fetchModuleMeetingInvitees: (...args: unknown[]) => fetchModuleMeetingInvitees(...(args as [string])),
   loadModuleStructure: vi.fn(async () => null),
   syncTeamsMeetingArtifacts: (...args: unknown[]) => syncTeamsMeetingArtifacts(...(args as [])),
   restoreModuleTeamsMeeting: (...args: unknown[]) => restoreModuleTeamsMeeting(...(args as [])),
@@ -253,6 +258,7 @@ describe('Teams Meetings page', () => {
     vi.mocked(loadTeamsMeetingArtifacts).mockReset();
     vi.mocked(loadTeamsMeetingArtifacts).mockResolvedValue(artifacts as never);
     updateTeamsMeetingSchedule.mockClear();
+    fetchModuleMeetingInvitees.mockClear();
     createTeamsMeeting.mockClear();
     fetchTeamsCreateStatus.mockClear();
     restoreModuleTeamsMeeting.mockClear();
@@ -691,6 +697,29 @@ describe('Teams Meetings page', () => {
     expect(vi.mocked(finishTeamsUpdate).mock.calls[0][1]).toMatchObject({ liveSessionId: 'LIVE-2', addedPeople: ['guest.presenter@example.com'] });
   });
 
+  it('keeps an attendee-only edit silent when the Teams dates already match', async () => {
+    await renderPage();
+    expect(await screen.findByText('Data Foundations')).toBeInTheDocument();
+    await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    const send = dialog.getByRole('button', { name: 'Update Teams calendar' });
+    await waitFor(() => expect(send).not.toBeDisabled());
+
+    const attendees = dialog.getByRole('combobox', { name: 'Attendees' });
+    fireEvent.change(attendees, { target: { value: 'new.learner@example.com' } });
+    fireEvent.keyDown(attendees, { key: 'Enter' });
+    await userEvent.click(send);
+
+    await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledTimes(1));
+    const [, input] = updateTeamsMeetingSchedule.mock.calls[0] as unknown as [string, Record<string, unknown>];
+    expect(input.peopleOnly).toBe(true);
+    expect(input.attendees).toEqual(['learner@example.com', 'apprentice@example.com', 'new.learner@example.com']);
+    await waitFor(() => expect(finishTeamsUpdate).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(finishTeamsUpdate).mock.calls[0][1]).toMatchObject({
+      liveSessionId: 'LIVE-1', addedPeople: ['new.learner@example.com'],
+    });
+  });
+
   // The detail used to unfold underneath the table, which pushed every row below
   // it off screen and left the reader scrolling to find what they had opened.
   it('opens the module detail in a dialog rather than unfolding it under the table', async () => {
@@ -732,6 +761,27 @@ describe('Teams Meetings page', () => {
     expect(dialog.getByRole('button', { name: 'Remove tutor@example.com' })).toBeInTheDocument();
   });
 
+  it('hides legacy presenters and co-organisers from the attendees field', async () => {
+    fetchCurriculumTeamsMeetingSummaries.mockResolvedValueOnce([
+      {
+        ...summaries[0],
+        attendees: ['learner@example.com', 'tutor@example.com', 'co@example.com'],
+        presenters: ['tutor@example.com'],
+        coOrganizers: ['co@example.com'],
+      },
+      ...summaries.slice(1),
+    ]);
+    await renderPage();
+    expect(await screen.findByText('Data Foundations')).toBeInTheDocument();
+    await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+
+    const dialog = within(await screen.findByRole('dialog'));
+    await waitFor(() => expect(dialog.getByRole('button', { name: 'Remove learner@example.com' })).toBeInTheDocument());
+    expect(dialog.getAllByRole('button', { name: 'Remove tutor@example.com' })).toHaveLength(1);
+    expect(dialog.getAllByRole('button', { name: 'Remove co@example.com' })).toHaveLength(1);
+    expect(dialog.getAllByRole('button', { name: 'Remove learner@example.com' })).toHaveLength(1);
+  });
+
   it('offers to build the calendar for a module that has session dates but no meeting', async () => {
     await renderPage();
     expect(await screen.findByText('Reporting Basics')).toBeInTheDocument();
@@ -750,6 +800,20 @@ describe('Teams Meetings page', () => {
     expect(dialog.getByRole('combobox', { name: 'Co-organizers' })).toHaveAttribute('placeholder', 'Search Entra by name or email...');
     expect(dialog.getByRole('combobox', { name: 'Presenters' })).toHaveAttribute('placeholder', 'Search Entra by name or email...');
     expect(dialog.getByRole('combobox', { name: 'Attendees' })).toHaveAttribute('placeholder', 'Search Entra by name or email...');
+  });
+
+  it('does not assign a presenter until the optional module prefill is requested', async () => {
+    await renderPage();
+    await screen.findByText('Reporting Basics');
+    await userEvent.click(within(rowFor('Reporting Basics')).getByRole('button', { name: 'Create Teams meetings calendar' }));
+
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.queryByRole('button', { name: 'Remove mahmoudfouda015@gmail.com' })).not.toBeInTheDocument();
+    expect(fetchModuleMeetingInvitees).not.toHaveBeenCalled();
+
+    await userEvent.click(dialog.getByRole('button', { name: "Prefill from the module's tutor and learner plans" }));
+    await waitFor(() => expect(dialog.getByRole('button', { name: 'Remove mahmoudfouda015@gmail.com' })).toBeInTheDocument());
+    expect(fetchModuleMeetingInvitees).toHaveBeenCalledWith('MOD-3');
   });
 
   it('creates all 16 current session dates when the session cache still holds only three', async () => {

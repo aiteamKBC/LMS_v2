@@ -407,10 +407,15 @@ export function ModuleSessionSchedulePreview({
             </span>
           )}
           {countryTimes.length > 0 && (
-            <span role="note" aria-label="Session start times in Egypt and England"
-              className="rounded-full border border-background-200 bg-background-50 px-2.5 py-1 normal-case text-foreground-600">
-              {countryTimes.map(label => <span key={label}>{label}</span>)}
-            </span>
+            <>
+              <span role="note" aria-label="Session start times in Egypt and England"
+                className="rounded-full border border-background-200 bg-background-50 px-2.5 py-1 normal-case text-foreground-600">
+                {countryTimes.map(label => <span key={label}>{label}</span>)}
+              </span>
+              <span className="basis-full text-[10px] font-normal normal-case text-foreground-500">
+                England changes between BST and GMT during the year, so the difference from Egypt can be 2 or 3 hours depending on the session date.
+              </span>
+            </>
           )}
           {/* Counts the dates a holiday lands on, not dates a holiday moved:
               nothing moves. Parked with the clash rule:

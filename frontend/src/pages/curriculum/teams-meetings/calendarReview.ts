@@ -10,8 +10,12 @@ export type ReviewedCalendar = Pick<TeamsMeetingInput, 'title' | 'organizerEmail
     previousOccurrences?: Array<{ session_number: number; scheduled_start: string }>;
     /** A people-only update that changes the meeting's settings and roles, said as such in the review. */
     settingsOnly?: boolean;
-    /** Offer the optional "was / now" change email. Only for a date change to an existing calendar. */
-    offerChangeEmail?: boolean;
+    /**
+     * Whether this save is announced: a moved calendar tells everyone already
+     * invited and sends the LMS change email, a people-or-settings save tells
+     * nobody who was already on it.
+     */
+    notifyOnUpdate?: boolean;
   };
 
 /** What the author chose in the review, beyond confirming it. */
@@ -129,25 +133,18 @@ export function calendarReviewHtml(input: ReviewedCalendar, zone: string): strin
         <div><dt>Language</dt><dd>${displaySetting(input.spokenLanguage, { 'en-GB': 'English (UK)', 'en-US': 'English (US)', 'ar-EG': 'Arabic (Egypt)', 'fr-FR': 'French' })}</dd></div>
       </dl></section>
     </aside></div>
-    ${input.offerChangeEmail ? `<label class="teams-review-notify"><input type="checkbox" id="teams-review-notify"><span><strong>Email attendees and organisers about this change</strong>
-      <small>Each learner gets their own email with their previous and new dates only — never anyone else's details. The organiser, co-organisers and presenters get a copy that also lists the invited learners. Leave unticked to send no LMS email; Microsoft still sends its own calendar update.</small></span></label>` : ''}
-    <p class="teams-review-send-note">${input.settingsOnly ? 'Only the recording, lobby, language and meeting roles will be updated. The join link and every session date stay as they are.' : input.peopleOnly ? 'Only the invitation list and participant roles will be updated.' : 'These are the dates that will be sent to Microsoft.'} Save and send applies this calendar now and may send meeting invitations or updates.${input.summaryEmail ? ' One separate schedule email will also be submitted for each learner, with the complete timetable and verified Teams links; the organiser, co-organisers and presenters each receive a copy that also lists the meeting settings and the invited learners.' : ''} Checking the box alone does not save or send anything.</p>
+    <p class="teams-review-send-note">${input.settingsOnly ? 'Only the recording, lobby, language and meeting roles will be updated. The join link and every session date stay as they are.' : input.peopleOnly ? 'Only the invitation list and participant roles will be updated.' : 'These are the dates that will be sent to Microsoft.'} Save and send applies this calendar now${input.peopleOnly || input.settingsOnly ? '. Nobody already invited is told about it: Microsoft is asked not to announce this save, and anyone added is sent the meeting invitation on their own' : input.notifyOnUpdate ? ' and Microsoft will announce the calendar change to existing invitees' : ', but Microsoft will not announce it to existing invitees'}${input.summaryEmail ? '. One separate schedule email will also be submitted for each learner, with the complete timetable and verified Teams links; the organiser, co-organisers and presenters each receive a copy that also lists the meeting settings and the invited learners.' : ''}${input.notifyOnUpdate ? ' The LMS change email is sent automatically for this update.' : input.peopleOnly || input.settingsOnly ? '' : ' No LMS change email will be sent.'}</p>
   </div>`;
 }
 
 export async function reviewCalendar(input: ReviewedCalendar, zone: string): Promise<CalendarReviewChoice> {
   const html = calendarReviewHtml(input, zone);
-  let notifyAttendees = false;
+  const notifyAttendees = Boolean(input.notifyOnUpdate);
   const result = await Swal.fire({
     title: 'Review Teams calendar', html, width: 1120, input: 'checkbox',
     inputPlaceholder: 'I checked the dates, AM/PM, time zone and invitation list.',
     inputValidator: value => value ? undefined : 'Confirm that you have reviewed this calendar.',
-    // Read as the dialog confirms, from the box itself: unticked unless the author ticked it.
-    preConfirm: () => {
-      notifyAttendees = Boolean(input.offerChangeEmail
-        && (Swal.getPopup()?.querySelector<HTMLInputElement>('#teams-review-notify')?.checked));
-      return true;
-    },
+    preConfirm: () => true,
     showCancelButton: true, cancelButtonText: 'Back to editing', confirmButtonText: 'Save and send',
     focusCancel: true, reverseButtons: true, buttonsStyling: false,
     showCloseButton: true, closeButtonAriaLabel: 'Close review',

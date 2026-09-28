@@ -2,6 +2,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { useCurriculumData } from '@/hooks/useCurriculumData';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
+import { useProgrammeKsbStats, withProgrammeKsbStats } from '@/hooks/useProgrammeKsbStats';
 import type {
   CurriculumCohort,
   CurriculumGroup,
@@ -48,7 +49,15 @@ const PREVIEW_ROWS = 25;
 
 export default function CurriculumReports() {
   const { data, loading: dataLoading, error: dataError, reload } = useCurriculumData({ compact: true });
-  const { programmes, loading: programmesLoading, error: programmesError } = useCurriculumProgrammes();
+  const { programmes: listedProgrammes, loading: programmesLoading, error: programmesError } = useCurriculumProgrammes();
+  // ksbMapped is not in the list payload any more -- it cost a read of every
+  // programme's authoring tree and held up three shared endpoints. The report
+  // fills in as the numbers arrive. See useProgrammeKsbStats.
+  const programmeKsbStats = useProgrammeKsbStats(listedProgrammes);
+  const programmes = useMemo(
+    () => listedProgrammes.map(programme => withProgrammeKsbStats(programme, programmeKsbStats)),
+    [listedProgrammes, programmeKsbStats],
+  );
   const loading = dataLoading || programmesLoading;
   const error = dataError || programmesError;
 
