@@ -54,6 +54,22 @@ describe('resolved review stream dashboard helpers', () => {
     expect(reviewActionMatrix(summaryOnly)).toMatchObject({ view: true, viewForm: false });
   });
 
+  it('offers the workspace for summary-only imports while they are not scheduled or scheduled', () => {
+    const notScheduled = event({
+      id: 'imported-review:14010', eventKey: 'imported-review:14010',
+      reviewSource: 'aptem', aptemReviewId: '14010', status: 'not-scheduled',
+      scheduledDate: null, scheduledTime: null, hasReviewForm: false,
+    });
+    const scheduled = event({
+      id: 'imported-review:14011', eventKey: 'imported-review:14011',
+      reviewSource: 'aptem', aptemReviewId: '14011', status: 'scheduled',
+      scheduledDate: '2026-09-23', scheduledTime: '11:00', hasReviewForm: false,
+    });
+
+    expect(reviewActionMatrix(notScheduled).viewForm).toBe(true);
+    expect(reviewActionMatrix(scheduled).viewForm).toBe(true);
+  });
+
   it('shows Schedule consistently for unbooked rows and never treats confirmed as completed', () => {
     const aptem = event({ status: 'confirmed', scheduledDate: '2026-09-20', scheduledTime: null });
     const native = event({ status: 'not-scheduled', scheduledDate: null, scheduledTime: null });
