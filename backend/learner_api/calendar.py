@@ -931,26 +931,26 @@ def learner_calendar_event_review(request, kind, pk, event_key):
             definition = review_instances.review_instance_form_definition(instance)
             if not definition['template']['visibleTo'].get('participant', True):
                 return _error('This review is not visible to the learner.', 403)
-            return JsonResponse(_learner_visible_review_definition(definition))
+            return JsonResponse(_learner_visible_review_definition(definition, pk))
         template = reviews.get_review_template_row(template_id, include_deleted=bool(record))
         if template is None:
             return _error('Review template not found.', 404)
         snapshot = review_instances.build_definition_snapshot(template)
         if not snapshot.get('visibleTo', {}).get('participant', True):
             return _error('This review is not visible to the learner.', 403)
-        return JsonResponse({
+        return JsonResponse(_learner_visible_review_definition({
             'instance': None, 'occurrenceNumber': occurrence_number,
             'template': snapshot, 'sections': snapshot['sections'],
             'signatures': {role: {'required': bool(snapshot['signatures'].get(role)), 'signed': False}
                            for role in review_instances.SIGNATURE_ROLES},
-        })
+        }, pk))
     instance = review_instances.get_review_instance(instance_id)
     if not instance:
         return _error("Review instance not found.", 404)
     definition = review_instances.review_instance_form_definition(instance)
     if not definition['template']['visibleTo'].get('participant', True):
         return _error('This review is not visible to the learner.', 403)
-    return JsonResponse(_learner_visible_review_definition(definition))
+    return JsonResponse(_learner_visible_review_definition(definition, pk))
 
 
 def _save_learner_review_answers(request, kind, pk, event_key):
@@ -991,13 +991,43 @@ def _save_learner_review_answers(request, kind, pk, event_key):
         return _error(str(exc), 403)
     except ValueError as exc:
         return _error(str(exc), 409)
-    return JsonResponse(_learner_visible_review_definition(updated))
+    return JsonResponse(_learner_visible_review_definition(updated, pk))
 
 
-def _learner_visible_review_definition(definition):
+def _saved_learner_signature(learner_id):
+    """Read the learner's reusable signature without making it mandatory.
+
+    The signature columns were added after the original learner calendar
+    endpoint. A deployment that has not applied that small migration should
+    still be able to open and sign reviews, so a missing table/column is
+    treated as an empty reusable signature.
+    """
+    try:
+        with connections["enrolment"].cursor() as cursor:
+            cursor.execute(
+                '''SELECT "Learner_signature", "Learner_signature_name"
+                     FROM enrolment."Created_users"
+                    WHERE id=%s LIMIT 1''',
+                [str(learner_id)],
+            )
+            row = cursor.fetchone()
+    except DatabaseError:
+        return {}
+    signature = _s(row[0]) if row else ""
+    if not signature.startswith("data:image/"):
+        return {}
+    return {
+        "savedSignature": signature,
+        "savedSignatureName": _s(row[1]) if row else "",
+    }
+
+
+def _learner_visible_review_definition(definition, learner_id=None):
     """Hide the formal MCM summary until the coach submits the Review."""
+    definition = dict(definition)
+    is_mcm = (definition.get('template') or {}).get('reviewTypeCode') == 'mcm'
     if (
-        (definition.get('template') or {}).get('reviewTypeCode') == 'mcm'
+        is_mcm
         and (definition.get('instance') or {}).get('status') not in {'awaiting-signature', 'completed'}
     ):
         from curriculum_api.review_instances import meeting_summary_field
@@ -1006,6 +1036,8 @@ def _learner_visible_review_definition(definition):
             field['answer'] = None
             field['answeredBy'] = None
             field['answeredAt'] = None
+    if learner_id is not None and is_mcm:
+        definition.update(_saved_learner_signature(learner_id))
     return definition
 
 
@@ -1104,6 +1136,11 @@ def learner_progress_review_sign(request, kind, pk, event_key):
     record = _learner_calendar_record(kind, pk, event_key)
     if not record or record.event_type not in {"mcr", "progress-review", "review"}:
         return _error("Review not found for this learner.", 404)
+    if record.event_type == 'mcr':
+        from .mcm_signoff import mcm_signoff_response
+        return mcm_signoff_response(request, record, pk)
+    if request.method != 'POST':
+        return _error("Method not allowed.", 405)
     # Curriculum Review instances are the canonical form/signature record.
     # Keep the old calendar blob only for rows created before instances existed.
     if _s(getattr(record, 'review_instance_id', '')):

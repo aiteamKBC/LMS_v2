@@ -11,7 +11,7 @@ from django.test import SimpleTestCase, RequestFactory
 from django.core.files.uploadedfile import SimpleUploadedFile
 
 from old_otjh.service import ServiceError
-from . import monthly_logs as logs, monthly_log_sources as sources
+from . import monthly_logs as logs, monthly_log_sources as sources, mcm_signoff as signoff
 
 
 class MonthlyLogsTests(SimpleTestCase):
@@ -195,6 +195,48 @@ class MonthlyLogsTests(SimpleTestCase):
             self.assertEqual(result.exception.code, 'month_not_closed')
             activities.assert_not_called()
             query.assert_not_called()
+
+    def test_mcm_signature_is_copied_to_the_matching_open_lms_month(self):
+        report = {'source': 'lms', 'rows': [self.row], 'profile': None,
+                  'snapshot_digest': 'mcm-digest'}
+        learner = {**self.learner, 'aptem_id': None}
+        with patch.object(logs, 'detail_data', return_value=report), \
+             patch.object(logs.canonical, 'enabled', return_value=False), \
+             patch.object(logs.transaction, 'atomic', return_value=nullcontext()), \
+             patch.object(logs.old_repo, 'query', return_value=[]) as query:
+            result = logs.mirror_mcm_learner_signature(
+                learner, '2026-09', 'data:image/png;base64,mcm', 'Learner',
+            )
+
+        self.assertEqual(result['status'], 'synced')
+        self.assertEqual(result['month'], '2026-09')
+        insert = next(call for call in query.call_args_list if 'INSERT INTO' in call.args[0])
+        self.assertIn('monthly_audit_signoffs', insert.args[0])
+        self.assertIn('data:image/png;base64,mcm', insert.args[1][4])
+        self.assertIn('mcm-digest', insert.args[1])
+
+    def test_mcm_signoff_uses_target_month_when_booking_is_later(self):
+        record = SimpleNamespace(
+            target_date=date(2026, 12, 16),
+            scheduled_date=date(2026, 9, 28),
+        )
+
+        self.assertEqual(signoff._month_for(record), '2026-12')
+
+    def test_mcm_signature_copy_is_idempotent_when_monthly_signature_exists(self):
+        report = {'source': 'lms', 'rows': [self.row], 'profile': None,
+                  'snapshot_digest': 'mcm-digest'}
+        learner = {**self.learner, 'aptem_id': None}
+        with patch.object(logs, 'detail_data', return_value=report), \
+             patch.object(logs.canonical, 'enabled', return_value=False), \
+             patch.object(logs.transaction, 'atomic', return_value=nullcontext()), \
+             patch.object(logs.old_repo, 'query', side_effect=[[], [{'id': 9}]]) as query:
+            result = logs.mirror_mcm_learner_signature(
+                learner, '2026-09', 'data:image/png;base64,mcm', 'Learner',
+            )
+
+        self.assertEqual(result, {'status': 'already-synced', 'month': '2026-09'})
+        self.assertEqual(query.call_count, 2)
 
     def test_admin_learner_workspace_allows_actions_and_ignores_a_stale_coach_selection(self):
         self.account.role = 'admin'

@@ -218,7 +218,7 @@ const mountProgressReview = (id: string) => render(
 );
 
 describe('Learner Review View opens the generic Curriculum form', () => {
-  it.each([true, false])('opens current month logs from an unfinished MCM with learner actions enabled: %s', async canProgress => {
+  it.each([true, false])('opens the selected MCM month logs with learner actions enabled: %s', async canProgress => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-11-15T12:00:00Z'));
     access.canProgress = canProgress;
@@ -227,8 +227,23 @@ describe('Learner Review View opens the generic Curriculum form', () => {
 
     fireEvent.click(screen.getByRole('link', { name: "This month's logs" }));
 
-    expect(screen.getByTestId('returned-location')).toHaveTextContent('/learner/monthly-logs/apprenticeship/12/2026-11');
+    expect(screen.getByTestId('returned-location')).toHaveTextContent('/learner/monthly-logs/apprenticeship/12/2026-09?workflow=mcm&source=mcm');
     expect(vi.mocked(fetch).mock.calls.every(call => !call[1]?.method || call[1].method === 'GET')).toBe(true);
+  });
+
+  it('opens the MCM target month when the meeting is booked in a different month', async () => {
+    events = [event({
+      id: SCHEDULED_MCM,
+      targetDate: '2026-12-16',
+      scheduledDate: '2026-09-28',
+      date: '2026-09-28',
+    })];
+
+    mountMcm(SCHEDULED_MCM);
+    await screen.findByTestId('learner-review-instance-form');
+    fireEvent.click(screen.getByRole('link', { name: "This month's logs" }));
+
+    expect(screen.getByTestId('returned-location')).toHaveTextContent('/learner/monthly-logs/apprenticeship/12/2026-12?workflow=mcm&source=mcm');
   });
 
   it('shows the saved learner image and points to the pending coach without asking the learner to sign again', () => {
@@ -247,6 +262,19 @@ describe('Learner Review View opens the generic Curriculum form', () => {
     expect(scroll).toHaveBeenCalled();
     expect(step).toHaveFocus();
     expect(onSign).not.toHaveBeenCalled();
+  });
+
+  it('offers the reusable Created_users signature before asking the learner to draw', () => {
+    reviewDefinition.instance!.status = 'awaiting-signature';
+    reviewDefinition.savedSignature = 'data:image/png;base64,Y3JlYXRlZA==';
+    reviewDefinition.savedSignatureName = 'Aya Khater';
+    render(<LearnerReviewInstanceForm definition={reviewDefinition} onSign={vi.fn()} signatoryName="Aya Khater" />);
+
+    expect(screen.getByRole('img', { name: 'Your saved signature' })).toHaveAttribute(
+      'src', reviewDefinition.savedSignature,
+    );
+    expect(screen.getByRole('button', { name: 'Use saved signature' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Draw new signature' })).toBeVisible();
   });
 
   it('lets the learner leave and reopen signature capture without saving', () => {

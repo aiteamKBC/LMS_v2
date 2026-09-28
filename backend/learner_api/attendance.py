@@ -199,6 +199,73 @@ def fetch_kbc_attendance_rates(aptem_ids):
     return totals
 
 
+def fetch_recent_kbc_attendance_rows(learners, *, limit=4):
+    """Read recent dated KBC register rows for Aptem-linked learners in one query.
+
+    ``learners`` contains the LMS learner identity alongside its canonical
+    Aptem ID. The result stays keyed to the LMS learner ID so callers never
+    need to match attendance by name or email.
+    """
+    entries = [
+        {
+            'aptem_id': str(item.get('aptem_id') or '').strip(),
+            'learner_id': item.get('learner_id'),
+            'learner_name': item.get('learner_name') or '',
+            'learner_email': item.get('learner_email') or '',
+        }
+        for item in (learners or [])
+        if str(item.get('aptem_id') or '').strip() and item.get('learner_id') is not None
+    ]
+    if not entries:
+        return []
+    row_limit = max(int(limit), 1)
+    dsn = _kbc_attendance_connection_string()
+    if not dsn:
+        raise RuntimeError('KBC attendance database is not configured.')
+
+    entries_by_aptem_id = {}
+    for entry in entries:
+        entries_by_aptem_id.setdefault(entry['aptem_id'], []).append(entry)
+
+    with psycopg.connect(dsn, row_factory=dict_row, connect_timeout=10) as conn:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                '''
+                SELECT aptem_id, "key", "date", "Attendance",
+                       attendance_status, module, lecture_name, updated_at
+                FROM (
+                    SELECT "ID"::text AS aptem_id, "key", "date", "Attendance",
+                           attendance_status, module, lecture_name,
+                           created_at AS updated_at,
+                           row_number() OVER (
+                               PARTITION BY "ID"::text
+                               ORDER BY "date" DESC, "key" DESC
+                           ) AS recent_rank
+                    FROM public.kbc_attendance
+                    WHERE "ID"::text = ANY(%s)
+                      AND "Attendance" IN (0, 1)
+                      AND "date" IS NOT NULL
+                      AND "date" <= CURRENT_DATE
+                ) recent
+                WHERE recent_rank <= %s
+                ORDER BY aptem_id, "date" DESC, "key" DESC
+                ''',
+                [list(entries_by_aptem_id), row_limit],
+            )
+            source_rows = cursor.fetchall()
+
+    result = []
+    for row in source_rows:
+        for entry in entries_by_aptem_id.get(row['aptem_id'], []):
+            result.append(_normalize_kbc_attendance_row(
+                row,
+                learner_id=entry['learner_id'],
+                learner_name=entry['learner_name'],
+                learner_email=entry['learner_email'],
+            ))
+    return result
+
+
 def _summarize_attendance(rows, *, now=None):
     """Summarize recorded attendance for sessions that have happened so far."""
     cutoff = timezone.localtime(now)

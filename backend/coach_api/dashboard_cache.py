@@ -30,7 +30,15 @@ def coach_dashboard_cache_ttl() -> int:
 
 def get_cached_coach_dashboard(coach_identity: str):
     key = coach_dashboard_cache_key(coach_identity)
-    payload = cache.get(key)
+    try:
+        payload = cache.get(key)
+    except Exception:  # noqa: BLE001 - cache availability must not gate reads
+        logger.warning(
+            "coach_dashboard_cache status=READ_FAILED namespace=%s",
+            CACHE_NAMESPACE,
+            exc_info=True,
+        )
+        return None
     logger.info(
         "coach_dashboard_cache status=%s namespace=%s",
         "HIT" if payload is not None else "MISS",
@@ -40,14 +48,29 @@ def get_cached_coach_dashboard(coach_identity: str):
 
 
 def cache_coach_dashboard(coach_identity: str, payload: dict) -> None:
-    cache.set(
-        coach_dashboard_cache_key(coach_identity),
-        payload,
-        timeout=coach_dashboard_cache_ttl(),
-    )
+    try:
+        cache.set(
+            coach_dashboard_cache_key(coach_identity),
+            payload,
+            timeout=coach_dashboard_cache_ttl(),
+        )
+    except Exception:  # noqa: BLE001 - a computed response remains valid
+        logger.warning(
+            "coach_dashboard_cache status=WRITE_FAILED namespace=%s",
+            CACHE_NAMESPACE,
+            exc_info=True,
+        )
 
 
 def invalidate_coach_dashboard_cache(coach_identity: str) -> None:
     """Invalidate the final response cache for one effective coach only."""
-    cache.delete(coach_dashboard_cache_key(coach_identity))
+    try:
+        cache.delete(coach_dashboard_cache_key(coach_identity))
+    except Exception:  # noqa: BLE001 - never turn a successful write into 500
+        logger.warning(
+            "coach_dashboard_cache status=INVALIDATE_FAILED namespace=%s",
+            CACHE_NAMESPACE,
+            exc_info=True,
+        )
+        return
     logger.info("coach_dashboard_cache status=INVALIDATED namespace=%s", CACHE_NAMESPACE)
