@@ -89,6 +89,7 @@ class ReviewBookingStatusTests(unittest.TestCase):
             clean_email=lambda value: str(value or '').strip().lower(),
             lock_learner_calendar=Mock(), ensure_learner_calendar_available=Mock(),
             ensure_learner_session_not_booked_in_week=Mock(),
+            england_non_delivery_reason=lambda _day: None,
             curriculum_reviews=SimpleNamespace(get_review_template_row=Mock(return_value={'id': 'REV-SYNTHETIC'})),
         )
         load(BACKEND / 'coach_api/views.py', {

@@ -65,7 +65,9 @@ LEARNER_ID_KWARGS = ("learner_id", "pk")
 #: authenticated caller. `document_types` is a static registry of doc types;
 #: `health` reports readiness and no learner data. Anything not listed here and
 #: lacking a learner id is treated as staff-only.
-UNSCOPED_VIEWS = frozenset({"health", "document_types"})
+# open_policy_document: the college policies every enrolling learner reads —
+# the same files for everyone, with nothing learner-specific in them.
+UNSCOPED_VIEWS = frozenset({"health", "document_types", "open_policy_document"})
 
 
 def auth_required():

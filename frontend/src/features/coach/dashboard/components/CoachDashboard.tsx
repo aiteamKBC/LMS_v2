@@ -24,7 +24,6 @@ import { SectionHeader } from '@/components/ui/SectionHeader';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Panel } from '@/components/ui/Panel';
-import { FilterChip } from '@/components/ui/FilterToolbar';
 import type { ImportedReview } from '@/api/reviewHistory';
 import type { EmbeddedCaseloadLearner } from '@/pages/coach/caseload/types';
 import { LearnerAvatar } from '@/pages/coach/shared/LearnerIdentity';
@@ -58,7 +57,6 @@ type PerformanceStatus = 'on-track' | 'at-risk' | 'high' | 'new-starter';
 type ScheduleStatus = 'upcoming' | 'overdue' | 'needs-schedule' | 'none';
 
 const EMPTY_VALUE = '--';
-const AT_RISK_SCROLL_THRESHOLD = 8;
 const UPCOMING_MEETING_SOURCES = new Set(['progress-review', 'mcr', 'catch-up', 'support', 'student-support', 'live-session']);
 
 function toIsoDate(value: Date) {
@@ -741,19 +739,6 @@ function formatCalendarWeekday(value?: string | null) {
   return new Intl.DateTimeFormat('en-GB', { weekday: 'short' }).format(date).toUpperCase();
 }
 
-function formatUpcomingLiveSessionDayLabel(value?: string | null) {
-  const date = parseLocalDate(value);
-  if (!date) return EMPTY_VALUE;
-  const targetDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  const today = new Date();
-  const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-  const tomorrow = new Date(startOfToday);
-  tomorrow.setDate(startOfToday.getDate() + 1);
-  if (targetDate.getTime() === startOfToday.getTime()) return 'Today';
-  if (targetDate.getTime() === tomorrow.getTime()) return 'Tomorrow';
-  return formatDateLabel(value);
-}
-
 function eventTypeLabel(event: CoachCalendarEvent) {
   if (event.source === 'progress-review') return eventPeriodLabel(event);
   if (event.source === 'mcr') return 'Monthly Coaching';
@@ -967,23 +952,6 @@ function scheduleEventTime(event: CoachCalendarEvent) {
 /** Just the start, for the fixed-size "Next" badge -- a live session's
  * "09:00 - 11:00" wraps and overflows a box sized for a single time. */
 
-const KPI_FILTER_LABEL: Record<DashboardKpi, string> = {
-  caseload: 'Full caseload',
-  active: 'Active learners',
-  'on-break': 'Paused learners',
-  'on-track': 'On track learners',
-  'at-risk': 'At risk learners',
-  'need-attention': 'Learners needing attention',
-  completed: 'Completed learners',
-  epa: 'EPA learners',
-  evidence: 'Evidence awaiting review',
-  reviews: 'Upcoming reviews',
-  'pending-marking': 'Pending marking',
-  'pr-week': 'Progress reviews this week',
-  'mcm-week': 'Monthly coaching meetings this week',
-  'catch-ups-week': 'Catch-ups this week',
-};
-
 function formatWeekRangeLabel() {
   const { start, end } = getCurrentWorkWeekRange();
   return formatDateRangeLabel(start, end);
@@ -1002,32 +970,6 @@ function formatUpcomingRangeLabel() {
 
 function LoadingBlock({ className = '', style }: { className?: string; style?: CSSProperties }) {
   return <div aria-hidden="true" className={`animate-pulse rounded-lg bg-background-100/90 ${className}`} style={style}></div>;
-}
-
-function AttentionSkeleton({ rows = 4 }: { rows?: number }) {
-  return (
-    <>
-      {Array.from({ length: rows }, (_, index) => (
-        <div
-          key={`attention-skeleton-${index}`}
-          className="grid items-center gap-3 rounded-2xl border border-foreground-200/60 bg-background-50 px-4 py-3.5 sm:px-5 lg:grid-cols-[minmax(0,1fr)_auto] lg:gap-5"
-        >
-          <div className="flex min-w-0 items-center gap-3">
-            <LoadingBlock className="h-10 w-10 rounded-full" />
-            <div className="min-w-0 flex-1">
-              <LoadingBlock className="h-3.5 w-40 max-w-[60%]" />
-              <LoadingBlock className="mt-2 h-3 w-56 max-w-[80%]" />
-            </div>
-          </div>
-          <div className="grid grid-cols-4 gap-2 lg:w-[380px]">
-            {Array.from({ length: 4 }, (_, cell) => (
-              <LoadingBlock key={`attention-cell-${index}-${cell}`} className="h-11" />
-            ))}
-          </div>
-        </div>
-      ))}
-    </>
-  );
 }
 
 function ScheduleSkeleton() {
@@ -1180,8 +1122,6 @@ export default function CoachDashboard() {
   const [calendarLoading, setCalendarLoading] = useState(true);
   const [calendarError, setCalendarError] = useState<string | null>(null);
   const [liveSessionsLoading, setLiveSessionsLoading] = useState(true);
-  const [liveSessionsError, setLiveSessionsError] = useState<string | null>(null);
-  const [caseloadExpanded, setCaseloadExpanded] = useState(true);
   const [scheduleExpanded, setScheduleExpanded] = useState(true);
   const [scheduleNotice, setScheduleNotice] = useState('');
   const [directoryCoaches, setDirectoryCoaches] = useState<DirectoryCoach[]>([]);
@@ -1244,7 +1184,6 @@ export default function CoachDashboard() {
       setCalendarLoading(true);
       setCalendarError(null);
       setLiveSessionsLoading(true);
-      setLiveSessionsError(null);
 
       if (!authenticatedCoachEmail) {
         setOwnerName(authenticatedCoachName);
@@ -1259,7 +1198,6 @@ export default function CoachDashboard() {
         // report — the picker below is the whole page for them.
         setLoadWarning(coach.canChooseCoach ? null : 'Coach access is required to load this dashboard.');
         setCalendarError('Coach access is required.');
-        setLiveSessionsError('Coach access is required.');
         setCalendarLoading(false);
         setLiveSessionsLoading(false);
         setLoading(false);
@@ -1321,7 +1259,6 @@ export default function CoachDashboard() {
         setCalendarPreviewEvents(nonLiveEvents.filter(isWithinNextWorkWeek));
         setLiveSessionEvents(events.filter(event => event.source === 'live-session'));
         setCalendarError(dashboard.errors?.meetings || null);
-        setLiveSessionsError(dashboard.errors?.meetings || null);
         setCalendarLoading(false);
         setLiveSessionsLoading(false);
         setLoading(false);
@@ -1336,7 +1273,6 @@ export default function CoachDashboard() {
         setMarkingThisWeek(undefined);
         setLoadWarning(error instanceof Error ? error.message : 'Unable to load coach dashboard data right now.');
         setCalendarError('Calendar unavailable right now.');
-        setLiveSessionsError('Live sessions unavailable right now.');
         setCalendarLoading(false);
         setLiveSessionsLoading(false);
         setLoading(false);
@@ -1371,10 +1307,6 @@ export default function CoachDashboard() {
     () => activeLearners.filter(learner => canonicalOtjhStatus(learner) === 'need-attention'),
     [activeLearners],
   );
-  const onTrackLearners = useMemo(
-    () => activeLearners.filter(learner => canonicalOtjhStatus(learner) === 'on-track'),
-    [activeLearners],
-  );
   const evidenceLearners = useMemo(
     () => evidenceQueue
       .filter(learner => learner.pendingEvidence > 0)
@@ -1382,14 +1314,9 @@ export default function CoachDashboard() {
     [evidenceQueue],
   );
   const atRiskCount = atRiskLearners.length;
-  const onTrackCount = onTrackLearners.length;
   const totalCaseload = enrichedLearners.length;
   const pendingEvidence = useMemo(
     () => evidenceLearners.reduce((total, learner) => total + learner.pendingEvidence, 0),
-    [evidenceLearners],
-  );
-  const completedEvidence = useMemo(
-    () => evidenceLearners.reduce((total, learner) => total + learner.acceptedEvidence, 0),
     [evidenceLearners],
   );
   const activeLearnerIndex = useMemo(() => learnerIdentityIndex(activeLearners), [activeLearners]);
@@ -1444,53 +1371,6 @@ export default function CoachDashboard() {
   const catchUpsThisWeek = weekEvents.filter(event => event.source === 'catch-up').length;
 
   /* ── Learners Requiring Attention (Risk Alert + At Risk Learners, merged) ── */
-  const overdueMap = useMemo(
-    () => buildOverdueMap(activeLearners, activeCalendarEvents),
-    [activeCalendarEvents, activeLearners],
-  );
-  const priorityMap = useMemo(() => {
-    const map = new Map<string, LearnerPriority>();
-    enrichedLearners.forEach(learner => map.set(learner.id, buildLearnerPriority(learner, overdueMap.get(learner.id))));
-    return map;
-  }, [enrichedLearners, overdueMap]);
-  const attentionQueue = useMemo(
-    () => atRiskLearners
-      .map(learner => ({ learner, priority: priorityMap.get(learner.id) }))
-      .filter((entry): entry is { learner: CoachLearner; priority: LearnerPriority } => Boolean(entry.priority?.reasons.length))
-      .sort((left, right) => right.priority.urgency - left.priority.urgency || left.learner.name.localeCompare(right.learner.name)),
-    [atRiskLearners, priorityMap],
-  );
-  const kpiFilterPredicate = useMemo((): ((learner: CoachLearner) => boolean) | null => {
-    switch (kpiFilter) {
-      case 'caseload': return () => true;
-      case 'active': return isActiveLearner;
-      case 'on-break': return isOnBreakLearner;
-      case 'completed': return isCompletedLearner;
-      case 'epa': return isEpaLearner;
-      case 'at-risk':
-      case 'need-attention':
-      case 'on-track':
-        return learner => isActiveLearner(learner) && canonicalOtjhStatus(learner) === kpiFilter;
-      default: return null;
-    }
-  }, [kpiFilter]);
-
-  const attentionRows = useMemo(() => {
-    if (kpiFilterPredicate) {
-      return enrichedLearners
-        .filter(kpiFilterPredicate)
-        .map(learner => ({ learner, priority: priorityMap.get(learner.id)! }))
-        .sort((left, right) => right.priority.urgency - left.priority.urgency || left.learner.name.localeCompare(right.learner.name));
-    }
-    return attentionQueue;
-  }, [attentionQueue, enrichedLearners, kpiFilterPredicate, priorityMap]);
-
-  const attentionPanelTitle = kpiFilter ? KPI_FILTER_LABEL[kpiFilter] : 'Learners at Risk';
-  const attentionPanelSubtitle = kpiFilter
-    ? 'Filtered from the KPI cards, ordered by priority'
-    : 'Learners currently flagged as OTJH at risk.';
-  const attentionHasOverflow = attentionRows.length > AT_RISK_SCROLL_THRESHOLD;
-
   const schedulePanelLoading = (calendarLoading || liveSessionsLoading) && !upcomingScheduleEvents.length;
   const dashboardLoading = loading || loadedCoachEmail !== authenticatedCoachEmail;
 
@@ -1646,7 +1526,6 @@ export default function CoachDashboard() {
           weekEvents={weekEvents}
           evidenceQueue={evidenceLearners}
           pendingEvidence={pendingEvidence}
-          completedEvidence={completedEvidence}
           onClose={() => setSelectedKpi(null)}
           onFilter={(filter) => {
             setSelectedKpi(null);
@@ -1764,27 +1643,6 @@ function OtjhDistribution({ learners, unavailable }: { learners: CoachLearner[];
    Compact learner rows retain the support reasons and four
    existing metrics inside keyboard-accessible details.
    ═══════════════════════════════════════════════════════════ */
-function AttentionLearnerRow({ learner, onOpen }: {
-  learner: CoachLearner;
-  onOpen: () => void;
-}) {
-  const status = OTJH_STATUS_META[canonicalOtjhStatus(learner)];
-  const varianceLabel = otjhVarianceLabel(learner);
-  return (
-    <tr>
-      <td><div className={styles.identity}>
-        <LearnerAvatar name={learner.name} initials={learner.initials} tone={learnerAvatarTone(learner)} />
-        <span className={styles.identityName}>{learner.name}</span>
-      </div></td>
-      <td><span className={styles.groupName}>{learner.group !== EMPTY_VALUE ? learner.group : learner.programme}</span></td>
-      <td>{varianceLabel === EMPTY_VALUE ? <span className={styles.subtle}>{EMPTY_VALUE}</span> : <StatusBadge tone={status.tone} label={varianceLabel} size="lg" className={styles.varianceBadge} />}</td>
-      <td><span className={styles.lastContact}>{displayValue(learner.lastMcm)}</span>{displayValue(learner.lastMcm) === EMPTY_VALUE && <span className={styles.subtle}>No MCM yet</span>}</td>
-      <td><span className={styles.lastContact}>{displayValue(learner.lastPr)}</span>{displayValue(learner.lastPr) === EMPTY_VALUE && <span className={styles.subtle}>No PR yet</span>}</td>
-      <td><button type="button" className={styles.textButton} onClick={onOpen} aria-label={`View learner ${learner.name}`}><AppIcon name="ri-user-line" aria-hidden="true" />View Profile</button></td>
-    </tr>
-  );
-}
-
 /* ═══════════════════════════════════════════════════════════
    Next review cell — an overdue review says so rather than
    showing a date the coach has to compare against today.
@@ -1792,14 +1650,13 @@ function AttentionLearnerRow({ learner, onOpen }: {
 /* ═══════════════════════════════════════════════════════════
    KPI drill-down modal
    ═══════════════════════════════════════════════════════════ */
-function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQueue, pendingEvidence, completedEvidence, onClose, onFilter }: {
+function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQueue, pendingEvidence, onClose, onFilter }: {
   type: DashboardKpi;
   learners: CoachLearner[];
   calendarEvents: CoachCalendarEvent[];
   weekEvents: CoachCalendarEvent[];
   evidenceQueue: EvidenceQueueLearner[];
   pendingEvidence: number;
-  completedEvidence: number;
   onClose: () => void;
   onFilter: (filter: DashboardKpi) => void;
 }) {

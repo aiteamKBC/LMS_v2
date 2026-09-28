@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
-import { monthlyHours, totalCompletedHours } from './monthlyHours';
+import { monthlyHours, monthlyTargetHours, totalCompletedHours } from './monthlyHours';
 
 function dashboard(): TrainingPlanDashboard {
   return {
@@ -31,6 +31,11 @@ function dashboard(): TrainingPlanDashboard {
 }
 
 describe('monthly OTJH totals', () => {
+  it('accepts a saved numeric log target and falls back for an empty value', () => {
+    expect(monthlyTargetHours('12.5', 20)).toBe(12.5);
+    expect(monthlyTargetHours('', 20)).toBe(20);
+    expect(monthlyTargetHours(null, null)).toBeNull();
+  });
   it('uses retained Audit months through August and LMS completion from September', () => {
     const data = dashboard();
 

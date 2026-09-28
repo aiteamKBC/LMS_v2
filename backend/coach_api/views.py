@@ -40,7 +40,9 @@ from coach_api.auth import (
     is_coach_view_as,
 )
 from coach_api.errors import coach_error
-from coach_api.models import CoachAbsenceReport, CoachCalendarEvent, CoachCalendarSequence
+from coach_api.cache.learners import coach_caseload_cache_key, coach_caseload_lock_key
+from coach_api.models import CoachAbsenceReport, CoachCalendarEvent, CoachCalendarSequence, ImportedReviewInstance
+from coach_api.services.learners.context import CaseloadRequestContext
 from coach_api.validation import (
     ObjectValidator,
     ValidationError,
@@ -1908,42 +1910,15 @@ def fetch_case_file_shell(owner_email: str, learner_id: int):
 
 
 def serialize_case_file_shell(profile, source) -> dict:
-    def optional_date(value):
-        return format_date(value) if value else None
-
-    source_aptem = getattr(source, "aptem_id", None)
-    profile_aptem = getattr(profile, "aptem_id", None)
-    source_aptem_id = int(str(source_aptem).strip()) if student_activity_available(source_aptem) else None
-    profile_aptem_id = int(str(profile_aptem).strip()) if student_activity_available(profile_aptem) else None
-    identity_conflict = bool(source_aptem_id and profile_aptem_id and source_aptem_id != profile_aptem_id)
-    aptem_id = None if identity_conflict else source_aptem_id or profile_aptem_id
-    raw_kind = clean_text(getattr(source, "learner_type", None) or getattr(profile, "learner_type", None)).casefold()
-    kind = "commercial" if raw_kind == "commercial" else "apprenticeship"
-    return {
-        "identity": {
-            "learnerId": str(profile.id),
-            "enrolmentId": str(profile.enrolment_id) if profile.enrolment_id else None,
-            "aptemId": str(aptem_id) if aptem_id else None,
-            "kind": kind,
-            "source": "conflict" if identity_conflict else ("aptem" if aptem_id else "native"),
-            "identityConflict": identity_conflict,
-        },
-        "profile": {
-            "name": clean_text(getattr(profile, "full_name", None) or getattr(source, "username", None)) or None,
-            "email": clean_text(getattr(profile, "email", None) or getattr(source, "email", None)) or None,
-            "programme": clean_text(getattr(profile, "programme", None) or getattr(source, "programme", None)) or None,
-            "cohort": clean_text(getattr(profile, "cohort", None) or getattr(source, "cohort", None)) or None,
-            "group": clean_text(getattr(profile, "group_name", None) or getattr(source, "group", None)) or None,
-            "employer": clean_text(getattr(source, "employer", None)) or None,
-            "coachName": clean_text(getattr(profile, "coach_name", None) or getattr(source, "coach_name", None)) or None,
-            "coachEmail": clean_text(getattr(profile, "coach_email", None) or getattr(source, "coach_email", None)) or None,
-            "status": clean_text(getattr(profile, "programme_status", None) or getattr(source, "programme_status", None)) or None,
-            "startDate": optional_date(getattr(profile, "start_date", None) or getattr(source, "start_date", None)),
-            "plannedEndDate": optional_date(getattr(profile, "end_date", None) or getattr(source, "end_date", None)),
-            "gatewayReviewDate": optional_date(getattr(profile, "gateway_review_date", None)),
-            "coachRag": format_coach_rag_value(getattr(profile, "coach_rag", None)) or None,
-        },
-    }
+    from .serializers.learner_profile import serialize_learner_profile_shell
+    return serialize_learner_profile_shell(
+        profile,
+        source,
+        clean_text=clean_text,
+        format_date=format_date,
+        student_activity_available=student_activity_available,
+        format_coach_rag_value=format_coach_rag_value,
+    )
 
 
 def fetch_attendance_caseload_rows(owner_email: str) -> list[LearnerProfile]:
@@ -9260,7 +9235,10 @@ def fetch_aptem_review_events(
             "aptemReviewId": aptem_review_id,
             "reviewerName": clean_text(review.get("reviewerName")) or None,
             "reviewCompletedAt": completed_date.isoformat() if completed_date else None,
-            "hasReviewForm": bool(row.get("review_data")) or bool(row.get("has_review_sections")),
+            "hasReviewForm": _imported_review_has_usable_form(
+                review,
+                has_normalized_sections=bool(row.get("has_review_sections")),
+            ),
             "sequence": 1,
             "title": clean_text(review.get("name")) or review_type or EVENT_TYPE_FALLBACK_TITLES.get(event_type, "Review"),
             "type": "coaching" if event_type == "mcr" else "review",
@@ -11847,8 +11825,9 @@ def coach_caseload(request):
     endpoint_started = perf_counter()
     owner_email = authenticated_coach_email(request)
     refresh_live_snapshots = request_prefers_live_caseload_snapshots(request)
-    summary_only = clean_text(request.GET.get("summary")).casefold() in {"1", "true", "yes", "on"}
-    paginated = any(key in request.GET for key in ("page", "page_size", "search", "status", "cohort", "group", "sort", "direction"))
+    request_context = CaseloadRequestContext.from_request(request)
+    summary_only = request_context.summary_only
+    paginated = request_context.paginated
     validator = ObjectValidator(request.GET)
     page = validator.integer("page", default=1, minimum=1)
     requested_page_size = validator.integer("page_size", default=10, minimum=1)
@@ -11870,8 +11849,11 @@ def coach_caseload(request):
     # Caseload enrichment is expensive and the page may request it again on a
     # refresh/remount.  Keep a short per-coach snapshot for read-only GETs;
     # live snapshot requests explicitly bypass this cache.
-    cache_scope = hashlib.sha256(request.META.get("QUERY_STRING", "").encode()).hexdigest()[:16]
-    caseload_cache_key = f"coach-caseload:v3:{normalize_email(owner_email)}:{int(summary_only)}:{cache_scope}"
+    caseload_cache_key = coach_caseload_cache_key(
+        owner_email,
+        summary_only=summary_only,
+        query_string=request_context.query_string,
+    )
     if not refresh_live_snapshots:
         cached_caseload = cache.get(caseload_cache_key)
         if cached_caseload is not None:
@@ -11880,7 +11862,7 @@ def coach_caseload(request):
     # two tabs must not run that identical work concurrently and exhaust the
     # per-process pools. The winner fills the ordinary response cache; followers
     # wait only for that same scoped coach/page/filter key.
-    caseload_lock_key = f"{caseload_cache_key}:building"
+    caseload_lock_key = coach_caseload_lock_key(caseload_cache_key)
     owns_caseload_lock = True
     if paginated and not refresh_live_snapshots:
         owns_caseload_lock = cache.add(caseload_lock_key, "1", 120)
@@ -13303,10 +13285,22 @@ def _imported_review_field(field, *, section_id, index):
     }
 
 
+def _imported_review_has_usable_form(review: dict, *, has_normalized_sections: bool = False) -> bool:
+    """Return whether an import contains a real form rather than metadata only."""
+    if has_normalized_sections:
+        return True
+    return any(
+        bool(section.get("fields") or section.get("tables") or clean_text(section.get("rawText")))
+        for section in review.get("sections") or []
+        if isinstance(section, dict)
+    )
+
+
 def _imported_review_definition(owner_email: str, event_key: str) -> dict | None:
     """Adapt one owned Aptem review to the native form-definition contract.
 
-    The source remains read-only and is never copied into Curriculum tables.
+    Summary-only imports remain read-only. Imports with a real form can store
+    LMS-local answers without changing the original Aptem data.
     ``event_key`` is the same stable identity used by the timetable row.
     """
     prefix = "imported-review:"
@@ -13348,14 +13342,29 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
         sections = _sections_by_review(cursor, [row["id"]])
 
     review = _serialize_review(row, sections)
-    if not review.get("detailsAvailable"):
-        return None
     learner = next((item for item in learners if int(item.id) == profile_id), None)
     if learner is None:
         return None
 
+    normalized_sections = sections.get(row["id"]) or []
+    form_available = _imported_review_has_usable_form(
+        review,
+        has_normalized_sections=bool(normalized_sections),
+    )
+    summary_only = not form_available
+    canonical_event_key = f"{prefix}{aptem_review_id}"
+    saved_instance = (
+        ImportedReviewInstance.objects.filter(
+            owner_email__iexact=owner_email,
+            event_key=canonical_event_key,
+        ).first()
+        if form_available
+        else None
+    )
+    saved_answers = saved_instance.answers if saved_instance and isinstance(saved_instance.answers, dict) else {}
+
     adapted_sections = []
-    for section_index, section in enumerate(review.get("sections") or []):
+    for section_index, section in enumerate((review.get("sections") or []) if form_available else []):
         section_id = str(section.get("id") or f"{row['id']}:{section_index}")
         fields = [
             _imported_review_field(field, section_id=section_id, index=index)
@@ -13394,6 +13403,9 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
                 "yesFields": [],
                 "noFields": [],
             })
+        for field in fields:
+            if field["id"] in saved_answers:
+                field["answer"] = saved_answers[field["id"]]
         adapted_sections.append({
             "id": f"aptem-section:{section_id}",
             "title": clean_text(section.get("name")) or "Review section",
@@ -13411,19 +13423,31 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
         role: {"required": False, "signed": False, "signedBy": None, "signedName": None, "signedAt": None, "signature": None}
         for role in curriculum_review_instances.SIGNATURE_ROLES
     }
+    instance_status = (
+        clean_text(review.get("status")) or CoachCalendarEvent.STATUS_NOT_SCHEDULED
+        if summary_only
+        else saved_instance.status if saved_instance else ImportedReviewInstance.STATUS_IN_PROGRESS
+    )
+    instance_completed_at = (
+        review.get("completedDate")
+        if summary_only
+        else saved_instance.completed_at.isoformat() if saved_instance and saved_instance.completed_at else None
+    )
     return {
-        "readOnly": True,
+        "readOnly": summary_only,
         "source": "aptem",
+        "formAvailable": form_available,
+        "summaryOnly": summary_only,
         "instance": {
-            "id": event_key,
+            "id": canonical_event_key,
             "reviewTemplateId": "",
             "learnerId": profile_id,
             "programmeId": clean_text(getattr(learner, "programme_id", None)),
             "occurrenceNumber": 1,
             "targetDate": target_date,
-            "status": clean_text(review.get("status")) or CoachCalendarEvent.STATUS_NOT_SCHEDULED,
+            "status": instance_status,
             "startedAt": None,
-            "completedAt": review.get("completedDate"),
+            "completedAt": instance_completed_at,
         },
         "template": {
             "id": "",
@@ -13702,6 +13726,38 @@ def coach_review_instance_previous(request, instance_id):
 def coach_review_instance_answers(request, instance_id):
     if request.method != "POST":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
+    owner_email = authenticated_coach_email(request)
+    if instance_id.startswith("imported-review:"):
+        definition = _imported_review_definition(owner_email, instance_id)
+        if not definition:
+            return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
+        if definition.get("summaryOnly"):
+            return JsonResponse({"detail": "This imported review has summary information only and cannot be edited."}, status=409)
+        try:
+            payload = parse_json_body(request)
+        except ValidationError as exc:
+            return validation_error_response(exc)
+        answers = payload.get("answers")
+        if not isinstance(answers, dict):
+            return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
+        field_ids = {
+            field["id"]
+            for section in definition.get("sections", [])
+            for field in section.get("fields", [])
+        }
+        if any(field_id not in field_ids for field_id in answers):
+            return JsonResponse({"detail": "answers contains a field that is not part of this review."}, status=400)
+        imported, _created = ImportedReviewInstance.objects.get_or_create(
+            owner_email=owner_email,
+            event_key=definition["instance"]["id"],
+            defaults={"learner_id": definition["instance"]["learnerId"]},
+        )
+        if imported.status == ImportedReviewInstance.STATUS_COMPLETED:
+            return JsonResponse({"detail": "This review has already been completed and is read-only."}, status=409)
+        imported.answers = answers
+        imported.save(update_fields=["answers", "updated_at"])
+        return JsonResponse(_imported_review_definition(owner_email, imported.event_key))
+
     instance_row, error = _authorized_review_instance(request, instance_id)
     if error:
         return error
@@ -13712,7 +13768,6 @@ def coach_review_instance_answers(request, instance_id):
     answers = payload.get("answers")
     if not isinstance(answers, dict):
         return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
-    owner_email = authenticated_coach_email(request)
     try:
         curriculum_review_instances.save_review_instance_answers(instance_row, answers, actor=owner_email)
     except ValueError as exc:
@@ -13926,6 +13981,44 @@ def coach_review_instance_progress(request, instance_id):
 def coach_review_instance_complete(request, instance_id):
     if request.method != "POST":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
+    owner_email = authenticated_coach_email(request)
+    if instance_id.startswith("imported-review:"):
+        definition = _imported_review_definition(owner_email, instance_id)
+        if not definition:
+            return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
+        if definition.get("summaryOnly"):
+            return JsonResponse({"detail": "This imported review has summary information only and cannot be completed."}, status=409)
+        payload = {}
+        if request.body:
+            try:
+                payload = parse_json_body(request)
+            except ValidationError as exc:
+                return validation_error_response(exc)
+        if not isinstance(payload, dict):
+            return JsonResponse({"detail": "Request body must be a JSON object."}, status=400)
+        answers = payload.get("answers", {})
+        if not isinstance(answers, dict):
+            return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
+        field_ids = {
+            field["id"]
+            for section in definition.get("sections", [])
+            for field in section.get("fields", [])
+        }
+        if any(field_id not in field_ids for field_id in answers):
+            return JsonResponse({"detail": "answers contains a field that is not part of this review."}, status=400)
+        imported, _created = ImportedReviewInstance.objects.get_or_create(
+            owner_email=owner_email,
+            event_key=definition["instance"]["id"],
+            defaults={"learner_id": definition["instance"]["learnerId"]},
+        )
+        if imported.status == ImportedReviewInstance.STATUS_COMPLETED:
+            return JsonResponse({"detail": "This review has already been completed."}, status=409)
+        imported.answers = answers
+        imported.status = ImportedReviewInstance.STATUS_COMPLETED
+        imported.completed_at = timezone.now()
+        imported.save(update_fields=["answers", "status", "completed_at", "updated_at"])
+        return JsonResponse(_imported_review_definition(owner_email, imported.event_key))
+
     instance_row, error = _authorized_review_instance(request, instance_id)
     if error:
         return error
@@ -13940,7 +14033,6 @@ def coach_review_instance_complete(request, instance_id):
     answers = payload.get("answers")
     if answers is not None and not isinstance(answers, dict):
         return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
-    owner_email = authenticated_coach_email(request)
     ok, errors = curriculum_review_instances.complete_review_instance(
         instance_row, actor=owner_email, answers=answers,
     )

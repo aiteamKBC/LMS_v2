@@ -64,6 +64,11 @@ export default [
         NodeJS: 'readonly',
         JSX: 'readonly',
         IdleRequestCallback: 'readonly',
+        AddEventListenerOptions: 'readonly',
+        RequestCache: 'readonly',
+        RequestCredentials: 'readonly',
+        RequestInfo: 'readonly',
+        RequestInit: 'readonly',
         __BASE_PATH__: 'readonly',
         __IS_PREVIEW__: 'readonly',
         __READDY_PROJECT_ID__: 'readonly',
@@ -95,6 +100,12 @@ export default [
       'no-useless-catch': 'off',
       'no-irregular-whitespace': 'off',
       'no-undef': 'error',
+    },
+  },
+  {
+    files: ['src/**/*.{test,spec}.{ts,tsx}'],
+    languageOptions: {
+      globals: globals.node,
     },
   },
   // Only enforce this rule for the router config file to avoid false positives elsewhere.

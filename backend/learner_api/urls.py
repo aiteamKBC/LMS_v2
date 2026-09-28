@@ -7,6 +7,7 @@ from . import monthly_reflection_ai
 from .assignment_ai_check import assignment_ai_check
 from . import ksb_generation
 from django.urls import path
+from curriculum_api import recording_views
 from . import monthly_logs
 from .dashboard_metrics import learner_metrics
 from .overview_week import overview_week
@@ -17,6 +18,7 @@ from .attendance_confirmation import confirm_attendance
 from .meeting_attendance import meeting_attendance, confirm_meeting_attendance
 from .attendance_mode import attendance_mode, review_attendance_mode
 from .first_session_bookings import first_session_bookings
+from .first_login_details import first_login_details
 
 from . import certificates, monthly_assignment, legacy_assignments, quiz_reading, review_history
 from . import historical_evidence
@@ -34,6 +36,7 @@ urlpatterns = [
     path('session-catchup/<str:kind>/<int:learner_id>/', link_catchup),
     path('session-results/<str:kind>/<int:learner_id>/<str:series_id>/sessions/<int:session_number>/', session_results.learner_results),
     path('session-results/<str:kind>/<int:learner_id>/<str:series_id>/artifacts/<str:artifact_id>/', session_results.learner_content),
+    path('session-results/<str:kind>/<int:learner_id>/<str:series_id>/artifacts/<str:artifact_id>/watch/', recording_views.learner_recording_watch),
     path("calendar/<str:kind>/<int:pk>/coach-availability/", coach_available_slots, name="coach-available-slots"),
     # Enrolment: no learner exists yet, so the case owner is named directly.
     path("calendar/case-owner-availability/", case_owner_available_slots, name="case-owner-availability"),
@@ -56,6 +59,7 @@ urlpatterns = [
     path("tutor-learners/", views.tutor_learners, name="tutor-learners"),
     # Enrolment workspace: every learner's first-session booking, read only.
     path("first-session-bookings/", first_session_bookings, name="first-session-bookings"),
+    path("first-login-details/<int:pk>/", first_login_details, name="first-login-details"),
     path("enrolment-users/", views.enrolment_users, name="enrolment-users"),
     path("enrolment-users/import-template/", learner_import.import_template, name="enrolment-users-import-template"),
     path("enrolment-users/import/", learner_import.import_students, name="enrolment-users-import"),
@@ -148,6 +152,11 @@ urlpatterns = [
         employer_portal.employer_review_instance,
         name="employer-review-instance",
     ),
+    path(
+        "employer-portal/<int:employer_id>/learner/<str:kind>/<int:learner_id>/reviews/<path:event_key>/",
+        employer_portal.employer_enrolment_review,
+        name="employer-enrolment-review",
+    ),
     path("employers/<int:pk>/", employers.employer_detail, name="employer-detail"),
     path("learner-detail/<str:kind>/<int:pk>/", learner_detail.learner_detail, name="learner-detail"),
     path("learner-summary/<str:kind>/<int:pk>/", learner_detail.learner_summary, name="learner-summary"),
@@ -174,6 +183,7 @@ urlpatterns = [
     path("certificates/<str:kind>/<int:pk>/issue/", certificates.issue_learner_certificate, name="learner-certificate-issue"),
     path("kbc-lms/all-students-schema/", lms_schema.all_students_schema, name="kbc-lms-all-students-schema"),
     path('student-activity/<str:kind>/<int:pk>/<int:group_id>/<int:activity_id>/files/<int:attachment_id>/', student_activity.subject_file, name='subject-file'),
+    path('student-activity/<str:kind>/<int:pk>/<int:group_id>/<int:activity_id>/source-file/', student_activity.source_material_file, name='source-material-file'),
     path("media/google-drive/<str:file_id>/", media_proxy.google_drive_media, name="google-drive-media"),
     path("attendance/<str:kind>/<int:learner_id>/", attendance.learner_attendance, name="learner-attendance"),
     path("learners/<int:pk>/coach/", views.learner_coach, name="learner-coach"),

@@ -53,6 +53,11 @@ ADD_COLUMNS = [
     ('"Completed"', "boolean NOT NULL DEFAULT false"),
     ('"Created_at"', "timestamptz NOT NULL DEFAULT now()"),
     ('"Updated_at"', "timestamptz NOT NULL DEFAULT now()"),
+    # Next of kin's own address, asked when it is not the learner's.
+    ('"Next_of_kin_postcode"', "text"),
+    ('"Next_of_kin_address"', "text"),
+    # Eligibility evidence files held in Azure, each with its blob path.
+    ('"Eligibility_evidence"', "jsonb NOT NULL DEFAULT '[]'::jsonb"),
 ]
 
 # One ILR per learner — also the conflict target for the upsert in the view.

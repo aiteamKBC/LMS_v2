@@ -558,12 +558,12 @@ export function EvidenceBody({
         />
       )}
 
-      <div className="space-y-5 md:space-y-6">
-        {/* ── Section header + primary CTA ── */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <h2 className="text-base font-heading font-semibold text-foreground-900">Evidence Library</h2>
-            <p className="text-sm text-foreground-400 mt-0.5">Your assignments and evidence, organised by month and component</p>
+      <div className={styles.page}>
+        <header className={styles.hero}>
+          <div className={styles.heroText}>
+            <p className={styles.eyebrow}>Evidence</p>
+            <h1>Evidence Library</h1>
+            <p>Your assignments and evidence, organised by month and component.</p>
           </div>
           {showReadOnlyNotice ? (
             <span className="inline-flex items-center gap-2 rounded-full border border-foreground-200 bg-background-100 px-4 py-2 text-xs font-semibold text-foreground-500">
@@ -572,12 +572,12 @@ export function EvidenceBody({
           ) : (
             <button
               onClick={() => setShowUploadModal(true)}
-              className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-primary-500 text-background-50 dark:text-foreground-950 text-sm font-semibold hover:bg-primary-600 transition-smooth cursor-pointer whitespace-nowrap"
+              className={styles.uploadButton}
             >
               <AppIcon className="ri-add-line"></AppIcon> Upload Evidence
             </button>
           )}
-        </div>
+        </header>
 
         {(evidenceError || downloadError) && (
           <div className="flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-red-800">
@@ -599,15 +599,20 @@ export function EvidenceBody({
             </div>
           )}
           <div className={styles.summary} aria-label="Evidence summary">
-            <div className={styles.summaryTotal}><strong>{loadingAny ? '—' : counts.total}</strong><span>Total evidence</span></div>
+            <div className={styles.summaryTotal}>
+              <span className={styles.summaryIcon}><AppIcon className="ri-stack-line" /></span>
+              <span><strong>{loadingAny ? '—' : counts.total}</strong><span>Total Evidence</span></span>
+            </div>
             {([
-              { label: 'Validated', filter: 'Validated', count: counts.validated },
-              { label: 'Pending', filter: 'Pending', count: counts.pending },
-              { label: 'Needs work', filter: 'Needs work', count: counts.needsWork },
-              { label: 'Drafts', filter: 'Draft', count: counts.draft },
+              { label: 'Submitted', filter: 'Pending', count: counts.pending, icon: 'ri-time-line', tone: styles.summaryPending },
+              { label: 'Approved', filter: 'Validated', count: counts.validated, icon: 'ri-checkbox-circle-line', tone: styles.summaryValidated },
+              { label: 'Needs Action', filter: 'Needs work', count: counts.needsWork, icon: 'ri-error-warning-line', tone: styles.summaryNeedsWork },
+              { label: 'Drafts', filter: 'Draft', count: counts.draft, icon: 'ri-file-text-line', tone: styles.summaryDraft },
             ] as const).map(stat => <button key={stat.filter} type="button" aria-pressed={activeFilter === stat.filter}
+              className={`${styles.summaryStat} ${stat.tone}`}
               onClick={() => setActiveFilter(value => value === stat.filter ? 'All' : stat.filter)}>
-              {stat.label}<strong>{loadingAny ? '—' : stat.count}</strong>
+              <span className={styles.summaryIcon}><AppIcon className={stat.icon} /></span>
+              <span><strong>{loadingAny ? '—' : stat.count}</strong><span>{stat.label}</span></span>
             </button>)}
           </div>
         </section>

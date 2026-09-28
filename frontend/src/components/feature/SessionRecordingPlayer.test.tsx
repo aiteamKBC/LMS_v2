@@ -1,9 +1,9 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SessionRecordingPlayer } from './SessionRecordingPlayer';
-import { loadTranscriptCues, type SessionFile } from '@/api/sessionResults';
+import { loadRecordingWatch, loadTranscriptCues, recordRecordingWatch, type SessionFile } from '@/api/sessionResults';
 
-vi.mock('@/api/sessionResults', async importOriginal => ({ ...await importOriginal<typeof import('@/api/sessionResults')>(), loadTranscriptCues: vi.fn() }));
+vi.mock('@/api/sessionResults', async importOriginal => ({ ...await importOriginal<typeof import('@/api/sessionResults')>(), loadTranscriptCues: vi.fn(), recordRecordingWatch: vi.fn(), loadRecordingWatch: vi.fn() }));
 const recording: SessionFile = { id: 'V', type: 'recording', state: 'ready', transcriptLinks: [{ id: 'T', timingReady: true, offsetSeconds: 2 }] };
 const transcript: SessionFile = { id: 'T', type: 'transcript', state: 'ready', timingReady: true };
 beforeEach(() => {
@@ -14,6 +14,62 @@ beforeEach(() => {
   ] });
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+
+describe('recording watch tracking', () => {
+  const learner = { kind: 'apprenticeship' as const, id: '101' };
+  beforeEach(() => {
+    vi.mocked(loadRecordingWatch).mockResolvedValue({ watchedSeconds: 0, durationSeconds: 0, csrfToken: 'token-1' });
+  });
+  const play = (video: HTMLVideoElement, times: number[]) => {
+    Object.defineProperty(video, 'paused', { configurable: true, value: false });
+    Object.defineProperty(video, 'seeking', { configurable: true, value: false });
+    times.forEach(time => { video.currentTime = time; fireEvent.timeUpdate(video); });
+  };
+
+  it('reports only seconds actually played, not a jump ahead, when the learner pauses', async () => {
+    vi.mocked(recordRecordingWatch).mockResolvedValue({ watchedSeconds: 4, durationSeconds: 0 });
+    render(<SessionRecordingPlayer seriesId="S" file={recording} transcripts={[transcript]} learner={learner} label="Recording" trackWatch />);
+    await waitFor(() => expect(loadRecordingWatch).toHaveBeenCalled());
+    await act(async () => undefined);
+    const video = screen.getByLabelText('Recording') as HTMLVideoElement;
+    play(video, [0, 1.5, 3, 100, 101]);
+    Object.defineProperty(video, 'paused', { configurable: true, value: true });
+    fireEvent.pause(video);
+    expect(recordRecordingWatch).toHaveBeenCalledTimes(1);
+    expect(recordRecordingWatch).toHaveBeenCalledWith('S', recording, learner,
+      { watchedSeconds: 4, position: 101, duration: 0 }, 'token-1', false);
+    expect(await screen.findByText('Viewing time saved: under 1 min')).toBeInTheDocument();
+  });
+
+  it('shows the saved total and says when viewing time could not be saved', async () => {
+    vi.mocked(recordRecordingWatch).mockResolvedValueOnce({ watchedSeconds: 2820, durationSeconds: 7200 })
+      .mockRejectedValueOnce(new Error('Viewing time could not be saved (403).'));
+    render(<SessionRecordingPlayer seriesId="S" file={recording} transcripts={[transcript]} learner={learner} label="Recording" trackWatch />);
+    await act(async () => undefined);
+    const video = screen.getByLabelText('Recording') as HTMLVideoElement;
+    play(video, [0, 1, 2]);
+    fireEvent.pause(video);
+    expect(await screen.findByText('Watched 47 of 120 min')).toBeInTheDocument();
+    play(video, [3, 4, 5]);
+    fireEvent.pause(video);
+    expect(await screen.findByText('Viewing time could not be saved (403).')).toBeInTheDocument();
+  });
+
+  it('shows viewing saved earlier as soon as the recording opens', async () => {
+    vi.mocked(loadRecordingWatch).mockResolvedValue({ watchedSeconds: 600, durationSeconds: 7200, csrfToken: 'token-1' });
+    render(<SessionRecordingPlayer seriesId="S" file={recording} transcripts={[transcript]} learner={learner} label="Recording" trackWatch />);
+    expect(await screen.findByText('Watched 10 of 120 min')).toBeInTheDocument();
+  });
+
+  it('does not report viewing for staff previews', () => {
+    render(<SessionRecordingPlayer seriesId="S" file={recording} transcripts={[transcript]} learner={learner} label="Recording" />);
+    const video = screen.getByLabelText('Recording') as HTMLVideoElement;
+    play(video, [0, 1, 2, 3]);
+    fireEvent.pause(video);
+    expect(recordRecordingWatch).not.toHaveBeenCalled();
+    expect(loadRecordingWatch).not.toHaveBeenCalled();
+  });
+});
 
 describe('recording transcript', () => {
   it('highlights and seeks using media time plus the stored offset, preserving pause', async () => {

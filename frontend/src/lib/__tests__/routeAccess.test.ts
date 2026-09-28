@@ -241,12 +241,15 @@ describe('choosing between several workspaces', () => {
       access: 'super-admin', accessHome: '/workspace/admin',
       accessWorkspaces: [
         { access: 'super-admin', home: '/workspace/admin', navRole: 'admin' },
-        { access: 'learner', home: '/workspace/learner?kind=commercial&id=510', navRole: 'learner' },
+        { access: 'learner', home: '/workspace/learner/commercial/510', navRole: 'learner' },
       ],
     };
     expect(postLoginRouteFor(account)).toBe(CHOOSE_WORKSPACE_ROUTE);
     // The route carries the record id: the chooser must never rebuild it.
-    expect(workspacesFor(account)[1].home).toContain('id=510');
+    expect(workspacesFor(account)[1].home).toBe('/workspace/learner/commercial/510');
+    // A query-string home resolves to the bare route, which has no learner.
+    expect(isBareLearnerWorkspacePath(workspacesFor(account)[1].home)).toBe(false);
+    expect(isBareLearnerWorkspacePath('/workspace/learner?kind=commercial&id=510')).toBe(true);
   });
 
   it('never offers a menu to a record monitor, who is pinned to /old-otjh', () => {

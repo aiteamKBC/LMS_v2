@@ -6,19 +6,16 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { useListQueryState } from '@/hooks/useListQueryState';
-import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
 import styles from './attendanceOverview.module.css';
 import lastFourStyles from './attendanceLastFour.module.css';
+import { useCoachAttendance } from '@/features/coach/attendance/hooks/useCoachAttendance';
+import { selectRecentAttendance } from '@/features/coach/attendance/selectors/attendanceSelectors';
+import type { AttendanceStatus } from '@/features/coach/attendance/types/attendance.types';
 
 const coachNav = roleNavMap.coach;
-const ENDPOINT = '/coach_api/coach/attendance';
 const PAGE_SIZE = 10;
 const QUERY_DEFAULTS = { group: '', programme: '', status: 'all', page: 1 };
-type AttendanceStatus = 'present' | 'absent';
-interface RecordRow { learnerId: string; sessionId: string; sessionDate: string | null; status: string }
-interface Learner { id: string; learner: string; email?: string | null; programme: string; programmeId?: string | null; group: string; groupName?: string | null; groupId?: string | null; programStatus?: string }
-interface Payload { learners?: Learner[]; attendanceRecords?: RecordRow[] }
 interface DayDraft { id: number; date: string; status: AttendanceStatus }
 const display = (value?: string | null) => value?.trim() || '--';
 const shortDate = (value: string | null) => value ? `${value.slice(5, 7)}-${value.slice(8, 10)}` : '--';
@@ -27,10 +24,10 @@ export default function CoachAttendance() {
   const coach = useCoachIdentity();
   const navigate = useNavigate();
   const { state: query, setValues: setQueryValues } = useListQueryState(QUERY_DEFAULTS);
-  const [learners, setLearners] = useState<Learner[]>([]);
-  const [records, setRecords] = useState<RecordRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const attendance = useCoachAttendance(coach.isInitialized && Boolean(coach.email));
+  const { learners, records } = attendance;
+  const loading = coach.isInitialized && !coach.email ? false : (!coach.isInitialized || attendance.loading);
+  const error = coach.isInitialized && !coach.email ? 'Coach access is required to load attendance data.' : attendance.error;
   const [groupId, setGroupId] = useState(String(query.group));
   const [programmeId, setProgrammeId] = useState(String(query.programme));
   const loaded = useMemo(() => query.group ? { groupId: String(query.group), programmeId: String(query.programme) } : null, [query.group, query.programme]);
@@ -41,20 +38,6 @@ export default function CoachAttendance() {
   const [days, setDays] = useState<DayDraft[]>([]);
   const page = Number(query.page);
   const [notice, setNotice] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!coach.isInitialized) return;
-    const controller = new AbortController();
-    setLoading(true); setError(null);
-    if (!coach.email) { setError('Coach access is required to load attendance data.'); setLoading(false); return; }
-    coachFetch(ENDPOINT, { signal: controller.signal }).then(async response => {
-      if (!response.ok) throw new Error(`Attendance request failed with ${response.status}`);
-      return response.json() as Promise<Payload>;
-    }).then(payload => { if (!controller.signal.aborted) { setLearners(payload.learners || []); setRecords(payload.attendanceRecords || []); } })
-      .catch(reason => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : 'Unable to load attendance data.'); })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
-    return () => controller.abort();
-  }, [coach.email, coach.isInitialized]);
 
   useEffect(() => {
     setGroupId(String(query.group));
@@ -68,7 +51,7 @@ export default function CoachAttendance() {
   const visible = useMemo(() => loadedLearners.filter(row => programStatus === 'all' || (programStatus === 'active' ? display(row.programStatus).toLowerCase() === 'active' : display(row.programStatus) === programStatus)), [loadedLearners, programStatus]);
   const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   const pageRows = visible.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-  const recent = (id: string) => records.filter(row => row.learnerId === id && ['present', 'absent'].includes(row.status)).sort((a, b) => (b.sessionDate || '').localeCompare(a.sessionDate || '')).slice(0, 4);
+  const recent = (id: string) => selectRecentAttendance(records, id);
   const loadStudents = () => { setQueryValues({ group: groupId, programme: programmeId, page: 1 }); setSelected(new Set()); setNotice(null); };
   const addDay = () => { if (!draftDate) return; setDays(current => current.some(row => row.date === draftDate) ? current : [...current, { id: Date.now(), date: draftDate, status: draftStatus }]); setDraftDate(''); };
 

@@ -15,6 +15,7 @@ import logging
 
 from .models import (
     WizardCvJob,
+    WizardIlrLearnerDetails,
     WizardKsbAssessment,
     WizardPersonalDetails,
     WizardPlr,
@@ -81,6 +82,11 @@ def _int(value):
         return None
 
 
+def _bool(value):
+    """True/False, or None for unanswered — a Yes/No the learner skipped."""
+    return value if isinstance(value, bool) else None
+
+
 def _dict(value):
     return value if isinstance(value, dict) else {}
 
@@ -115,6 +121,36 @@ def project_draft(kind, learner_id, draft):
                 "signature": sig,
                 # Stamp the signing date when one wasn't supplied but a signature was.
                 "signature_date": _date(pd.get("signatureDate")),
+            },
+        )
+
+    if ILR_DETAILS_KEY in draft:
+        d = _dict(draft[ILR_DETAILS_KEY])
+        WizardIlrLearnerDetails.objects.update_or_create(
+            **scope,
+            defaults={
+                "years_at_address": _int(d.get("yearsAtAddress")),
+                "at_address_since_birth": _bool(d.get("sinceBirth")),
+                "postcode_prior_to_enrolment": _s(d.get("postcodePriorToEnrolment")),
+                "national_insurance_number": _s(d.get("niNumber")),
+                "ni_number_applied": _bool(d.get("niApplied")),
+                "legal_sex": _s(d.get("legalSex")),
+                "pronouns": _s(d.get("pronouns")),
+                "ethnicity": _s(d.get("ethnicity")),
+                "long_term_disability": _bool(d.get("longTermDisability")),
+                "highest_qualification": _s(d.get("highestQualification")),
+                "employment_status": _s(d.get("employmentStatus")),
+                "employment_start_date": _date(d.get("employmentStartDate")),
+                "job_title": _s(d.get("jobTitle")),
+                "self_employed": _bool(d.get("selfEmployed")),
+                "full_time_education": _bool(d.get("fullTimeEducation")),
+                "expected_leaving_date": _date(d.get("expectedLeavingDate")),
+                "length_of_unemployment": _s(d.get("lengthOfUnemployment")),
+                "volunteers": _bool(d.get("volunteers")),
+                "state_benefits": _s(d.get("stateBenefits")),
+                "benefit_claim_basis": _s(d.get("benefitClaimBasis")),
+                "declaration_signature": _s(d.get("signature")),
+                "declaration_signed_date": _date(d.get("signatureDate")),
             },
         )
 
@@ -172,10 +208,22 @@ def project_draft(kind, learner_id, draft):
                     "credits": _int(r.get("credits")),
                     "grade": _s(r.get("grade")),
                     "record_type": _s(r.get("recordType")),
+                    "start_date": _date(r.get("startDate")),
+                    "end_date": _date(r.get("endDate")),
                 },
             )
             seen.append(ref)
-        WizardPlrRecord.objects.filter(**scope).exclude(record_ref__in=seen).delete()
+        removed = WizardPlrRecord.objects.filter(**scope).exclude(record_ref__in=seen)
+        # A removed record takes its certificate files with it — once the delete
+        # has committed, so a rolled-back save never loses a file it kept.
+        orphaned = [item for row in removed for item in (row.evidence or []) if isinstance(item, dict)]
+        removed.delete()
+        if orphaned:
+            from django.db import transaction
+
+            from .learner_uploads import remove_blob
+
+            transaction.on_commit(lambda: [remove_blob(item) for item in orphaned], using="enrolment")
 
     if "cvJob" in draft:
         cv = _dict(draft["cvJob"])
@@ -186,6 +234,12 @@ def project_draft(kind, learner_id, draft):
                 "experience_text": _s(cv.get("experienceText")),
                 "pm_qualifications": _s(cv.get("pmQualifications")),
                 "functional_skills_enrol": _s(cv.get("functionalSkillsEnrol")),
+                "highest_qualification": _s(cv.get("highestQualification")),
+                "highest_qualification_field": _s(cv.get("highestQualificationField")),
+                "has_field_qualification": _bool(cv.get("hasFieldQualification")),
+                "highest_field_qualification": _s(cv.get("highestFieldQualification")),
+                "gcse_english": _bool(cv.get("gcseEnglish")),
+                "gcse_maths": _bool(cv.get("gcseMaths")),
             },
         )
 
@@ -211,6 +265,52 @@ def project_draft(kind, learner_id, draft):
         WizardPolicyAck.objects.filter(**scope).exclude(policy_id__in=seen).delete()
 
 
+#: The ILR Learner Details step's key in the wizard draft. Stored ONLY in
+#: enrolment."Wizard_Ilr_Learner_Details" — never in enrolment."Extended_ILR",
+#: whose Wizard_draft snapshot has this key removed before it is written (see
+#: extended_ilr.py). The ILR and the Extended ILR are separate records.
+ILR_DETAILS_KEY = "ilrDetails"
+
+
+def without_ilr_details(draft):
+    """The draft as enrolment."Extended_ILR" may store it: no ILR Learner Details."""
+    return {key: value for key, value in _dict(draft).items() if key != ILR_DETAILS_KEY}
+
+
+def read_ilr_details(kind, learner_id):
+    """This learner's ILR Learner Details in draft shape, or None if never saved."""
+    row = WizardIlrLearnerDetails.objects.filter(learner_kind=kind, learner_id=learner_id).first()
+    return ilr_details_draft(row) if row else None
+
+
+def ilr_details_draft(row):
+    """One Wizard_Ilr_Learner_Details row in the draft's ilrDetails shape."""
+    return {
+        "yearsAtAddress": row.years_at_address,
+        "sinceBirth": row.at_address_since_birth,
+        "postcodePriorToEnrolment": row.postcode_prior_to_enrolment or "",
+        "niNumber": row.national_insurance_number or "",
+        "niApplied": row.ni_number_applied,
+        "legalSex": row.legal_sex or "",
+        "pronouns": row.pronouns or "",
+        "ethnicity": row.ethnicity or "",
+        "longTermDisability": row.long_term_disability,
+        "highestQualification": row.highest_qualification or "",
+        "employmentStatus": row.employment_status or "",
+        "employmentStartDate": str(row.employment_start_date) if row.employment_start_date else "",
+        "jobTitle": row.job_title or "",
+        "selfEmployed": row.self_employed,
+        "fullTimeEducation": row.full_time_education,
+        "expectedLeavingDate": str(row.expected_leaving_date) if row.expected_leaving_date else "",
+        "lengthOfUnemployment": row.length_of_unemployment or "",
+        "volunteers": row.volunteers,
+        "stateBenefits": row.state_benefits or "",
+        "benefitClaimBasis": row.benefit_claim_basis or "",
+        "signature": row.declaration_signature or None,
+        "signatureDate": str(row.declaration_signed_date) if row.declaration_signed_date else "",
+    }
+
+
 def read_projection(kind, learner_id):
     """Rebuild the draft shape from the per-step tables.
 
@@ -234,6 +334,10 @@ def read_projection(kind, learner_id):
             "signature": pd.signature or None,
             "signatureDate": str(pd.signature_date) if pd.signature_date else "",
         }
+
+    ilr_details = WizardIlrLearnerDetails.objects.filter(**scope).first()
+    if ilr_details:
+        out[ILR_DETAILS_KEY] = ilr_details_draft(ilr_details)
 
     sr = WizardSkillsRadar.objects.filter(**scope).first()
     ksbs = list(WizardKsbAssessment.objects.filter(**scope))
@@ -277,6 +381,8 @@ def read_projection(kind, learner_id):
                     "credits": r.credits or 0,
                     "grade": r.grade or "",
                     "recordType": r.record_type or "",
+                    "startDate": str(r.start_date) if r.start_date else "",
+                    "endDate": str(r.end_date) if r.end_date else "",
                 }
                 for r in records
             ],
@@ -289,6 +395,12 @@ def read_projection(kind, learner_id):
             "experienceText": cv.experience_text or "",
             "pmQualifications": cv.pm_qualifications or "",
             "functionalSkillsEnrol": cv.functional_skills_enrol or "",
+            "highestQualification": cv.highest_qualification or "",
+            "highestQualificationField": cv.highest_qualification_field or "",
+            "hasFieldQualification": cv.has_field_qualification,
+            "highestFieldQualification": cv.highest_field_qualification or "",
+            "gcseEnglish": cv.gcse_english,
+            "gcseMaths": cv.gcse_maths,
         }
 
     acks = list(WizardPolicyAck.objects.filter(**scope))

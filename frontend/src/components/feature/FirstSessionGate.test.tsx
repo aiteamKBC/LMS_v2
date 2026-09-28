@@ -98,6 +98,17 @@ describe('FirstSessionGate', () => {
     expect(await screen.findByText('My programme')).toBeTruthy();
   });
 
+  it('lets an apprentice still enrolling through to their enrolment, with no booking screen', async () => {
+    // The first session comes after every enrolment step, so the wizard,
+    // reviews and documents must not sit behind it.
+    mocks.account = { role: 'learner', subjectId: 7, learnerType: 'apprenticeship' };
+    mocks.fetchState.mockResolvedValue(state({ access: 'enrolling' }));
+    view('/learner/onboarding');
+
+    expect(await screen.findByText('My programme')).toBeTruthy();
+    expect(screen.queryByText('Book your first learning session')).toBeNull();
+  });
+
   it('never holds anyone who is not a learner', async () => {
     mocks.account = { role: 'staff', subjectId: 3 };
     view();

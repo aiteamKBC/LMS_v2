@@ -157,17 +157,20 @@ export function YesNoRadio({
   value,
   onChange,
   name,
+  error,
 }: {
   legend: string;
   value: boolean | null;
   onChange: (v: boolean) => void;
   name: string;
+  /** Shown under the row, with the choices outlined in red, when the question still needs an answer. */
+  error?: string;
 }) {
   return (
     <fieldset className="grid grid-cols-1 sm:grid-cols-[1fr_auto] gap-2 sm:gap-4 py-2.5 border-b border-foreground-100 last:border-0 sm:items-center">
       <legend className="sr-only">{legend}</legend>
       <span className="text-[12px] text-foreground-700">{legend}</span>
-      <div className="flex items-center gap-5 shrink-0">
+      <div className={`flex items-center gap-5 shrink-0${error ? ' rounded-lg border border-red-500 px-2.5 py-1' : ''}`}>
         {[
           { v: true, l: 'Yes' },
           { v: false, l: 'No' },
@@ -178,12 +181,16 @@ export function YesNoRadio({
               name={name}
               checked={value === o.v}
               onChange={() => onChange(o.v)}
+              aria-invalid={error ? true : undefined}
               className="accent-primary-500"
             />
             {o.l}
           </label>
         ))}
       </div>
+      {error && (
+        <p className="sm:col-span-2 justify-self-end inline-block rounded-md bg-red-50 px-2 py-0.5 text-[12px] text-red-600">{error}</p>
+      )}
     </fieldset>
   );
 }

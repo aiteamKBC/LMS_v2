@@ -13,7 +13,7 @@
 // values for them.
 // ============================================================================
 
-export type PerformanceStatus = 'at-risk' | 'on-track' | 'high' | 'new-starter';
+export type PerformanceStatus = 'at-risk' | 'on-track' | 'high' | 'new-starter' | 'unavailable';
 export type EnrollmentStatus = 'all' | 'active' | 'break' | 'withdrawn' | 'ready-to-enrol' | 'unknown';
 export type AttendanceRisk = 'green' | 'amber' | 'red';
 
