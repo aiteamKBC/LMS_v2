@@ -51,13 +51,13 @@ describe('Coach caseload loading', () => {
     });
   });
 
-  it('loads the embedded dashboard table from the paginated caseload endpoint', async () => {
+  it('uses dashboard-owned learners without loading detailed endpoints', async () => {
     render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={[learner]} /></MemoryRouter>);
 
     expect(await screen.findByText('Final Learner')).toBeInTheDocument();
     expect(screen.getByText('19 Sep 2026')).toBeInTheDocument();
     expect(screen.queryByText('Loading learners')).not.toBeInTheDocument();
-    expect(coachFetch).toHaveBeenCalledWith(expect.stringContaining('/coach_api/coach/caseload?page=1&page_size=10'), expect.anything());
+    expect(coachFetch).not.toHaveBeenCalled();
     expect(fetchCoachCalendarEvents).not.toHaveBeenCalled();
     expect(screen.getByRole('heading', { name: 'All Learners' })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'OTJH caseload summary' })).not.toBeInTheDocument();
@@ -69,6 +69,30 @@ describe('Coach caseload loading', () => {
     expect(screen.queryByText(/\d+ shown/)).not.toBeInTheDocument();
     expect(screen.queryByText('Most urgent first')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Sort direction:/ })).not.toBeInTheDocument();
+  });
+
+  it('filters dashboard-owned learners locally and paginates after fifteen rows', async () => {
+    const learners = Array.from({ length: 16 }, (_, index) => ({
+      ...learner,
+      id: String(index + 1),
+      name: index === 15 ? 'Abigail Reece' : `Aaa Learner ${String(index + 1).padStart(2, '0')}`,
+      initials: index === 15 ? 'AR' : 'LR',
+    } satisfies CaseloadApiLearner));
+    render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={learners} /></MemoryRouter>);
+
+    expect(await screen.findByText('Aaa Learner 01')).toBeInTheDocument();
+    expect(screen.queryByText('Abigail Reece')).not.toBeInTheDocument();
+    expect(screen.getByText(/1.15/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    expect((await screen.findAllByText('Abigail Reece')).length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText('Aaa Learner 01')).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Abigail Reece' } });
+    expect((await screen.findAllByText('Abigail Reece')).length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText('Aaa Learner 02')).not.toBeInTheDocument();
+    expect(screen.getByText(/1.1/)).toBeInTheDocument();
+    expect(coachFetch).not.toHaveBeenCalled();
   });
 
   it('resets to page one when a backend filter changes', async () => {

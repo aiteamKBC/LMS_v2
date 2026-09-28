@@ -20,9 +20,9 @@ describe('weekWindow', () => {
     expect(weekWindow(weeks, 0)).toEqual({ start: '2026-09-07', end: '2026-09-13' });
     expect(weekWindow(weeks, 1)).toEqual({ start: '2026-09-14', end: '2026-09-20' });
   });
-  it('leaves the last week open-ended', () => {
+  it('ends the last week six days after its start', () => {
     const weeks = [session(1, '2026-09-07'), session(2, '2026-09-14')];
-    expect(weekWindow(weeks, 1)).toEqual({ start: '2026-09-14', end: null });
+    expect(weekWindow(weeks, 1)).toEqual({ start: '2026-09-14', end: '2026-09-20' });
   });
 });
 
@@ -126,6 +126,19 @@ describe('activityExpectedTimeLabel', () => {
   });
   it('falls back to a video/session duration in minutes', () => {
     expect(activityExpectedTimeLabel({ durationMinutes: 25 } as any)).toBe('25 mins');
+  });
+  it('shows durations of an hour or more in hours and remaining minutes', () => {
+    expect(activityExpectedTimeLabel({ durationMinutes: 60 } as any)).toBe('1h');
+    expect(activityExpectedTimeLabel({ durationMinutes: 78 } as any)).toBe('1h 18m');
+    expect(activityExpectedTimeLabel({ durationMinutes: 120 } as any)).toBe('2h');
+    expect(activityExpectedTimeLabel({ durationMinutes: 65.5 } as any)).toBe('1h 5m 30s');
+    expect(activityExpectedTimeLabel({ isQuiz: true, quizMeta: { duration: 120, timeUnit: 'minutes' } } as any)).toBe('2h');
+    expect(activityExpectedTimeLabel({ isQuiz: true, quizMeta: { duration: 120, timeUnit: 'seconds' } } as any)).toBe('120 seconds');
+  });
+  it('shows fractional video minutes as minutes and seconds', () => {
+    expect(activityExpectedTimeLabel({ durationMinutes: 6.96 } as any)).toBe('6m 58s');
+    expect(activityExpectedTimeLabel({ durationMinutes: 0.5 } as any)).toBe('30s');
+    expect(activityExpectedTimeLabel({ durationMinutes: 6.999 } as any)).toBe('7 mins');
   });
   it('falls back to expected OTJ hours', () => {
     expect(activityExpectedTimeLabel({ expectedOtjh: 0.5 } as any)).not.toBe('—');

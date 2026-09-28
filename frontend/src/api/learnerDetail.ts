@@ -155,6 +155,8 @@ export interface LearnerDetail {
   phone: string;
   programme: string;
   programmeStatus: string;
+  /** The enrolment wizard: 'Submitted' by the learner, 'Completed' by staff; older payloads omit it. */
+  onboardingStatus?: string;
   learnerType?: LearnerKind;
   programmeStartDate?: string;
   /** The learner's own recorded start, from Created_users.Learner_start_date.
@@ -214,7 +216,7 @@ export interface LearnerDetail {
 }
 
 export type LearnerSummary = Pick<LearnerDetail,
-  'id' | 'name' | 'email' | 'phone' | 'programme' | 'programmeStatus' |
+  'id' | 'name' | 'email' | 'phone' | 'programme' | 'programmeStatus' | 'onboardingStatus' |
   'cohort' | 'group' | 'employer' | 'employerId' | 'organization' | 'learnerType' | 'isActive'
 > & Pick<LearnerDetail, 'studentActivityAvailable' | 'programmeStartDate' | 'learnerStartDate' | 'learnerEndDate' | 'programmeEndDate' | 'accessGate' | 'learningAccess'>;
 

@@ -1,13 +1,14 @@
 import type { ReactNode } from 'react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import type { LearnerComponentEntry, LearnerDetail } from '@/api/learnerDetail';
 import type { ExtraActivity } from '@/api/extraActivities';
+import type { CoverMetadata } from '../my-learning/SubjectWorkspace';
 import { clearAllCachedResources } from '@/api/cachedRequest';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
 import MonthlySubmissionPage from './page';
-import { defaultAssignmentMonth, groupMonthlyAssignments } from './model';
+import { assignmentToday, defaultAssignmentMonth, groupMonthlyAssignments, isOverdueAssignment } from './model';
 
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <>{children}</> }));
 vi.mock('@/hooks/useMyLearner', () => ({ useResolvedLearner: () => ({ kind: 'commercial', id: '125' }) }));
@@ -30,13 +31,15 @@ const metadata = { covers: {}, activity_dates: {
 const contract = { months: { '2026-09': { label: 'Month 4 — Martech', topics: ['Data, Insight and Analytics'], planned: 42, source: 'contract' },
   '2026-10': { label: '', topics: ['Marketing strategy'], planned: 30, source: 'contract' } }, contractStatus: 'ready' };
 
-function mockRequests(options: { failed?: 'dates' | 'statuses' | 'contract'; statuses?: Record<string, string>; counts?: Record<string, number>; extras?: ExtraActivity[] } = {}) {
+function mockRequests(options: { failed?: 'dates' | 'statuses' | 'contract'; statuses?: Record<string, string>; counts?: Record<string, number>; extras?: ExtraActivity[]; dates?: CoverMetadata } = {}) {
   const fetcher = vi.fn(async (url: string) => {
     if (url.includes('/reflection/extra-activities/')) return { ok: true, json: async () => ({ activities: options.extras || [] }) };
     const source = url.includes('/subject-covers/') ? 'dates' : url.includes('/training-plan-dashboard/') ? 'contract' : 'statuses';
-    const data = source === 'dates' ? metadata : source === 'contract' ? contract : { statuses: [
+    const data = source === 'dates' ? options.dates || metadata : source === 'contract' ? contract : { statuses: [
       { activityType: 'assignment', activityId: 'A1', status: options.statuses?.A1 || 'draft', submissionCount: options.counts?.A1 },
       { activityType: 'assignment', activityId: 'A2', status: options.statuses?.A2 || 'submitted_for_tutor_review', submissionCount: options.counts?.A2 },
+      ...Object.entries(options.statuses || {}).filter(([id]) => id !== 'A1' && id !== 'A2')
+        .map(([activityId, status]) => ({ activityType: 'assignment', activityId, status, submissionCount: options.counts?.[activityId] })),
     ] };
     return { ok: options.failed !== source, json: async () => options.failed === source ? { error: 'Unavailable' } : data };
   });
@@ -52,7 +55,31 @@ beforeEach(() => {
   vi.mocked(useLearnerDetailParam).mockReturnValue({ real, loading: false, loadError: null, isRealMode: true, refresh: vi.fn() });
   mockRequests();
 });
-afterEach(() => { cleanup(); clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); clearAllCachedResources(); vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+function mockOverdueAssignments() {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-09-27T12:00:00Z'));
+  vi.mocked(useLearnerDetailParam).mockReturnValue({ real: { ...real, components: [
+    ...real.components,
+    component('A5', { component: 'Older assignment', week: 'Earlier work', assignmentBrief: 'Work from August.' }),
+    component('A6', { component: 'Accepted assignment' }),
+    component('A7', { component: 'No due date' }),
+    component('A8', { component: 'Due today' }),
+  ] }, loading: false, loadError: null, isRealMode: true, refresh: vi.fn() });
+  mockRequests({ statuses: { A5: 'rejected', A6: 'accepted', A7: 'draft', A8: 'todo' }, dates: {
+    covers: {}, activity_dates: {
+      ...metadata.activity_dates,
+      A1: { ...metadata.activity_dates.A1, week_end: '2026-09-13', due_timing: 'End of week' },
+      A2: { ...metadata.activity_dates.A2, week_end: '2026-09-20', due_timing: 'End of week' },
+      A3: { ...metadata.activity_dates.A3, week_end: '2026-10-11', due_timing: 'End of week' },
+      A5: { date: '2026-08-24', month: '2026-08', week_end: '2026-08-30', date_source: 'builder_week', due_timing: 'End of week' },
+      A6: { date: '2026-08-24', month: '2026-08', week_end: '2026-08-30', date_source: 'builder_week', due_timing: 'End of week' },
+      A7: { date: '2026-08-17', month: '2026-08', week_end: '2026-08-23', date_source: 'builder_week' },
+      A8: { date: '2026-09-21', month: '2026-09', week_end: '2026-09-27', date_source: 'builder_week', due_timing: 'End of week' },
+    },
+  } });
+}
 
 it('shows accepted extra activities in their submission month, including months without assignments', async () => {
   const activity: ExtraActivity = { activityId: 'extra:example', title: 'Additional research', status: 'accepted',
@@ -65,7 +92,7 @@ it('shows accepted extra activities in their submission month, including months 
   const card = await screen.findByRole('button', { name: /Extra Activity · Additional research/ });
   expect(screen.queryByRole('region', { name: 'Extra activity details' })).toBeNull();
   fireEvent.click(card);
-  expect(card).toHaveAttribute('aria-pressed', 'true');
+  await waitFor(() => expect(card).toHaveAttribute('aria-pressed', 'true'));
   expect(screen.queryByText('Explain how data informs your marketing decisions.')).toBeNull();
   const section = within(screen.getByRole('region', { name: 'Extra activity details' }));
   expect(section.getByText('Evidence accepted')).toBeVisible();
@@ -73,11 +100,11 @@ it('shows accepted extra activities in their submission month, including months 
   expect(section.queryByText('Later research')).toBeNull();
   expect(section.queryByText('Pending research')).toBeNull();
   expect(section.queryByText('Rejected research')).toBeNull();
-  const filters = within(screen.getByRole('group', { name: 'Filter assignments by status' }));
-  fireEvent.click(filters.getByRole('button', { name: 'Rejected' }));
+  const filters = within(screen.getByRole('group', { name: 'Filter assignments by time' }));
+  fireEvent.click(filters.getByRole('button', { name: 'Overdue' }));
   expect(screen.queryByRole('button', { name: /Extra Activity · Additional research/ })).toBeNull();
   expect(screen.queryByRole('region', { name: 'Extra activity details' })).toBeNull();
-  fireEvent.click(filters.getByRole('button', { name: 'Accepted' }));
+  fireEvent.click(filters.getByRole('button', { name: 'This month' }));
   expect(screen.getByRole('button', { name: /Extra Activity · Additional research/ })).toBeVisible();
   fireEvent.change(screen.getByRole('combobox', { name: 'Choose month' }), { target: { value: '2026-11' } });
   expect(await screen.findByText('Later research')).toBeVisible();
@@ -93,36 +120,72 @@ it('opens an extra activity directly from its saved selection', async () => {
   expect(screen.getByRole('button', { name: /Extra Activity · Saved selection/ })).toHaveAttribute('aria-pressed', 'true');
 });
 
-it('filters the selected month and keeps the displayed brief in sync with accepted or rejected results', async () => {
-  mockRequests({ statuses: { A1: 'rejected', A2: 'accepted' } });
-  mount('?month=2026-09&assignment=A1');
-  const filters = await screen.findByRole('group', { name: 'Filter assignments by status' });
-  const cards = screen.getByRole('region', { name: 'Assignments for Month 4 — Martech' });
-  fireEvent.click(within(filters).getByRole('button', { name: 'Accepted' }));
-  expect(within(cards).queryByRole('button', { name: /Data and insight/ })).toBeNull();
-  expect(within(cards).getByRole('button', { name: /Digital analytics/ })).toHaveAttribute('aria-pressed', 'true');
-  expect(await screen.findByText('Evaluate the analytics tools.')).toBeVisible();
-  expect(screen.queryByText('Explain how data informs your marketing decisions.')).toBeNull();
-  fireEvent.click(within(filters).getByRole('button', { name: 'Rejected' }));
-  expect(within(cards).queryByRole('button', { name: /Digital analytics/ })).toBeNull();
-  expect(screen.getByRole('link', { name: 'Revise assignment' })).toHaveAttribute('href', '/learner/monthly-submission/commercial/125/A1?month=2026-09');
-  expect(within(cards).getByText('Changes requested')).toHaveAttribute('data-status', 'rejected');
-  fireEvent.click(within(filters).getByRole('button', { name: 'All' }));
-  expect(within(cards).getByRole('button', { name: /Digital analytics/ })).toBeVisible();
+it('defaults to the chosen month and shows only overdue work requiring learner action across months', async () => {
+  mockOverdueAssignments();
+  mount('');
+  const filters = within(await screen.findByRole('group', { name: 'Filter assignments by time' }));
+  expect(filters.getByRole('button', { name: 'This month' })).toHaveAttribute('aria-pressed', 'true');
+  expect(screen.getByRole('combobox', { name: 'Choose month' })).toHaveValue('2026-09');
+  expect(screen.getByRole('region', { name: 'Assignments for Month 4 — Martech' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: /Older assignment/ })).toBeNull();
+  fireEvent.click(filters.getByRole('button', { name: 'Overdue' }));
+  const cards = screen.getByRole('region', { name: 'Overdue assignments' });
+  expect(within(cards).getByText('2 overdue assignments')).toBeVisible();
+  expect(within(cards).getByRole('button', { name: /Older assignment/ })).toBeVisible();
   expect(within(cards).getByRole('button', { name: /Data and insight/ })).toBeVisible();
+  expect(within(cards).queryByRole('button', { name: /Digital analytics/ })).toBeNull();
+  expect(within(cards).queryByRole('button', { name: /Accepted assignment/ })).toBeNull();
+  expect(within(cards).queryByRole('button', { name: /No due date/ })).toBeNull();
+  expect(within(cards).queryByRole('button', { name: /Due today/ })).toBeNull();
+  expect(within(cards).queryByRole('button', { name: /Next assignment/ })).toBeNull();
+  expect(screen.getByRole('link', { name: 'Revise assignment' })).toHaveAttribute('href', '/learner/monthly-submission/commercial/125/A5?month=2026-08');
+  const information = screen.getByRole('complementary', { name: 'Assignment information' });
+  expect(information).toHaveTextContent('August 2026');
+  expect(within(information).getByText('Due date').parentElement).toHaveTextContent('30 August 2026');
+  expect(screen.getByRole('combobox', { name: 'Choose month' })).toHaveValue('2026-09');
 });
 
-it('supports filtered links, keeps the filter across months and recovers from an empty result', async () => {
-  mockRequests({ statuses: { A1: 'accepted', A2: 'partial' } });
-  mount('?month=2026-09&status=accepted');
-  const filters = await screen.findByRole('group', { name: 'Filter assignments by status' });
-  expect(within(filters).getByRole('button', { name: 'Accepted' })).toHaveAttribute('aria-pressed', 'true');
-  expect(screen.queryByRole('button', { name: /Digital analytics/ })).toBeNull();
+it('opens an overdue assignment from its original month and returns to the chosen month', async () => {
+  mockOverdueAssignments();
+  mount('?month=2026-09&view=overdue&assignment=A1');
+  const filters = within(await screen.findByRole('group', { name: 'Filter assignments by time' }));
+  expect(filters.getByRole('button', { name: 'Overdue' })).toHaveAttribute('aria-pressed', 'true');
+  fireEvent.click(screen.getByRole('button', { name: /Older assignment/ }));
+  expect(await screen.findByText('Work from August.')).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Revise assignment' })).toHaveAttribute('href', '/learner/monthly-submission/commercial/125/A5?month=2026-08');
+  fireEvent.click(filters.getByRole('button', { name: 'This month' }));
+  expect(screen.getByRole('region', { name: 'Assignments for Month 4 — Martech' })).toBeVisible();
+  expect(screen.queryByRole('button', { name: /Older assignment/ })).toBeNull();
   fireEvent.change(screen.getByRole('combobox', { name: 'Choose month' }), { target: { value: '2026-10' } });
-  expect(screen.getByText('No accepted assignments for this month. Choose another filter or month.')).toBeVisible();
-  expect(screen.queryByRole('region', { name: 'Assignment marking result' })).toBeNull();
-  fireEvent.click(within(filters).getByRole('button', { name: 'All' }));
   expect(screen.getByRole('link', { name: 'Start assignment' })).toHaveAttribute('href', '/learner/monthly-submission/commercial/125/A3?month=2026-10');
+});
+
+it('shows an empty overdue state when no assignments have an authored due date', async () => {
+  mount();
+  fireEvent.click(within(await screen.findByRole('group', { name: 'Filter assignments by time' })).getByRole('button', { name: 'Overdue' }));
+  expect(screen.getByRole('status')).toHaveTextContent('No overdue assignments with a confirmed due date.');
+  expect(screen.queryByRole('link', { name: 'Continue assignment' })).toBeNull();
+});
+
+it('starts on the current UK month even when its assignments have not been scheduled yet', async () => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(new Date('2026-08-15T12:00:00Z'));
+  mount('');
+  const monthSelect = await screen.findByRole('combobox', { name: 'Choose month' });
+  expect(monthSelect).toHaveValue('2026-08');
+  expect(screen.getByRole('status')).toHaveTextContent('No assignments for this month.');
+  fireEvent.change(monthSelect, { target: { value: '2026-09' } });
+  expect(screen.getByRole('link', { name: 'Continue assignment' })).toHaveAttribute('href', '/learner/monthly-submission/commercial/125/A1?month=2026-09');
+});
+
+it('keeps undated work available through the month chooser', async () => {
+  vi.mocked(useLearnerDetailParam).mockReturnValue({ real: { ...real, components: [component('A4', { component: 'Undated assignment' })] },
+    loading: false, loadError: null, isRealMode: true, refresh: vi.fn() });
+  mount('');
+  const monthSelect = await screen.findByRole('combobox', { name: 'Choose month' });
+  expect(monthSelect).toHaveValue('2026-09');
+  fireEvent.change(monthSelect, { target: { value: '' } });
+  expect(screen.getByRole('link', { name: 'Start assignment' })).toHaveAttribute('href', '/learner/monthly-submission/commercial/125/A4');
 });
 
 it.each([
@@ -252,6 +315,24 @@ it('uses the current, next or most recent scheduled month and rejects ambiguous 
   expect(groupMonthlyAssignments({ ...real, components: [component('A1')] }, ambiguous, contract, {})[0].month).toBe('');
 });
 
+it('uses the authored end-of-week due date and the UK calendar day for overdue work', () => {
+  const dates: CoverMetadata = { covers: {}, activity_dates: {
+    A1: { date: '2026-03-23', week_end: '2026-03-29', due_timing: 'End of week', date_source: 'builder_week' },
+    A2: { date: '2026-03-23', week_end: '2026-03-29', date_source: 'builder_week' },
+  } };
+  const rows = groupMonthlyAssignments({ ...real, components: real.components.slice(0, 2) }, dates, contract,
+    { A1: 'draft', A2: 'todo' })[0].assignments;
+  expect(rows[0].dueDate).toBe('2026-03-29');
+  expect(rows[1].dueDate).toBe('');
+  expect(assignmentToday(new Date('2026-03-29T22:30:00Z'))).toBe('2026-03-29');
+  expect(assignmentToday(new Date('2026-03-29T23:30:00Z'))).toBe('2026-03-30');
+  expect(isOverdueAssignment(rows[0], '2026-03-29')).toBe(false);
+  expect(isOverdueAssignment(rows[0], '2026-03-30')).toBe(true);
+  expect(isOverdueAssignment({ ...rows[0], status: 'submitted_for_tutor_review' }, '2026-03-30')).toBe(false);
+  expect(isOverdueAssignment({ ...rows[0], status: 'accepted' }, '2026-03-30')).toBe(false);
+  expect(isOverdueAssignment(rows[1], '2026-03-30')).toBe(false);
+});
+
 it('shows the actual marking result and reviewer directly below the question', async () => {
   const markedReal = { ...real, componentMarkingStatus: { A1: { status: 'accepted', feedback: 'Clear analysis with relevant workplace evidence.',
     reviewedBy: 'Sam Taylor', reviewedAt: '2026-09-13T12:00:00Z' } } };
@@ -304,11 +385,12 @@ it('distinguishes an unmarked draft from an assignment awaiting review', async (
 });
 
 
-it('places assignment choices before the selected brief', async () => {
+it('places the selected brief before the month assignment choices', async () => {
   mount();
-  const choices = await screen.findByText('Assignments this month');
+  const choices = await screen.findByRole('group', { name: 'Filter assignments by time' });
   const brief = screen.getByText('Explain how data informs your marketing decisions.');
-  expect(choices.compareDocumentPosition(brief) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(brief.compareDocumentPosition(choices) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(screen.queryByText('Assignments this month')).not.toBeInTheDocument();
 });
 
 it('remembers the selected assignment when returning without query parameters', async () => {

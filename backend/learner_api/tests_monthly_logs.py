@@ -11,20 +11,40 @@ from django.test import SimpleTestCase, RequestFactory
 from django.core.files.uploadedfile import SimpleUploadedFile
 
 from old_otjh.service import ServiceError
-from . import monthly_logs as logs, monthly_log_sources as sources
+from . import monthly_logs as logs, monthly_log_sources as sources, mcm_signoff as signoff
 
 
 class MonthlyLogsTests(SimpleTestCase):
     def setUp(self):
+        # These cases exercise the retained path for a learner with no canonical
+        # identity. Canonical behavior has its own isolated regression suite.
+        profile = patch.object(logs.canonical, 'profile', return_value=None)
+        profile.start()
+        self.addCleanup(profile.stop)
         today = patch.object(logs.timezone, 'localdate', return_value=date(2026, 10, 1))
         today.start()
         self.addCleanup(today.stop)
-        self.account = SimpleNamespace(id=1, role='learner', subject_type='learner', subject_id=7,
+        self.account = SimpleNamespace(id=1, role='learner', subject_type='learner', subject_id=7, is_active=True,
                                        display_name='Learner', email='learner@example.test')
         self.learner = {'id': 7, 'aptem_id': 42, 'name': 'Learner', 'programme': 'Programme',
                         'email': 'learner@example.test', 'coach_email': 'coach@example.test',
                         '_profile': None, '_view_as': False}
         self.row = sources.row('progress:1', '2026-09-12T10:00:00Z', 'Reading', 'Reading', hours=1)
+        # Keep this SimpleTestCase a true unit suite as the production journal
+        # gains canonical/history persistence dependencies. Those integrations
+        # have dedicated tests; these cases exercise monthly-log orchestration.
+        dependencies = [
+            patch.object(logs.canonical, 'enabled', return_value=False),
+            patch.object(logs.history, 'later_rows', return_value={}),
+            patch.object(logs.history, 'summary', side_effect=lambda learner: logs.old.summary(learner)),
+            patch.object(logs.history, 'detail', side_effect=lambda learner, month, demo=False: logs.old.month_detail(learner, month)),
+            patch.object(logs, 'lock_state', return_value={
+                'locked': False, 'locked_at': None, 'unlocked_at': None, 'unlocked_by': None,
+            }),
+        ]
+        for dependency in dependencies:
+            dependency.start()
+            self.addCleanup(dependency.stop)
 
     def request(self, method='get', **data):
         request = getattr(RequestFactory(), method)('/', data=data)
@@ -89,13 +109,14 @@ class MonthlyLogsTests(SimpleTestCase):
         self.assertEqual(detail['training_plan_target_source'], 'signed_training_plan')
         start.assert_not_called()
 
-    def test_historical_summary_uses_signed_training_plan_targets(self):
+    def test_historical_summary_uses_history_service_targets(self):
         historical = {'months': [
             {'month': '2026-01', 'training_plan_target': 1},
             {'month': '2026-02', 'training_plan_target': 30},
         ]}
-        with patch.object(logs.old, 'summary', return_value=historical), \
-             patch.object(logs, 'signed_training_plan_targets', return_value={'2026-01': 3}):
+        historical['months'][0]['training_plan_target'] = 3
+        historical['months'][0]['training_plan_target_source'] = 'signed_training_plan'
+        with patch.object(logs.history, 'summary', return_value=historical):
             summary = logs.legacy_summary(self.learner)
 
         self.assertEqual(summary['months'][0]['training_plan_target'], 3)
@@ -175,6 +196,48 @@ class MonthlyLogsTests(SimpleTestCase):
             activities.assert_not_called()
             query.assert_not_called()
 
+    def test_mcm_signature_is_copied_to_the_matching_open_lms_month(self):
+        report = {'source': 'lms', 'rows': [self.row], 'profile': None,
+                  'snapshot_digest': 'mcm-digest'}
+        learner = {**self.learner, 'aptem_id': None}
+        with patch.object(logs, 'detail_data', return_value=report), \
+             patch.object(logs.canonical, 'enabled', return_value=False), \
+             patch.object(logs.transaction, 'atomic', return_value=nullcontext()), \
+             patch.object(logs.old_repo, 'query', return_value=[]) as query:
+            result = logs.mirror_mcm_learner_signature(
+                learner, '2026-09', 'data:image/png;base64,mcm', 'Learner',
+            )
+
+        self.assertEqual(result['status'], 'synced')
+        self.assertEqual(result['month'], '2026-09')
+        insert = next(call for call in query.call_args_list if 'INSERT INTO' in call.args[0])
+        self.assertIn('monthly_audit_signoffs', insert.args[0])
+        self.assertIn('data:image/png;base64,mcm', insert.args[1][4])
+        self.assertIn('mcm-digest', insert.args[1])
+
+    def test_mcm_signoff_uses_target_month_when_booking_is_later(self):
+        record = SimpleNamespace(
+            target_date=date(2026, 12, 16),
+            scheduled_date=date(2026, 9, 28),
+        )
+
+        self.assertEqual(signoff._month_for(record), '2026-12')
+
+    def test_mcm_signature_copy_is_idempotent_when_monthly_signature_exists(self):
+        report = {'source': 'lms', 'rows': [self.row], 'profile': None,
+                  'snapshot_digest': 'mcm-digest'}
+        learner = {**self.learner, 'aptem_id': None}
+        with patch.object(logs, 'detail_data', return_value=report), \
+             patch.object(logs.canonical, 'enabled', return_value=False), \
+             patch.object(logs.transaction, 'atomic', return_value=nullcontext()), \
+             patch.object(logs.old_repo, 'query', side_effect=[[], [{'id': 9}]]) as query:
+            result = logs.mirror_mcm_learner_signature(
+                learner, '2026-09', 'data:image/png;base64,mcm', 'Learner',
+            )
+
+        self.assertEqual(result, {'status': 'already-synced', 'month': '2026-09'})
+        self.assertEqual(query.call_count, 2)
+
     def test_admin_learner_workspace_allows_actions_and_ignores_a_stale_coach_selection(self):
         self.account.role = 'admin'
         with patch.object(logs.old, 'coach_actor', return_value={'role': 'admin', 'email': 'admin@example.test'}), \
@@ -230,6 +293,46 @@ class MonthlyLogsTests(SimpleTestCase):
             with self.assertRaises(ServiceError) as result:
                 logs.scope(self.request(perspective='learner'), 7)
             self.assertEqual(result.exception.status, 404)
+
+    def studying_staff(self, record_id=7):
+        self.account.role = 'staff'
+        self.account.subject_type = 'staff'
+        self.account.subject_id = 3
+        self.account.is_active = True
+        return patch('login.learner_enrolment.existing_learner_record',
+                     return_value=SimpleNamespace(pk=record_id))
+
+    def test_staff_member_is_the_learner_on_their_own_record(self):
+        with self.studying_staff(), \
+             patch.object(logs.old, 'coach_actor') as coach_actor, \
+             patch.object(logs.old, 'resolve_record', return_value=self.learner), \
+             patch.object(sources, 'profile', return_value=None):
+            request = self.request('post')
+            request.GET = {'perspective': 'learner'}
+            learner, role = logs.scope(request, 7)
+        self.assertEqual(role, 'learner')
+        self.assertFalse(learner['_view_as'])
+        self.assertFalse(request.admin_learner_action)
+        coach_actor.assert_not_called()
+
+    def test_staff_member_keeps_coach_rules_on_another_learner(self):
+        with self.studying_staff(record_id=9), \
+             patch.object(logs.old, 'coach_actor', return_value={'role': 'coach', 'email': 'other@example.test'}), \
+             patch.object(logs.old, 'resolve_record', return_value=self.learner), \
+             patch.object(sources, 'profile', return_value=None):
+            with self.assertRaises(ServiceError) as result:
+                logs.scope(self.request(perspective='learner'), 7)
+        self.assertEqual(result.exception.status, 404)
+
+    def test_own_record_outside_the_learner_workspace_is_not_learner_access(self):
+        with self.studying_staff() as lookup, \
+             patch.object(logs.old, 'coach_actor', return_value={'role': 'coach', 'email': 'other@example.test'}), \
+             patch.object(logs.old, 'resolve_record', return_value=self.learner), \
+             patch.object(sources, 'profile', return_value=None):
+            with self.assertRaises(ServiceError) as result:
+                logs.scope(self.request(), 7)
+        self.assertEqual(result.exception.status, 404)
+        lookup.assert_not_called()
 
     def test_month_end_rollover_does_not_create_empty_months(self):
         with patch.object(sources, 'activity_rows', return_value=[self.row]), \

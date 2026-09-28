@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import MonthlyLogsPage from './page';
 import { completeLogMonth, getLogContent, getLogLearners, getLogMonth, getLogSummary, signLogMonth, type LogDetail, type LogSummary } from './api';
+import { fetchTrainingPlanContract } from '@/api/trainingPlanDashboard';
 import { learnerNavItems, coachNavItems } from '@/mocks/navigation';
 import { rememberLearner } from '@/hooks/useMyLearner';
 
@@ -16,6 +17,7 @@ vi.mock('@/features/old-otjh/SignatureCapture', () => ({ SignatureCapture: ({ di
   dialogRole: string; onDraftStart: () => void; onSave: (blob: Blob, capture: 'draw') => void;
 }) => <button onClick={() => { onDraftStart(); onSave(new Blob(['signature']), 'draw'); }}>Sign as {dialogRole}</button> }));
 vi.mock('./api', () => ({ completeLogMonth: vi.fn(), getLogContent: vi.fn(), getLogLearners: vi.fn(), getLogMonth: vi.fn(), getLogSummary: vi.fn(), signLogMonth: vi.fn() }));
+vi.mock('@/api/trainingPlanDashboard', () => ({ fetchTrainingPlanContract: vi.fn() }));
 
 const current: LogDetail = { source: 'lms', month: '2026-09', status: 'awaiting_signature', row_count: 1,
   planned_hours: 2, actual_hours: 1, not_accepted_hours: 0, pending_revisions: 0, can_complete: false,
@@ -48,6 +50,7 @@ beforeEach(() => {
   localStorage.clear();
   Object.assign(account, { role: 'learner', subjectId: 7, access: 'learner' });
   vi.mocked(getLogSummary).mockResolvedValue(summary);
+  vi.mocked(fetchTrainingPlanContract).mockResolvedValue({ months: {}, contractStatus: 'not-available' });
   vi.mocked(getLogMonth).mockImplementation(async (_id, month) => month === '2026-08' ? retained : current);
   vi.mocked(getLogContent).mockResolvedValue({ id: 44, parts: [{ id: 44, title: 'Original material', category: 'Reading',
     url: 'https://example.org/reading', html: null, quiz: null }] });
@@ -69,6 +72,54 @@ describe('monthly logs', () => {
     expect(getLogSummary).toHaveBeenCalledWith('7', expect.any(AbortSignal), 'learner');
     expect(screen.getAllByRole('link', { name: /Review month/ }).map(link => link.getAttribute('href')))
       .toEqual(['/learner/monthly-logs/2026-08', '/learner/monthly-logs/2026-09']);
+  });
+
+  it('shows contract target hours returned for a month and keeps the all-months tab selected', async () => {
+    vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [{ ...current, training_plan_target: 20 }] });
+    page();
+    expect(await screen.findByText('September 2026')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /All months/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('20.00 h')).toBeVisible();
+  });
+
+  it('uses the chart contract target for an unavailable month without replacing a saved target', async () => {
+    rememberLearner('apprenticeship', '7');
+    vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [
+      { ...retained, training_plan_target: null, target_warning: 'The signed Training Plan could not be read.' },
+      { ...current, training_plan_target: 12 },
+    ] });
+    vi.mocked(fetchTrainingPlanContract).mockResolvedValue({ contractStatus: 'ready', months: {
+      '2026-08': { label: '', topics: [], planned: 16, source: 'contract' },
+      '2026-09': { label: '', topics: [], planned: 20, source: 'contract' },
+    } });
+    page();
+    expect(await screen.findByText('16.00 h')).toBeVisible();
+    expect(screen.getByText('12.00 h')).toBeVisible();
+    expect(screen.queryByText('The signed Training Plan could not be read.')).not.toBeInTheDocument();
+    expect(fetchTrainingPlanContract).toHaveBeenCalledWith('apprenticeship', '7', expect.any(AbortSignal));
+  });
+
+  it('keeps the target unavailable when the contract is not ready', async () => {
+    rememberLearner('apprenticeship', '7');
+    vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [{ ...current, training_plan_target: null }] });
+    vi.mocked(fetchTrainingPlanContract).mockResolvedValue({ contractStatus: 'unverified', months: {
+      '2026-09': { label: '', topics: [], planned: 20, source: 'contract' },
+    } });
+    page();
+    await waitFor(() => expect(fetchTrainingPlanContract).toHaveBeenCalled());
+    expect(screen.getByText('Unavailable')).toBeVisible();
+  });
+
+  it('shows the contract target in the month report when the log target is missing', async () => {
+    rememberLearner('apprenticeship', '7');
+    vi.mocked(getLogMonth).mockResolvedValue({ ...retained, training_plan_target: null,
+      target_warning: 'The signed Training Plan could not be read.' });
+    vi.mocked(fetchTrainingPlanContract).mockResolvedValue({ contractStatus: 'ready', months: {
+      '2026-08': { label: '', topics: [], planned: 16, source: 'contract' },
+    } });
+    page('/learner/monthly-logs/2026-08');
+    expect(await screen.findByText('16.00 h')).toBeVisible();
+    expect(screen.queryByText(/Target hours: Unavailable/)).not.toBeInTheDocument();
   });
 
   it('shows the current month as an in-progress live log, not as an unsigned closed month', async () => {

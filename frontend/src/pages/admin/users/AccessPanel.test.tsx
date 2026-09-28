@@ -8,7 +8,7 @@
  * instead" appeared to do nothing at all.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AccessPanel } from './AccessPanel';
 import type { PlatformAccount } from '@/api/platformAdmin';

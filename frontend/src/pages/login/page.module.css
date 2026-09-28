@@ -97,7 +97,20 @@
 .secureFooter span { display: inline-flex; align-items: center; gap: 6px; }
 .secureFooter svg.app-icon { color: var(--login-purple); font-size: 14px; }
 
-@media (max-width: 1365px) and (min-width: 768px) {
+@media (max-width: 1365px) and (min-width: 768px) and (orientation: landscape) {
+  .formPanel {
+    top: 12%;
+    height: 76%;
+    align-items: safe center;
+    padding: 2.25% 4%;
+  }
+  .intro { margin-bottom: 12px; }
+  .form { gap: 9px; }
+  .ssoBlock { margin-top: 10px; }
+  .secureFooter { margin-top: 10px; padding-top: 8px; }
+}
+
+@media (max-width: 1365px) and (min-width: 768px) and (orientation: portrait) {
   .page { padding: 0; overflow-y: auto; overflow-x: hidden; }
   /* The tablet artwork is a portrait composition with a reserved white
      panel below the illustration. Keep the form in that panel instead of
@@ -198,7 +211,7 @@
 
 /* Very short devices still get the complete action area without introducing
    an inner scrollbar; the security note is secondary to the sign-in controls. */
-@media (max-width: 1365px) and (max-height: 700px) {
+@media (max-width: 1365px) and (min-width: 768px) and (orientation: portrait) and (max-height: 700px) {
   .formPanel {
     transform: scaleY(.8);
     transform-origin: top center;

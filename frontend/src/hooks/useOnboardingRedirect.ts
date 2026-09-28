@@ -21,6 +21,26 @@ export const ONBOARDING_NAV_ITEMS: SidebarNavItem[] = [
   { id: 'learner-onboarding-reviews', label: 'Reviews', icon: 'ri-calendar-check-line', href: ONBOARDING_REVIEWS_ROUTE },
 ];
 
+/** Why Reviews is locked: the reviews follow a handed-in enrolment. */
+export const REVIEWS_LOCKED_REASON = 'Available once you submit your enrolment';
+
+/**
+ * Whether the learner has handed in their enrolment wizard — 'Submitted' when
+ * they press Submit enrolment, 'Completed' once staff sign it off.
+ */
+export function isEnrolmentSubmitted(onboardingStatus?: string | null): boolean {
+  const status = (onboardingStatus || '').trim().toLowerCase();
+  return status === 'submitted' || status === 'completed';
+}
+
+/** The onboarding menu, with Reviews locked until the enrolment is submitted. */
+export function onboardingNavItems(enrolmentSubmitted: boolean): SidebarNavItem[] {
+  if (enrolmentSubmitted) return ONBOARDING_NAV_ITEMS;
+  return ONBOARDING_NAV_ITEMS.map((item) =>
+    item.href === ONBOARDING_REVIEWS_ROUTE ? { ...item, locked: true, lockedReason: REVIEWS_LOCKED_REASON } : item
+  );
+}
+
 /**
  * The learner has an account but nobody has started their enrolment yet — the
  * backend's DEFAULT_PROGRAMME_STATUS (learner_api/constants.py).
@@ -102,6 +122,30 @@ export function isDeliveryStatus(programmeStatus?: string | null): boolean {
   return (programmeStatus || '').trim().toLowerCase() === DELIVERY_STATUS.toLowerCase();
 }
 
+/** Every enrolment document is signed; the programme has not started yet. */
+export const READY_TO_ENROL_STATUS = 'Ready to enrol';
+
+/**
+ * Where an apprentice who is not yet Active goes instead of Student Home, or
+ * null when Student Home is theirs.
+ *
+ * Student Home is the entry to a running programme — continue learning,
+ * monthly submissions, coaching bookings — so before the programme starts it
+ * only offers doors to pages that have nothing behind them. Each enrolment
+ * stage has one page that does: the wizard while Onboarding, the overview (with
+ * its waiting notice and compliance documents) otherwise. Statuses after the
+ * start (Active, On break, Completed, Withdrawn…) keep Student Home, as does an
+ * unknown status, for the same lock-out reason as isFreshStatus.
+ */
+export function apprenticeHomeRedirect(programmeStatus?: string | null): string | null {
+  if (isOnboardingStatus(programmeStatus)) return ONBOARDING_ROUTE;
+  const status = (programmeStatus || '').trim().toLowerCase();
+  if (isFreshStatus(programmeStatus) || isDeliveryStatus(programmeStatus) || status === READY_TO_ENROL_STATUS.toLowerCase()) {
+    return FRESH_ROUTE;
+  }
+  return null;
+}
+
 /**
  * The sidebar for a learner at the given programme status.
  *
@@ -115,6 +159,8 @@ export function navItemsForStatus(
   learnerKind?: string,
   hasPreviousLearning = false,
   readyForLearning = false,
+  // Unknown counts as submitted, for the same lock-out reason as isFreshStatus.
+  enrolmentSubmitted = true,
 ): SidebarNavItem[] {
   const commercial = learnerKind?.toLowerCase() === 'commercial';
   const availableNav = navItemsForLearnerKind(fullNav, learnerKind);
@@ -126,7 +172,7 @@ export function navItemsForStatus(
       .filter((item): item is SidebarNavItem => Boolean(item));
 
   if (isFreshStatus(programmeStatus)) return pick(FRESH_NAV_IDS);
-  if (isOnboardingStatus(programmeStatus)) return commercial ? pick(FRESH_NAV_IDS) : ONBOARDING_NAV_ITEMS;
+  if (isOnboardingStatus(programmeStatus)) return commercial ? pick(FRESH_NAV_IDS) : onboardingNavItems(enrolmentSubmitted);
   if (isDeliveryStatus(programmeStatus)) {
     if (commercial && readyForLearning) return availableNav;
     const ids = commercial ? FRESH_NAV_IDS : DELIVERY_NAV_IDS;

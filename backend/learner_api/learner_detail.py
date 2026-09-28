@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 from django.db import DatabaseError, connections
 from django.db.models import prefetch_related_objects
 from django.http import JsonResponse
+from .projection_performance import measure_projection
 from django.utils import timezone
 
 from login.permissions import learner_self_or_staff
@@ -30,6 +31,7 @@ from login.permissions import learner_self_or_staff
 from .active_users import completed_hours_from_progress, fmt_hours, hydrate_source_training_plan, target_by_elapsed_time, week_by_elapsed_time
 from .identity import learner_profile_for_source
 from .aptem_status import programme_status
+from .constants import DEFAULT_PROGRAMME_STATUS
 from .learner_progression import access_gate, advance_learner
 from .learning_plan import effective_training_plan
 from .programme_access import learning_access
@@ -1874,7 +1876,12 @@ def learner_detail(request, kind, pk):
             response['Cache-Control'] = 'private, no-store'
             return response
         options = {"compact": True} if request.GET.get("content") == "summary" else {}
-        return JsonResponse(build_learner_detail(source, pk, **options))
+        with measure_projection(
+            'learner-detail', kind=kind, learner_id=pk,
+            section=request.GET.get('content') or 'complete',
+        ) as measurement:
+            with measurement.stage('detail'):
+                return JsonResponse(build_learner_detail(source, pk, **options))
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
 
@@ -1900,8 +1907,13 @@ def learner_summary(request, kind, pk):
             "learner_type", "aptem_id", "start_date", "end_date",
             "learner_start_date",
             "practical_period_end_date", "apprenticeship_end_date",
+            "onboarding_status",
         ).get(pk=pk)
-        resolved_status = programme_status(source)
+        # A blank status is an account nobody has moved on yet: 'Fresh user',
+        # as learner detail and the first-login check already read it. Left
+        # blank here, the learner workspace took it for "status unknown" and
+        # opened the full dashboard instead of the first-login screens.
+        resolved_status = programme_status(source) or DEFAULT_PROGRAMME_STATUS
     except model.DoesNotExist:
         return _error("Learner not found.", 404)
     except DatabaseError as exc:
@@ -1917,6 +1929,9 @@ def learner_summary(request, kind, pk):
         "phone": _s(source.phone_number),
         "programme": _s(source.programme),
         "programmeStatus": resolved_status,
+        # 'Submitted' once the learner hands in their enrolment wizard,
+        # 'Completed' once staff sign it off; the learner's Reviews unlock then.
+        "onboardingStatus": _s(getattr(source, "onboarding_status", "")),
         "cohort": _s(source.cohort),
         "group": _s(source.group),
         "employer": _s(source.employer),

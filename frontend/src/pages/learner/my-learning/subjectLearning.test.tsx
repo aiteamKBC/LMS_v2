@@ -430,9 +430,9 @@ describe('map and My Learning navigation', () => {
   it('keeps headline totals unchanged by filters and switches grid/list accessibly', async () => {
     renderWorkspace('/learner/my-learning/commercial/132', 'catalogue');
     await screen.findByRole('button', { name: /Open subject/ });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Filter by progress' }), { target: { value: 'complete' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Status' }), { target: { value: 'complete' } });
     expect(screen.queryByRole('button', { name: /Open subject/ })).not.toBeInTheDocument();
-    expect(within(screen.getByText('Total activities').parentElement!).getByText('2')).toBeVisible();
+    expect(within(screen.getByText('Learning activities').parentElement!).getByText('2')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }));
     expect(screen.getByRole('button', { name: 'List' })).toHaveAttribute('aria-pressed', 'true');
     fireEvent.click(screen.getByRole('button', { name: 'Grid' }));
@@ -442,11 +442,15 @@ describe('map and My Learning navigation', () => {
     expect(screen.getByRole('button', { name: /Open subject/ })).toBeVisible();
   });
 
-  it('uses the authoritative activity total everywhere and opens deadlines as assignments', async () => {
+  it('uses the authoritative activity total everywhere and opens deadline components', async () => {
     vi.spyOn(api, 'subjectRequest').mockResolvedValue({ ...metadata, activity_dates: {
       'ASSIGNMENT-1': { date: '2050-10-04', month: '2050-10', week_start: '2050-10-04', week_end: '2050-10-10', due_timing: 'end of week' },
+      'CHECKPOINT-1': { date: '2050-10-04', month: '2050-10', week_start: '2050-10-04', week_end: '2050-10-10', due_timing: 'end of week' },
     } });
-    const real = { components: [{ moduleId: 'M1', module: 'Leadership', componentId: 'ASSIGNMENT-1', component: 'Due assignment', type: 'assignment' }] } as LearnerDetail;
+    const real = { components: [
+      { moduleId: 'M1', module: 'Leadership', componentId: 'ASSIGNMENT-1', component: 'Due assignment', type: 'assignment' },
+      { moduleId: 'M1', module: 'Leadership', componentId: 'CHECKPOINT-1', component: 'Due checkpoint', type: 'checkpoint' },
+    ] } as LearnerDetail;
     render(<MemoryRouter><StudentActivityPanel view="catalogue" kind="commercial" learnerId="132" data={data} real={real} loading={false} error={null} onRetry={() => {}}
       metrics={{ migrated: true,
         programme: { completed: 35, total: 304, percent: 11.51, status: 'ready' },
@@ -456,7 +460,8 @@ describe('map and My Learning navigation', () => {
 
     await screen.findByRole('button', { name: /Open subject/ });
     expect(screen.getByText('1 subjects · 304 activities')).toBeVisible();
-    expect(screen.getByRole('link', { name: 'View all assignments' })).toHaveAttribute('href', '/learner/my-learning/commercial/132?tab=assignments');
-    expect(screen.getByRole('link', { name: /Due assignment/ })).toHaveAttribute('href', '/learner/monthly-submission/commercial/132/ASSIGNMENT-1');
+    expect(screen.getByRole('heading', { name: 'Upcoming' })).toBeVisible();
+    expect(screen.getByRole('link', { name: /Due assignment/ })).toHaveAttribute('href', '/learner/component/commercial/132/ASSIGNMENT-1');
+    expect(screen.getByRole('link', { name: /Due checkpoint/ })).toHaveAttribute('href', '/learner/component/commercial/132/CHECKPOINT-1');
   });
 });

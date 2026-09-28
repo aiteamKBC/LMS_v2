@@ -17,5 +17,12 @@
 .feedback { margin-top: 24px; }
 .feedback h3 { font-size: 14px; font-weight: 600; }
 .feedback article { margin-top: 12px; padding: 14px; background: #f6f7fb; border-radius: 9px; font-size: 12px; }
+
+:global([data-theme='dark']) .root { color: #f6f8fb; }
+:global([data-theme='dark']) :is(.summary span, .notice, .feedback article) { background: #213854; }
+:global([data-theme='dark']) :is(.documents button, .actions, .frame) { border-color: #3b526c; }
+:global([data-theme='dark']) .documents button[aria-pressed='true'] { background: #302748; border-color: #8060b1; color: #d7c4f4; }
+:global([data-theme='dark']) :is(.actions a, .notice button) { color: #d7c4f4; }
+:global([data-theme='dark']) .hint { color: #b6c4d5; }
 .feedback article p { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 7px; }
 .feedback article div { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; }

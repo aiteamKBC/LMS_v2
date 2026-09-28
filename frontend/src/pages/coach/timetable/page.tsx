@@ -14,6 +14,7 @@ import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { coachFetch } from '@/lib/coachFetch';
 import { initialsFor } from '@/lib/format';
 import { roleNavMap } from '@/mocks/navigation';
+import { coachSessionKey, readCoachSessionCache, writeCoachSessionCache } from '@/features/coach/shared/coachSessionCache';
 import ProgressReviewCompletionModal from '@/pages/coach/shared/ProgressReviewCompletionModal';
 import { reviewInstancePath, reviewInstanceRouteState } from '@/pages/coach/shared/reviewInstanceNavigation';
 import { createLearnerReviewAddition, fetchLearnerAdditionReviewTemplates, markReviewInstanceInProgressManually, openReviewInstanceForEvent } from '@/api/reviewInstances';
@@ -614,7 +615,7 @@ const SCHEDULABLE_SOURCE_META: Record<SchedulableSource, { description: string; 
     surface: 'from-secondary-500/10 via-secondary-400/5 to-transparent',
   },
   'catch-up': {
-    description: 'Learner catch-up bookings waiting for placement.',
+    description: 'Catch-up sessions available for scheduling or rescheduling.',
     icon: 'ri-timer-line',
     accent: 'text-rose-700',
     surface: 'from-rose-500/10 via-rose-400/5 to-transparent',
@@ -761,7 +762,7 @@ function scheduleActionLabel(event: TimetableEvent | null | undefined) {
   if (!event) return 'Schedule';
   if (event.status === 'cancelled') return 'Schedule Again';
   if (event.status === 'scheduled') return 'Reschedule';
-  if (event.source === 'catch-up' || event.source === 'student-support') return 'Approve & Schedule';
+  if (event.source === 'student-support') return 'Approve & Schedule';
   return 'Schedule';
 }
 
@@ -841,9 +842,11 @@ export default function CoachTimetablePage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [calendarColors, setCalendarColors] = useState<CalendarColorPreferences>(() => loadCalendarColors(calendarColorOwner));
   const [colorPreferencesOpen, setColorPreferencesOpen] = useState(false);
-  const [events, setEvents] = useState<TimetableEvent[]>([]);
-  const [schedulerCatchUpEvents, setSchedulerCatchUpEvents] = useState<TimetableEvent[]>([]);
-  const [summary, setSummary] = useState<TimetableSummary>(EMPTY_SUMMARY);
+  const cacheKey = coachSessionKey('timetable', coach.email);
+  const initialCache = readCoachSessionCache<{ events: TimetableEvent[]; schedulerCatchUpEvents: TimetableEvent[]; summary: TimetableSummary }>(cacheKey);
+  const [events, setEvents] = useState<TimetableEvent[]>(() => initialCache?.events || []);
+  const [schedulerCatchUpEvents, setSchedulerCatchUpEvents] = useState<TimetableEvent[]>(() => initialCache?.schedulerCatchUpEvents || []);
+  const [summary, setSummary] = useState<TimetableSummary>(() => initialCache?.summary || EMPTY_SUMMARY);
   const [createSessionOpen, setCreateSessionOpen] = useState(false);
   const [createSessionType, setCreateSessionType] = useState<CoachBookableSessionType>('catch-up');
   const [createSessionLearnerId, setCreateSessionLearnerId] = useState('');
@@ -864,7 +867,7 @@ export default function CoachTimetablePage() {
   const [createSessionReviewTargetDate, setCreateSessionReviewTargetDate] = useState('');
   const [createSessionReviewReasonCode, setCreateSessionReviewReasonCode] = useState<LearnerAdditionReasonCode | ''>('');
   const [createSessionReviewReason, setCreateSessionReviewReason] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => !initialCache);
   const [error, setError] = useState<string | null>(null);
   const [eventActionBusy, setEventActionBusy] = useState(false);
   const [eventActionError, setEventActionError] = useState<string | null>(null);
@@ -953,7 +956,13 @@ export default function CoachTimetablePage() {
   const loadTimetable = useCallback(async (staleGuard: { cancelled: boolean }, signal: AbortSignal, onTimeout: () => boolean) => {
     if (!coach.isInitialized) return;
 
-    setLoading(true);
+    const cached = readCoachSessionCache<{ events: TimetableEvent[]; schedulerCatchUpEvents: TimetableEvent[]; summary: TimetableSummary }>(cacheKey);
+    if (cached) {
+      setEvents(cached.events);
+      setSchedulerCatchUpEvents(cached.schedulerCatchUpEvents);
+      setSummary(cached.summary);
+      setLoading(false);
+    } else setLoading(true);
     setError(null);
     if (!coach.email) {
       setError('Coach access is required to load timetable data.');
@@ -972,9 +981,11 @@ export default function CoachTimetablePage() {
 
       const nextEvents = data.events || [];
       const nextSummary = data.summary ? normalizeSummary(data.summary, nextEvents) : buildFallbackSummary(nextEvents);
+      const nextSchedulerCatchUpEvents = data.schedulerQueues?.catchUp || [];
 
+      writeCoachSessionCache(cacheKey, { events: nextEvents, schedulerCatchUpEvents: nextSchedulerCatchUpEvents, summary: nextSummary });
       setEvents(nextEvents);
-      setSchedulerCatchUpEvents(data.schedulerQueues?.catchUp || []);
+      setSchedulerCatchUpEvents(nextSchedulerCatchUpEvents);
       setSummary(nextSummary);
       setSelectedEvent(currentSelectedEvent => {
         if (!currentSelectedEvent) return null;
@@ -984,6 +995,7 @@ export default function CoachTimetablePage() {
       if (staleGuard.cancelled) return;
       const timedOut = onTimeout();
       if (err instanceof DOMException && err.name === 'AbortError' && !timedOut) return;
+      if (cached) return;
 
       setError(timedOut ? TIMETABLE_LOAD_TIMEOUT_MESSAGE : err instanceof Error ? err.message : 'Unable to load timetable data');
       setEvents([]);
@@ -993,7 +1005,7 @@ export default function CoachTimetablePage() {
     } finally {
       if (!staleGuard.cancelled) setLoading(false);
     }
-  }, [coach.email, coach.isInitialized]);
+  }, [cacheKey, coach.email, coach.isInitialized]);
 
   useEffect(() => {
     const staleGuard = { cancelled: false };
@@ -1906,12 +1918,16 @@ export default function CoachTimetablePage() {
   const selectedEventDetailsPath = selectedEvent ? eventDetailsPath(selectedEvent) : null;
   const selectedScheduleEventNotes = sanitizeEventNotes(selectedScheduleEvent?.notes);
   const scheduleModalFeedback = sanitizeCalendarSyncMessage(scheduleModalError || scheduleModalNotice);
+  const scheduleNeedsApproval = selectedScheduleEvent?.source === 'student-support'
+    && selectedScheduleEvent.status === 'not-scheduled';
   const scheduleModalTitle = scheduleModalCompact
     ? scheduleActionLabel(selectedScheduleEvent)
-    : 'Approve and place session';
+    : scheduleNeedsApproval ? 'Approve and place session' : 'Schedule session';
   const scheduleModalDescription = scheduleModalCompact
     ? 'Choose the new calendar slot for this event.'
-    : 'Choose source, select item, then approve the final calendar slot.';
+    : scheduleNeedsApproval
+      ? 'Choose source, select item, then approve the final calendar slot.'
+      : 'Choose the calendar slot for this session.';
 
   const openSelectedEventDetails = () => {
     if (!selectedEventDetailsPath) return;
@@ -2726,7 +2742,7 @@ export default function CoachTimetablePage() {
                           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary-50 text-primary-600">
                             <AppIcon className="ri-calendar-schedule-line"></AppIcon>
                           </span>
-                          {selectedEvent.status === 'not-scheduled' && (selectedEvent.source === 'catch-up' || selectedEvent.source === 'student-support') ? 'Approve & Schedule' : 'Schedule Meeting'}
+                          {selectedEvent.status === 'not-scheduled' && selectedEvent.source === 'student-support' ? 'Approve & Schedule' : 'Schedule Meeting'}
                         </h4>
                         {selectedEvent.status === 'not-scheduled' && (
                           <span className="rounded-full bg-red-50 px-2.5 py-1 text-[12px] font-bold text-red-700">Needs scheduling</span>
@@ -3544,7 +3560,11 @@ export default function CoachTimetablePage() {
 
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-background-200/70 pt-3">
                 <p className="text-[12px] text-foreground-500">
-                  {scheduleModalCompact ? 'This updates the calendar slot and Teams meeting details.' : 'Learner requests become official Teams meetings after coach approval.'}
+                  {scheduleModalCompact
+                    ? 'This updates the calendar slot and Teams meeting details.'
+                    : scheduleNeedsApproval
+                      ? 'Learner support requests become official Teams meetings after coach approval.'
+                      : 'This places the session on the coach calendar and updates its Teams meeting details.'}
                 </p>
                 <div className="flex items-center gap-3">
                   <button

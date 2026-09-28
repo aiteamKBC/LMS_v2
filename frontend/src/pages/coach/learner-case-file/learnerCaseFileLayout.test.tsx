@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CaseFileReviewMeeting, CoachLearnerCaseFileData } from './types';
@@ -193,9 +193,11 @@ describe('Learner Case File design', () => {
     expect(screen.getByText('Activity overview only')).toBeInTheDocument();
     expect(screen.getByText('Rewards hidden')).toBeInTheDocument();
     expect(mocks.useCaseFileDashboardPlan).toHaveBeenCalledWith('apprenticeship', '125', true, true);
-    // Overview, OTJH & KSB Progress, Attendance, Learning Plan, Reviews, Assignments.
-    expect(screen.getAllByRole('tab')).toHaveLength(6);
+    // Overview, OTJH & KSB Progress, Attendance, Learning Plan, Reviews, Assignments,
+    // Enrolment Documents.
+    expect(screen.getAllByRole('tab')).toHaveLength(7);
     expect(screen.getByRole('tab', { name: 'Assignments' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Enrolment Documents' })).toBeInTheDocument();
     expect(screen.queryByRole('tab', { name: 'Programme & Employer' })).not.toBeInTheDocument();
     expect(screen.getByRole('tab', { name: 'Reviews' })).toBeInTheDocument();
   });

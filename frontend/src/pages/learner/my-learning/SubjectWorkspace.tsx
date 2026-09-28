@@ -10,16 +10,17 @@ import { completedComponentIds, isComponentComplete, hasComponentContent, format
 import { DeferredStudentMaterial as StudentMaterial } from './DeferredStudentMaterial';
 import styles from './SubjectWorkspace.module.css';
 import { LearningCatalogue } from './LearningCatalogue';
+import { DEFAULT_MODULE_COVER } from './moduleCover';
 import { LearningMapHero, SubjectTimeline } from './SubjectTimeline';
 import { HolidayNoteHint } from '@/components/feature/HolidayNoteHint';
 import { weekHolidayNotes } from '@/pages/learner/training-plan-timeline/model';
 import { certificateEligible, learningDate, learningDeadlines, learningPlanSelection, learningHref, nextLearningWeek, continuingLearningWeek, currentLearningWeek, recommendedLearningSubject, resolveLearningSubject, subjectMapWeeks, subjectOpeningActivity } from './subjectLearning';
 import type { LearningSchedule } from '@/api/learnerOverview';
-import type { PlanModule } from '@/api/trainingPlanDashboard';
+import type { PlanModule, PlanSession } from '@/api/trainingPlanDashboard';
 
 type Schedule = Pick<StudentActivityItem, 'date' | 'month' | 'week_start' | 'week_end' | 'date_needs_review' | 'date_source'> & { due_timing?: string };
 export type SubjectEntry = { id: string; title: string; category: string; completed: boolean; position: number; schedule: Schedule; week?: string; legacy?: StudentActivityItem; native?: JourneyComponent; bestScorePercent?: number | null };
-export type Subject = { id: string; title: string; source: 'legacy' | 'current'; activities: SubjectEntry[] };
+export type Subject = { id: string; title: string; source: 'legacy' | 'current'; activities: SubjectEntry[]; recordedHistory?: boolean; catalogueCount?: number; acceptedHours?: number };
 type BuilderSubject = { id: string; title: string };
 type ActivitySource = { module_id: string; group_id: number; activity_id: number };
 export type CoverMetadata = { covers: Record<string, string>; activity_dates?: Record<string, Schedule>; current_subjects?: BuilderSubject[]; builder_subjects?: Record<string, BuilderSubject>; activity_sources?: Record<string, ActivitySource> };
@@ -75,6 +76,13 @@ function scheduleForDate(value?: string | null): Schedule {
   return { date, month: date.slice(0, 7), week_start, week_end: day.toISOString().slice(0, 10) };
 }
 
+function formatRecordedHours(hours: number) {
+  const seconds = Math.max(0, Math.round(hours * 3600));
+  return [Math.floor(seconds / 3600) ? `${Math.floor(seconds / 3600)}h` : '',
+    Math.floor(seconds % 3600 / 60) ? `${Math.floor(seconds % 3600 / 60)}m` : '',
+    seconds % 60 ? `${seconds % 60}s` : ''].filter(Boolean).join(' ') || '0m';
+}
+
 function nativeActivitySchedule(schedule: Schedule | undefined, sessionDate?: string | null): Schedule {
   // Older metadata used the upload date. It cannot override a session date or
   // move a whole future programme into the month its components were created.
@@ -107,8 +115,10 @@ export function groupSubjectActivities(activities: SubjectEntry[]) {
 export function subjectsFrom(data: StudentActivityResponse | null, real: LearnerDetail | null, metadata?: CoverMetadata | null): Subject[] {
   const { activity_dates: dates = {}, current_subjects: currentSubjects = [], builder_subjects: builderSubjects = {} } = metadata || {};
   const activitySources = data?.activity_sources ?? metadata?.activity_sources ?? {};
+  const recordedHistory = data?.progress_basis === 'recorded_activities';
+  const historicalModules = new Set(recordedHistory ? (data?.subjects || []).flatMap(s => s.module_id ? [s.module_id] : []) : []);
   const subjects = new Map<string, Subject>();
-  for (const subject of data?.subjects || []) subjects.set(`legacy:${subject.id}`, { id: `legacy:${subject.id}`, title: subject.name, source: 'legacy', activities: [] });
+  for (const subject of data?.subjects || []) subjects.set(`legacy:${subject.id}`, { id: `legacy:${subject.id}`, title: subject.name, source: 'legacy', activities: [], recordedHistory, catalogueCount: subject.catalogue_count, acceptedHours: subject.accepted_hours });
   for (const item of data?.activities || []) {
     const key = `legacy:${item.group_id}`;
     const subject = subjects.get(key) || { id: key, title: item.group_name || 'Unnamed subject', source: 'legacy' as const, activities: [] };
@@ -126,16 +136,19 @@ export function subjectsFrom(data: StudentActivityResponse | null, real: Learner
     legacyByBuilder.set(source.module_id, [...new Set([...(legacyByBuilder.get(source.module_id) || []), key])]);
   }
   const currentKey = (moduleId: string) => {
+    if (recordedHistory) return `current:${moduleId}`;
     const matches = legacyByBuilder.get(moduleId);
     if (matches?.length === 1) return matches[0];
     return `current:${moduleId}`;
   };
   const completed = completedComponentIds(real);
   for (const subject of currentSubjects) {
+    if (historicalModules.has(subject.id)) continue;
     const key = currentKey(subject.id);
     if (!subjects.has(key)) subjects.set(key, { id: key, title: subject.title, source: 'current', activities: [] });
   }
   for (const [index, item] of (real?.components || []).entries()) {
+    if (item.moduleId && historicalModules.has(item.moduleId)) continue;
     const key = item.moduleId ? currentKey(item.moduleId) : `unlinked:${item.module}`;
     const subject = subjects.get(key) || { id: key, title: item.module || 'Unnamed subject', source: 'current' as const, activities: [] };
     const component: JourneyComponent = { ...item, title: item.component,
@@ -168,6 +181,7 @@ export function subjectsFrom(data: StudentActivityResponse | null, real: Learner
     subjects.set(key, subject);
   }
   for (const title of real?.modules || []) {
+    if ([...subjects.values()].some(subject => subject.title.trim().toLowerCase() === title.trim().toLowerCase())) continue;
     subjects.set(`unlinked:${title}`, { id: `unlinked:${title}`, title, source: 'current', activities: [] });
   }
   return [...subjects.values()].map((subject) => ({ ...subject, title: builderSubjects[subject.id]?.title || subject.title }))
@@ -187,7 +201,7 @@ export function buildUnifiedLearningSummary(
   for (const subject of subjects) {
     subject.activities = subject.activities.filter((entry) => {
       const key = entry.legacy?.source_activity_id != null
-        ? `legacy:${entry.legacy.source_activity_id}`
+        ? `legacy:${entry.legacy.group_id}:${entry.legacy.catalogue_kind || "material"}:${entry.legacy.activity_id}`
         : entry.native?.componentId ? `component:${entry.native.componentId}`
           : entry.native?.quizMeta?.quizId ? `quiz:${entry.native.quizMeta.quizId}` : null;
       if (!key) return true;
@@ -316,11 +330,12 @@ function ActivityGroup({ title, label = title, activities, level, children }: {
 const SUBJECT_CARD_TONES = ['purple', 'navy', 'green', 'gold', 'blue', 'rose'] as const;
 type SubjectCardTone = typeof SUBJECT_CARD_TONES[number];
 
-export function Cover({ title, url, large = false }: { title: string; url?: string; large?: boolean }) {
+export function Cover({ title, url, large = false, fallbackUrl }: { title: string; url?: string; large?: boolean; fallbackUrl?: string }) {
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [url]);
+  const imageUrl = url && !failed ? url : fallbackUrl;
   return <div className={`${styles.cover} ${large ? styles.coverLarge : ''}`}>
-    {url && !failed ? <img src={url} alt={`${title} cover`} loading="lazy" decoding="async" onError={() => setFailed(true)} className="h-full w-full object-cover motion-safe:transition-transform motion-safe:duration-500 motion-safe:group-hover:scale-105" /> : <div className={`${styles.coverFallback} flex h-full ${large ? 'items-center justify-center' : 'items-end p-4'}`}>
+    {imageUrl ? <img src={imageUrl} alt={`${title} cover`} loading="lazy" decoding="async" onError={() => setFailed(true)} className={`h-full w-full object-cover motion-safe:transition-transform motion-safe:duration-500 motion-safe:group-hover:scale-105 ${imageUrl === fallbackUrl ? styles.defaultCoverImage : ''}`} /> : <div className={`${styles.coverFallback} flex h-full ${large ? 'items-center justify-center' : 'items-end p-4'}`}>
       <div aria-hidden="true" className={styles.coverOrbit} />
       <span className={`${styles.coverSymbol} relative flex items-center justify-center rounded-2xl border border-white/90 bg-white/85 text-primary-600 shadow-sm ${large ? 'h-16 w-16' : 'h-11 w-11'}`}><BookOpen className={large ? 'h-8 w-8' : 'h-5 w-5'} strokeWidth={1.7} aria-hidden="true" /></span>
     </div>}
@@ -438,17 +453,15 @@ function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfTo
   const startDate = planModule?.start_date ? learningDate(planModule.start_date) : 'Not scheduled';
   const endDate = planModule?.end_date ? learningDate(planModule.end_date) : 'Not scheduled';
   const sessionCount = planModule?.sessions_number;
-  return <article className={`group ${styles.card} ${styles.subjectTheme}`} data-tone={tone}>
+  return <article className={`group ${styles.card} ${styles.subjectTheme} ${styles.moduleCard}`} data-tone={tone}>
     <button type="button" onClick={onOpen} className={styles.cardButton}>
-      <div className="relative w-full">
-        <Cover title={subject.title} url={cover} />
-        <span className={styles.status} data-state={isComplete ? 'complete' : completed > 0 ? 'started' : 'new'}>
-          <span aria-hidden="true" className={styles.statusDot} />{status}
-        </span>
-      </div>
+      <div className="relative w-full"><Cover title={subject.title} url={cover} fallbackUrl={DEFAULT_MODULE_COVER} /></div>
       <div className={styles.cardBody}>
         <div className={styles.cardMetaRow}>
-          <p className={styles.cardEyebrow}><Layers3 size={13} aria-hidden="true" />{total} {total === 1 ? 'activity' : 'activities'}</p>
+          <span className={styles.status} data-state={isComplete ? 'complete' : completed > 0 ? 'started' : 'new'}>
+            <span aria-hidden="true" className={styles.statusDot} />{status}
+          </span>
+          <p className={styles.cardEyebrow}><Layers3 size={13} aria-hidden="true" />{total} {subject.recordedHistory ? 'recorded activities' : total === 1 ? 'activity' : 'activities'}</p>
           {certificateReady && <span className={styles.certificateBadge}><Award size={13} aria-hidden="true" />Ready</span>}
         </div>
         <h3 className={styles.cardTitle}>{subject.title}</h3>
@@ -459,8 +472,10 @@ function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfTo
           <div><dt>Sessions</dt><dd>{sessionCount == null ? 'Not set' : `${sessionCount} ${sessionCount === 1 ? 'session' : 'sessions'}`}</dd></div>
         </dl>
         <p className={styles.cardDescription}>Explore your learning materials and activities.</p>
-        <div className={styles.cardProgress}><Progress done={completed} total={total} compact label={`${subject.title} progress`} /></div>
-        <span className={styles.nextActivity}>{isComplete ? <CheckCircle2 size={20} /> : <BookOpen size={20} />}<span><small>{isComplete ? 'Well done' : 'Next up'}</small><strong>{isComplete ? 'All activities complete' : next?.title || 'Explore this subject'}</strong></span><ChevronRight size={16} /></span>
+        <div className={styles.cardProgress}><Progress done={completed} total={total} compact label={`${subject.title} progress`} />
+          {subject.recordedHistory && <p className="mt-2 text-xs text-foreground-500">Recorded activities only · Full catalogue: {subject.catalogueCount ?? 0}<br />Accepted time: {formatRecordedHours(subject.acceptedHours ?? 0)}</p>}
+        </div>
+        <span className={styles.nextActivity}>{isComplete ? <CheckCircle2 size={20} /> : <BookOpen size={20} />}<span><small>{isComplete ? 'Well done' : 'Next up'}</small><strong>{isComplete ? subject.recordedHistory ? 'All recorded activities complete' : 'All activities complete' : next?.title || 'Explore this subject'}</strong></span><ChevronRight size={16} /></span>
         <span className={styles.cardAction}>Open subject<ArrowRight size={16} aria-hidden="true" /></span>
       </div>
     </button>
@@ -494,30 +509,31 @@ function ActivityRow({ entry, kind, learnerId, onProgress }: { entry: SubjectEnt
   const contentId = useId();
   const href = nativeHref(entry, kind, learnerId);
   const legacy = entry.legacy;
+  const canOpenMaterial = legacy?.can_open_material !== false;
   const score = entry.bestScorePercent ?? legacy?.best_score_percent ?? (legacy?.quiz_score != null && legacy.quiz_maximum_score ? legacy.quiz_score / legacy.quiz_maximum_score * 100 : null);
   return <div role="group" aria-label={`${entry.title} activity`} className="border-t border-foreground-100 first:border-t-0"><div className="grid grid-cols-[2rem_minmax(0,1fr)] items-start gap-3 p-4 sm:flex sm:flex-wrap sm:items-center">
     <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${entry.completed ? 'bg-emerald-50 text-emerald-600' : 'bg-background-100 text-foreground-400'}`}>{entry.completed ? <CheckCircle2 size={18} /> : <BookOpen size={16} />}</span>
     <div className="min-w-0 flex-1"><h5 className="text-sm font-semibold text-foreground-900">
-      {legacy && kind && learnerId ? <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-controls={contentId} className="text-left text-primary-700 underline-offset-4 hover:underline focus-visible:underline">{entry.title}</button>
+      {legacy && canOpenMaterial && kind && learnerId ? <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-controls={contentId} className="text-left text-primary-700 underline-offset-4 hover:underline focus-visible:underline">{entry.title}</button>
         : href ? <Link to={href} className="text-primary-700 underline-offset-4 hover:underline focus-visible:underline">{entry.title}</Link> : entry.title}
     </h5><p className="mt-1 text-xs text-foreground-500">{[entry.category, entry.schedule.date, score != null ? `Best score ${Math.round(score)}%` : ''].filter(Boolean).join(' · ')}</p>
       {legacy?.section_title && <p className="mt-1 text-xs text-foreground-500">Lecture: {legacy.section_title}</p>}
     </div>
     <div className="col-start-2 flex flex-wrap items-center gap-2 sm:ml-auto"><span className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${entry.completed ? 'bg-emerald-50 text-emerald-700' : 'bg-background-100 text-foreground-600'}`}>{entry.completed ? 'Complete' : 'Not complete'}</span>
-    {legacy && kind && learnerId && <button onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-controls={contentId} className="rounded-lg border border-foreground-200 px-3 py-2 text-xs font-semibold text-primary-700">{open ? 'Close activity' : 'Open activity'}</button>}
+    {legacy && canOpenMaterial && kind && learnerId && <button onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-controls={contentId} className="rounded-lg border border-foreground-200 px-3 py-2 text-xs font-semibold text-primary-700">{open ? 'Close activity' : 'Open activity'}</button>}
     {!legacy && href && <Link to={href} className="rounded-lg border border-foreground-200 px-3 py-2 text-xs font-semibold text-primary-700">Open activity</Link>}
-    {!legacy && !href && <span className="text-xs text-foreground-500">Content not available yet</span>}</div>
+    {((legacy && !canOpenMaterial) || (!legacy && !href)) && <span className="text-xs text-foreground-500">Content not available yet</span>}</div>
   </div>
     {legacy && <p className="px-4 pb-3 text-[11px] text-foreground-400">OTJH: {legacy.hours_mapped ? formatHoursMinutes(legacy.actual) : 'Unavailable'} · Planned: {legacy.planned_hours_mapped ? formatHoursMinutes(legacy.planned) : 'Unavailable'}</p>}
-    <div id={contentId}>{open && legacy && kind && learnerId && <div role="region" aria-label={`${entry.title} content`} className="p-3 pt-0"><StudentMaterial kind={kind} learnerId={learnerId} groupId={legacy.group_id} activityId={legacy.source_activity_id} completed={entry.completed} onProgress={onProgress} /></div>}</div>
+    <div id={contentId}>{open && legacy && canOpenMaterial && kind && learnerId && <div role="region" aria-label={`${entry.title} content`} className="p-3 pt-0"><StudentMaterial kind={kind} learnerId={learnerId} groupId={legacy.group_id} activityId={legacy.source_activity_id} completed={entry.completed} onProgress={onProgress} /></div>}</div>
   </div>;
 }
 
-export function StudentActivityPanel({ data: incomingData, loading, error, onRetry, kind, learnerId, real: incomingReal = null, onProgress, metrics, view = 'catalogue', schedule, scheduleLoading = false }: {
+export function StudentActivityPanel({ data: incomingData, loading, error, onRetry, kind, learnerId, real: incomingReal = null, onProgress, metrics, view = 'catalogue', schedule, scheduleLoading = false, upcomingSessions }: {
   kind?: string; learnerId?: string; real?: LearnerDetail | null; data: StudentActivityResponse | null;
   loading: boolean; error: string | null; onRetry: () => void; onProgress?: () => void;
   metrics?: LearnerMetrics | null;
-  view?: 'catalogue' | 'map'; schedule?: LearningSchedule | null; scheduleLoading?: boolean;
+  view?: 'catalogue' | 'map'; schedule?: LearningSchedule | null; scheduleLoading?: boolean; upcomingSessions?: PlanSession[];
 }) {
   const [search, setSearch] = useState('');
   const location = useLocation();
@@ -663,11 +679,12 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
         deadlines={deadlines}
         moduleStartDate={subject => planModulesBySubject.get(subject.id)?.start_date}
         onContinue={subject => { setSearch(''); select(subject.id, 'current'); }}
+        covers={covers} upcomingSessions={upcomingSessions}
         renderCard={subject => <SubjectCard key={subject.id} subject={subject} cover={covers[subject.id]} tone={subjectTones.get(subject.id)} onOpen={() => select(subject.id)} template={certificateConfig.template} csrfToken={certificateConfig.csrfToken} kind={kind} learnerId={learnerId} planModule={planModulesBySubject.get(subject.id)} />} />
       {(data || metrics) && <><div className="flex flex-wrap gap-6 rounded-xl bg-background-100 px-4 py-3 text-xs"><div><span className="block text-foreground-500">Recorded OTJH</span><strong>{recordedOtjh == null ? 'Unavailable' : formatHoursMinutes(recordedOtjh)}</strong></div><div><span className="block text-foreground-500">Planned OTJH</span><strong>{plannedOtjh == null ? 'Unavailable' : formatHoursMinutes(plannedOtjh)}</strong></div></div>{hasProgrammeOtjh && <p className="text-[12px] text-foreground-500">Programme totals include accepted historical hours and new recorded learning. Planned hours come from your training plan.</p>}</>}
     </> : <>
       <div className="flex flex-wrap items-center justify-between gap-3"><button onClick={() => select()} className="flex items-center gap-1.5 text-sm font-semibold text-primary-700"><ChevronLeft size={17} />All subjects</button><Link to={learningHref('map', kind, learnerId, active.id)} className={styles.textLink}><MapIcon size={17} />View learning map<ArrowRight size={16} /></Link></div>
-      <div className={`${styles.subjectTheme} relative overflow-hidden rounded-2xl border bg-white`} data-tone={subjectTones.get(active.id)}><Cover title={active.title} url={covers[active.id]} large /><div className="p-5"><Progress done={active.activities.filter((entry) => entry.completed).length} total={active.activities.length} showFormula /></div></div>
+      <div className={`${styles.subjectTheme} relative overflow-hidden rounded-2xl border bg-white`} data-tone={subjectTones.get(active.id)}><Cover title={active.title} url={covers[active.id]} fallbackUrl={DEFAULT_MODULE_COVER} large /><div className="p-5"><Progress done={active.activities.filter((entry) => entry.completed).length} total={active.activities.length} showFormula /></div></div>
       {groups.map(({ month, weeks }) => {
         const monthTitle = month === 'introduction' ? 'Introduction' : month === 'extra' ? 'Extra activities' : month === 'undated' ? 'Undated activities' : new Date(`${month}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' });
         return <ActivityGroup key={`${active.id}:${month}`} title={monthTitle} activities={weeks.flatMap(({ activities }) => activities)} level={3}>

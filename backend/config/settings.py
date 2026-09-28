@@ -461,6 +461,11 @@ else:
         },
     }
 
+# Final serialized Coach Dashboard response. Keep this short because some
+# attendance/progress sources are external and cannot emit local invalidation
+# events. Production may override it without requiring Redis in development.
+COACH_DASHBOARD_CACHE_TTL = int(os.environ.get('COACH_DASHBOARD_CACHE_TTL', '90'))
+
 
 # Share expensive curriculum payloads between Django workers in production.
 # The backend subclasses Django's built-in Redis cache, which uses the

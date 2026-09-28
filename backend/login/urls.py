@@ -4,7 +4,7 @@ from . import safeguarding_sso
 from . import inclusion_sso
 from . import coach_directory
 
-from . import admin_evidence, access_requests, microsoft_sso, platform_admin, views
+from . import admin_evidence, access_requests, microsoft_sso, platform_admin, saved_signature, views
 from old_otjh.entry import entry_status
 
 urlpatterns = [
@@ -19,6 +19,8 @@ urlpatterns = [
     path("login/", views.login, name="login"),
     path("logout/", views.logout, name="logout"),
     path("me/", views.me, name="login-me"),
+    # The signed-in person's own saved signature, offered wherever they sign.
+    path("me/signature/", saved_signature.my_signature, name="login-my-signature"),
     path("learner-entry/", entry_status, name="learner-entry"),
 
     # --- sign in with Microsoft (see microsoft_sso.py) ---

@@ -615,8 +615,6 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     recoveryAbort.current?.abort();
     setCreateRecovery(null);
     endCreateProgress();
-    // endCreateProgress only touches refs and state setters.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedId]);
   const selectedForDisplay = useMemo(() => {
     if (!selected) return null;
@@ -1342,8 +1340,6 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     return null;
   };
   useEffect(() => () => { recoveryAbort.current?.abort(); endCreateProgress(); },
-    // endCreateProgress only touches refs and state setters.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     []);
 
   /** One status reading into the progress panel; `null` is a read that failed. */

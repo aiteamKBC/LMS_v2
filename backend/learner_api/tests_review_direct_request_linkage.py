@@ -284,7 +284,7 @@ class AlreadyLinkedTemplateArchivedTests(DirectRequestHelpersMixin):
 
 
 class NonReviewBookingUnaffectedTests(DirectRequestHelpersMixin):
-    def test_catch_up_booking_is_unaffected_by_the_review_linkage_guard(self):
+    def test_catch_up_booking_schedules_directly_without_review_linkage(self):
         day = bookable_day(20)
         request = self.factory.post(
             f'/learner_api/calendar/commercial/{self.learner.pk}/book/',
@@ -301,11 +301,13 @@ class NonReviewBookingUnaffectedTests(DirectRequestHelpersMixin):
         )
         self.assertIn(response.status_code, (200, 201), response.content)
         body = json.loads(response.content.decode())
-        self.assertTrue(body.get('approvalRequired'))
+        self.assertNotIn('approvalRequired', body)
         record = CoachCalendarEvent.objects.get(event_type='catch-up')
         self.assertFalse(record.review_template_id)
         self.assertFalse(record.review_instance_id)
-        self.assertEqual(record.status, CoachCalendarEvent.STATUS_NOT_SCHEDULED)
+        self.assertEqual(record.status, CoachCalendarEvent.STATUS_SCHEDULED)
+        self.assertEqual(record.scheduled_date, day)
+        self.assertEqual(record.scheduled_time, time(10, 0))
 
 
 class LegacyUnlinkedRowsUntouchedTests(DirectRequestHelpersMixin):

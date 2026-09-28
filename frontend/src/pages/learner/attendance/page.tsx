@@ -7,6 +7,7 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
 import { useMyLearner } from '@/hooks/useMyLearner';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
+import { learningSchedule } from '@/api/learnerOverview';
 import { useRefreshOnReturn } from '@/hooks/useRefreshOnReturn';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
@@ -29,6 +30,9 @@ import CatchupBooking from './components/CatchupBooking';
 import RecoveryPlansDialog from './components/RecoveryPlansDialog';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { featuredLecture, useLectureClock } from './liveLecture';
+import { learnerHeaderPlan } from '@/pages/workspace/learner/learnerHeaderPlan';
+import { learningToday } from '../my-learning/subjectLearning';
+import { dateKey } from '../training-plan-timeline/model';
 import styles from './attendance.module.css';
 
 const learnerNav = roleNavMap.learner;
@@ -49,9 +53,11 @@ export default function AttendancePage() {
   const access = useLearnerWorkspaceAccess(learner.id);
   const navigate = useNavigate();
   const read = useLiveLearnerRead(learner.kind, learner.id, true, fetchAttendanceWorkspace, peekAttendanceWorkspace);
-  useRefreshOnReturn(read.refresh, { enabled: Boolean(learner.kind && learner.id) });
+  const schedule = useLiveLearnerRead(learner.kind, learner.id, true, learningSchedule.read, learningSchedule.peek);
+  useRefreshOnReturn(() => { read.refresh(); schedule.refresh(); }, { enabled: Boolean(learner.kind && learner.id) });
   const data = read.data;
-  const [moduleId, setModuleId] = useState('all');
+  const learnerKey = `${learner.kind}:${learner.id}`;
+  const [moduleSelection, setModuleSelection] = useState<{ learnerKey: string; moduleId: string } | null>(null);
   const [filter, setFilter] = useState<AttendanceFilter>('all');
   const [report, setReport] = useState<AttendanceLecture | 'choose' | null>(null);
   const [showRecoveryPlans, setShowRecoveryPlans] = useState(false);
@@ -74,7 +80,27 @@ export default function AttendancePage() {
   }), [data, confirmations, learner.kind, learner.id]);
   const now = useLectureClock(allLectures);
   const featured = featuredLecture(allLectures, now, data?.timeZone);
-  const selectedModule = data?.modules.some(module => module.id === moduleId) ? moduleId : 'all';
+  const today = learningToday();
+  const currentModule = useMemo(() => {
+    if (!schedule.data) return null;
+    const modules = schedule.data.modules.map(module => {
+      const storedEnd = dateKey(module.end_date);
+      const deliveryEnd = dateKey(module.effectiveEndDate);
+      return deliveryEnd > storedEnd ? { ...module, end_date: deliveryEnd } : module;
+    });
+    const plan = learnerHeaderPlan(modules, {}, today);
+    return plan.label.startsWith('Current') ? plan.modules[0] || null : null;
+  }, [schedule.data, today]);
+  const moduleOptions = useMemo(() => {
+    const options = data?.modules || [];
+    if (!currentModule || options.some(module => module.id === `native:${currentModule.id}`)) return options;
+    return [...options, { id: `native:${currentModule.id}`, title: currentModule.title }];
+  }, [data, currentModule]);
+  const requestedModule = moduleSelection?.learnerKey === learnerKey ? moduleSelection.moduleId : null;
+  const selectedModule = requestedModule === 'all' ? 'all'
+    : requestedModule && moduleOptions.some(module => module.id === requestedModule) ? requestedModule
+      : currentModule ? `native:${currentModule.id}` : 'all';
+  const setModuleId = (moduleId: string) => setModuleSelection({ learnerKey, moduleId });
   const lectures = useMemo(() => allLectures.filter(row => selectedModule === 'all' || row.moduleId === selectedModule), [allLectures, selectedModule]);
   const counts = useMemo(() => lectureCounts(lectures), [lectures]);
   const tabs: PageTabItem[] = [
@@ -165,13 +191,13 @@ export default function AttendancePage() {
               <label className={styles.moduleField}><span>Select Module</span>
                 <select className={styles.moduleSelect} aria-label="Module" value={selectedModule} onChange={event => { setModuleId(event.target.value); setFilter('all'); }}>
                   <option value="all">All modules</option>
-                  {data.modules.map(module => <option key={module.id} value={module.id}>{module.title}</option>)}
+                  {moduleOptions.map(module => <option key={module.id} value={module.id}>{module.title}</option>)}
                 </select>
               </label>
               <div className={styles.moduleOverview}>
                 <h2>Module Overview</h2>
-                <p className={styles.selectedModule} title={data.modules.find(module => module.id === selectedModule)?.title || 'All modules'}>
-                  {data.modules.find(module => module.id === selectedModule)?.title || 'All modules'}
+                <p className={styles.selectedModule} title={moduleOptions.find(module => module.id === selectedModule)?.title || 'All modules'}>
+                  {moduleOptions.find(module => module.id === selectedModule)?.title || 'All modules'}
                 </p>
                 <p className={styles.rateDescription} title="Includes late attendance">{counts.rate == null ? 'No completed attendance records yet' : <>{counts.rate}% attendance<span className="sr-only"> · includes late attendance</span></>}</p>
               </div>
@@ -182,6 +208,7 @@ export default function AttendancePage() {
                 <Stat label="Covered Missed" value={counts.covered} total={counts.all} icon="ri-star-fill" tone="covered" />
               </div>
             </Panel>
+            {schedule.error && <p role="alert" className={styles.scheduleError}>Current module could not be identified. <button type="button" onClick={schedule.refresh}>Retry schedule</button></p>}
             <AttendanceLectureList key={selectedModule} lectures={lectures} moduleId={selectedModule} onModuleChange={setModuleId}
               filter={filter} onFilterChange={setFilter} tabs={tabs} onOpen={openActivities} onReport={setReport}
               onCatchup={row => { setCatchup(row); setCatchupBooking(null); }} />

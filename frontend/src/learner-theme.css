@@ -217,7 +217,8 @@
 }
 
 /* Keep the existing dark-mode control, with navy surfaces and readable text. */
-:root[data-theme="dark"]:has(.dashboard-theme[data-workspace-role="learner"]) {
+:root[data-theme="dark"]:has(.dashboard-theme[data-workspace-role="learner"]),
+:root[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"] {
   --learner-soft: #1e344d;
   --learner-accent-soft: #302748;
   --learner-success-soft: #163c31;
@@ -235,6 +236,12 @@
   --kbc-border: #3b526c;
   --kbc-text: #f6f8fb;
   --kbc-muted: #b6c4d5;
+  --kbc-learner-surface: #182d48;
+  --kbc-learner-page: #101e30;
+  --kbc-learner-border: #3b526c;
+  --kbc-learner-text: #f6f8fb;
+  --kbc-learner-muted: #b6c4d5;
+  --kbc-learner-primary-dark: #d7c4f4;
   --kbc-primary: #24496b;
   --kbc-primary-deep: #d2deed;
   --kbc-primary-secondary: #315f89;
@@ -451,7 +458,7 @@ body .dashboard-theme[data-workspace-role="learner"] [aria-busy="true"] .kbc-ske
   border-color: rgb(196 175 228 / 0.52) !important;
 }
 
-[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] [aria-busy="true"] .kbc-skeleton {
+[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] .kbc-skeleton {
   background: linear-gradient(90deg, #263f59 25%, #3a5572 50%, #263f59 75%);
   background-size: 200% 100%;
 }
@@ -518,6 +525,10 @@ body:has(.dashboard-theme[data-workspace-role="learner"]) .dashboard-theme[data-
 
 body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-sidebar-panel :is(a, button) {
   color: #ffffff;
+}
+
+body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-sidebar-panel:not([data-collapsed]) nav[aria-label="Learner primary navigation"] :is(a, button) {
+  border-radius: 0;
 }
 
 body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-sidebar-panel :is(a, button):not([aria-current="page"]):not([aria-current="true"]) {
@@ -736,4 +747,59 @@ body .dashboard-theme[data-workspace-role="learner"] .workspace-main .workspace-
   .kbc-learner-header {
     height: 64px !important;
   }
+}
+
+/* Dark learner chrome is shared by every learner screen. Keep the purple
+   reference treatment above for light mode. */
+html[data-theme="dark"] body:has(.dashboard-theme[data-workspace-role="learner"]) .dashboard-theme[data-workspace-role="learner"] :is(.kbc-learner-sidebar, .kbc-learner-sidebar-panel) {
+  background: #111f32 !important;
+}
+
+html[data-theme="dark"] body:has(.dashboard-theme[data-workspace-role="learner"]) .dashboard-theme[data-workspace-role="learner"] .kbc-learner-header {
+  background: #162740 !important;
+  border-bottom: 1px solid #3b526c !important;
+}
+
+html[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] :is(.kbc-learner-sidebar-pattern, .kbc-learner-header-pattern) {
+  opacity: 0.06;
+}
+
+html[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-sidebar-panel :is(a[aria-current="page"], button[aria-current="true"]) {
+  background: #304766 !important;
+  color: #f6f8fb !important;
+  box-shadow: inset 3px 0 0 #bfa3ee;
+}
+
+html[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-sidebar-panel :is(a, button):not([aria-current="page"]):not([aria-current="true"]):hover,
+html[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-sidebar-panel :is(a, button):not([aria-current="page"]):not([aria-current="true"]):focus-visible {
+  background: #24405d !important;
+}
+
+html[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-header .kbc-workspace-switcher-button {
+  background: #304766 !important;
+  border-color: #526b88 !important;
+  box-shadow: none !important;
+}
+
+html[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] .kbc-learner-header .kbc-workspace-switcher-button:is(:hover, [aria-expanded="true"]) {
+  background: #3b5577 !important;
+}
+
+html[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] .workspace-breadcrumbs {
+  background: transparent !important;
+  border-color: transparent !important;
+}
+
+html[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] .workspace-breadcrumb-home {
+  background: #263d5a !important;
+  border-color: #526b88 !important;
+  color: #f6f8fb !important;
+}
+
+html[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] .workspace-breadcrumb-step {
+  background: #263d5a !important;
+}
+
+html[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] .workspace-breadcrumb-step.is-current {
+  background: #4a3e66 !important;
 }

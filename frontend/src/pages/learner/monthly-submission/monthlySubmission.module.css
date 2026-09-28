@@ -40,8 +40,6 @@
 .statusFilters { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
 .statusFilters button { min-height: 44px; padding: 10px 22px; border: 1px solid #cad6e3; border-radius: 10px; background: white; color: #294e73; font-size: 14px; font-weight: 700; }
 .statusFilters button[aria-pressed='true'] { background: #18304d; border-color: #18304d; color: white; }
-.statusFilters button[data-filter='accepted'][aria-pressed='true'] { background: #166534; border-color: #166534; }
-.statusFilters button[data-filter='rejected'][aria-pressed='true'] { background: #991b1b; border-color: #991b1b; }
 .filterEmpty { padding: 24px; border: 1px dashed #bdccdc; border-radius: 12px; background: white; color: #526b85; font-size: 14px; line-height: 1.7; }
 .submissions { display: grid; gap: 16px; margin: 24px 0; }
 .submissions > .sectionHeading { align-items: center; flex-wrap: wrap; }
@@ -231,7 +229,9 @@
   gap: 18px;
   color: #211650;
 }
-.pageHeader h1 { color: #25145e; font-size: clamp(28px, 3vw, 32px); letter-spacing: -.9px; }
+.pageHeader > div { min-width: 0; padding-left: 22px; }
+.pageHeader h1 { position: relative; color: #25145e; font-size: clamp(28px, 3vw, 32px); letter-spacing: -.9px; }
+.pageHeader h1::before { position: absolute; top: .08em; bottom: .08em; left: -22px; width: 5px; border-radius: 3px; background: #4a168f; content: ''; }
 .pageHeader p { max-width: 590px; color: #606385; line-height: 1.55; }
 .total { padding: 9px 14px; border-color: #e7e2f2; color: #2b1a68; box-shadow: 0 5px 18px #31206d0d; }
 .total svg { color: #3e2190; }
@@ -272,17 +272,22 @@
 .monthSelectLabel select { height: 44px; padding: 0 34px 0 13px; border-color: #e3dcf5; border-radius: 9px; color: #2b1a68; font-size: 13px; box-shadow: 0 4px 12px #3820780e; }
 .monthSelectLabel select:hover { border-color: #7755cd; }
 .monthSelectLabel select:focus-visible { outline-color: #6944c6; }
-.primary.extraActivityButton { height: 44px; min-height: 44px; padding: 0 15px; border-color: #321078; border-radius: 9px; background: #321078; box-shadow: 0 7px 14px #32107825; font-size: 12px !important; }
-.primary.extraActivityButton:hover { background: #452092; }
+.primary.extraActivityButton { height: 44px; min-height: 44px; padding: 0 15px; border-color: var(--action-primary, #5b21b6); border-radius: 9px; background: var(--action-primary, #5b21b6); box-shadow: 0 7px 14px rgb(79 45 127 / .16); font-size: 12px !important; }
+.primary.extraActivityButton:hover { background: var(--action-primary-hover, #6d28d9); }
 
-.assignmentSection { display: grid; gap: 0; }
+.assignmentWorkspace { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 320px); align-items: start; gap: 18px; min-width: 0; }
+.assignmentDetail { min-width: 0; }
+.assignmentSection { display: grid; gap: 0; padding: 16px; border: 1px solid #e8e3f2; border-radius: 18px; background: #fff; box-shadow: 0 9px 28px #3921790d; }
 .sectionHeading { margin-bottom: 10px; }
 .sectionHeading h2 { color: #271760; font-size: 17px; letter-spacing: -.2px; }
 .sectionHeading > span { color: #77738e; font-size: 11px; }
-.statusFilters { gap: 7px; margin: 4px 0 12px; }
-.statusFilters button { min-height: 34px; padding: 7px 17px; border-color: #e4e0ed; border-radius: 8px; color: #2d2360; font-size: 11px; }
-.statusFilters button[aria-pressed='true'], .statusFilters button[data-filter='accepted'][aria-pressed='true'], .statusFilters button[data-filter='rejected'][aria-pressed='true'] { border-color: #3a128b; background: #3a128b; color: #fff; }
-.assignmentGrid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.filterToolbar { display: grid; gap: 12px; margin: 0 0 16px; }
+.filterToolbar .statusFilters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; width: 100%; margin: 0; }
+.assignmentCount { color: #77738e; font-size: 11px; }
+.statusFilters button { width: 100%; min-height: 34px; min-width: 0; padding: 7px 10px; border-color: #e4e0ed; border-radius: 8px; color: #2d2360; font-size: 11px; }
+.statusFilters button[aria-pressed='true'] { border-color: var(--action-primary, #5b21b6); background: var(--action-primary, #5b21b6); color: #fff; }
+.statusFilters button:focus-visible { outline: 2px solid var(--action-primary, #5b21b6); outline-offset: 2px; }
+.assignmentGrid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
 .assignment { gap: 9px; min-height: 154px; padding: 12px 13px; border-color: #e9e5f2; border-radius: 12px; color: #25195f; box-shadow: 0 5px 15px #3921790b; }
 .assignment[aria-pressed="true"] { border-color: #783fd2; background: #fbf9ff; box-shadow: 0 6px 16px #6c3acc1d, inset 0 0 0 1px #783fd2; }
 .assignment:hover { border-color: #8053d4; box-shadow: 0 6px 16px #6c3acc1b; }
@@ -331,7 +336,7 @@
 
 @media (max-width: 1040px) {
   .monthSelector { grid-template-columns: minmax(230px, 1fr) 90px minmax(260px, .95fr); }
-  .assignmentGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .assignmentWorkspace { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 760px) {
   .page { padding: 20px 16px 30px; }
@@ -354,3 +359,94 @@
   .heroHeader > .status { margin-top: 4px; }
   .facts dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* The submission screens use fixed light colours, so keep their dark palette
+   local to these screens and leave the document/PDF canvas unchanged. */
+:global([data-theme='dark']) :is(.page, .extraPage) {
+  color: var(--kbc-text);
+}
+
+:global([data-theme='dark']) :is(
+  .total, .month, .hero, .assignmentSection, .assignment, .filterEmpty,
+  .loading, .empty, .extraForm, .extraHistory, .extraAnswer, .extraMetadata
+) {
+  background: var(--kbc-surface);
+  border-color: var(--kbc-border);
+  color: var(--kbc-text);
+}
+
+:global([data-theme='dark']) :is(
+  .monthSelector, .heroHeader, .extraHeader, .extraSteps, .extraFooter,
+  .submissionAttempt, .attachment, .feedback, .facts, .pdfViewer
+) {
+  background: #213854;
+  border-color: var(--kbc-border);
+  color: var(--kbc-text);
+}
+
+:global([data-theme='dark']) :is(.month[aria-pressed='true'], .assignment[aria-pressed='true']) {
+  background: #302748;
+  border-color: #8060b1;
+}
+
+:global([data-theme='dark']) :is(
+  .heroIcon, .assignmentIcon, .statusFilters button, .secondary,
+  .feedbackToggle, .pdfToolbar button, .extraKsbTags span, .ksbs span
+) {
+  background: #263d5a;
+  border-color: #526b88;
+  color: #e8dcff;
+}
+
+:global([data-theme='dark']) .statusFilters button[aria-pressed='true'] {
+  background: #5e378d;
+  border-color: #8060b1;
+  color: #fff;
+}
+
+:global([data-theme='dark']) :is(
+  .pageHeader h1, .monthSelector h2, .sectionHeading h2, .assignment > strong,
+  .heroHeader h2, .brief h3, .facts dd, .feedbackHeading h4,
+  .submissionAttempt h5, .submittedAnswer summary, .empty h2,
+  .extraMetadata dd, .extraAnswer summary, .extraProse
+) {
+  color: var(--kbc-text);
+}
+
+:global([data-theme='dark']) :is(
+  .pageHeader p, .monthSelector p:not(.eyebrow), .monthTopic,
+  .month small, .month > span:not([class]), .assignmentTopic, .assignmentBottom,
+  .focus, .question, .attachmentPreview > p, .feedbackReviewer,
+  .feedbackLabel, .feedbackText, .feedbackEmpty, .facts dt, .facts dd small,
+  .heroFooter > p, .extraHeader p:not(.eyebrow), .extraMetadata dt
+) {
+  color: var(--kbc-muted);
+}
+
+:global([data-theme='dark']) :is(.extraAnswer summary, .pdfToolbar button:hover:not(:disabled), .feedbackToggle:hover) {
+  background: #304766;
+}
+
+:global([data-theme='dark']) :is(.extraCheck, .error, .changesRequested) {
+  background: #413923;
+  border-color: #a88048;
+  color: #f5d3a0;
+}
+
+:global([data-theme='dark']) :is(.extraCheck[data-passed='true'], .extraFeedback) {
+  background: #163c31;
+  border-color: #468f74;
+  color: #a8e4c5;
+}
+
+:global([data-theme='dark']) .extraAnswer summary {
+  border-color: var(--kbc-border);
+  color: var(--kbc-text);
+}
+
+:global([data-theme='dark']) .status { background: #263d5a; color: #dbe8f7; }
+:global([data-theme='dark']) .status[data-status='draft'] { background: #302748; color: #d7c4f4; }
+:global([data-theme='dark']) .status:is([data-status='accepted'], [data-status='completed']) { background: #163c31; color: #a8e4c5; }
+:global([data-theme='dark']) .status:is([data-status='rejected'], [data-status='referred'], [data-status='returned']) { background: #462a32; color: #edb1b1; }
+:global([data-theme='dark']) .status:is([data-status='todo'], [data-status='partial'], [data-status='escalated']) { background: #413923; color: #f5d3a0; }
+:global([data-theme='dark']) .status[data-status='submitted_for_tutor_review'] { background: #203c61; color: #b9d7ff; }

@@ -233,9 +233,8 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
   const { success, error } = useToast();
   const phase: 'create' | 'edit' = editing ? 'edit' : 'create';
   const [formData, setFormData] = useState<Record<string, string>>(INITIAL);
-  // Apprenticeship intake is temporarily switched off, so commercial is the
-  // only selectable kind and therefore the default. When editing, the record's
-  // own kind replaces it once the fields load.
+  // Commercial is the default kind on create. When editing, the record's own
+  // kind replaces it once the fields load.
   const [kind, setKind] = useState<LearnerKind>('commercial');
   const [submitting, setSubmitting] = useState(false);
   // Editing starts empty and fills in, so the form must say it is still loading
@@ -764,7 +763,7 @@ export function CreateUserModal({ onClose, onCreated, editing, onSaved }: {
                 value: 'apprenticeship' as LearnerKind,
                 label: 'Apprenticeship learner',
                 detail: 'Full ILR, compliance documents and the enrolment wizard.',
-                disabled: true,
+                disabled: Boolean(editing),
               },
               {
                 value: 'commercial' as LearnerKind,

@@ -287,6 +287,12 @@ export interface EnrolmentBoard {
     groupMembership: string;
     signatureUrl?: string;
     hasMandate: boolean;
+    /** Home address on the learner's record, as one line ('' when none). */
+    address?: string;
+    /** The learner's reusable signature (PNG data URL), saved at first sign-in. */
+    savedSignature?: string;
+    /** "YYYY-MM-DD" the reusable signature was saved. */
+    savedSignatureDate?: string;
   };
   activity: {
     aptemUsage: string;
@@ -346,6 +352,47 @@ export interface PersonalDetails {
   /** PNG data URL — drawn or uploaded via SignaturePad. */
   signature?: string;
   /** ISO date the signature was captured. */
+  signatureDate?: string;
+}
+
+/**
+ * The ILR step (slug 'ilr-details'): what the Individualised Learner Record asks that
+ * the learner record does not already hold. Name, DOB, current address, phone
+ * and email are shown read-only from the record instead. Stored in its own
+ * table (enrolment."Wizard_Ilr_Learner_Details"), separate from the Extended ILR.
+ * Dropdown answers are the DfE ILR option labels (see ilrLearnerDetailsOptions).
+ */
+export interface IlrLearnerDetails {
+  yearsAtAddress: number | null;
+  sinceBirth: boolean | null;
+  postcodePriorToEnrolment: string;
+  niNumber: string;
+  /** Ticked when the learner has no NI number and has applied for one. */
+  niApplied: boolean | null;
+  legalSex: string;
+  pronouns: string;
+  ethnicity: string;
+  longTermDisability: boolean | null;
+  highestQualification: string;
+  employmentStatus: string;
+  /** In paid employment only. ISO date. */
+  employmentStartDate?: string;
+  /** In paid employment only. */
+  jobTitle?: string;
+  /** In paid employment only. */
+  selfEmployed?: boolean | null;
+  fullTimeEducation: boolean | null;
+  /** In full-time education or training only. ISO date. */
+  expectedLeavingDate?: string;
+  /** Not in paid employment only. */
+  lengthOfUnemployment?: string;
+  /** Not in paid employment only. */
+  volunteers?: boolean | null;
+  stateBenefits: string;
+  /** When a benefit is claimed: in the learner's own right or a joint claim. */
+  benefitClaimBasis?: string;
+  /** PNG data URL — the "information on this form is correct" certification. */
+  signature?: string | null;
   signatureDate?: string;
 }
 
@@ -413,6 +460,9 @@ export interface IlrForm {
     email: string;
     phone: string;
     sameAddressAsLearner: boolean | null;
+    /** Only asked when the address is not the learner's; optional so older saved answers still load. */
+    postcode?: string;
+    address?: string;
   };
   eligibility: {
     employedInEngland: boolean | null;
@@ -437,6 +487,23 @@ export interface IlrForm {
   otherTraining: { attended12m: boolean | null; completedWhen: string };
   circumstances: { caringResponsibilities: string; other: string; careLeaver: boolean | null };
   understanding: { programmeUnderstanding: string; careerProgression: string };
+  /**
+   * The "Additional Information" section. It replaced the age questions, media
+   * consent, the declarations below and both signature blocks on the form; those
+   * keys stay in this type so answers saved before the change still load, but
+   * they are no longer asked or printed. Of `declarations`, only
+   * over50PercentEngland, wageRateBand, knownByOtherName and plrAccessAware are
+   * still asked — in this section.
+   */
+  additionalInformation: {
+    jobRoleRelevance: string;
+    /** 'Yes' | 'No' | '' — residence in the UK for 3 years not mainly for full-time education. */
+    residenceNotForFullTimeEducation: string;
+    /** 'Yes' | 'No' | '' — holds an EHCP issued by a local authority. */
+    ehcp: string;
+    /** Only asked when knownByOtherName is true; cleared when it is not. */
+    otherNames: string;
+  };
   additional: { aged16to18: boolean | null; aged19to24: boolean | null };
   media: { consent: boolean | null };
   declarations: {
@@ -462,21 +529,35 @@ export interface PlrRecord {
   qualificationType: string;
   subject: string;
   level?: string;
+  startDate?: string;
+  endDate?: string;
   awardDate?: string;
   credits: number;
   grade: string;
   recordType: 'Imported' | 'Manual' | string;
 }
 export interface PlrState {
+  /** No longer asked on the step; kept so a saved ULN is carried through unchanged. */
   uln: string;
   records: PlrRecord[];
 }
 
 export interface CvJobForm {
+  /** Legacy: a file name only. Uploads are now stored in Azure (see cvJobDocuments). */
   cvFile?: string;
+  /** Previous experience, or "N/A" when a CV was uploaded. */
   experienceText?: string;
+  /** Legacy: no longer asked; kept so saved answers still load. */
   pmQualifications: string;
   functionalSkillsEnrol?: string;
+  highestQualification?: string;
+  highestQualificationField?: string;
+  /** "Do you have any <programme field> qualifications?" */
+  hasFieldQualification?: boolean | null;
+  /** Only asked when hasFieldQualification is true; cleared when it is not. */
+  highestFieldQualification?: string;
+  gcseEnglish?: boolean | null;
+  gcseMaths?: boolean | null;
 }
 
 export interface PolicyDoc {
@@ -491,6 +572,7 @@ export interface PoliciesState {
 
 export interface WizardDraft {
   personalDetails: PersonalDetails;
+  ilrDetails: IlrLearnerDetails;
   skillsRadar: SkillsRadarState;
   ilr: IlrForm;
   plr: PlrState;
@@ -504,12 +586,16 @@ export interface WizardStepDef {
 }
 
 export const WIZARD_STEPS: WizardStepDef[] = [
-  { slug: 'introduction', label: 'Introduction' },
+  // Slugs are the page addresses and never change; only the order and the
+  // labels follow the onboarding flow.
+  { slug: 'introduction', label: 'Welcome' },
+  { slug: 'before-you-begin', label: 'Before You Begin' },
   { slug: 'personal-details', label: 'Personal Details' },
-  { slug: 'skills-radar', label: 'Skills Radar' },
+  { slug: 'ilr-details', label: 'ILR' },
   { slug: 'ilr', label: 'Extended ILR' },
+  { slug: 'cv-job', label: 'CV/Job Description' },
   { slug: 'plr', label: 'Personal Learning Record' },
-  { slug: 'cv-job', label: 'CV / Job Description' },
+  { slug: 'skills-radar', label: 'Skills Radar' },
   { slug: 'policies', label: 'Policies' },
-  { slug: 'next-steps', label: 'Next Steps' },
+  { slug: 'next-steps', label: 'What Happens Now?' },
 ];

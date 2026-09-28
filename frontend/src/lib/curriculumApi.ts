@@ -2174,10 +2174,12 @@ export interface FreeProgrammeModule {
   components: FreeProgrammeComponent[];
 }
 
+type ExpandedCurriculumGroup = Omit<CurriculumGroup, 'modules'> & { modules: CurriculumModule[] };
+
 export interface CurriculumProgrammeDetail {
   schema: string;
   programme: CurriculumProgramme;
-  cohorts: Array<CurriculumCohort & { groups: Array<CurriculumGroup & { modules: CurriculumModule[] }> }>;
+  cohorts: Array<Omit<CurriculumCohort, 'groups'> & { groups: ExpandedCurriculumGroup[] }>;
   flat: {
     cohorts: CurriculumCohort[];
     groups: CurriculumGroup[];

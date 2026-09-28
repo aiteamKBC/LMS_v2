@@ -309,6 +309,19 @@ export function accountAction(
 }
 
 /**
+ * Delete a staff account for good: the sign-in account and the staff record
+ * behind it. The server refuses learners, employers and the caller's own
+ * account, and answers 409 when other records still point at it — suspend it
+ * instead in that case.
+ */
+export function deleteStaffAccount(id: number): Promise<{ deleted: true; id: number }> {
+  return request<{ deleted: true; id: number }>(
+    `${BASE}/accounts/${id}/`,
+    { method: 'POST', body: JSON.stringify({ action: 'delete' }) },
+  );
+}
+
+/**
  * Also make this person a learner.
  *
  * Creates their `enrolment."Created_users"` record and nothing else. The login

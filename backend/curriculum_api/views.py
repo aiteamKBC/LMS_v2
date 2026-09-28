@@ -4107,6 +4107,23 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
         metadata = dict(artifact)
         metadata.pop('lmsHiddenFromLearners', None)
         metadata.pop('lmsTranscriptTimeline', None)
+        same_recording = None if existing else _same_artifact_under_new_graph_id(cursor, lock, payload)
+        if same_recording:
+            # Teams re-issued the id of an artifact already saved (same call and
+            # recording window). Keep the one LMS row -- its id, archive, visibility
+            # and transcript timing -- and only move it to the current Graph id.
+            row_id, saved = same_recording
+            saved_metadata = parse_json_value(saved, {})
+            metadata['lmsHiddenFromLearners'] = saved_metadata.get('lmsHiddenFromLearners') is True
+            if 'lmsTranscriptTimeline' in saved_metadata:
+                metadata['lmsTranscriptTimeline'] = saved_metadata['lmsTranscriptTimeline']
+            cursor.execute(
+                f'UPDATE {authoring_table_name(LIVE_SESSION_ARTIFACTS_TABLE)} SET graph_artifact_id=%s, content_url=%s, '
+                'content_correlation_id=%s, metadata=%s, updated_at=%s WHERE id=%s',
+                [graph_id, payload['content_url'], payload['content_correlation_id'], json_db_value(metadata),
+                 datetime.utcnow(), row_id],
+            )
+            return True
         if existing:
             saved_metadata = parse_json_value(existing[0], {})
             metadata['lmsHiddenFromLearners'] = saved_metadata.get('lmsHiddenFromLearners') is True
@@ -4115,6 +4132,24 @@ def upsert_live_session_artifact(occurrence, artifact_type, artifact):
         payload['metadata'] = json_db_value(metadata)
         authoring_upsert(LIVE_SESSION_ARTIFACTS_TABLE, ['occurrence_id', 'artifact_type', 'graph_artifact_id'], payload)
     return True
+
+
+def _same_artifact_under_new_graph_id(cursor, lock, payload):
+    """(row id, metadata) of this occurrence's artifact for the same call and recording window.
+
+    Graph has returned one recording under a second id on a later sync; matching
+    only on graph_artifact_id then saved and archived it twice.
+    """
+    if not payload['call_id'] or not payload['created_datetime']:
+        return None
+    cursor.execute(
+        f'SELECT id, metadata FROM {authoring_table_name(LIVE_SESSION_ARTIFACTS_TABLE)} '
+        'WHERE occurrence_id=%s AND artifact_type=%s AND call_id=%s AND created_datetime=%s '
+        'AND end_datetime IS NOT DISTINCT FROM %s ORDER BY created_at LIMIT 1' + lock,
+        [payload['occurrence_id'], payload['artifact_type'], payload['call_id'],
+         payload['created_datetime'], payload['end_datetime']],
+    )
+    return cursor.fetchone()
 
 
 def remove_artifact_from_wrong_occurrences(occurrences, target_occurrence, artifact_type, artifact):

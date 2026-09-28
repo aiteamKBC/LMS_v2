@@ -45,10 +45,16 @@ export function normalizeResolvedReviews(events: CoachCalendarEvent[]) {
 export function reviewActionMatrix(event: CoachCalendarEvent): ReviewActionMatrix {
   const status = normalizedReviewStatus(event);
   const formAvailable = Boolean(event.hasReviewForm || event.reviewInstanceId || event.reviewTemplateId);
+  const importedPreStartReview = Boolean(
+    event.aptemReviewId && (status === 'not-scheduled' || status === 'scheduled'),
+  );
   return {
     schedule: status === 'not-scheduled' ? 'Schedule' : status === 'scheduled' ? 'Reschedule' : null,
     view: true,
-    viewForm: formAvailable,
+    // Imported reviews must remain reachable before they start even when the
+    // import contains summary metadata only. The workspace decides whether it
+    // is an editable form or the protected summary-only presentation.
+    viewForm: formAvailable || importedPreStartReview,
     presentation: Boolean(event.enrolmentId),
     join: canJoinMeeting({ ...event, status }),
   };

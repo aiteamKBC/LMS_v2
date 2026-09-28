@@ -30,6 +30,8 @@ export function groupMonthlyAssignments(real: LearnerDetail, metadata: CoverMeta
     // Import timestamps are not delivery dates; ambiguous dates stay unscheduled.
     const useSchedule = schedule && !['original_created_at', 'source_date', 'undated'].includes(schedule.date_source || '');
     const date = useSchedule ? schedule.date_needs_review ? '' : dateKey(schedule.date) : dateKey(component.sessionDate);
+    const dueDate = useSchedule && !schedule.date_needs_review && schedule.due_timing?.trim().toLowerCase() === 'end of week'
+      ? dateKey(schedule.week_end) : '';
     const month = date.slice(0, 7);
     const status = statuses?.[id] || real.componentMarkingStatus?.[id]?.status
       || (completed.has(id) ? 'completed' : statuses ? 'todo' : '');
@@ -37,7 +39,7 @@ export function groupMonthlyAssignments(real: LearnerDetail, metadata: CoverMeta
     const revise = ['referred', 'returned', 'rejected', 'partial'].includes(status);
     const hasContent = hasComponentContent({ ...component, title: component.component });
     const awaitingBrief = !hasContent && status === 'todo';
-    return { ...component, id, date, month, status, submitted, awaitingBrief,
+    return { ...component, id, date, dueDate, month, status, submitted, awaitingBrief,
       submissionCount: submissionCounts[id],
       marking: real.componentMarkingStatus?.[id],
       action: awaitingBrief ? 'Awaiting assignment brief' : status === 'draft' ? 'Continue assignment'
@@ -59,6 +61,17 @@ export function groupMonthlyAssignments(real: LearnerDetail, metadata: CoverMeta
 
 export type AssignmentMonth = ReturnType<typeof groupMonthlyAssignments>[number];
 export type MonthlyAssignmentRow = AssignmentMonth['assignments'][number];
+
+export function assignmentToday(today = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(today);
+  const part = (type: string) => parts.find(item => item.type === type)?.value || '';
+  return `${part('year')}-${part('month')}-${part('day')}`;
+}
+
+export function isOverdueAssignment(assignment: MonthlyAssignmentRow, today = assignmentToday()) {
+  return Boolean(assignment.dueDate && assignment.dueDate < today
+    && ['todo', 'draft', 'referred', 'returned', 'rejected', 'partial'].includes(assignment.status));
+}
 
 export function defaultAssignmentMonth(groups: AssignmentMonth[], today = new Date()) {
   const parts = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/London', year: 'numeric', month: '2-digit' }).formatToParts(today);

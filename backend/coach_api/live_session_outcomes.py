@@ -5,8 +5,9 @@ their own Teams attendance, calculated per occurrence into
 curriculum.live_session_learner_attendance. This module only reads that
 result; it never changes the occurrence, its meeting or its attendance.
 
-A learner's calendar shows ``completed`` when that learner was present and
-``ended`` otherwise. A coach's calendar shows ``completed`` when any learner was
+A learner's calendar shows ``completed`` when that learner was present, or
+watched the whole recording afterwards (``watchedRecording``), and ``ended``
+otherwise. Watching does not change the attendance record. A coach's calendar shows ``completed`` when any learner was
 present and ``ended`` otherwise.
 """
 from datetime import datetime, timedelta
@@ -51,10 +52,13 @@ def _present_occurrences(occurrence_ids, *, learner_profile_id=None, learner_ema
     return set(rows.values_list('occurrence_id', flat=True).distinct())
 
 
-def annotate_live_session_outcomes(events, *, learner_profile_id=None, learner_email='', now=None):
+def annotate_live_session_outcomes(events, *, learner_profile_id=None, learner_email='', now=None,
+                                   recording_viewer=None):
     """Add ``meetingOutcome`` ('ended' | 'completed' | None) to elapsed live-session events.
 
     Pass the learner to judge that learner's attendance; leave it out for a coach view.
+    ``recording_viewer`` is (learner kind, source learner id): a fully watched recording
+    also completes the session on that learner's calendar.
     """
     now_local = timezone.localtime(now).replace(tzinfo=None)
     elapsed = []
@@ -74,4 +78,12 @@ def annotate_live_session_outcomes(events, *, learner_profile_id=None, learner_e
     ) if tracked else set()
     for event in elapsed:
         event['meetingOutcome'] = 'completed' if event.get('occurrenceId') in present else 'ended'
+    missed = {event['occurrenceId'] for event in elapsed if event['meetingOutcome'] == 'ended' and event.get('occurrenceId')}
+    if recording_viewer and missed:
+        from curriculum_api.recording_views import fully_watched_occurrences
+        watched = fully_watched_occurrences(*recording_viewer, missed)
+        for event in elapsed:
+            if event['meetingOutcome'] == 'ended' and event.get('occurrenceId') in watched:
+                event['meetingOutcome'] = 'completed'
+                event['watchedRecording'] = True
     return events

@@ -4681,6 +4681,12 @@ table tbody td:last-child {
   box-shadow: 0 10px 22px -20px rgb(76 29 149 / 0.72);
 }
 
+@media (max-width: 1023px) {
+  .workspace-content > .kbc-workspace-topbar {
+    z-index: 10;
+  }
+}
+
 .kbc-topbar-title {
   color: white !important;
 }

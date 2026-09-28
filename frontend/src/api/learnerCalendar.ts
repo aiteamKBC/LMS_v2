@@ -16,6 +16,8 @@ export interface LearnerCalendarEvent {
   id: string;
   /** Server-derived once the booked time has passed: learner attended (completed) or not (ended). */
   meetingOutcome?: 'ended' | 'completed' | null;
+  /** Live session the learner missed but then watched in full as a recording. */
+  watchedRecording?: boolean;
   eventKey: string;
   title: string;
   source: 'mcr' | 'progress-review' | string;
@@ -110,6 +112,9 @@ export function fetchLearnerCalendarEvents(kind: LearnerKind, id: string, option
 export type LearnerReviewDefinition = Omit<ReviewInstanceFormDefinition, 'instance'> & {
   instance: ReviewInstanceFormDefinition['instance'] | null;
   occurrenceNumber?: number;
+  /** Reusable learner signature from enrolment.Created_users, when present. */
+  savedSignature?: string;
+  savedSignatureName?: string;
 };
 
 export function fetchLearnerEventReviewInstance(
@@ -152,26 +157,29 @@ export function learnerMeetingArtifactContentUrl(kind: LearnerKind, learnerId: s
   return options.preview ? `${base}?preview=1` : base;
 }
 
-export async function signLearnerProgressReview(kind: LearnerKind, learnerId: string, eventKey: string, input: { name: string; signature: string }): Promise<{ event: LearnerCalendarEvent }> {
+export async function signLearnerProgressReview(kind: LearnerKind, learnerId: string, eventKey: string, input: { name: string; signature: string }): Promise<{ event: LearnerCalendarEvent; monthlyLogSync?: { status: string; month?: string; message?: string } | null }> {
   const response = await fetch(`${BASE}/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/sign/`, {
     method: 'POST',
     credentials: 'include',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(input),
   });
-  const data = await response.json().catch(() => ({})) as { event?: LearnerCalendarEvent; error?: string };
+  const data = await response.json().catch(() => ({})) as { event?: LearnerCalendarEvent; error?: string; monthlyLogSync?: { status: string; month?: string; message?: string } | null };
   if (!response.ok || !data.event) throw new Error(data.error || `Could not sign the review (${response.status}).`);
   invalidateLearnerCalendarCache(kind, learnerId);
-  return { event: data.event };
+  if (data.monthlyLogSync?.status === 'failed') {
+    throw new Error(data.monthlyLogSync.message || 'The MCM was signed, but the monthly log could not be updated. Please try again.');
+  }
+  return { event: data.event, monthlyLogSync: data.monthlyLogSync };
 }
 
 export type BookableSessionType =
   | 'first-session'
   | 'catch-up'
   | 'student-support'
-  // Monthly coaching and progress reviews also come from the programme cycle,
-  // scheduled coach-side; booking one here adds a meeting of that kind rather
-  // than filling a scheduled slot.
+  // Monthly coaching and progress reviews resolve to their official
+  // Curriculum occurrence before scheduling; they never create an unlinked
+  // standalone review row.
   | 'mcr'
   | 'progress-review'
   | 'review'
@@ -475,9 +483,11 @@ export interface LearnerFirstSession {
   event: LearnerCalendarEvent | null;
   /** The session date, "YYYY-MM-DD", or null when nothing is booked. */
   startsOn: string | null;
-  /** 'book' — nothing booked yet. 'waiting' — booked, day not arrived.
-   *  'open' — the session day has come, so the programme runs normally. */
-  access: 'book' | 'waiting' | 'open';
+  /** 'enrolling' — an apprentice who has not finished enrolment; the first
+   *  session comes after it, so nothing is held yet. 'book' — nothing booked
+   *  yet. 'waiting' — booked, day not arrived. 'open' — the session day has
+   *  come, so the programme runs normally. */
+  access: 'enrolling' | 'book' | 'waiting' | 'open';
 }
 
 /**

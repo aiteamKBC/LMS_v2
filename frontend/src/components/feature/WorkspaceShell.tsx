@@ -232,6 +232,9 @@ export function WorkspaceShell({
     'learner-monthly-coaching': 'monthly-coaching', 'learner-progress-reviews': 'progress-reviews', 'learner-reviews': 'reviews',
     'learner-attendance': 'attendance', 'learner-evidence': 'evidence', 'learner-calendar': 'calendar',
   };
+  const homeDashboardPath = routeLearner
+    ? `/workspace/learner/${routeLearner.kind}/${routeLearner.id}/dashboard`
+    : null;
   const stableNavItems = routeLearner
     ? navItems.map(item => {
       const page = learnerPageById[item.id];
@@ -239,7 +242,8 @@ export function WorkspaceShell({
         const childPage = learnerPageById[child.id];
         return childPage ? { ...child, href: learnerHref(childPage, routeLearner.kind, routeLearner.id) } : child;
       });
-      return page ? { ...item, href: learnerHref(page, routeLearner.kind, routeLearner.id), children } : children ? { ...item, children } : item;
+      return page ? { ...item, href: page === 'dashboard' && location.pathname === homeDashboardPath
+        ? homeDashboardPath : learnerHref(page, routeLearner.kind, routeLearner.id), children } : children ? { ...item, children } : item;
     })
     : navItems;
   const workspaceNavItems = auth.account?.role === 'admin' && !navItems.some(item => item.id === 'personal-courses')

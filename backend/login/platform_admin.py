@@ -16,7 +16,8 @@ invent an endpoint. So the surface here is small on purpose:
     GET  /login_api/admin/overview/    headline counts across login + enrolment
     GET  /login_api/admin/accounts/    sign-in accounts, filterable, paginated
     POST /login_api/admin/accounts/<id>/   suspend / restore / unlock /
-                                           resend-invitation / send-password-reset
+                                           resend-invitation / send-password-reset /
+                                           delete (staff accounts only)
     GET  /login_api/admin/audit/       login."Login_audit", filterable, paginated
     GET  /login_api/admin/roles/       the four real roles + live member counts
     GET  /login_api/admin/email-log/   invitation + reset delivery attempts
@@ -41,7 +42,7 @@ from __future__ import annotations
 
 import json
 
-from django.db import DatabaseError, connections, transaction
+from django.db import DatabaseError, IntegrityError, connections, transaction
 from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
@@ -656,7 +657,7 @@ def accounts(request):
 @require_POST
 @require_role(ROLE_ADMIN)
 def account_action(request, pk):
-    """Suspend, restore, unlock, or re-send an account's onboarding mail.
+    """Suspend, restore, unlock, delete, or re-send an account's onboarding mail.
 
     The writes the console legitimately owns. Deliberately *not* here:
     changing an account's role. Role is recomputed from the person's enrolment
@@ -682,10 +683,11 @@ def account_action(request, pk):
         "resend-invitation",
         "send-password-reset",
         "add-learner-record",
+        "delete",
     }:
         return _error(
             "action must be one of: suspend, restore, unlock, resend-invitation, "
-            "send-password-reset, add-learner-record.",
+            "send-password-reset, add-learner-record, delete.",
             400,
         )
 
@@ -833,6 +835,9 @@ def account_action(request, pk):
             "account": _account_json(account, timezone.now(), _row_extras([account])),
         })
 
+    if action == "delete":
+        return _delete_staff_account(request, account, actor)
+
     # An admin suspending themselves would lock the console's own door with no
     # way back through the UI. Cheap guard, and the failure mode is expensive.
     if action == "suspend" and actor is not None and actor.id == account.id:
@@ -880,6 +885,62 @@ def account_action(request, pk):
         pass
 
     return JsonResponse({"account": _account_json(account, timezone.now(), _row_extras([account]))})
+
+
+def _delete_staff_account(request, account, actor):
+    """Remove a staff member: their sign-in account and their Staff_users row.
+
+    Both go, in one transaction. Deleting only the login account would leave the
+    person in the directory, one "Send invitation" away from coming back; deleting
+    only the staff row would leave an account that resolves to nobody.
+
+    Staff only. A learner's account sits on an enrolment record with a compliance
+    trail, and an employer's on the employer record — neither is removed from a
+    sign-in console. Sessions, invitations and password resets go with the
+    account (ON DELETE CASCADE). Anything else that still points at it — personal
+    study records, for one — makes the delete fail, and the answer is to suspend.
+    """
+    from learner_api.models import StaffUser
+
+    if account.subject_type != "staff":
+        return _error("Only staff accounts can be deleted here.", 400, code="not_staff")
+    # Same reasoning as the self-suspend guard, and this one cannot be undone.
+    if actor is not None and actor.id == account.id:
+        return _error("You cannot delete your own account.", 400, code="self_delete")
+
+    account_id, email, staff_id = account.id, account.email, account.subject_id
+    try:
+        with transaction.atomic(using="enrolment"):
+            StaffUser.objects.filter(pk=staff_id).delete()
+            account.delete()
+    except IntegrityError:
+        return _error(
+            "This account still has records linked to it, so it cannot be deleted. "
+            "Suspend it instead.",
+            409,
+            code="has_linked_records",
+        )
+    except DatabaseError as exc:
+        return _error(f"Database error: {exc}", 502)
+
+    # The row the audit entry describes is gone, so the entry carries the email
+    # and the staff id — enough to say who was removed and by whom.
+    try:
+        with transaction.atomic(using="enrolment"):
+            LoginAudit.objects.create(
+                event="admin_delete",
+                email=email,
+                account_id=account_id,
+                succeeded=True,
+                reason=f"staff id {staff_id}"
+                       + (f" by {actor.email}" if actor else " by admin"),
+                ip_address=client_ip(request),
+                user_agent=user_agent(request),
+            )
+    except DatabaseError:
+        pass
+
+    return JsonResponse({"deleted": True, "id": account_id})
 
 
 # ---------------------------------------------------------------------------

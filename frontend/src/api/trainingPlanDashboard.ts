@@ -49,7 +49,21 @@ export type PlanModule = { id: string; title: string; description: string; start
   /** Where the run would have ended with nothing closed. */
   originalEndDate?: string };
 export type PlanReview = Pick<LearnerCalendarEvent, 'id' | 'eventKey' | 'title' | 'source' | 'sequence' | 'status' | 'date' | 'targetDate' | 'scheduledDate' | 'scheduledTime' | 'durationMinutes' | 'coachName' | 'invited'> & { meetingLink?: string | null };
-export type PlanModuleSummary = { id: string; moduleIds: string[]; completed: number; total: number; directHours?: number | null; ksbProgress?: { completed: number; total: number } | null; dates: string[]; title: string; source: string };
+export type PlanModuleSummary = {
+  id: string;
+  moduleIds: string[];
+  completed: number;
+  total: number;
+  directHours?: number | null;
+  ksbProgress?: { completed: number; total: number } | null;
+  dates: string[];
+  title: string;
+  source: string;
+  sessionTitles: Array<{ date: string; title: string }>;
+  activityCounts?: Record<string, number>;
+  ksbCodes?: string[];
+  ksbMappingMissing?: boolean;
+};
 export type TrainingPlanDashboard = {
   /** Per-module activity/hour/KSB summaries already loaded by the overview read. */
   planSubjects?: PlanModuleSummary[];

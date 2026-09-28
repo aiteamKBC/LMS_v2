@@ -7,6 +7,7 @@ import psycopg
 from django.db import DatabaseError, connections
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
+from .projection_performance import measure_projection
 
 from audit_api.last_audit_ledger_views import _is_completed
 from login.permissions import learner_self_or_staff
@@ -20,6 +21,7 @@ from .training_plan_contract import selected_contract
 from .training_plan_dashboard import find_contract, number, rows
 from .otjh_totals import completed_otjh, completed_actual_otjh
 from old_otjh.service import ServiceError
+from . import canonical_learning
 
 log = logging.getLogger(__name__)
 _MISSING = object()
@@ -233,8 +235,7 @@ def metrics_from_loaded(source, kind, *, migrated, native, progress,
     activity and export-link reads outside this function lets the Dashboard
     load them once without changing the metric definitions used elsewhere.
     """
-    if kind == 'commercial' and str(source.pk) in {'271', '234'}:
-        from . import canonical_learning
+    if canonical_learning.enabled(source.pk):
         return canonical_learning.metrics(source.pk)
     with connections['enrolment'].cursor() as cursor:
         planned_document = (preloaded or {}).get('planned_hours_document', _MISSING)
@@ -332,8 +333,7 @@ def metrics_from_loaded(source, kind, *, migrated, native, progress,
 
 
 def read_metrics(source, kind, preloaded=None):
-    if kind == 'commercial' and str(source.pk) in {'271', '234'}:
-        from . import canonical_learning
+    if canonical_learning.enabled(source.pk):
         return canonical_learning.metrics(source.pk)
     migrated = student_activity_available(source.aptem_id)
     direct_progress = (preloaded or {}).get('direct_progress') if preloaded is not None else None
@@ -478,8 +478,10 @@ def learner_metrics(request, kind, pk):
     if model is None:
         return JsonResponse({'error': 'Unknown learner kind.'}, status=404)
     try:
-        source = model.all_learners.only('id', 'aptem_id', 'email').get(pk=pk)
-        payload = read_metrics(source, kind)
+        with measure_projection('metrics', kind=kind, learner_id=pk) as measurement:
+            source = model.all_learners.only('id', 'aptem_id', 'email').get(pk=pk)
+            with measurement.stage('metrics'):
+                payload = read_metrics(source, kind)
     except model.DoesNotExist:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     except ServiceError as error:

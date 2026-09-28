@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
-import { useLocation } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import {
   bookLearnerCalendarSession,
@@ -23,9 +23,12 @@ import { RouteLoadingSkeleton } from './RouteLoadingSkeleton';
 // Two states, both decided by the server (`access`), never by this browser: a
 // learner must not reach their programme early by changing their own clock.
 //
-//   'book'    -> the booking screen below
-//   'waiting' -> the holding screen below
-//   'open'    -> nothing; the programme renders normally
+//   'enrolling' -> nothing; an apprentice books only once every enrolment
+//                  step is done, and until then their enrolment is the page
+//                  they need (useOnboardingRedirect keeps them on it)
+//   'book'      -> the booking screen below
+//   'waiting'   -> the holding screen below
+//   'open'      -> nothing; the programme renders normally
 //
 // Note this is NOT the cohort start-date lockout that LearnerProgrammeGate
 // used to apply and that was deliberately removed. That held learners out of
@@ -77,7 +80,7 @@ function LearnerFirstSessionGate({ children }: { children: ReactNode }) {
   const { auth, logout } = useAuth();
   const { pathname } = useLocation();
   const account = auth.account;
-  const kind = account?.learnerType || 'apprenticeship';
+  const kind: LearnerKind = account?.learnerType === 'commercial' ? 'commercial' : 'apprenticeship';
   const learnerId = String(account?.subjectId ?? '');
 
   const [state, setState] = useState<LearnerFirstSession | null>(null);
@@ -109,7 +112,7 @@ function LearnerFirstSessionGate({ children }: { children: ReactNode }) {
   // has done nothing wrong, and holding them out on a network error would be
   // the same screen as holding them out on purpose.
   if (loadError && !state) return <>{children}</>;
-  if (!state || state.access === 'open') return <>{children}</>;
+  if (!state || state.access === 'open' || state.access === 'enrolling') return <>{children}</>;
 
   return (
     <Holding
@@ -136,7 +139,7 @@ function Holding({ state, kind, learnerId, onBooked, onSignOut }: {
           ? <Waiting state={state} />
           : <Booking state={state} kind={kind} learnerId={learnerId} onBooked={onBooked} />}
         <div className="mt-6 flex flex-wrap items-center gap-4 border-t border-foreground-100 pt-4 text-[13px]">
-          <a href="/learner/support" className="text-primary-600 hover:underline">Contact support</a>
+          <Link to="/learner/support" className="text-primary-600 hover:underline">Contact support</Link>
           <button type="button" onClick={onSignOut} className="text-foreground-500 hover:underline">
             Sign out
           </button>

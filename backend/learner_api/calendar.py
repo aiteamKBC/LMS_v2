@@ -42,6 +42,7 @@ from .booking_calendar import booking_calendar_payload, booking_date_restriction
 # Imported rather than restated so the gate, the booking and the calendar
 # cannot disagree about either.
 from .aptem_status import programme_status
+from .constants import DEFAULT_PROGRAMME_STATUS, DELIVERY_PROGRAMME_STATUS
 from .first_session import (
     SESSION_TYPE as FIRST_SESSION_TYPE,
     imported_from_aptem as first_session_imported_from_aptem,
@@ -110,6 +111,10 @@ def assigned_curriculum_module_ids(learner):
 # must be booked against a generated programme-cycle eventKey so the learner and
 # coach see the same official calendar row.
 BOOKABLE_TYPES = ("catch-up", "student-support", "first-session", "mcr", "progress-review", "review", "gateway", "other")
+
+# Catch-ups use the learner-selected slot immediately. These are the session
+# types whose learner-created bookings remain requests for coach placement.
+COACH_APPROVAL_TYPES = frozenset(("student-support", "gateway", "other"))
 
 # The Microsoft Graph invite subject uses the same wording as the page — see
 # coach_api.BOOKED_EVENT_TITLES, which mirrors EVENT_TITLES above.
@@ -926,26 +931,26 @@ def learner_calendar_event_review(request, kind, pk, event_key):
             definition = review_instances.review_instance_form_definition(instance)
             if not definition['template']['visibleTo'].get('participant', True):
                 return _error('This review is not visible to the learner.', 403)
-            return JsonResponse(_learner_visible_review_definition(definition))
+            return JsonResponse(_learner_visible_review_definition(definition, pk))
         template = reviews.get_review_template_row(template_id, include_deleted=bool(record))
         if template is None:
             return _error('Review template not found.', 404)
         snapshot = review_instances.build_definition_snapshot(template)
         if not snapshot.get('visibleTo', {}).get('participant', True):
             return _error('This review is not visible to the learner.', 403)
-        return JsonResponse({
+        return JsonResponse(_learner_visible_review_definition({
             'instance': None, 'occurrenceNumber': occurrence_number,
             'template': snapshot, 'sections': snapshot['sections'],
             'signatures': {role: {'required': bool(snapshot['signatures'].get(role)), 'signed': False}
                            for role in review_instances.SIGNATURE_ROLES},
-        })
+        }, pk))
     instance = review_instances.get_review_instance(instance_id)
     if not instance:
         return _error("Review instance not found.", 404)
     definition = review_instances.review_instance_form_definition(instance)
     if not definition['template']['visibleTo'].get('participant', True):
         return _error('This review is not visible to the learner.', 403)
-    return JsonResponse(_learner_visible_review_definition(definition))
+    return JsonResponse(_learner_visible_review_definition(definition, pk))
 
 
 def _save_learner_review_answers(request, kind, pk, event_key):
@@ -986,13 +991,43 @@ def _save_learner_review_answers(request, kind, pk, event_key):
         return _error(str(exc), 403)
     except ValueError as exc:
         return _error(str(exc), 409)
-    return JsonResponse(_learner_visible_review_definition(updated))
+    return JsonResponse(_learner_visible_review_definition(updated, pk))
 
 
-def _learner_visible_review_definition(definition):
+def _saved_learner_signature(learner_id):
+    """Read the learner's reusable signature without making it mandatory.
+
+    The signature columns were added after the original learner calendar
+    endpoint. A deployment that has not applied that small migration should
+    still be able to open and sign reviews, so a missing table/column is
+    treated as an empty reusable signature.
+    """
+    try:
+        with connections["enrolment"].cursor() as cursor:
+            cursor.execute(
+                '''SELECT "Learner_signature", "Learner_signature_name"
+                     FROM enrolment."Created_users"
+                    WHERE id=%s LIMIT 1''',
+                [str(learner_id)],
+            )
+            row = cursor.fetchone()
+    except DatabaseError:
+        return {}
+    signature = _s(row[0]) if row else ""
+    if not signature.startswith("data:image/"):
+        return {}
+    return {
+        "savedSignature": signature,
+        "savedSignatureName": _s(row[1]) if row else "",
+    }
+
+
+def _learner_visible_review_definition(definition, learner_id=None):
     """Hide the formal MCM summary until the coach submits the Review."""
+    definition = dict(definition)
+    is_mcm = (definition.get('template') or {}).get('reviewTypeCode') == 'mcm'
     if (
-        (definition.get('template') or {}).get('reviewTypeCode') == 'mcm'
+        is_mcm
         and (definition.get('instance') or {}).get('status') not in {'awaiting-signature', 'completed'}
     ):
         from curriculum_api.review_instances import meeting_summary_field
@@ -1001,13 +1036,18 @@ def _learner_visible_review_definition(definition):
             field['answer'] = None
             field['answeredBy'] = None
             field['answeredAt'] = None
+    if learner_id is not None and is_mcm:
+        definition.update(_saved_learner_signature(learner_id))
     return definition
 
 
 @learner_self_or_staff(kwarg="pk")
 def learner_calendar_event_review_pdf(request, kind, pk, event_key):
     """Download the signed MCM PDF for a learner-visible calendar review."""
-    response = learner_calendar_event_review(request, kind, pk, event_key)
+    # The review view has its own learner_self_or_staff decorator, which reads
+    # ``pk`` from keyword arguments. Preserve that contract when delegating so
+    # the nested authorization gate can identify the learner as well.
+    response = learner_calendar_event_review(request, kind=kind, pk=pk, event_key=event_key)
     if getattr(response, "status_code", 500) != 200:
         return response
     try:
@@ -1096,6 +1136,11 @@ def learner_progress_review_sign(request, kind, pk, event_key):
     record = _learner_calendar_record(kind, pk, event_key)
     if not record or record.event_type not in {"mcr", "progress-review", "review"}:
         return _error("Review not found for this learner.", 404)
+    if record.event_type == 'mcr':
+        from .mcm_signoff import mcm_signoff_response
+        return mcm_signoff_response(request, record, pk)
+    if request.method != 'POST':
+        return _error("Method not allowed.", 405)
     # Curriculum Review instances are the canonical form/signature record.
     # Keep the old calendar blob only for rows created before instances existed.
     if _s(getattr(record, 'review_instance_id', '')):
@@ -1286,6 +1331,7 @@ def learner_calendar(request, kind, pk):
         from coach_api.live_session_outcomes import annotate_live_session_outcomes
         annotate_live_session_outcomes(
             events, learner_profile_id=getattr(mirror, "id", None), learner_email=email,
+            recording_viewer=(kind, pk),
         )
     except DatabaseError as exc:
         logger.exception("learner_calendar: event lookup failed")
@@ -1377,6 +1423,14 @@ def learner_calendar_book(request, kind, pk):
             return _error(
                 "No case owner has been assigned to you yet. Please contact your programme team.", 400
             )
+        if is_first_session and _still_enrolling(kind, learner):
+            # The gate stops offering it, but the calendar still lists the type:
+            # the order is kept here, where a stale tab cannot get round it.
+            return _error(
+                "Your first learning session is booked once your enrolment is complete: "
+                "your enrolment form, your three onboarding reviews and your compliance "
+                "documents.", 400
+            )
         if is_first_session:
             # There is only ever one first session. Without this a learner
             # could book a second from a stale tab and end up with two
@@ -1449,9 +1503,8 @@ def learner_calendar_book(request, kind, pk):
     assignment_booking = _s(payload.get("bookingContext")) == "monthly-assignment"
     if assignment_booking and (session_type != "mcr" or not assignment_month or _s(payload.get("reviewId"))):
         return _error("Monthly assignment bookings require an MCM, an assignment month, and no imported review.", 400)
-    # Requests opened from the generic learner modal go to the coach for
-    # approval. Programme-cycle rows opened from an official calendar card
-    # retain their existing direct scheduling flow.
+    # Generic MCM/PR requests still resolve to an official Curriculum
+    # occurrence before they use the direct scheduling flow below.
     direct_cycle_request = session_type in {"mcr", "progress-review"} and not _s(payload.get("eventKey")) and not assignment_month
     if direct_cycle_request:
         # A generic MCM/PR request must still resolve to an official Curriculum
@@ -1467,11 +1520,7 @@ def learner_calendar_book(request, kind, pk):
             message, status_code = resolution_error
             return _error(message, status_code)
         payload = {**payload, "eventKey": resolved_event_key}
-        direct_cycle_request = False
-    requires_coach_approval = (
-        session_type in {"student-support", "gateway", "other"}
-        or direct_cycle_request
-    ) and not is_onboarding_review
+    requires_coach_approval = session_type in COACH_APPROVAL_TYPES and not is_onboarding_review
     calendar_learner_id = int(mirror.id) if mirror is not None and not is_onboarding_review else pk
 
     if assignment_month:
@@ -1864,9 +1913,6 @@ def learner_calendar_reschedule(request, kind, pk):
         return _error("scheduledDate is required.", 400)
     if not scheduled_time:
         return _error("scheduledTime is required.", 400)
-    date_restriction = booking_date_restriction(scheduled_date)
-    if date_restriction is not None:
-        return _error(date_restriction.message, 400)
 
     try:
         record = _learner_booking_record(kind, pk, event_key)
@@ -1874,6 +1920,14 @@ def learner_calendar_reschedule(request, kind, pk):
             return _error("Booking not found.", 404)
         if record.status != CoachCalendarEvent.STATUS_SCHEDULED:
             return _error("Only an upcoming scheduled session can be rescheduled.", 409)
+        # Checked once the row is known: a first session may move to a Sunday,
+        # every other session type keeps the weekday-only calendar.
+        date_restriction = booking_date_restriction(
+            scheduled_date,
+            allow_sunday=_s(record.event_type).lower() == "first-session",
+        )
+        if date_restriction is not None:
+            return _error(date_restriction.message, 400)
         if (
             record.scheduled_date == scheduled_date
             and record.scheduled_time == scheduled_time
@@ -2105,6 +2159,34 @@ def _already_started(learner):
     return programme_status(learner).casefold() == "active"
 
 
+#: An apprentice's enrolment stages, before the one that books the first
+#: session. The wizard and the three onboarding reviews happen at Onboarding,
+#: the four compliance documents at Delivery; signing the last of those moves
+#: them to Ready to enrol (learner_progression), and only then is the first
+#: session theirs to book. Blank is the backend's own "Fresh user" default.
+APPRENTICE_ENROLMENT_STATUSES = frozenset(
+    status.casefold()
+    for status in ("", DEFAULT_PROGRAMME_STATUS, "Onboarding", DELIVERY_PROGRAMME_STATUS)
+)
+
+
+def _still_enrolling(kind, learner):
+    """Whether this is an apprentice who has not finished enrolling yet.
+
+    The first session comes after every enrolment step for an apprentice, so
+    until then there is nothing to book and no programme to hold them out of --
+    their own enrolment is the page they need. Commercial learners have no such
+    steps and book from the start, as before.
+
+    The record's own learner type wins over the URL's ``kind``: both kinds live
+    in one table, and the row is what says which one this learner is.
+    """
+    learner_type = _s(getattr(learner, "learner_type", "")) or _s(kind)
+    if learner_type.casefold() != "apprenticeship":
+        return False
+    return programme_status(learner).strip().casefold() in APPRENTICE_ENROLMENT_STATUSES
+
+
 @learner_self_or_staff(kwarg="pk")
 def learner_first_session(request, kind, pk):
     """Whether this learner has booked their first session, and when.
@@ -2112,7 +2194,8 @@ def learner_first_session(request, kind, pk):
         GET /learner_api/calendar/<kind>/<id>/first-session/
 
     -> {caseOwner: {name, email} | null, booked: bool, event: {...} | null,
-        startsOn: "YYYY-MM-DD" | null, access: "book" | "waiting" | "open"}
+        startsOn: "YYYY-MM-DD" | null,
+        access: "enrolling" | "book" | "waiting" | "open"}
 
     The first session used to be arranged by whoever enrolled the learner. It is
     now the learner's own first task: they sign in, book it with their case
@@ -2122,6 +2205,9 @@ def learner_first_session(request, kind, pk):
     browser -- a learner must not be able to reach their programme early by
     changing a date on their own machine:
 
+    * ``enrolling`` -- an apprentice still working through enrolment
+      (``_still_enrolling``). The first session comes after it, so nothing is
+      held and nothing is offered yet.
     * ``book``    -- nothing booked yet; the learner books it.
     * ``waiting`` -- booked, but the day has not arrived.
     * ``open``    -- the session day has come (or passed), so the programme runs
@@ -2169,6 +2255,12 @@ def learner_first_session(request, kind, pk):
         # permanent lockout the Aptem case above avoids, reached by a different
         # route (activated outside this booking flow, or before it existed).
         access = "open"
+    elif _still_enrolling(kind, learner):
+        # Checked before the booking itself: an apprentice who booked under the
+        # old order must not be held on the waiting screen, away from the
+        # enrolment steps still left. The booking is kept, and takes over again
+        # once they reach Ready to enrol.
+        access = "enrolling"
     elif starts_on is None:
         access = "book"
     else:
