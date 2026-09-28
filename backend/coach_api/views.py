@@ -41,7 +41,7 @@ from coach_api.auth import (
 )
 from coach_api.errors import coach_error
 from coach_api.cache.learners import coach_caseload_cache_key, coach_caseload_lock_key
-from coach_api.models import CoachAbsenceReport, CoachCalendarEvent, CoachCalendarSequence
+from coach_api.models import CoachAbsenceReport, CoachCalendarEvent, CoachCalendarSequence, ImportedReviewInstance
 from coach_api.services.learners.context import CaseloadRequestContext
 from coach_api.validation import (
     ObjectValidator,
@@ -13291,8 +13291,8 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
     prefix = "imported-review:"
     if not event_key.startswith(prefix):
         return None
-    aptem_review_id = clean_text(event_key[len(prefix):])
-    if not aptem_review_id:
+    requested_review_id = clean_text(event_key[len(prefix):])
+    if not requested_review_id:
         return None
 
     learners = fetch_caseload_dashboard_profiles(owner_email)
@@ -13309,15 +13309,26 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
                reviewer_name, learner_name, planned_scheduled_date,
                completed_date, status, review_data, extraction_status, last_error
         FROM "Learner".reviews
-        WHERE learner_id = ANY(%s) AND aptem_review_id = %s
+        WHERE learner_id = ANY(%s)
+          AND (
+              aptem_review_id = %s
+              OR id = CASE WHEN %s ~ '^[0-9]+$' THEN %s::bigint ELSE NULL END
+          )
         ORDER BY id
-        LIMIT 2
     '''
     connection = connections[get_learner_db_alias()]
     with connection.cursor() as cursor:
-        cursor.execute(query, [eligible_ids, aptem_review_id])
+        cursor.execute(query, [eligible_ids, requested_review_id, requested_review_id, requested_review_id])
         columns = [column[0] for column in cursor.description]
-        rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        matching_rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        # A numeric Aptem id can coincidentally equal another imported row's
+        # database id. Prefer the canonical Aptem identity when it exists;
+        # only fall back to the row id for old history links.
+        canonical_rows = [
+            row for row in matching_rows
+            if clean_text(row.get("aptem_review_id")) == requested_review_id
+        ]
+        rows = canonical_rows or matching_rows
         if len(rows) != 1:
             return None
         row = rows[0]
@@ -13332,6 +13343,13 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
     learner = next((item for item in learners if int(item.id) == profile_id), None)
     if learner is None:
         return None
+
+    canonical_event_key = f"{prefix}{clean_text(row.get('aptem_review_id')) or row['id']}"
+    saved_instance = ImportedReviewInstance.objects.filter(
+        owner_email__iexact=owner_email,
+        event_key=canonical_event_key,
+    ).first()
+    saved_answers = saved_instance.answers if saved_instance and isinstance(saved_instance.answers, dict) else {}
 
     adapted_sections = []
     for section_index, section in enumerate(review.get("sections") or []):
@@ -13373,6 +13391,9 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
                 "yesFields": [],
                 "noFields": [],
             })
+        for field in fields:
+            if field["id"] in saved_answers:
+                field["answer"] = saved_answers[field["id"]]
         adapted_sections.append({
             "id": f"aptem-section:{section_id}",
             "title": clean_text(section.get("name")) or "Review section",
@@ -13391,18 +13412,18 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
         for role in curriculum_review_instances.SIGNATURE_ROLES
     }
     return {
-        "readOnly": True,
+        "readOnly": False,
         "source": "aptem",
         "instance": {
-            "id": event_key,
+            "id": canonical_event_key,
             "reviewTemplateId": "",
             "learnerId": profile_id,
             "programmeId": clean_text(getattr(learner, "programme_id", None)),
             "occurrenceNumber": 1,
             "targetDate": target_date,
-            "status": clean_text(review.get("status")) or CoachCalendarEvent.STATUS_NOT_SCHEDULED,
+            "status": saved_instance.status if saved_instance else ImportedReviewInstance.STATUS_IN_PROGRESS,
             "startedAt": None,
-            "completedAt": review.get("completedDate"),
+            "completedAt": saved_instance.completed_at.isoformat() if saved_instance and saved_instance.completed_at else None,
         },
         "template": {
             "id": "",
@@ -13681,6 +13702,36 @@ def coach_review_instance_previous(request, instance_id):
 def coach_review_instance_answers(request, instance_id):
     if request.method != "POST":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
+    owner_email = authenticated_coach_email(request)
+    if instance_id.startswith("imported-review:"):
+        definition = _imported_review_definition(owner_email, instance_id)
+        if not definition:
+            return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
+        try:
+            payload = parse_json_body(request)
+        except ValidationError as exc:
+            return validation_error_response(exc)
+        answers = payload.get("answers")
+        if not isinstance(answers, dict):
+            return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
+        field_ids = {
+            field["id"]
+            for section in definition.get("sections", [])
+            for field in section.get("fields", [])
+        }
+        if any(field_id not in field_ids for field_id in answers):
+            return JsonResponse({"detail": "answers contains a field that is not part of this review."}, status=400)
+        imported, _created = ImportedReviewInstance.objects.get_or_create(
+            owner_email=owner_email,
+            event_key=definition["instance"]["id"],
+            defaults={"learner_id": definition["instance"]["learnerId"]},
+        )
+        if imported.status == ImportedReviewInstance.STATUS_COMPLETED:
+            return JsonResponse({"detail": "This review has already been completed and is read-only."}, status=409)
+        imported.answers = answers
+        imported.save(update_fields=["answers", "updated_at"])
+        return JsonResponse(_imported_review_definition(owner_email, imported.event_key))
+
     instance_row, error = _authorized_review_instance(request, instance_id)
     if error:
         return error
@@ -13691,7 +13742,6 @@ def coach_review_instance_answers(request, instance_id):
     answers = payload.get("answers")
     if not isinstance(answers, dict):
         return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
-    owner_email = authenticated_coach_email(request)
     try:
         curriculum_review_instances.save_review_instance_answers(instance_row, answers, actor=owner_email)
     except ValueError as exc:
@@ -13905,6 +13955,42 @@ def coach_review_instance_progress(request, instance_id):
 def coach_review_instance_complete(request, instance_id):
     if request.method != "POST":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
+    owner_email = authenticated_coach_email(request)
+    if instance_id.startswith("imported-review:"):
+        definition = _imported_review_definition(owner_email, instance_id)
+        if not definition:
+            return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
+        payload = {}
+        if request.body:
+            try:
+                payload = parse_json_body(request)
+            except ValidationError as exc:
+                return validation_error_response(exc)
+        if not isinstance(payload, dict):
+            return JsonResponse({"detail": "Request body must be a JSON object."}, status=400)
+        answers = payload.get("answers", {})
+        if not isinstance(answers, dict):
+            return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
+        field_ids = {
+            field["id"]
+            for section in definition.get("sections", [])
+            for field in section.get("fields", [])
+        }
+        if any(field_id not in field_ids for field_id in answers):
+            return JsonResponse({"detail": "answers contains a field that is not part of this review."}, status=400)
+        imported, _created = ImportedReviewInstance.objects.get_or_create(
+            owner_email=owner_email,
+            event_key=definition["instance"]["id"],
+            defaults={"learner_id": definition["instance"]["learnerId"]},
+        )
+        if imported.status == ImportedReviewInstance.STATUS_COMPLETED:
+            return JsonResponse({"detail": "This review has already been completed."}, status=409)
+        imported.answers = answers
+        imported.status = ImportedReviewInstance.STATUS_COMPLETED
+        imported.completed_at = timezone.now()
+        imported.save(update_fields=["answers", "status", "completed_at", "updated_at"])
+        return JsonResponse(_imported_review_definition(owner_email, imported.event_key))
+
     instance_row, error = _authorized_review_instance(request, instance_id)
     if error:
         return error
@@ -13919,7 +14005,6 @@ def coach_review_instance_complete(request, instance_id):
     answers = payload.get("answers")
     if answers is not None and not isinstance(answers, dict):
         return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
-    owner_email = authenticated_coach_email(request)
     ok, errors = curriculum_review_instances.complete_review_instance(
         instance_row, actor=owner_email, answers=answers,
     )
