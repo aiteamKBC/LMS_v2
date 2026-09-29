@@ -193,7 +193,10 @@ export default function CoachMeetingDetail() {
     const controller = new AbortController();
     setLoading(true);
     setError(null);
-    fetchCoachCalendarEvents(controller.signal)
+    fetchCoachCalendarEvents(controller.signal, {
+      includeLiveSessions: false,
+      includeSchedulerQueues: false,
+    })
       .then((data) => {
         const selected = (data.events || []).find(item => {
           const identityMatches = item.reviewInstanceId === eventKey || eventIdentity(item) === eventKey;

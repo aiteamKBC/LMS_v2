@@ -91,12 +91,12 @@ function ksbLearningActivities(data: CoachLearnerCaseFileData, code: string): Ev
     seen.add(key);
     const normalizedType = String(type || '').trim().toLowerCase().replace(/[_-]+/g, ' ');
     activities.push({
+      ...metadata,
       title,
-      componentId: componentId || undefined,
       type: normalizedType === 'live session' ? 'Live session'
         : normalizedType ? normalizedType.charAt(0).toUpperCase() + normalizedType.slice(1)
           : 'Activity type unavailable',
-      ...metadata,
+      componentId: componentId || undefined,
     });
   };
 
@@ -104,7 +104,12 @@ function ksbLearningActivities(data: CoachLearnerCaseFileData, code: string): Ev
     (item) => normalizeKsbCode(item.code) === normalizedCode,
   );
   for (const [index, source] of (completedDetail?.sources || []).entries()) {
-    add(source.title || source.id || 'Aptem evidence', source.typeLabel || source.kind,
+    const sourceTitle = String(source.title || '').trim();
+    const genericTitle = sourceTitle && sourceTitle.toLowerCase() === String(source.typeLabel || source.kind || '').trim().toLowerCase();
+    const componentTitle = genericTitle && source.componentId
+      ? detailComponentTitle(data, source.componentId)
+      : '';
+    add(componentTitle || sourceTitle || source.id || 'Aptem evidence', source.typeLabel || source.kind,
       source.id || `completed-source:${normalizedCode}:${index}`, undefined, source);
   }
   if (activities.length > 0) return activities;
@@ -123,7 +128,7 @@ function ksbLearningActivities(data: CoachLearnerCaseFileData, code: string): Ev
   for (const progress of detail.videoProgress || []) {
     if (!(progress.ksbs || []).some((ksb) => normalizeKsbCode(ksb) === normalizedCode)) continue;
     const component = detail.components.find((item) => item.componentId === progress.componentId);
-    add(component?.component || 'Video', 'video', progress.componentId);
+    add(progress.componentTitle || component?.component || 'Video', 'video', progress.componentId);
   }
   for (const progress of detail.componentProgress || []) {
     if (!(progress.ksbs || []).some((ksb) => normalizeKsbCode(ksb) === normalizedCode)) continue;
@@ -131,6 +136,18 @@ function ksbLearningActivities(data: CoachLearnerCaseFileData, code: string): Ev
     add(progress.componentTitle || component?.component || progress.componentType, progress.componentType || component?.type, progress.componentId);
   }
   return activities;
+}
+
+function detailComponentTitle(data: CoachLearnerCaseFileData, componentId: string): string {
+  const component = data.detail?.components.find((item) => item.componentId === componentId);
+  const videoProgress = data.detail?.videoProgress?.find((item) => item.componentId === componentId);
+  const componentProgress = data.detail?.componentProgress?.find((item) => item.componentId === componentId);
+  const title = videoProgress?.componentTitle?.trim()
+    || componentProgress?.componentTitle?.trim()
+    || component?.component?.trim()
+    || '';
+  const type = videoProgress?.kind || componentProgress?.componentType || component?.type || '';
+  return title.toLowerCase() === type.toLowerCase() ? '' : title;
 }
 
 function buildDisplayKsbs(

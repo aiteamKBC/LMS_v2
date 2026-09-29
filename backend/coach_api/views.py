@@ -3490,6 +3490,21 @@ def monthly_learning_title(entry: dict) -> str:
     )
 
 
+def ksb_evidence_title(entry: dict, activity: dict | None, component_meta: dict) -> str:
+    """Prefer an authored activity name over an imported media-type label."""
+    candidates = [
+        clean_text(entry.get("title")),
+        clean_text(entry.get("quizName")),
+        clean_text(entry.get("componentTitle")),
+        clean_text((activity or {}).get("title")),
+        clean_text(component_meta.get("title")),
+    ]
+    generic_labels = {"video", "audio", "quiz", "assignment", "activity", "component", "reading", "podcast", "live session"}
+    return next((title for title in candidates if title and title.casefold() not in generic_labels), None) or next(
+        (title for title in candidates if title), ""
+    )
+
+
 def monthly_learning_detail(entry: dict) -> str:
     detail = clean_text(entry.get("detail"))
     if detail:
@@ -4087,13 +4102,7 @@ def build_ksb_completed_details(
         merged_entry = {
             **(activity or {}),
             **entry,
-            "title": (
-                clean_text(entry.get("title"))
-                or clean_text(entry.get("quizName"))
-                or clean_text(entry.get("componentTitle"))
-                or clean_text((activity or {}).get("title"))
-                or clean_text(component_meta.get("title"))
-            ),
+            "title": ksb_evidence_title(entry, activity, component_meta),
             "module": (
                 clean_text(entry.get("moduleTitle") or entry.get("module"))
                 or clean_text((activity or {}).get("module"))
@@ -4118,6 +4127,7 @@ def build_ksb_completed_details(
             "title": monthly_learning_title(merged_entry),
             "typeLabel": monthly_learning_type(merged_entry),
             "kind": kind or "activity",
+            "componentId": component_id or None,
             "module": clean_text(merged_entry.get("module")) or "--",
             "week": clean_text(merged_entry.get("week")) or "--",
             "reportedTime": clean_text(entry.get("reportedTime")) or "--",
@@ -9435,8 +9445,8 @@ def resolve_coach_review_events(
 ) -> dict:
     """Resolve each learner to exactly one review source by effective Aptem id.
 
-    The one exception: an Aptem-linked learner with no imported Aptem MCM gets
-    Curriculum MCM occurrences (never Curriculum Progress Reviews).
+    Aptem-linked learners use Learner.reviews exclusively. Curriculum review
+    occurrences are generated only for learners without an effective Aptem id.
     """
     aptem_by_profile, identity_conflicts = resolve_effective_aptem_ids(learners)
     aptem_reviews_available = True
@@ -9461,25 +9471,6 @@ def resolve_coach_review_events(
         learner for learner in learners
         if int(learner.id) not in aptem_by_profile and int(learner.id) not in identity_conflicts
     ]
-    # An Aptem-linked learner with no imported Aptem MCM still has monthly
-    # coaching due, so their MCMs come from Curriculum like a native learner's.
-    # Progress Reviews stay Aptem-only. A lightweight all-history MCM identity
-    # lookup keeps a date-windowed timetable consistent without loading every
-    # historical review row and its form sections.
-    aptem_mcm_profiles = {
-        int(event["learnerId"]) for event in aptem_events if event.get("source") == "mcr"
-    }
-    if aptem_reviews_available and aptem_by_profile and (start_date or end_date):
-        try:
-            aptem_mcm_profiles = fetch_aptem_mcm_profile_ids(aptem_by_profile)
-        except DatabaseError as exc:
-            logger.warning("Could not load Aptem MCM history for coach timetable: %s", exc)
-            aptem_reviews_available = False
-            aptem_mcm_profiles = set()
-    mcm_fallback_learners = [
-        learner for learner in learners
-        if int(learner.id) in aptem_by_profile and int(learner.id) not in aptem_mcm_profiles
-    ]
     events: list[dict] = list(aptem_events)
     issues: list[dict[str, str]] = [
         {"learnerId": str(profile_id), "code": "aptem_identity_conflict"}
@@ -9501,12 +9492,13 @@ def resolve_coach_review_events(
         "curriculumReviewRows": 0,
         "aptemLearners": len(aptem_by_profile),
         "curriculumLearners": len(native_learners),
-        "curriculumMcmFallbackLearners": len(mcm_fallback_learners),
+        # Retained in the response contract for existing dashboard consumers.
+        "curriculumMcmFallbackLearners": 0,
     }
     review_template_cache: dict[str, list[dict]] = {}
 
-    for learner in [*native_learners, *mcm_fallback_learners]:
-        mcm_only = int(learner.id) in aptem_by_profile
+    for learner in native_learners:
+        mcm_only = False
         programme_id = resolve_curriculum_programme_id(getattr(learner, "programme_id", None) or getattr(learner, "programme", None))
         template_identifiers = curriculum_review_instances.programme_review_template_identifiers(
             programme_id, template_cache=review_template_cache,

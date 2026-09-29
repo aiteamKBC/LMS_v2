@@ -72,7 +72,7 @@ describe('progress review list navigation and filters', () => {
     mount();
     await screen.findByText('Scheduled Review');
     expect(fetchEvents).toHaveBeenCalledWith(expect.any(AbortSignal), {
-      start: '2026-09-01', end: '2026-09-30', includeLiveSessions: false, includeSchedulerQueues: false,
+      includeLiveSessions: false, includeSchedulerQueues: false,
     });
     const filters = within(screen.getByRole('navigation', { name: 'Filter progress reviews by status' }));
     expect(filters.getAllByRole('button').map(button => button.textContent)).toEqual([
@@ -83,10 +83,57 @@ describe('progress review list navigation and filters', () => {
     expect(screen.queryByText('Scheduled Review')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
     expect(await screen.findByText('Next Month Review')).toBeVisible();
-    expect(fetchEvents).toHaveBeenLastCalledWith(expect.any(AbortSignal), {
-      start: '2026-10-01', end: '2026-10-31', includeLiveSessions: false, includeSchedulerQueues: false,
-    });
+    expect(fetchEvents).toHaveBeenCalledTimes(1);
     expect(filters.getByRole('button', { name: 'All1' })).toBeVisible();
+  });
+
+  it('shows reviews in their booked month across statuses even when the target month differs', async () => {
+    fetchEvents.mockResolvedValue({ events: [
+      review(20, { learner: 'Moved Scheduled', targetDate: '2026-09-20', scheduledDate: '2026-10-04', status: 'scheduled' }),
+      review(21, { learner: 'October Completed', targetDate: '2026-10-12', status: 'completed' }),
+      review(22, { learner: 'October Unscheduled', targetDate: '2026-10-15' }),
+    ] });
+    mount();
+    await screen.findByText('0 progress reviews');
+    fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
+    expect(await screen.findByText('Moved Scheduled')).toBeVisible();
+    const filters = within(screen.getByRole('navigation', { name: 'Filter progress reviews by status' }));
+    expect(filters.getByRole('button', { name: 'All3' })).toBeVisible();
+    expect(filters.getByRole('button', { name: 'Scheduled1' })).toBeVisible();
+    expect(filters.getByRole('button', { name: 'Completed1' })).toBeVisible();
+    expect(filters.getByRole('button', { name: 'Not Scheduled1' })).toBeVisible();
+  });
+
+  it('loads past and upcoming progress reviews across all months', async () => {
+    mount();
+    await screen.findByText('Scheduled Review');
+
+    fireEvent.click(screen.getByRole('button', { name: 'All months' }));
+
+    expect(await screen.findByText('Next Month Review')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'All months' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('route')).toHaveTextContent('months=all');
+    expect(fetchEvents).toHaveBeenLastCalledWith(expect.any(AbortSignal), {
+      includeLiveSessions: false, includeSchedulerQueues: false,
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Previous month' }));
+    expect(screen.queryByText('Next Month Review')).toBeNull();
+    expect(screen.getByRole('button', { name: 'All months' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('orders progress reviews from newest to oldest before pagination', async () => {
+    mount();
+    await screen.findByText('Scheduled Review');
+    fireEvent.click(screen.getByRole('button', { name: 'All months' }));
+
+    const rows = within(await screen.findByRole('table')).getAllByRole('row').slice(1);
+    expect(rows.map(row => row.textContent)).toEqual([
+      expect.stringContaining('Next Month Review'),
+      expect.stringContaining('Scheduled Review'),
+      expect.stringContaining('Needs Schedule'),
+      expect.stringContaining('Completed Review'),
+    ]);
   });
 
   it('keeps the last successful month visible when the coach returns to the page', async () => {
