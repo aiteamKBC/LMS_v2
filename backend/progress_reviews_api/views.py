@@ -4,12 +4,16 @@
     GET  /progress_reviews_api/<int:learner_id>/periods
     GET  /progress_reviews_api/<int:learner_id>/pack?review_date=YYYY-MM-DD
     POST /progress_reviews_api/<int:learner_id>/generate
+    POST /progress_reviews_api/<str:review_id>/publish
     GET  /progress_reviews_api/<str:review_id>/download
     GET  /progress_reviews_api/<str:review_id>/preview   (the deck as a PDF, for the in-page viewer)
     POST /progress_reviews_api/bulk-generate
     GET  /progress_reviews_api/<int:learner_id>/mcm/pack?meeting_date=YYYY-MM-DD
     GET  /progress_reviews_api/<int:learner_id>/mcm/runs/latest?meeting_date=YYYY-MM-DD
     POST /progress_reviews_api/<int:learner_id>/mcm/generate
+
+Generated and uploaded decks are stored as owner-only drafts. The owner must
+publish a draft before it becomes the learner-visible completed deck.
 
 The mcm/* endpoints produce the Monthly Coaching Meeting deck through the same
 pipeline (see mcm.py for how it differs from a Progress Review); its runs are
@@ -156,7 +160,7 @@ def _render_deck(pack, review_kind, run_id):
 
 def _store_deck(
     *, run_id, learner_kind, learner_id, period, pack, review_kind, generated_by,
-    pptx_bytes=None, parent_run_id=None, revision_source="generated",
+    pptx_bytes=None, parent_run_id=None, revision_source="generated", save_as_draft=False,
 ) -> dict:
     """Record one deck version: the run, the pack it came from, the rendered
     (or uploaded) PPTX in blob storage, and its file row. Shared by generate,
@@ -197,7 +201,12 @@ def _store_deck(
         size_bytes=len(pptx_bytes),
         generated_by=generated_by,
     )
-    runs.mark_run_completed(run_id)
+    if save_as_draft:
+        runs.mark_run_draft(run_id)
+        generation_status = "draft"
+    else:
+        runs.mark_run_completed(run_id)
+        generation_status = "completed"
 
     return {
         "reviewId": run_id,
@@ -206,7 +215,7 @@ def _store_deck(
         "reviewDate": period.review_date.isoformat(),
         "reviewPeriodStart": period.review_period_start.isoformat(),
         "reviewPeriodEnd": period.review_period_end.isoformat(),
-        "generationStatus": "completed",
+        "generationStatus": generation_status,
         "revisionSource": revision_source,
         "sourceWarnings": pack["source_warnings"],
         "downloadUrl": f"/progress_reviews_api/{run_id}/download/",
@@ -215,6 +224,7 @@ def _store_deck(
 
 def _generate_for_learner(
     learner_id: int, *, review_date=None, generated_by="system", review_kind="progress_review", uploaded_pptx=None,
+    save_as_draft=False,
 ) -> dict:
     """Build the learner's pack and store a deck for it: rendered from the
     template, or — with `uploaded_pptx` — the owner's own presentation, kept
@@ -252,6 +262,7 @@ def _generate_for_learner(
         run_id=run_id, learner_kind=kind, learner_id=learner_id, period=period, pack=pack,
         review_kind=review_kind, generated_by=generated_by, pptx_bytes=uploaded_pptx,
         revision_source="uploaded" if uploaded_pptx is not None else "generated",
+        save_as_draft=save_as_draft,
     )
 
 
@@ -334,14 +345,19 @@ def latest_run(request, learner_id):
     """Does a PPTX already exist for this exact review? Backs a review card's
     "Create slides" vs "Slides"/"View slides" button state, and the same
     check when the modal opens — scoped to one review_date so a learner's
-    review 2 card can never show review 1's (or vice versa)."""
+    review 2 card can never show review 1's (or vice versa). Staff may add
+    ``include_draft=1`` while reviewing their own Progress Review draft."""
     if request.method != "GET":
         return _error("Method not allowed.", 405)
     review_date = _parse_date_param(request.GET.get("review_date"))
     if review_date is None:
         return _error("review_date is required (YYYY-MM-DD).", 400)
 
-    row = runs.get_latest_run_for_period(learner_id, review_date)
+    account = authenticate_request(request)
+    include_draft = request.GET.get("include_draft") == "1" and account is not None and _is_staff(account)
+    row = (runs.get_latest_run_for_period if include_draft else runs.get_latest_completed_run_for_period)(
+        learner_id, review_date,
+    )
     if not row:
         return JsonResponse({"exists": False})
     return JsonResponse({
@@ -364,7 +380,9 @@ def generate(request, learner_id):
 
     review_date = _parse_date_param(payload.get("review_date"))
     try:
-        result = _generate_for_learner(learner_id, review_date=review_date, generated_by=_current_email(request))
+        result = _generate_for_learner(
+            learner_id, review_date=review_date, generated_by=_current_email(request), save_as_draft=True,
+        )
     except GenerationError as exc:
         return _error(exc.message, exc.status)
     return JsonResponse(result, status=201)
@@ -398,6 +416,17 @@ def _readable_run(request, review_id):
             return None, _error("You do not have permission to perform this action.", 403)
         if account.role != "learner" and not _is_staff(account):
             return None, _error("You do not have permission to perform this action.", 403)
+        if run["generation_status"] != "completed":
+            owner = (
+                run.get("review_kind") == mcm.REVIEW_KIND
+                and account.role == "learner"
+                and int(run["learner_id"]) == int(account.subject_id)
+            ) or (
+                run.get("review_kind") != mcm.REVIEW_KIND
+                and _is_staff(account)
+            )
+            if not owner:
+                return None, _error("This deck has not been saved yet.", 404)
     return run, None
 
 
@@ -482,7 +511,9 @@ def bulk_generate(request):
     results = []
     for learner_id in ids:
         try:
-            results.append(_generate_for_learner(learner_id, review_date=review_date, generated_by=generated_by))
+            results.append(_generate_for_learner(
+                learner_id, review_date=review_date, generated_by=generated_by, save_as_draft=True,
+            ))
         except GenerationError as exc:
             results.append({"learnerId": learner_id, "generationStatus": "failed", "error": exc.message})
         except Exception:  # one learner's failure must never sink the batch
@@ -525,7 +556,16 @@ def mcm_latest_run(request, learner_id):
     meeting_date = _meeting_date(request)
     if meeting_date is None:
         return _error("meeting_date is required (YYYY-MM-DD).", 400)
-    row = runs.get_latest_run_for_period(learner_id, meeting_date, review_kind=mcm.REVIEW_KIND)
+    account = authenticate_request(request)
+    include_draft = (
+        request.GET.get("include_draft") == "1"
+        and account is not None
+        and account.role == "learner"
+        and int(account.subject_id) == int(learner_id)
+    )
+    row = (runs.get_latest_run_for_period if include_draft else runs.get_latest_completed_run_for_period)(
+        learner_id, meeting_date, review_kind=mcm.REVIEW_KIND,
+    )
     if not row:
         return JsonResponse({"exists": False})
     return JsonResponse({
@@ -551,6 +591,7 @@ def mcm_generate(request, learner_id):
     try:
         result = _generate_for_learner(
             learner_id, review_date=meeting_date, generated_by=_current_email(request), review_kind=mcm.REVIEW_KIND,
+            save_as_draft=True,
         )
     except GenerationError as exc:
         return _error(exc.message, exc.status)
@@ -575,8 +616,8 @@ def _editable_run(request, review_id):
     run = runs.get_run(review_id)
     if not run:
         return None, None, _error("Review not found.", 404)
-    if run["generation_status"] != "completed":
-        return None, None, _error("Only a completed deck can be edited.", 409)
+    if run["generation_status"] not in {"draft", "completed"}:
+        return None, None, _error("Only a generated deck can be edited.", 409)
     account = authenticate_request(request)
     if account is None:
         if auth_gate_enabled():
@@ -614,6 +655,48 @@ def _new_revision(run, pack, *, edited_by, revision_source, pptx_bytes=None):
         generated_by=edited_by, pptx_bytes=pptx_bytes,
         parent_run_id=run["id"], revision_source=revision_source,
     )
+
+
+def _result_for_run(run):
+    """Return the same response shape as generation for a newly published run."""
+    snapshot = runs.get_snapshot(run["id"]) or {}
+    snapshot_warnings = snapshot.get("source_warnings", []) if isinstance(snapshot, dict) else []
+    warnings = run.get("source_warnings") or snapshot_warnings
+    if isinstance(warnings, str):
+        try:
+            warnings = json.loads(warnings)
+        except (TypeError, ValueError):
+            warnings = []
+    return {
+        "reviewId": run["id"],
+        "learnerId": int(run["learner_id"]),
+        "reviewNumber": run.get("review_number"),
+        "reviewDate": run["review_date"].isoformat(),
+        "reviewPeriodStart": run["review_period_start"].isoformat(),
+        "reviewPeriodEnd": run["review_period_end"].isoformat(),
+        "generationStatus": run["generation_status"],
+        "revisionSource": run.get("revision_source") or "generated",
+        "sourceWarnings": warnings,
+        "downloadUrl": f"/progress_reviews_api/{run['id']}/download/",
+    }
+
+
+@csrf_exempt
+def publish(request, review_id):
+    """Publish a generated draft after its owner has reviewed it."""
+    if request.method != "POST":
+        return _error("Method not allowed.", 405)
+    run, _edited_by, error = _editable_run(request, review_id)
+    if error:
+        return error
+    if run["generation_status"] != "draft":
+        return _error("This deck is already saved.", 409)
+    if not runs.publish_run(review_id):
+        return _error("The draft could not be saved. Please reload and try again.", 409)
+    saved = runs.get_run(review_id)
+    if not saved:
+        return _error("The saved deck could not be found.", 404)
+    return JsonResponse(_result_for_run(saved))
 
 
 @csrf_exempt
@@ -764,7 +847,7 @@ def _uploaded_pptx(request):
     return data, None
 
 
-def _upload_own(request, learner_id, *, date_field, review_kind):
+def _upload_own(request, learner_id, *, date_field, review_kind, save_as_draft=True):
     if request.method != "POST":
         return _error("Method not allowed.", 405)
     data, error = _uploaded_pptx(request)
@@ -776,7 +859,7 @@ def _upload_own(request, learner_id, *, date_field, review_kind):
     try:
         result = _generate_for_learner(
             learner_id, review_date=meeting_date, generated_by=_current_email(request),
-            review_kind=review_kind, uploaded_pptx=data,
+            review_kind=review_kind, uploaded_pptx=data, save_as_draft=save_as_draft,
         )
     except GenerationError as exc:
         return _error(exc.message, exc.status)
@@ -788,7 +871,7 @@ def _upload_own(request, learner_id, *, date_field, review_kind):
 def upload_own(request, learner_id):
     """POST multipart {file, review_date}: the coach's own Progress Review deck
     instead of a generated one."""
-    return _upload_own(request, learner_id, date_field="review_date", review_kind="progress_review")
+    return _upload_own(request, learner_id, date_field="review_date", review_kind="progress_review", save_as_draft=True)
 
 
 @csrf_exempt
@@ -796,4 +879,4 @@ def upload_own(request, learner_id):
 def mcm_upload_own(request, learner_id):
     """POST multipart {file, meeting_date}: the learner's own MCM deck instead
     of a generated one."""
-    return _upload_own(request, learner_id, date_field="meeting_date", review_kind=mcm.REVIEW_KIND)
+    return _upload_own(request, learner_id, date_field="meeting_date", review_kind=mcm.REVIEW_KIND, save_as_draft=True)

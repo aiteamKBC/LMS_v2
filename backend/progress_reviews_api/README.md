@@ -155,11 +155,23 @@ On success it returns:
 {
   "reviewId": "…", "learnerId": 123, "reviewNumber": 2,
   "reviewDate": "2026-06-15", "reviewPeriodStart": "…", "reviewPeriodEnd": "…",
-  "generationStatus": "completed",
+  "generationStatus": "draft",
   "sourceWarnings": ["Attendance register could not be reached; …"],
   "downloadUrl": "/progress_reviews_api/<reviewId>/download/"
 }
 ```
+
+Generation stores the PPTX as a draft owned by the coach. The current saved
+deck remains unchanged, and learners cannot see the draft. After reviewing it,
+the coach publishes it with:
+
+```
+POST /progress_reviews_api/<reviewId>/publish/
+```
+
+The publish response has the same shape with `generationStatus: "completed"`.
+Monthly Coaching Meeting generation follows the same draft flow, with the
+learner as the owner who publishes their own deck.
 
 Then fetch a short-lived download link:
 
@@ -181,10 +193,13 @@ in that learner's row and never stops the rest of the batch:
 
 ```json
 {"results": [
-  {"reviewId": "…", "learnerId": 1, "generationStatus": "completed", "downloadUrl": "…"},
+  {"reviewId": "…", "learnerId": 1, "generationStatus": "draft", "downloadUrl": "…"},
   {"learnerId": 2, "generationStatus": "failed", "error": "This learner has no programme start date recorded."}
 ]}
 ```
+
+Bulk generation also creates owner-only drafts; each draft must be reviewed and
+published before it replaces the learner-visible saved deck.
 
 ## Previewing before generating
 
