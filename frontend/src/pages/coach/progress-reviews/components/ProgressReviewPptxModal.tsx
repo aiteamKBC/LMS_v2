@@ -9,6 +9,7 @@ import {
   fetchReviewPack,
   generateMcm,
   generateProgressReview,
+  publishProgressReview,
   uploadOwnDeck,
   type ProgressReviewGenerateResult,
   type ProgressReviewPack,
@@ -24,6 +25,7 @@ type RevisionSource = 'generated' | 'edited' | 'uploaded';
 /** The deck version the modal is showing. */
 interface DeckVersion {
   reviewId: string;
+  status: 'draft' | 'completed';
   source: RevisionSource;
   at: string | null;
 }
@@ -74,8 +76,7 @@ export default function ProgressReviewPptxModal({
   open: boolean;
   target: SlidesDeckTarget | null;
   onClose: () => void;
-  /** Lets the caller's own button relabel to "Slides" the moment a deck
-   * exists, without the whole list needing to refetch. */
+  /** Lets the caller's own button relabel to "Slides" after a draft is saved. */
   onGenerated?: () => void;
 }) {
   const { success, error: toastError } = useToast();
@@ -111,13 +112,23 @@ export default function ProgressReviewPptxModal({
 
     Promise.all([
       isMcm ? fetchMcmPack(learnerId, meetingDate) : fetchReviewPack(learnerId, meetingDate),
-      (isMcm ? fetchMcmLatestRun(learnerId, meetingDate) : fetchLatestRun(learnerId, meetingDate)).catch(() => ({ exists: false as const })),
+      (isMcm
+        ? fetchMcmLatestRun(learnerId, meetingDate, { includeDraft: isOwner })
+        : fetchLatestRun(learnerId, meetingDate, { includeDraft: isOwner })
+      ).catch(() => ({ exists: false as const })),
     ])
       .then(([packData, latestRun]) => {
         if (cancelled) return;
         setPack(packData);
-        if (latestRun.exists && latestRun.generationStatus === 'completed' && latestRun.reviewId) {
-          setDeck({ reviewId: latestRun.reviewId, source: latestRun.revisionSource || 'generated', at: latestRun.generatedAt || null });
+        if (latestRun.exists && latestRun.reviewId && (
+          latestRun.generationStatus === 'completed' || (isOwner && latestRun.generationStatus === 'draft')
+        )) {
+          setDeck({
+            reviewId: latestRun.reviewId,
+            status: latestRun.generationStatus === 'draft' ? 'draft' : 'completed',
+            source: latestRun.revisionSource || 'generated',
+            at: latestRun.generatedAt || null,
+          });
           setPhase('ready');
         } else {
           setPhase('idle');
@@ -130,14 +141,18 @@ export default function ProgressReviewPptxModal({
       });
 
     return () => { cancelled = true; };
-  }, [open, learnerId, meetingDate, isMcm]);
+  }, [open, learnerId, meetingDate, isMcm, isOwner]);
 
   if (!open || !target) return null;
 
   function showVersion(result: ProgressReviewGenerateResult, fallback: RevisionSource) {
-    setDeck({ reviewId: result.reviewId, source: result.revisionSource || fallback, at: new Date().toISOString() });
+    setDeck({
+      reviewId: result.reviewId,
+      status: result.generationStatus === 'draft' ? 'draft' : 'completed',
+      source: result.revisionSource || fallback,
+      at: new Date().toISOString(),
+    });
     setPhase('ready');
-    onGenerated?.();
   }
 
   async function run(label: string, work: () => Promise<ProgressReviewGenerateResult>, fallback: RevisionSource, done: string) {
@@ -155,7 +170,7 @@ export default function ProgressReviewPptxModal({
 
   function handleGenerate() {
     if (deck && !window.confirm(
-      'Regenerate from the latest LMS data? The slides shown here will be replaced; the current version stays in the history.',
+      'Generate a new draft from the latest LMS data? The saved version stays unchanged until you save this draft.',
     )) return;
     void run(
       'Generating slides from LMS data…',
@@ -165,9 +180,30 @@ export default function ProgressReviewPptxModal({
     );
   }
 
+  async function handlePublish() {
+    if (!deck || deck.status !== 'draft') return;
+    setWorkLabel('Saving slides...');
+    setPhase('working');
+    setActionError(null);
+    try {
+      const result = await publishProgressReview(deck.reviewId);
+      setDeck({ ...deck, status: 'completed', at: new Date().toISOString(), source: result.revisionSource || deck.source });
+      setPhase('ready');
+      onGenerated?.();
+      success('Slides saved', `${deckLabel} slides for ${str(target?.learnerName, 'this learner')}.`);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : 'The slides could not be saved. Please try again.');
+      setPhase('ready');
+    }
+  }
+
   function handleUpload(file: File | undefined) {
     if (!file) return;
-    if (deck && !window.confirm(`Use "${file.name}" as the slides? The current version stays in the history.`)) return;
+    if (deck && !window.confirm(
+      deck.status === 'draft'
+        ? `Use "${file.name}" as the new draft? The saved version stays unchanged until you save.`
+        : `Use "${file.name}" as a new draft? The current version stays unchanged until you save.`,
+    )) return;
     void run('Uploading your presentation…', () => uploadOwnDeck(kind, learnerId, meetingDate, file), 'uploaded', 'Presentation uploaded');
   }
 
@@ -186,9 +222,10 @@ export default function ProgressReviewPptxModal({
 
   // An edit or re-upload from the editor is a new version: show it straight away.
   function handleEdited(newReviewId: string) {
-    setDeck({ reviewId: newReviewId, source: 'edited', at: new Date().toISOString() });
+    setDeck({ reviewId: newReviewId, status: 'completed', source: 'edited', at: new Date().toISOString() });
     setEditing(false);
     setViewing(true);
+    onGenerated?.();
     success('Slides updated', 'A new version was saved. The previous version is kept.');
   }
 
@@ -240,11 +277,13 @@ export default function ProgressReviewPptxModal({
             <>
               {/* Where the slides stand — the first thing the user needs to know. */}
               {deck ? (
-                <div className="flex items-center gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3">
-                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-lg text-emerald-700"><AppIcon className="ri-slideshow-2-line" /></span>
+                <div className={`flex items-center gap-3 rounded-xl border px-4 py-3 ${deck.status === 'draft' ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50'}`}>
+                  <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-lg ${deck.status === 'draft' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}><AppIcon className="ri-slideshow-2-line" /></span>
                   <div className="min-w-0">
-                    <p className="text-sm font-semibold text-emerald-900">Slides ready</p>
-                    <p className="text-[12px] text-emerald-800">{SOURCE_LABEL[deck.source]}{whenLabel(deck.at) ? ` · ${whenLabel(deck.at)}` : ''}</p>
+                    <p className={`text-sm font-semibold ${deck.status === 'draft' ? 'text-amber-900' : 'text-emerald-900'}`}>
+                      {deck.status === 'draft' ? 'Draft ready — not saved' : 'Slides ready'}
+                    </p>
+                    <p className={`text-[12px] ${deck.status === 'draft' ? 'text-amber-800' : 'text-emerald-800'}`}>{SOURCE_LABEL[deck.source]}{whenLabel(deck.at) ? ` · ${whenLabel(deck.at)}` : ''}</p>
                   </div>
                 </div>
               ) : phase !== 'working' && (
@@ -317,12 +356,17 @@ export default function ProgressReviewPptxModal({
               {deck ? (
                 <>
                   <button type="button" className={accentButton} disabled={busy} onClick={() => setViewing(true)}>
-                    <AppIcon className="ri-slideshow-2-line" /> View slides
+                    <AppIcon className="ri-slideshow-2-line" /> {deck.status === 'draft' ? 'View draft' : 'View slides'}
                   </button>
                   <button type="button" className={primaryButton} disabled={busy || downloading} onClick={handleDownload}>
                     <AppIcon className={downloading ? 'ri-loader-4-line animate-spin' : 'ri-download-line'} />
-                    {downloading ? 'Fetching link…' : 'Download PPTX'}
+                    {downloading ? 'Fetching link…' : deck.status === 'draft' ? 'Download draft' : 'Download PPTX'}
                   </button>
+                  {isOwner && deck.status === 'draft' && (
+                    <button type="button" className={primaryButton} disabled={busy} onClick={() => { void handlePublish(); }}>
+                      <AppIcon className="ri-save-3-line" /> Save slides
+                    </button>
+                  )}
                 </>
               ) : isOwner ? (
                 <>

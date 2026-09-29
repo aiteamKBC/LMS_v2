@@ -1283,7 +1283,7 @@ export default function CoachProgressReviews() {
       if (failed) {
         setActionError(`Bulk generation finished with ${failed} of ${data.results.length} failure(s).`);
       } else {
-        setActionNotice(`Bulk generation complete — ${data.results.length} deck(s) generated.`);
+        setActionNotice(`Bulk generation complete — ${data.results.length} draft(s) generated. Open each review to review and save its slides.`);
       }
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Unable to run bulk generation.');
