@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.http import HttpResponse
@@ -50,6 +51,23 @@ class RequestObservabilityTests(SimpleTestCase):
 
         self.assertNotIn("Server-Timing", response)
         self.assertNotIn("X-DB-Query-Count", response)
+
+    @override_settings(
+        DEBUG=False,
+        PERFORMANCE_DIAGNOSTICS=True,
+        PERFORMANCE_DIAGNOSTIC_ACCOUNT_IDS=frozenset({"42"}),
+    )
+    @patch("config.performance.connections.all", return_value=[])
+    def test_allowlisted_production_account_receives_diagnostic_headers(self, _connections):
+        def response(request):
+            request.login_account = SimpleNamespace(pk=42)
+            return HttpResponse("ok")
+
+        middleware = PerformanceTimingMiddleware(response)
+        result = middleware(self.factory.get("/coach_api/coach/dashboard"))
+
+        self.assertEqual(result["X-LMS-Performance-Diagnostic"], "1")
+        self.assertEqual(result["X-DB-Query-Count"], "0")
 
     @override_settings(DEBUG=True, PERFORMANCE_DIAGNOSTICS=True)
     @patch("config.performance.connections.all", return_value=[])

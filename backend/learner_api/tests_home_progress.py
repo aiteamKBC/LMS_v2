@@ -150,11 +150,29 @@ class HomeProgressTests(SimpleTestCase):
         with patch('learner_api.home_progress.connections', {'enrolment': connection}), \
              patch('learner_api.home_progress._group_dates', return_value=(START, END, 'learner')), \
              patch('learner_api.home_progress.rows', return_value=[]), \
-             patch('learner_api.home_progress.lecture_register', side_effect=DatabaseError('offline')):
+             patch('learner_api.home_progress.lecture_register', side_effect=DatabaseError('offline')), \
+             patch('learner_api.home_progress.canonical_learning.metrics', return_value={
+                 'otjh': {'actual': 0, 'planned': 0},
+             }):
             result = read_home_progress(source, 'apprenticeship', [], [], [], [], END)
         self.assertEqual(cursor.execute.call_args.args[1], ['apprenticeship', '499'])
+        self.assertNotIn('structured_manual_activities', cursor.execute.call_args.args[0])
         self.assertIsNone(result['lectures'])
         self.assertEqual(result['otjh']['planned'], 0)
+
+    def test_home_actual_uses_the_canonical_ssot_total_when_available(self):
+        connection = MagicMock()
+        source = SimpleNamespace(pk=499, aptem_id=None)
+        canonical = {'otjh': {'actual': 12.5}}
+        with patch('learner_api.home_progress.connections', {'enrolment': connection}), \
+             patch('learner_api.home_progress._group_dates', return_value=(START, END, 'learner')), \
+             patch('learner_api.home_progress.rows', return_value=[]), \
+             patch('learner_api.home_progress.lecture_register', return_value=[]), \
+             patch('learner_api.home_progress.canonical_learning.metrics', return_value=canonical) as metrics:
+            result = read_home_progress(source, 'commercial', [], [], [], [], END)
+        self.assertEqual(result['otjh']['actual'], 12.5)
+        self.assertIsNone(result['otjh']['percent'])
+        metrics.assert_called_once_with(499)
 
     def test_home_endpoint_keeps_route_enrolment_and_ignores_query_identity(self):
         model = MagicMock()
@@ -170,7 +188,7 @@ class HomeProgressTests(SimpleTestCase):
     def test_home_reads_all_plan_activities_while_preserving_weekly_schedule_payload(self):
         connection = MagicMock()
         cursor = connection.cursor.return_value.__enter__.return_value
-        cursor.fetchall.return_value = [('M1', 'Marketing')]
+        cursor.fetchall.return_value = [('M1', 'Marketing', True)]
         current = [native(id='current', expected_hours=2), native(id='future', date='2027-01-01', expected_hours=10)]
         dates = {row['id']: {'date': row['date']} for row in current}
         source = SimpleNamespace(pk=499, aptem_id=None)
@@ -182,4 +200,26 @@ class HomeProgressTests(SimpleTestCase):
             result = read_week(source, datetime(2026, 9, 10, tzinfo=timezone.utc), home_kind='apprenticeship')
         self.assertEqual(result['homeProgress'], {'sentinel': True})
         self.assertEqual(len(list(home.call_args.args[2])), 2)
+        self.assertEqual(home.call_args.kwargs['attendance_module_ids'], ['M1'])
         self.assertEqual(result['modules'][0]['total'], 1)
+
+    def test_dashboard_metrics_use_the_same_canonical_ssot_total_as_the_metrics_endpoint(self):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        cursor.fetchall.return_value = [('M1', 'Marketing')]
+        current = [native(id='current', expected_hours=2)]
+        source = SimpleNamespace(pk=499, aptem_id=None)
+        canonical = {'otjh': {'actual': 12.5}}
+        with patch('learner_api.overview_week.connections', {'enrolment': connection}), \
+             patch('learner_api.overview_week.rows', return_value=current), \
+             patch('learner_api.overview_week.read_builder_activity_dates', return_value={}), \
+             patch('learner_api.overview_week._direct_progress_records', return_value=[]), \
+             patch('learner_api.overview_week.canonical_learning.enabled', return_value=True), \
+             patch('learner_api.overview_week.canonical_learning.metrics', return_value=canonical) as metrics, \
+             patch('learner_api.overview_week.metrics_from_loaded') as legacy_metrics:
+            result = read_week(
+                source, datetime(2026, 9, 10, tzinfo=timezone.utc), dashboard_kind='commercial',
+            )
+        self.assertEqual(result['metrics'], canonical)
+        metrics.assert_called_once_with(499)
+        legacy_metrics.assert_not_called()

@@ -345,6 +345,9 @@ INSTALLED_APPS = [
     'progress_reviews_api',
     'knowledge_base',
     'chat',
+    # One shared projection table, one transactional outbox and one short-lived
+    # performance-sample table for aggregate screens across every workspace.
+    'read_models',
     # Platform authentication (auth schema on the Neon enrolment database).
     # Its tables are unmanaged and created by `manage.py apply_login_tables`.
     'login',
@@ -399,6 +402,12 @@ MIDDLEWARE = [
 
 PERFORMANCE_DIAGNOSTICS = os.environ.get('PERFORMANCE_DIAGNOSTICS', 'false').lower() == 'true'
 SLOW_REQUEST_THRESHOLD_MS = int(os.environ.get('SLOW_REQUEST_THRESHOLD_MS', '750'))
+PERFORMANCE_DIAGNOSTIC_ACCOUNT_IDS = frozenset(
+    value.strip()
+    for value in os.environ.get('PERFORMANCE_DIAGNOSTIC_ACCOUNT_IDS', '').split(',')
+    if value.strip()
+)
+PERFORMANCE_SAMPLE_RETENTION_DAYS = int(os.environ.get('PERFORMANCE_SAMPLE_RETENTION_DAYS', '14'))
 
 ROOT_URLCONF = 'config.urls'
 
@@ -464,7 +473,38 @@ else:
 # Final serialized Coach Dashboard response. Keep this short because some
 # attendance/progress sources are external and cannot emit local invalidation
 # events. Production may override it without requiring Redis in development.
-COACH_DASHBOARD_CACHE_TTL = int(os.environ.get('COACH_DASHBOARD_CACHE_TTL', '90'))
+COACH_DASHBOARD_CACHE_TTL = int(os.environ.get('COACH_DASHBOARD_CACHE_TTL', '30'))
+COACH_DASHBOARD_SNAPSHOT_MAX_AGE = int(os.environ.get('COACH_DASHBOARD_SNAPSHOT_MAX_AGE', '30'))
+COACH_DASHBOARD_REFRESH_DEBOUNCE = float(os.environ.get('COACH_DASHBOARD_REFRESH_DEBOUNCE', '0.25'))
+COACH_DASHBOARD_REFRESH_LOCK_TTL = int(os.environ.get('COACH_DASHBOARD_REFRESH_LOCK_TTL', '300'))
+COACH_DASHBOARD_BACKGROUND_REFRESH_ENABLED = (
+    os.environ.get('COACH_DASHBOARD_BACKGROUND_REFRESH_ENABLED', 'true').lower() == 'true'
+)
+
+# Shared read models are additive and roll out behind flags. Apply the migration
+# on a Neon child branch, verify parity, then enable outbox/dual-write before
+# switching reads. The legacy Coach table remains the fallback throughout.
+READ_MODEL_OUTBOX_ENABLED = os.environ.get('READ_MODEL_OUTBOX_ENABLED', 'false').lower() == 'true'
+READ_MODEL_DUAL_WRITE_ENABLED = os.environ.get('READ_MODEL_DUAL_WRITE_ENABLED', 'false').lower() == 'true'
+COACH_DASHBOARD_SHARED_READ_MODEL_ENABLED = (
+    os.environ.get('COACH_DASHBOARD_SHARED_READ_MODEL_ENABLED', 'false').lower() == 'true'
+)
+LEARNER_HOME_SHARED_READ_MODEL_ENABLED = (
+    os.environ.get('LEARNER_HOME_SHARED_READ_MODEL_ENABLED', 'false').lower() == 'true'
+)
+LEARNER_HOME_READ_MODEL_TTL_SECONDS = int(os.environ.get('LEARNER_HOME_READ_MODEL_TTL_SECONDS', '30'))
+CURRICULUM_HOME_SHARED_READ_MODEL_ENABLED = (
+    os.environ.get('CURRICULUM_HOME_SHARED_READ_MODEL_ENABLED', 'false').lower() == 'true'
+)
+CURRICULUM_HOME_READ_MODEL_TTL_SECONDS = int(os.environ.get('CURRICULUM_HOME_READ_MODEL_TTL_SECONDS', '30'))
+RECORD_MONITOR_SHARED_READ_MODEL_ENABLED = (
+    os.environ.get('RECORD_MONITOR_SHARED_READ_MODEL_ENABLED', 'false').lower() == 'true'
+)
+RECORD_MONITOR_READ_MODEL_TTL_SECONDS = int(
+    os.environ.get('RECORD_MONITOR_READ_MODEL_TTL_SECONDS', '30')
+)
+READ_MODEL_WORKER_LEASE_SECONDS = int(os.environ.get('READ_MODEL_WORKER_LEASE_SECONDS', '300'))
+READ_MODEL_OUTBOX_RETENTION_DAYS = int(os.environ.get('READ_MODEL_OUTBOX_RETENTION_DAYS', '7'))
 
 
 # Share expensive curriculum payloads between Django workers in production.
@@ -473,12 +513,32 @@ COACH_DASHBOARD_CACHE_TTL = int(os.environ.get('COACH_DASHBOARD_CACHE_TTL', '90'
 # process-local cache when no Redis URL is configured.
 CACHE_URL = os.environ.get('CACHE_URL') or os.environ.get('REDIS_URL')
 if CACHE_URL:
+    from redis.backoff import NoBackoff
+    from redis.retry import Retry
+
+    # Redis is an accelerator, never a dependency for serving a page. Bound
+    # connection/read waits so an unavailable cache falls through to the latest
+    # valid Postgres projection inside the API latency budget.
+    CACHE_SOCKET_CONNECT_TIMEOUT_SECONDS = float(
+        os.environ.get('CACHE_SOCKET_CONNECT_TIMEOUT_SECONDS', '0.2')
+    )
+    CACHE_SOCKET_TIMEOUT_SECONDS = float(
+        os.environ.get('CACHE_SOCKET_TIMEOUT_SECONDS', '0.2')
+    )
     CACHES = {
         'default': {
             'BACKEND': 'django.core.cache.backends.redis.RedisCache',
             'LOCATION': CACHE_URL,
             'KEY_PREFIX': os.environ.get('CACHE_KEY_PREFIX', 'kbc-lms'),
             'TIMEOUT': int(os.environ.get('CACHE_DEFAULT_TIMEOUT', '300')),
+            'OPTIONS': {
+                'socket_connect_timeout': CACHE_SOCKET_CONNECT_TIMEOUT_SECONDS,
+                'socket_timeout': CACHE_SOCKET_TIMEOUT_SECONDS,
+                # A cache miss/failure must immediately fall through to the
+                # durable Postgres projection; retrying Redis belongs outside
+                # an end-user request.
+                'retry': Retry(NoBackoff(), 0),
+            },
         }
     }
 else:

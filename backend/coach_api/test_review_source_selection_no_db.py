@@ -374,6 +374,9 @@ class AptemEventVerificationTests(SimpleTestCase):
         self.assertTrue(events[0]["hasReviewForm"])
         self.assertNotIn("reviewInstanceId", events[0])
         self.assertNotIn("reviewTemplateId", events[0])
+        query = cursor.execute.call_args.args[0]
+        self.assertIn("jsonb_build_object", query)
+        self.assertNotIn("lr.review_data, lr.extraction_status", query)
 
     @patch("coach_api.views.connections")
     def test_metadata_only_import_does_not_claim_to_have_a_review_form(self, connections):

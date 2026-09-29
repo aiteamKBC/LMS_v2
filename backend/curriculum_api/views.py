@@ -60,6 +60,7 @@ from .ksb_coverage import (
     normalise_classification as coverage_normalise_classification,
     normalise_code as coverage_normalise_code,
 )
+from .learner_ksb_sync import sync_progress_ksbs
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +152,18 @@ def invalidate_curriculum_cache():
     # backend-specific delete-pattern API. Old generations expire naturally
     # after the normal TTL.
     bump_shared_curriculum_epoch()
+    # One outbox pair per write request, recorded while the caller's database
+    # transaction is still active. A tree save can invalidate once per row, so
+    # the request-scoped marker prevents that from becoming thousands of
+    # duplicate outbox inserts; the worker still coalesces concurrent requests.
+    if not getattr(_CURRICULUM_EPOCH_BUMP, 'read_model_queued', False):
+        try:
+            from .read_model import enqueue_all_curriculum_home_refreshes
+            enqueue_all_curriculum_home_refreshes(reason='curriculum-change')
+        except Exception:
+            logger.warning('Unable to enqueue Curriculum Home refresh.', exc_info=True)
+        if getattr(_CURRICULUM_EPOCH_BUMP, 'scoped', False):
+            _CURRICULUM_EPOCH_BUMP.read_model_queued = True
     # Only the negative answers are dropped. Whether a table exists changes on
     # DDL, never on a curriculum write, and the ensure_* helpers only ever add
     # tables -- so a cached True is still true, while a cached False may have
@@ -498,6 +511,7 @@ def bump_shared_curriculum_epoch():
 def begin_curriculum_write_scope():
     _CURRICULUM_EPOCH_BUMP.scoped = True
     _CURRICULUM_EPOCH_BUMP.pending = False
+    _CURRICULUM_EPOCH_BUMP.read_model_queued = False
 
 
 def end_curriculum_write_scope():
@@ -505,6 +519,7 @@ def end_curriculum_write_scope():
     pending = getattr(_CURRICULUM_EPOCH_BUMP, 'pending', False)
     _CURRICULUM_EPOCH_BUMP.scoped = False
     _CURRICULUM_EPOCH_BUMP.pending = False
+    _CURRICULUM_EPOCH_BUMP.read_model_queued = False
     if pending:
         write_shared_curriculum_epoch_bump()
 
@@ -9000,7 +9015,7 @@ def programme_learner_ksb_progress(programme_id, required_codes=None):
         return result
 
     try:
-        progress_totals, _rows, _excluded = learner_progress_ksb_consumption(learner_ids, list(expected))
+        progress_totals = learner_progress_ksb_totals(learner_ids, list(expected))
     except Exception as exc:
         logger.warning('Could not load learner KSB consumption for programme %s: %s', programme_id, exc)
         return result
@@ -12370,6 +12385,16 @@ def curriculum_overview(request):
     cache_key = f'overview:{visibility}:{"compact" if compact else "full"}'
     force = request_bypasses_curriculum_cache(request)
 
+    if compact and not force and getattr(settings, 'CURRICULUM_HOME_SHARED_READ_MODEL_ENABLED', False):
+        from .read_model import enqueue_curriculum_home_refresh, get_curriculum_home
+        shared = get_curriculum_home(visibility)
+        if shared is not None and isinstance(shared.payload.get('overview'), dict):
+            response = JsonResponse(shared.payload['overview'])
+            response['X-LMS-Cache'] = 'READ-MODEL-STALE' if shared.stale else 'READ-MODEL-HIT'
+            if shared.stale:
+                enqueue_curriculum_home_refresh(visibility, reason='stale-read')
+            return response
+
     def build_overview():
         return build_curriculum_payload(visibility, compact=compact, force=force)
 
@@ -12382,7 +12407,14 @@ def curriculum_overview(request):
     payload = cached_curriculum_value(cache_key, build_overview, force=force)
     if compact:
         payload = {**payload, 'modules': compact_module_rows(payload['modules'])}
-    return JsonResponse(payload)
+    response = JsonResponse(payload)
+    if compact and getattr(settings, 'CURRICULUM_HOME_SHARED_READ_MODEL_ENABLED', False):
+        from .read_model import enqueue_curriculum_home_refresh
+        enqueue_curriculum_home_refresh(
+            visibility, reason='forced-read' if force else 'missing-read-model',
+        )
+        response['X-LMS-Cache'] = 'READ-MODEL-MISS'
+    return response
 
 
 def get_cached_payload(request, compact=False):
@@ -19239,6 +19271,7 @@ def sync_component_ksb_projection(component_id, component_row=None, module_row=N
     update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id], {'ksb_mappings': json_db_value(json_items)})
     authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, 'component_id = %s', [component_id], deleted_by=deleted_by)
     authoring_bulk_upsert(AUTHORING_KSB_MAPPINGS_TABLE, ['id'], projection_payloads)
+    sync_progress_ksbs({component_id: json_items}, actor=deleted_by)
     return json_items
 
 
@@ -19522,6 +19555,10 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
         authoring_bulk_upsert(AUTHORING_WEEKS_TABLE, ['id'], week_payloads)
         authoring_bulk_upsert(AUTHORING_COMPONENTS_TABLE, ['id'], component_payloads)
         authoring_bulk_upsert(AUTHORING_KSB_MAPPINGS_TABLE, ['id'], mapping_payloads)
+        sync_progress_ksbs({
+            component['id']: as_json_value(component.get('ksb_mappings'), [])
+            for component in component_payloads
+        }, actor='curriculum-module-save')
 
         criteria = payload.get('completionCriteria') or {}
         defaults = default_completion_payload()
@@ -20553,9 +20590,26 @@ def curriculum_preview_tutor_availability(request):
 @require_GET
 def curriculum_programmes(request):
     visibility = curriculum_visibility(request)
+    force = request_bypasses_curriculum_cache(request)
+    if not force and getattr(settings, 'CURRICULUM_HOME_SHARED_READ_MODEL_ENABLED', False):
+        from .read_model import enqueue_curriculum_home_refresh, get_curriculum_home
+        shared = get_curriculum_home(visibility)
+        if (
+            shared is not None
+            and isinstance(shared.payload.get('overview'), dict)
+            and isinstance(shared.payload.get('programmes'), list)
+        ):
+            response = curriculum_collection_response(
+                shared.payload['overview'], 'programmes', shared.payload['programmes'],
+            )
+            response['X-LMS-Cache'] = 'READ-MODEL-STALE' if shared.stale else 'READ-MODEL-HIT'
+            if shared.stale:
+                enqueue_curriculum_home_refresh(visibility, reason='stale-read')
+            return response
     payload = cached_curriculum_value(
         f'overview:{visibility}:compact',
-        lambda: build_curriculum_payload(visibility, compact=True),
+        lambda: build_curriculum_payload(visibility, compact=True, force=force),
+        force=force,
     )
     # Both enrichments read the authoring tables, so they share one read scope
     # rather than each paying for its own round trips. Read-only: the payload
@@ -20564,16 +20618,25 @@ def curriculum_programmes(request):
         enriched_modules = cached_curriculum_value(
             f'modules:{visibility}:enriched',
             lambda: enrich_modules_with_authoring(payload['modules'], include_programme_deleted=visibility == 'all'),
+            force=force,
         )
         programmes = cached_curriculum_value(
             f'programmes:{visibility}:with-module-counts',
             lambda: enrich_programmes_with_module_counts(payload['programmes'], enriched_modules, modules_enriched=True, include_archived=visibility == 'all'),
+            force=force,
         )
-    return curriculum_collection_response(
+    response = curriculum_collection_response(
         payload,
         'programmes',
         programmes,
     )
+    if getattr(settings, 'CURRICULUM_HOME_SHARED_READ_MODEL_ENABLED', False):
+        from .read_model import enqueue_curriculum_home_refresh
+        enqueue_curriculum_home_refresh(
+            visibility, reason='forced-read' if force else 'missing-read-model',
+        )
+        response['X-LMS-Cache'] = 'READ-MODEL-MISS'
+    return response
 
 
 @require_GET
@@ -23187,6 +23250,15 @@ def curriculum_uploaded_file(request, path):
 # does not render a component's body should exclude it.
 COMPONENT_HEAVY_COLUMNS = ('settings_json',)
 
+# The KSB projection needs identity, placement, display metadata, OTJH, and the
+# flags that exclude archived/library rows.  It must not inherit every other
+# component column: this table now holds tens of thousands of rows, and legacy
+# JSON/text fields made the shared scan exceed the request statement timeout.
+COMPONENT_KSB_SCOPE_COLUMNS = (
+    'id', 'week_id', 'module_catalogue_id', 'type', 'title', 'expected_otjh',
+    'is_programme_deleted', 'deleted_at', 'library_state',
+)
+
 
 def authoring_child_rows_for_modules(table, module_ids, *, columns=None, exclude_columns=None):
     """Rows of an authoring child table (weeks/components/mappings) for module ids.
@@ -23357,10 +23429,10 @@ def authoring_scope_data(scope='', identifier=''):
     week_rows = active_week_rows(authoring_child_rows_for_modules(AUTHORING_WEEKS_TABLE, module_ids))
     component_rows = active_component_rows(authoring_child_rows_for_modules(
         AUTHORING_COMPONENTS_TABLE, module_ids,
-        # ksb_coverage.py never reads settings_json, and it is 24 MB of inlined
-        # authoring content - ~90 s per programme to fetch and discard.
-        # Excluded rather than allow-listed so columns added later still arrive.
-        exclude_columns=COMPONENT_HEAVY_COLUMNS,
+        # This feeds only ksb_coverage.py and the active-row filters.  A narrow
+        # allow-list is intentional: legacy JSON/text columns are large and a
+        # newly-added component body must not silently enter this aggregate.
+        columns=COMPONENT_KSB_SCOPE_COLUMNS,
     ))
     mapping_rows = active_mapping_rows(authoring_child_rows_for_modules(AUTHORING_KSB_MAPPINGS_TABLE, module_ids))
 
@@ -24173,6 +24245,80 @@ def learner_progress_ksb_consumption(learner_ids, programme_ksb_codes, component
         rows_out,
         excluded_out,
     )
+
+
+def learner_progress_ksb_totals(learner_ids, programme_ksb_codes):
+    """Return only the achieved KSB totals needed by programme summary cards.
+
+    ``learner_progress_ksb_consumption`` deliberately returns the full learner
+    activity history because the Curriculum impact drill-down needs OTJH,
+    lineage, deleted-component resolution and excluded rows. The programme
+    cards need none of that detail. Reusing the drill-down query there made
+    every cold Curriculum home request scan and join the full progress history
+    once per programme.
+
+    Keep the same completion and repeat-attempt rules while selecting only
+    progress rows that carry one of this programme's KSB codes. This is a read
+    optimisation, not a second definition of achievement: the decision still
+    comes from ``learner_api.progress_rules``.
+    """
+    if not learner_ids or connection.vendor != 'postgresql':
+        return {}
+    if not learner_schema_table_exists('learner_progress_entries') or not learner_schema_table_exists('learner_progress_ksbs'):
+        return {}
+    code_filter = sorted({
+        coverage_normalise_code(code)
+        for code in programme_ksb_codes
+        if coverage_normalise_code(code)
+    })
+    if not code_filter:
+        return {}
+
+    totals = defaultdict(lambda: defaultdict(float))
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                '''
+                select p.learner_id, p.id as progress_id, p.kind,
+                       p.component_ref, p.passed, p.submitted_at,
+                       k.ksb_code, coalesce(max(k.weight), 0) as weight
+                from "Learner"."learner_progress_entries" p
+                join "Learner"."learner_progress_ksbs" k on k.progress_id = p.id
+                where p.learner_id = any(%s)
+                  -- KSB snapshots are normalised to upper-case on every write.
+                  -- Keep the indexed column bare so PostgreSQL can use
+                  -- learner_progress_ksbs_code_idx instead of scanning all
+                  -- snapshots to evaluate upper(btrim(...)).
+                  and k.ksb_code = any(%s)
+                group by p.learner_id, p.id, p.kind, p.component_ref,
+                         p.passed, p.submitted_at, k.ksb_code
+                order by p.submitted_at desc nulls last, p.id desc
+                ''',
+                [learner_ids, code_filter],
+            )
+            rows = rows_as_dicts(cursor)
+    except Exception as exc:
+        logger.warning('Could not load learner progress KSB totals: %s', exc)
+        return {}
+
+    seen = set()
+    allowed_codes = set(code_filter)
+    for row in rows:
+        code = coverage_normalise_code(row.get('ksb_code'))
+        if not code or code not in allowed_codes:
+            continue
+        if not progress_counts_as_achieved(kind=row.get('kind'), passed=row.get('passed')):
+            continue
+        component_ref = clean_str(row.get('component_ref'))
+        dedupe_key = (row.get('learner_id'), component_ref or row.get('progress_id'), code)
+        if dedupe_key in seen:
+            continue
+        seen.add(dedupe_key)
+        totals[row.get('learner_id')][code] += float_weight(row.get('weight') or 0)
+    return {
+        learner_id: dict(code_totals)
+        for learner_id, code_totals in totals.items()
+    }
 
 
 def parse_ksb_weights(value):

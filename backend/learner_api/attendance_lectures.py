@@ -122,7 +122,7 @@ def report_id(row):
     return _kbc_attendance_report_id(key)
 
 
-def read_native_occurrences(source):
+def read_native_occurrences(source, *, module_ids=None):
     """Current assigned-module occurrences expected for, or attended by, the learner.
 
     Current module assignment is authoritative for the learner's schedule.  A
@@ -132,11 +132,15 @@ def read_native_occurrences(source):
     if not source.email:
         return []
     with connections['enrolment'].cursor() as cur:
-        # An old Teams invitation is not a current curriculum assignment.
-        # Use the same saved plan as My Learning and Training Plan, then exclude
-        # deleted delivery modules and replaced meeting series below.
-        cur.execute(ATTENDANCE_SUBJECTS_SQL, [source.id])
-        module_ids = [row[0] for row in cur.fetchall()]
+        if module_ids is None:
+            # An old Teams invitation is not a current curriculum assignment.
+            # Use the same saved plan as My Learning and Training Plan, then exclude
+            # deleted delivery modules and replaced meeting series below.
+            cur.execute(ATTENDANCE_SUBJECTS_SQL, [source.id])
+            module_ids = [row[0] for row in cur.fetchall()]
+        else:
+            module_ids = list(dict.fromkeys(str(value or '').strip() for value in module_ids))
+            module_ids = [value for value in module_ids if value]
         if not module_ids:
             return []
         cur.execute('''SELECT o.id AS session_id,o.id AS occurrence_id,
@@ -177,9 +181,9 @@ def read_native_occurrences(source):
     return result
 
 
-def lecture_register(source):
+def lecture_register(source, *, module_ids=None):
     records = combined_attendance_rows(source)
-    scheduled = read_native_occurrences(source)
+    scheduled = read_native_occurrences(source, module_ids=module_ids)
     by_occurrence = {str(row['session_id']): row for row in scheduled}
     now = timezone.now()
     result = []

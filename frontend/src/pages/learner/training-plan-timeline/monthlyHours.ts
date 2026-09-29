@@ -45,10 +45,10 @@ export function monthlyHours(data: TrainingPlanDashboard, programmeStartMonth = 
   ], programmeStartMonth, programmeEndMonth);
   const recordedAvailable = data.actualAvailable !== false || Object.keys(data.monthlyOtjh || {}).length > 0;
   return keys.map(key => {
-    const useAudit = !!data.auditOtjhCutoffMonth && key <= data.auditOtjhCutoffMonth;
     const monthlyLog = data.monthlyLogOtjh?.[key];
     const current = data.monthlyOtjh?.[key];
-    const historical = data.actual.filter(row => row.month === key).reduce((sum, row) => sum + row.hours, 0);
+    const canonicalRows = data.actual.filter(row => row.month === key);
+    const canonicalActual = canonicalRows.reduce((sum, row) => sum + row.hours, 0);
     // A Monthly Logs row can legitimately have no stored target (for example,
     // when the log was created before the contract target was imported).  The
     // target is a plan value, so use the contract/current-plan value as a
@@ -56,10 +56,13 @@ export function monthlyHours(data: TrainingPlanDashboard, programmeStartMonth = 
     // one.  This lets cumulative target-to-date calculations remain usable
     // without changing the completed-hours provenance rules below.
     const planned = data.months[key]?.planned ?? current?.planned ?? null;
-    // Marking contributes to submitted. Retained Audit and accepted LMS hours
-    // contribute to completed, exactly once, through Monthly Logs when present.
-    const submitted = monthlyLog ? monthlyLog.submitted : useAudit ? null : recordedAvailable ? (current?.submitted ?? 0) : null;
-    const completed = monthlyLog ? monthlyLog.completed : useAudit ? null : recordedAvailable ? historical + (current?.actual ?? 0) : null;
+    // Marking contributes to submitted. Accepted SSOT hours contribute to
+    // completed exactly once: Monthly Logs first, then the canonical monthly
+    // projection. Never add the weekly projection to the same canonical row.
+    const submitted = monthlyLog ? monthlyLog.submitted : recordedAvailable ? (current?.submitted ?? 0) : null;
+    const completed = monthlyLog ? monthlyLog.completed : recordedAvailable
+      ? canonicalRows.length ? canonicalActual : (current?.actual ?? 0)
+      : null;
     return {
       key,
       label: new Date(`${key}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }),

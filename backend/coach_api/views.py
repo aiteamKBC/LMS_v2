@@ -71,6 +71,7 @@ from learner_api.models import (
     learner_ksbs_relation_exists,
 )
 from learner_api.constants import ACCESS_COACH, ACCESS_SUPER_ADMIN
+from learner_api import canonical_learning
 # The one audited shape for the submissions table, shared with the two learner
 # write paths so all three record the same columns. See submission_audit.
 from learner_api.submission_audit import (
@@ -1791,17 +1792,12 @@ def fetch_caseload_dashboard_profiles(owner_email: str) -> list[LearnerProfile]:
     """Return a lean learner snapshot for the coach dashboard first paint."""
     requested_owner = normalize_email(owner_email)
     learner_alias = get_learner_db_alias()
-    progress_prefetches = [
+    dashboard_prefetches = [
         "ksb_assignment__profile_version__definitions",
         "plan_modules__weeks__components",
-        "progress_entries__ksb_links",
-        "progress_entries__quiz_answers__correct_answers",
-        "progress_entries__quiz_answers__chosen_answers",
     ]
     if learner_ksbs_relation_exists(learner_alias):
-        progress_prefetches.insert(0, "assigned_ksbs")
-    if learner_activity_events_relation_exists(learner_alias):
-        progress_prefetches.append("activity_events")
+        dashboard_prefetches.insert(0, "assigned_ksbs")
     queryset = (
         LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
         .filter(coach_email_key=requested_owner)
@@ -1837,7 +1833,7 @@ def fetch_caseload_dashboard_profiles(owner_email: str) -> list[LearnerProfile]:
         # For current_week_label(): a few extra batched queries (one per
         # related table, not one per learner) rather than a lazy per-row
         # fetch the first time each learner's .training_plan is touched.
-        .prefetch_related(*progress_prefetches)
+        .prefetch_related(*dashboard_prefetches)
         .order_by("full_name", "id")
     )
     rows = [row for row in queryset if clean_text(row.username)]
@@ -1845,7 +1841,7 @@ def fetch_caseload_dashboard_profiles(owner_email: str) -> list[LearnerProfile]:
     return rows
 
 
-def caseload_dashboard_progress_projections(rows) -> dict[int, dict]:
+def caseload_dashboard_progress_projections(rows, *, ksb_rows=None) -> dict[int, dict]:
     """Project established KSB fallback and activity metadata in bulk.
 
     Programme metrics belong exclusively to ``caseload_canonical_metrics``.
@@ -1854,29 +1850,59 @@ def caseload_dashboard_progress_projections(rows) -> dict[int, dict]:
     them later. Training-plan activity counts must never be copied here because
     they would overwrite the historical + native population with differently-
     scoped values such as 158 / 133.
+
+    ``ksb_rows`` lets aggregate callers skip the historical KSB fallback for
+    learners whose canonical KSB metric is already ready. Latest activity is
+    still loaded for every row; only the redundant many-row KSB join is
+    narrowed.
     """
+    rows = list(rows or [])
+    ksb_rows = rows if ksb_rows is None else list(ksb_rows or [])
+    completed_codes = caseload_completed_ksb_codes(ksb_rows)
+    latest_activities = caseload_latest_learning_activities(rows)
     projections = {}
-    for row in rows or []:
-        learner = serialize_caseload_learner(
-            row,
-            refresh_live_snapshots=False,
-            # The summary does not expose OTJH entry details. Supplying an
-            # empty, already-resolved lookup prevents that detail-only builder
-            # from querying curriculum once per learner.
-            expected_otjh_by_component_id={},
-            curriculum_ksbs=row.ksbs,
-        )
+    for row in rows:
+        target_codes = set(ksb_target_lookup(row.ksbs))
+        achieved_codes = completed_codes.get(int(row.id), set()) & target_codes
+        target_count = len(target_codes)
+        completed_count = len(achieved_codes)
+        available = target_count > 0
+        latest = latest_activities.get(int(row.id)) or {}
         projections[int(row.id)] = {
-            "ksbCompleted": learner.get("ksbCompleted"),
-            "ksbTarget": learner.get("ksbTarget"),
-            "ksbStatus": learner.get("ksbStatus") or "",
-            "ksbProgress": learner.get("ksbProgress") if learner.get("ksbProgress") is not None else 0,
-            "ksbProgressAvailable": bool(learner.get("ksbProgressAvailable")),
-            "lastActivity": learner.get("lastActivity"),
-            "lastActivityDate": learner.get("lastActivityDate"),
-            "lastActivityLabel": learner.get("lastActivityLabel"),
+            "ksbCompleted": completed_count if available else None,
+            "ksbTarget": target_count if available else None,
+            "ksbStatus": derive_ksb_status(completed_count, target_count) if available else "",
+            "ksbProgress": percentage(completed_count, target_count) if available else 0,
+            "ksbProgressAvailable": available,
+            "lastActivity": latest.get("display"),
+            "lastActivityDate": latest.get("date"),
+            "lastActivityLabel": latest.get("label"),
         }
     return projections
+
+
+def caseload_completed_ksb_codes(rows) -> dict[int, set[str]]:
+    """Load achieved KSB codes for a caseload without hydrating progress rows."""
+    learner_ids = [int(row.id) for row in rows or [] if getattr(row, "id", None) is not None]
+    if not learner_ids:
+        return {}
+    result: dict[int, set[str]] = defaultdict(set)
+    with connections[get_learner_db_alias()].cursor() as cursor:
+        cursor.execute(
+            '''SELECT p.learner_id,k.ksb_code
+               FROM "Learner".learner_progress_entries p
+               JOIN "Learner".learner_progress_ksbs k ON k.progress_id=p.id
+               WHERE p.learner_id=ANY(%s) AND p.deleted_at IS NULL
+                 AND p.passed IS NOT FALSE
+                 AND btrim(lower(coalesce(p.kind,''))) <> 'activity_event'
+                 AND (btrim(lower(coalesce(p.kind,''))) <> 'quiz' OR p.passed IS TRUE)''',
+            [learner_ids],
+        )
+        for learner_id, raw_code in cursor.fetchall():
+            code = normalize_ksb_parent_code(raw_code)
+            if code:
+                result[int(learner_id)].add(code)
+    return result
 
 
 def fetch_case_file_shell(owner_email: str, learner_id: int):
@@ -2261,13 +2287,21 @@ def learner_activity_feed_entries(row: LearnerProfile | SimpleNamespace, *, newe
 
 def latest_learning_activity(progress_entries: list[dict], activity_entries: list[dict]) -> dict | None:
     """Return the newest real learner action across progress and activity feeds."""
+    def activity_instant(value):
+        if isinstance(value, (date, datetime)):
+            return value
+        try:
+            return datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return parse_date_value(value)
+
     candidates = []
     for entry in [*progress_entries, *activity_entries]:
         if not isinstance(entry, dict):
             continue
         occurred_at = next(
             (
-                parse_date_value(entry.get(field))
+                activity_instant(entry.get(field))
                 for field in ("submittedAt", "at", "completedAt", "startedAt", "date", "createdAt")
                 if entry.get(field)
             ),
@@ -2298,28 +2332,77 @@ def latest_learning_activity(progress_entries: list[dict], activity_entries: lis
 
 
 def caseload_latest_learning_activities(rows) -> dict[int, dict]:
-    """Bulk-load latest LMS activity so dashboard rows do not issue N requests."""
+    """Bulk-load at most two latest candidates per learner.
+
+    The previous bulk query removed the HTTP N+1 but still transferred every
+    historical progress row to Python. PostgreSQL now picks the newest normal
+    progress row and newest feed row for each learner; Python retains the
+    established cross-source date/title selection.
+    """
     learner_ids = [int(row.id) for row in rows or [] if getattr(row, "id", None) is not None]
     if not learner_ids:
         return {}
-    activities: dict[int, dict] = {}
-    entries = (
-        LearnerProgressEntry.objects
-        .filter(learner_id__in=learner_ids)
-        .only(
-            "learner_id", "kind", "component_title", "module_title", "week_title",
-            "component_ref", "quiz_ref", "attempt", "expected_otjh", "reported_time",
-            "submitted_at", "started_at", "claimed_seconds", "verified_seconds",
-            "time_tracking_source",
+    progress_by_learner: dict[int, list[dict]] = defaultdict(list)
+    feed_by_learner: dict[int, list[dict]] = defaultdict(list)
+    query = '''
+        WITH progress_candidates AS (
+            SELECT DISTINCT ON (learner_id)
+                   learner_id, 'progress' AS source_kind, kind, component_title,
+                   submitted_at, started_at, feed_kind, feed_title, feed_occurred_at
+              FROM "Learner".learner_progress_entries
+             WHERE learner_id = ANY(%s)
+               AND COALESCE(kind, '') <> 'activity_event'
+               AND COALESCE(submitted_at, started_at) IS NOT NULL
+             ORDER BY learner_id, COALESCE(submitted_at, started_at) DESC,
+                      entry_order ASC, id ASC
+        ),
+        feed_candidates AS (
+            SELECT DISTINCT ON (learner_id)
+                   learner_id, 'feed' AS source_kind, kind, component_title,
+                   submitted_at, started_at, feed_kind, feed_title, feed_occurred_at
+              FROM "Learner".learner_progress_entries
+             WHERE learner_id = ANY(%s)
+               AND NULLIF(BTRIM(feed_kind), '') IS NOT NULL
+               AND COALESCE(feed_occurred_at, submitted_at) IS NOT NULL
+             ORDER BY learner_id, COALESCE(feed_occurred_at, submitted_at) DESC,
+                      entry_order ASC, id ASC
         )
-        .order_by("learner_id", "-submitted_at", "-started_at", "-id")
-    )
-    for entry in entries:
-        learner_id = int(entry.learner_id)
-        candidate = latest_learning_activity([progress_entry_history_record(entry)], [])
-        current = activities.get(learner_id)
-        if candidate and (not current or candidate["date"] > current["date"]):
-            activities[learner_id] = candidate
+        SELECT * FROM progress_candidates
+        UNION ALL
+        SELECT * FROM feed_candidates
+    '''
+    with connections[get_learner_db_alias()].cursor() as cursor:
+        cursor.execute(query, [learner_ids, learner_ids])
+        candidates = cursor.fetchall()
+
+    for (
+        learner_id, source_kind, kind, component_title, submitted_at,
+        started_at, feed_kind, feed_title, feed_occurred_at,
+    ) in candidates:
+        profile_id = int(learner_id)
+        if source_kind == "progress":
+            progress_by_learner[profile_id].append({
+                "kind": kind,
+                "componentTitle": component_title,
+                "submittedAt": submitted_at.isoformat() if submitted_at else "",
+                "startedAt": started_at.isoformat() if started_at else "",
+            })
+        else:
+            occurred_at = feed_occurred_at or submitted_at
+            feed_by_learner[profile_id].append({
+                "kind": feed_kind,
+                "title": feed_title or component_title,
+                "at": occurred_at.isoformat() if occurred_at else "",
+            })
+
+    activities = {}
+    for profile_id in set(progress_by_learner) | set(feed_by_learner):
+        candidate = latest_learning_activity(
+            progress_by_learner.get(profile_id, []),
+            feed_by_learner.get(profile_id, []),
+        )
+        if candidate:
+            activities[profile_id] = candidate
     return activities
 
 
@@ -2489,6 +2572,28 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
     if not work:
         return {}
 
+    all_work = work
+    enrolment_ids = [int(source.pk) for _, source, _ in all_work]
+    try:
+        canonical_by_enrolment = canonical_learning.metrics_bulk(enrolment_ids)
+    except DatabaseError as exc:
+        # Keep the established partial-success fallback if the consolidated
+        # projection is temporarily unavailable.
+        logger.warning("Could not bulk-read canonical coach metrics: %s", exc)
+        canonical_by_enrolment = {}
+    work = [
+        item for item in all_work
+        if int(item[1].pk) not in canonical_by_enrolment
+    ]
+    result = {
+        profile_id: canonical_by_enrolment[int(source.pk)]
+        for profile_id, source, _kind in all_work
+        if canonical_by_enrolment.get(int(source.pk)) is not None
+    }
+    if not work:
+        _coach_perf("dashboard", "canonical_metrics", perf_started, learner_count=len(all_work))
+        return result
+
     enrolment_ids = [int(source.pk) for _, source, _ in work]
     direct_progress = load_direct_progress_records_bulk(enrolment_ids)
     # ``source.pk`` is the canonical internal enrolment identity. ``aptem_id``
@@ -2628,8 +2733,8 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
         return loaded
 
     results = load_metrics_inputs(work)
-    result = {profile_id: metrics for profile_id, metrics in results if metrics is not None}
-    _coach_perf("dashboard", "canonical_metrics", perf_started, learner_count=len(work))
+    result.update({profile_id: metrics for profile_id, metrics in results if metrics is not None})
+    _coach_perf("dashboard", "canonical_metrics", perf_started, learner_count=len(all_work))
     return result
 
 
@@ -3598,6 +3703,29 @@ def progress_entry_history_record(entry: LearnerProgressEntry) -> dict:
     }
 
 
+def caseload_progress_history(rows) -> dict[int, list[dict]]:
+    """Load only the progress columns needed by the six-month risk chart."""
+    learner_ids = [int(row.id) for row in rows or [] if getattr(row, "id", None) is not None]
+    result: dict[int, list[dict]] = defaultdict(list)
+    if not learner_ids:
+        return result
+    entries = (
+        LearnerProgressEntry.objects
+        .filter(learner_id__in=learner_ids)
+        .exclude(kind="activity_event")
+        .only(
+            "learner_id", "kind", "component_ref", "quiz_ref", "attempt",
+            "module_title", "week_title", "component_title", "expected_otjh",
+            "reported_time", "submitted_at", "started_at", "claimed_seconds",
+            "verified_seconds", "time_tracking_source",
+        )
+        .order_by("learner_id", "entry_order", "id")
+    )
+    for entry in entries:
+        result[int(entry.learner_id)].append(progress_entry_history_record(entry))
+    return result
+
+
 def historical_progress_date(record: dict) -> date | None:
     value = record.get("submittedAt") or record.get("startedAt")
     parsed = parse_date_value(value)
@@ -3706,20 +3834,7 @@ def dashboard_monthly_risk_history(
             for component_id in week
         ]
         expected_by_id = curriculum_expected_otjh_by_component_id(component_ids)
-        progress_by_learner: dict[int, list[dict]] = defaultdict(list)
-        progress_entries = (
-            LearnerProgressEntry.objects
-            .filter(learner_id__in=[int(row.id) for row in active_rows])
-            .only(
-                "learner_id", "kind", "component_ref", "quiz_ref", "attempt",
-                "module_title", "week_title", "component_title", "expected_otjh",
-                "reported_time", "submitted_at", "started_at", "claimed_seconds",
-                "verified_seconds", "time_tracking_source",
-            )
-            .order_by("learner_id", "entry_order", "id")
-        )
-        for entry in progress_entries:
-            progress_by_learner[int(entry.learner_id)].append(progress_entry_history_record(entry))
+        progress_by_learner = caseload_progress_history(active_rows)
         return build_monthly_risk_history(
             active_rows,
             progress_by_learner,
@@ -9143,11 +9258,40 @@ def fetch_aptem_review_events(
         SELECT lr.learner_id, lr.id, lr.aptem_review_id, lr.review_name,
                lr.review_type, lr.reviewer_name, lr.learner_name,
                lr.planned_scheduled_date, lr.completed_date, lr.status,
-               lr.review_data, lr.extraction_status, lr.last_error,
-               EXISTS (
-                   SELECT 1
-                   FROM "Learner".review_sections section
-                   WHERE section.review_id = lr.id
+               jsonb_build_object(
+                   'source_metadata', jsonb_build_object(
+                       'Planned / Scheduled Date', lr.review_data #>> '{source_metadata,Planned / Scheduled Date}',
+                       'Completed Date', lr.review_data #>> '{source_metadata,Completed Date}',
+                       'Reviewer', lr.review_data #>> '{source_metadata,Reviewer}',
+                       'Status', lr.review_data #>> '{source_metadata,Status}'
+                   )
+               ) AS review_data,
+               lr.extraction_status, lr.last_error,
+               (
+                   EXISTS (
+                       SELECT 1
+                       FROM "Learner".review_sections section
+                       WHERE section.review_id = lr.id
+                   )
+                   OR EXISTS (
+                       SELECT 1
+                       FROM jsonb_array_elements(
+                           CASE
+                               WHEN jsonb_typeof(lr.review_data -> 'sections') = 'array'
+                               THEN lr.review_data -> 'sections'
+                               ELSE '[]'::jsonb
+                           END
+                       ) embedded
+                       WHERE (
+                           jsonb_typeof(embedded -> 'fields') = 'array'
+                           AND jsonb_array_length(embedded -> 'fields') > 0
+                       ) OR (
+                           jsonb_typeof(embedded -> 'tables') = 'array'
+                           AND jsonb_array_length(embedded -> 'tables') > 0
+                       ) OR NULLIF(BTRIM(COALESCE(
+                           embedded ->> 'raw_text', embedded ->> 'rawText', ''
+                       )), '') IS NOT NULL
+                   )
                ) AS has_review_sections,
                lr.review_data ->> 'aptem_learner_id' AS source_learner_id
         FROM "Learner".reviews lr

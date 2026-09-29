@@ -3,10 +3,6 @@ import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '@/hooks/useAuth';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
-import { fetchTrainingPlanContract } from '@/api/trainingPlanDashboard';
-import type { LearnerKind } from '@/api/learnerDetail';
-import type { TrainingPlanContract } from '@/api/trainingPlanDashboard';
-import { monthlyTargetHours } from '@/pages/learner/training-plan-timeline/monthlyHours';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { EmptyState } from '@/components/ui/EmptyState';
@@ -43,8 +39,7 @@ export default function MonthlyLogsPage() {
     workspaceLabel={nav.workspaceLabel} pageTitle="Monthly Logs" pageSubtitle="Your monthly learning record, activities and signatures"
     showBackButton backFallbackHref={month ? base : perspective === 'learner' ? overview : '/coach/monthly-logs'}>
     <PageContainer className={`${design.scope} ${design.page} ${styles.theme} ${month ? journal.canvas : ''}`}>
-      {id ? <LearnerLogs key={`${perspective}-${id}`} id={id} month={month} base={base} perspective={perspective}
-        contractKind={perspective === 'learner' && selected.id === id ? selected.kind : undefined} /> : perspective === 'learner'
+      {id ? <LearnerLogs key={`${perspective}-${id}`} id={id} month={month} base={base} perspective={perspective} /> : perspective === 'learner'
         ? <EmptyState title="Your learner account is unavailable" /> : <CoachMonthlyLogLearners />}
     </PageContainer>
   </WorkspaceShell>;
@@ -71,26 +66,22 @@ function FutureMonthState({ month, base }: { month: string; base: string }) {
   </div>;
 }
 
-function LearnerLogs({ id, month, base, perspective, contractKind }: { id: string; month?: string; base: string; perspective: LogPerspective; contractKind?: LearnerKind }) {
+function LearnerLogs({ id, month, base, perspective }: { id: string; month?: string; base: string; perspective: LogPerspective }) {
   const { auth } = useAuth();
   const query = useQuery({ queryKey: ['monthly-logs', auth.account?.id, perspective, perspective === 'coach' ? coachViewAs()?.email : null, id, 'summary'],
     queryFn: ({ signal }) => getLogSummary(id, signal, perspective), refetchInterval: 7000 });
-  const contract = useQuery({ queryKey: ['monthly-logs', auth.account?.id, contractKind, id, 'contract-targets'],
-    queryFn: ({ signal }) => fetchTrainingPlanContract(contractKind!, id, signal),
-    enabled: !!contractKind && (!!month || !!query.data?.months.some(item => item.training_plan_target == null)),
-    staleTime: 30_000, retry: false });
   if (query.isPending) return <MonthIndexSkeleton perspective={perspective} />;
   if (query.error && !query.data) return <ErrorState error={query.error} retry={() => void query.refetch()} />;
   if (!query.data) return null;
   const summary = { ...query.data, months: [...query.data.months].sort((a, b) => a.month.localeCompare(b.month)) };
   return <>
     {query.error && <p role="alert">Updates are temporarily unavailable. <button onClick={() => void query.refetch()}>Try again</button></p>}
-    {month ? <MonthlyLog key={`${id}-${month}`} id={id} month={month} summary={summary} base={base} perspective={perspective} contract={contract.data} />
-      : <MonthList summary={summary} base={base} perspective={perspective} contract={contract.data} />}
+    {month ? <MonthlyLog key={`${id}-${month}`} id={id} month={month} summary={summary} base={base} perspective={perspective} />
+      : <MonthList summary={summary} base={base} perspective={perspective} />}
   </>;
 }
 
-function MonthlyLog({ id, month, summary, base, perspective, contract }: { id: string; month: string; summary: LogSummary; base: string; perspective: LogPerspective; contract?: TrainingPlanContract }) {
+function MonthlyLog({ id, month, summary, base, perspective }: { id: string; month: string; summary: LogSummary; base: string; perspective: LogPerspective }) {
   const { auth } = useAuth();
   const { search } = useLocation();
   const sourceRef = new URLSearchParams(search).get('source') || undefined;
@@ -108,13 +99,12 @@ function MonthlyLog({ id, month, summary, base, perspective, contract }: { id: s
     signLogMonth(id, month, draftDigest.current || query.data!.snapshot_digest, blob, capture, summary.csrf_token, perspective),
     onSuccess: data => { client.setQueryData(key, data); draftDigest.current = null; setCaptureVersion(v => v + 1);
       setMessage('Your signature has been saved for this month.'); void client.invalidateQueries({ queryKey: ['monthly-logs'] });
-      if (data.source === 'legacy') void client.invalidateQueries({ queryKey: ['old-otjh'] }); },
+    },
     onError: () => { void client.invalidateQueries({ queryKey: ['monthly-logs'] }); } });
   const completion = useMutation({ mutationFn: () => completeLogMonth(id, month, summary.csrf_token, perspective), onSuccess: data => {
-    client.setQueryData(key, { ...data, source: 'legacy' });
+    client.setQueryData(key, data);
     setMessage('This month has been reviewed, signed and completed.');
     void client.invalidateQueries({ queryKey: ['monthly-logs'] });
-    void client.invalidateQueries({ queryKey: ['old-otjh'] });
   } });
   const unlocking = useMutation({ mutationFn: () => unlockLogMonth(id, month, summary.csrf_token, 'learner'), onSuccess: data => {
     client.setQueryData(key, data);
@@ -126,10 +116,7 @@ function MonthlyLog({ id, month, summary, base, perspective, contract }: { id: s
   if (query.error && !query.data) return <ErrorState error={query.error} retry={() => void query.refetch()} />;
   if (!query.data) return null;
   const data = query.data;
-  const displayTarget = monthlyTargetHours(data.training_plan_target,
-    contract?.contractStatus === 'ready' ? contract.months[month]?.planned : null);
-  const displayData = data.training_plan_target == null && displayTarget != null
-    ? { ...data, training_plan_target: displayTarget, target_warning: null } : data;
+  const displayData = data;
   const readOnly = !!data.is_open || summary.read_only || (perspective === 'learner' && !canActAsStudent);
   const index = summary.months.findIndex(m => m.month === month);
   const previous = summary.months[index - 1], next = summary.months[index + 1];

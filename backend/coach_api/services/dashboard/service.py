@@ -11,6 +11,8 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import date, timedelta
 
+from django.conf import settings
+
 from coach_api.selectors.dashboard.marking import dashboard_marking_projection
 from .context import CoachDashboardContext
 
@@ -27,6 +29,25 @@ class CoachDashboardService:
 
     def build(self) -> dict:
         """Read the persistent projection; build once only if it is absent."""
+        if getattr(settings, "COACH_DASHBOARD_SHARED_READ_MODEL_ENABLED", False):
+            from coach_api.read_model import MODEL_KEY, SCOPE_TYPE
+            from read_models.repository import get_read_model
+
+            shared = get_read_model(
+                MODEL_KEY,
+                SCOPE_TYPE,
+                self.context.owner_email,
+                schema_version=self.SCHEMA_VERSION,
+                cache_ttl=max(int(getattr(settings, "COACH_DASHBOARD_CACHE_TTL", 30)), 1),
+            )
+            if shared is not None:
+                payload = dict(shared.payload)
+                payload["readModel"] = {
+                    "version": shared.schema_version,
+                    "refreshedAt": shared.refreshed_at.isoformat(),
+                }
+                return payload
+
         # Resolve through the compatibility module so existing patch points and
         # operational tooling remain valid during the module relocation.
         from coach_api import dashboard_service as compatibility
@@ -46,11 +67,28 @@ class CoachDashboardService:
     def refresh(self) -> dict:
         from coach_api import dashboard_service as compatibility
         payload = self.build_live()
-        compatibility.CoachDashboardSnapshot.objects.update_or_create(
+        snapshot, _created = compatibility.CoachDashboardSnapshot.objects.update_or_create(
             owner_email=self.context.owner_email,
             defaults={"payload": payload, "schema_version": self.SCHEMA_VERSION},
         )
-        return payload
+        shared = None
+        if getattr(settings, "READ_MODEL_DUAL_WRITE_ENABLED", False):
+            from coach_api.read_model import MODEL_KEY, SCOPE_TYPE
+            from read_models.repository import put_read_model
+            shared = put_read_model(
+                MODEL_KEY,
+                SCOPE_TYPE,
+                self.context.owner_email,
+                payload,
+                schema_version=self.SCHEMA_VERSION,
+                ttl_seconds=max(int(getattr(settings, "COACH_DASHBOARD_SNAPSHOT_MAX_AGE", 30)), 1),
+            )
+        response_payload = dict(payload)
+        response_payload["readModel"] = {
+            "version": self.SCHEMA_VERSION,
+            "refreshedAt": (shared.refreshed_at if shared else snapshot.refreshed_at).isoformat(),
+        }
+        return response_payload
 
     def build_live(self) -> dict:
         # Imported lazily to avoid moving the established domain functions in
@@ -62,10 +100,19 @@ class CoachDashboardService:
         context.rows = domain.fetch_caseload_dashboard_profiles(context.owner_email)
         context.learners = [domain.serialize_caseload_dashboard_learner(row) for row in context.rows]
 
-        progress_projections = domain.caseload_dashboard_progress_projections(context.rows)
+        canonical_metrics = domain.caseload_canonical_metrics(context.rows)
+        ksb_fallback_rows = [
+            row for row in context.rows
+            if (
+                (canonical_metrics.get(int(row.id)) or {}).get("ksb") or {}
+            ).get("status") != "ready"
+        ]
+        progress_projections = domain.caseload_dashboard_progress_projections(
+            context.rows,
+            ksb_rows=ksb_fallback_rows,
+        )
         audit_totals = domain.caseload_audit_hour_totals(context.rows)
         ksb_counts = domain.caseload_evidenced_ksb_counts(context.rows)
-        canonical_metrics = domain.caseload_canonical_metrics(context.rows)
         aptem_by_profile = domain.caseload_aptem_ids(context.rows)
 
         # Dashboard monthly risk uses the already-prefetched learner plan.  It
@@ -78,13 +125,7 @@ class CoachDashboardService:
             for component_id in week
         ]
         expected = domain.curriculum_expected_otjh_by_component_id(component_ids)
-        progress_by_learner = {
-            int(row.id): [
-                entry for entry in domain.list_or_empty(row.training_plan_progress)
-                if isinstance(entry, dict)
-            ]
-            for row in context.rows
-        }
+        progress_by_learner = domain.caseload_progress_history(context.rows)
         monthly_risk = domain.build_monthly_risk_history(
             context.rows,
             progress_by_learner,
@@ -93,9 +134,13 @@ class CoachDashboardService:
             hydrated_plans_by_learner=plans,
         )
 
+        owner_name = domain.coach_staff_display_name(context.owner_email) or next(
+            (getattr(row, "coach_name", "") for row in context.rows if getattr(row, "coach_name", "")),
+            "Coach",
+        )
         resolved = domain.resolve_coach_review_events(
             context.owner_email,
-            domain.coach_staff_display_name(context.owner_email) or "Coach",
+            owner_name,
             context.rows,
         )
         all_review_events = resolved.get("events", [])
@@ -112,11 +157,12 @@ class CoachDashboardService:
         standalone_type_fields = domain.review_type_fields_by_template(
             getattr(record, "review_template_id", "") for record in standalone_records
         )
+        learners_by_id = {int(row.id): row for row in context.rows}
         standalone_events = [
             domain.build_catchup_calendar_event(
                 record,
-                owner_name=domain.coach_staff_display_name(context.owner_email) or "Coach",
-                learner={int(row.id): row for row in context.rows}.get(record.learner_id),
+                owner_name=owner_name,
+                learner=learners_by_id.get(record.learner_id),
                 review_type_fields=standalone_type_fields,
             )
             for record in standalone_records
@@ -135,7 +181,7 @@ class CoachDashboardService:
         # not timetable recurrence generation.
         preview_events.extend(domain.collect_tracked_live_session_events(
             context.owner_email,
-            domain.coach_staff_display_name(context.owner_email) or "Coach",
+            owner_name,
             start_date=context.today - timedelta(days=31),
             end_date=context.today + timedelta(days=90),
         ))
@@ -171,15 +217,11 @@ class CoachDashboardService:
             learner["attendanceAvailable"] = bool(learner.get("attendanceRateAvailable"))
 
         marking = dashboard_marking_projection(context)
-        owner_name = domain.coach_staff_display_name(context.owner_email) or next(
-            (getattr(row, "coach_name", "") for row in context.rows if getattr(row, "coach_name", "")),
-            "Coach",
-        )
         return {
             "owner": {"name": owner_name, "email": context.owner_email},
             "learners": context.learners,
             "monthlyRisk": monthly_risk,
-            "assignedGroups": domain.fetch_official_assigned_groups(context.owner_email),
+            "assignedGroups": domain.fetch_official_assigned_groups(context.owner_email, owner_name),
             "meetings": {
                 "events": preview_events,
                 "summary": resolved.get("sourceCounts", {}),

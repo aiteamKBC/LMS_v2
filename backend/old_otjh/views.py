@@ -3,6 +3,7 @@ from functools import wraps
 import json
 from urllib.parse import urlencode
 
+from django.conf import settings
 from django.db import DatabaseError
 from django.http import FileResponse, HttpResponse, JsonResponse, StreamingHttpResponse
 from django.middleware.csrf import get_token
@@ -211,7 +212,27 @@ def monitor_dashboard(request):
     actor = service.coach_actor(request.login_account)
     if actor['role'] not in {'admin', 'monitor'}:
         raise service.ServiceError('Monitoring access is required.', 'forbidden', 403)
-    return JsonResponse(dashboard(request.GET))
+    if getattr(settings, 'RECORD_MONITOR_SHARED_READ_MODEL_ENABLED', False):
+        from .read_model import enqueue_record_monitor_refresh, get_record_monitor
+        shared = get_record_monitor()
+        records = (shared.payload or {}).get('records') if shared is not None else None
+        if isinstance(records, list):
+            response = JsonResponse(dashboard(
+                request.GET,
+                records=records,
+                updated_at=(shared.payload or {}).get('updated_at'),
+            ))
+            response['X-LMS-Cache'] = 'READ-MODEL-STALE' if shared.stale else 'READ-MODEL-HIT'
+            if shared.stale:
+                enqueue_record_monitor_refresh(reason='stale-read')
+            return response
+
+    response = JsonResponse(dashboard(request.GET))
+    if getattr(settings, 'RECORD_MONITOR_SHARED_READ_MODEL_ENABLED', False):
+        from .read_model import enqueue_record_monitor_refresh
+        enqueue_record_monitor_refresh(reason='missing-read-model')
+        response['X-LMS-Cache'] = 'READ-MODEL-MISS'
+    return response
 
 
 @endpoint('GET')

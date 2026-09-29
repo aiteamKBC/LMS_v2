@@ -14,7 +14,6 @@ function dashboard(): TrainingPlanDashboard {
       '2026-07': { target: 10, submitted: 1, completed: 8 },
       '2026-08': { target: 44, submitted: 2, completed: 15 },
     },
-    auditOtjhCutoffMonth: '2026-08',
     monthlyOtjh: {
       '2026-08': { planned: 80, submitted: 30, actual: 40, missingPlannedActivities: 0 },
       '2026-09': { planned: 18, submitted: 3, actual: 7, missingPlannedActivities: 0 },
@@ -36,23 +35,23 @@ describe('monthly OTJH totals', () => {
     expect(monthlyTargetHours('', 20)).toBe(20);
     expect(monthlyTargetHours(null, null)).toBeNull();
   });
-  it('uses retained Audit months through August and LMS completion from September', () => {
+  it('uses SSOT monthly logs first and canonical actual rows as the fallback', () => {
     const data = dashboard();
 
     expect(monthlyHours(data, '2026-07', '2026-10').map(row => [row.key, row.completed])).toEqual([
       ['2026-07', 8],
       ['2026-08', 15],
-      ['2026-09', 11],
+      ['2026-09', 4],
       ['2026-10', 5],
     ]);
-    expect(totalCompletedHours(data, '2026-07', '2026-10')).toBe(39);
+    expect(totalCompletedHours(data, '2026-07', '2026-10')).toBe(32);
   });
 
-  it('returns unavailable when an Audit month is missing instead of substituting LMS hours', () => {
+  it('uses zero canonical actual when a month has no SSOT log or accepted rows', () => {
     const data = dashboard();
     delete data.monthlyLogOtjh?.['2026-07'];
 
-    expect(totalCompletedHours(data, '2026-07', '2026-10')).toBeNull();
+    expect(totalCompletedHours(data, '2026-07', '2026-10')).toBe(24);
   });
 
   it('falls back to the contract target when a Monthly Logs target is missing', () => {
@@ -67,6 +66,6 @@ describe('monthly OTJH totals', () => {
   });
 
   it('limits the card total to the same programme months as the chart', () => {
-    expect(totalCompletedHours(dashboard(), '2026-08', '2026-09')).toBe(26);
+    expect(totalCompletedHours(dashboard(), '2026-08', '2026-09')).toBe(19);
   });
 });

@@ -332,9 +332,8 @@ def metrics_from_loaded(source, kind, *, migrated, native, progress,
     }
 
 
-def read_metrics(source, kind, preloaded=None):
-    if canonical_learning.enabled(source.pk):
-        return canonical_learning.metrics(source.pk)
+def _read_legacy_metrics(source, kind, preloaded=None):
+    """Retained only for isolated migration comparisons; never used by live endpoints."""
     migrated = student_activity_available(source.aptem_id)
     direct_progress = (preloaded or {}).get('direct_progress') if preloaded is not None else None
     if direct_progress is None:
@@ -469,6 +468,11 @@ def read_metrics(source, kind, preloaded=None):
         manual_hours=(preloaded.get('manual_hours', _MISSING) if preloaded is not None else _MISSING),
         preloaded=preloaded)
     return result
+
+
+def read_metrics(source, kind, preloaded=None):
+    """Return programme totals exclusively from the consolidated SSOT."""
+    return canonical_learning.metrics(source.pk)
 
 
 @require_GET

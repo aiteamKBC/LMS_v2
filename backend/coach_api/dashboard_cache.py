@@ -25,12 +25,18 @@ def coach_dashboard_cache_key(coach_identity: str) -> str:
 
 
 def coach_dashboard_cache_ttl() -> int:
-    return max(int(getattr(settings, "COACH_DASHBOARD_CACHE_TTL", 90)), 1)
+    return max(int(getattr(settings, "COACH_DASHBOARD_CACHE_TTL", 30)), 1)
 
 
 def get_cached_coach_dashboard(coach_identity: str):
     key = coach_dashboard_cache_key(coach_identity)
-    payload = cache.get(key)
+    try:
+        payload = cache.get(key)
+    except Exception as exc:
+        # Redis improves latency but a cache outage must still fall through to
+        # the persistent read model.
+        logger.warning("coach_dashboard_cache status=UNAVAILABLE namespace=%s error=%s", CACHE_NAMESPACE, exc)
+        return None
     logger.info(
         "coach_dashboard_cache status=%s namespace=%s",
         "HIT" if payload is not None else "MISS",
@@ -40,14 +46,21 @@ def get_cached_coach_dashboard(coach_identity: str):
 
 
 def cache_coach_dashboard(coach_identity: str, payload: dict) -> None:
-    cache.set(
-        coach_dashboard_cache_key(coach_identity),
-        payload,
-        timeout=coach_dashboard_cache_ttl(),
-    )
+    try:
+        cache.set(
+            coach_dashboard_cache_key(coach_identity),
+            payload,
+            timeout=coach_dashboard_cache_ttl(),
+        )
+    except Exception as exc:
+        logger.warning("coach_dashboard_cache status=UNAVAILABLE namespace=%s error=%s", CACHE_NAMESPACE, exc)
 
 
 def invalidate_coach_dashboard_cache(coach_identity: str) -> None:
     """Invalidate the final response cache for one effective coach only."""
-    cache.delete(coach_dashboard_cache_key(coach_identity))
+    try:
+        cache.delete(coach_dashboard_cache_key(coach_identity))
+    except Exception as exc:
+        logger.warning("coach_dashboard_cache status=UNAVAILABLE namespace=%s error=%s", CACHE_NAMESPACE, exc)
+        return
     logger.info("coach_dashboard_cache status=INVALIDATED namespace=%s", CACHE_NAMESPACE)

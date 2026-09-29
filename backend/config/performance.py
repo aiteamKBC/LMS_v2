@@ -39,14 +39,18 @@ class PerformanceTimingMiddleware:
 
         total_ms = (time.perf_counter() - started) * 1000
         application_ms = max(0.0, total_ms - database_ms)
-        # Query counts and timing breakdowns expose implementation details and
-        # are therefore browser-visible only in local DEBUG mode.
-        if settings.DEBUG:
+        # Production headers are exposed only to explicitly allowlisted signed-
+        # in diagnostic accounts. A browser header cannot opt itself in.
+        from system_audit.performance import diagnostic_account_allowed
+        diagnostic_account = diagnostic_account_allowed(getattr(request, 'login_account', None))
+        if settings.DEBUG or diagnostic_account:
             response['Server-Timing'] = (
                 f'db;dur={database_ms:.1f};desc="{query_count} queries", '
                 f'app;dur={application_ms:.1f}, total;dur={total_ms:.1f}'
             )
             response['X-DB-Query-Count'] = str(query_count)
+        if diagnostic_account:
+            response['X-LMS-Performance-Diagnostic'] = '1'
 
         threshold = getattr(settings, 'SLOW_REQUEST_THRESHOLD_MS', 750)
         if total_ms >= threshold:

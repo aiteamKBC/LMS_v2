@@ -1,4 +1,7 @@
 """Monitoring tests run without creating a database or changing real records."""
+from contextlib import nullcontext
+import inspect
+import json
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -110,6 +113,124 @@ class MonitoringCountsTests(SimpleTestCase):
         for params in ({'page': 'bad'}, {'status': 'invented'}):
             with self.assertRaises(service.ServiceError): monitoring.dashboard(params)
 
+    def test_dashboard_can_filter_one_prebuilt_record_snapshot(self):
+        records = monitoring.assemble(
+            [learner(i) for i in range(1, 4)],
+            [source(i + 40) for i in range(1, 4)],
+            [], [], [], [],
+        )
+        with patch.object(monitoring, 'load_records', side_effect=AssertionError('live read')):
+            result = monitoring.dashboard(
+                {'search': 'learner 2'},
+                records=records,
+                updated_at='2026-09-29T12:00:00+00:00',
+            )
+
+        self.assertEqual(result['total'], 1)
+        self.assertEqual(result['learners'][0]['name'], 'Learner 2')
+        self.assertEqual(result['stats']['total_learners'], 3)
+        self.assertEqual(result['updated_at'], '2026-09-29T12:00:00+00:00')
+
+    def test_cohort_identity_counts_are_bulk_aggregates_not_correlated_scans(self):
+        with patch.object(repo, 'query', return_value=[]) as query:
+            self.assertEqual(monitoring.cohort_records(), [])
+
+        sql = query.call_args.args[0]
+        self.assertIn('WITH enrolment_link_counts AS', sql)
+        self.assertIn('audit_link_counts AS', sql)
+        self.assertNotIn('(SELECT count(*) FROM enrolment.', sql)
+        self.assertNotIn('(SELECT count(*) FROM "Last_audit".', sql)
+
+
+@override_settings(RECORD_MONITOR_SHARED_READ_MODEL_ENABLED=True)
+class MonitoringReadModelTests(SimpleTestCase):
+    def setUp(self):
+        self.request = RequestFactory().get('/audit_api/old-otjh/monitor/')
+        self.request.login_account = SimpleNamespace(role='staff')
+        self.view = inspect.unwrap(views.monitor_dashboard)
+        self.records = monitoring.assemble([learner()], [source()], [], [], [], [])
+
+    def test_ready_projection_preserves_the_dashboard_contract(self):
+        shared = SimpleNamespace(
+            payload={
+                'records': self.records,
+                'updated_at': '2026-09-29T12:00:00+00:00',
+            },
+            stale=False,
+        )
+        expected = monitoring.dashboard(
+            self.request.GET,
+            records=self.records,
+            updated_at='2026-09-29T12:00:00+00:00',
+        )
+        with (
+            patch.object(service, 'coach_actor', return_value={'role': 'monitor'}),
+            patch('old_otjh.read_model.get_record_monitor', return_value=shared),
+            patch.object(monitoring, 'load_records', side_effect=AssertionError('live read')),
+        ):
+            response = self.view(self.request)
+
+        self.assertEqual(json.loads(response.content), expected)
+        self.assertEqual(response['X-LMS-Cache'], 'READ-MODEL-HIT')
+
+    def test_stale_projection_is_served_and_refresh_is_queued(self):
+        shared = SimpleNamespace(
+            payload={'records': self.records, 'updated_at': 'fixed'},
+            stale=True,
+        )
+        with (
+            patch.object(service, 'coach_actor', return_value={'role': 'monitor'}),
+            patch('old_otjh.read_model.get_record_monitor', return_value=shared),
+            patch('old_otjh.read_model.enqueue_record_monitor_refresh') as enqueue,
+        ):
+            response = self.view(self.request)
+
+        self.assertEqual(response['X-LMS-Cache'], 'READ-MODEL-STALE')
+        enqueue.assert_called_once_with(reason='stale-read')
+
+    def test_missing_projection_falls_back_to_live_and_queues_refresh(self):
+        with (
+            patch.object(service, 'coach_actor', return_value={'role': 'monitor'}),
+            patch('old_otjh.read_model.get_record_monitor', return_value=None),
+            patch('old_otjh.read_model.enqueue_record_monitor_refresh') as enqueue,
+            patch.object(monitoring, 'load_records', return_value=self.records) as live,
+        ):
+            response = self.view(self.request)
+
+        self.assertEqual(response['X-LMS-Cache'], 'READ-MODEL-MISS')
+        live.assert_called_once_with()
+        enqueue.assert_called_once_with(reason='missing-read-model')
+
+    def test_successful_domain_transaction_queues_inside_the_same_alias(self):
+        with (
+            patch.object(repo.transaction, 'atomic', return_value=nullcontext()),
+            patch('old_otjh.read_model.enqueue_record_monitor_refresh') as enqueue,
+        ):
+            with repo.atomic():
+                pass
+
+        enqueue.assert_called_once_with(
+            reason='previous-record-write', using=repo.DB,
+        )
+
+    def test_builder_captures_one_global_record_snapshot(self):
+        from . import read_model
+        with patch.object(monitoring, 'load_records', return_value=self.records) as load:
+            payload = read_model.build_record_monitor('global')
+
+        self.assertEqual(payload['records'], self.records)
+        self.assertIn('updated_at', payload)
+        load.assert_called_once_with()
+
+    def test_enrolment_change_queues_the_global_projection_on_same_alias(self):
+        from . import read_model_signals
+        with patch.object(read_model_signals, 'enqueue_record_monitor_refresh') as enqueue:
+            read_model_signals.enrolment_changed(
+                sender=object(), instance=SimpleNamespace(), using='enrolment',
+            )
+
+        enqueue.assert_called_once_with(reason='enrolment-link', using='enrolment')
+
 
 @override_settings(OLD_OTJH_ENABLED=True)
 class MonitoringAccessTests(SimpleTestCase):
@@ -177,7 +298,7 @@ class MonitoringAccessTests(SimpleTestCase):
 
     def test_unstarted_month_can_be_read_without_any_insert(self):
         record = {'id': 1, 'aptem_id': 41, 'name': 'Learner', 'programme': 'Programme', '_read_only': True}
-        with patch.object(repo, 'transition', return_value=None), patch.object(repo, 'source_months', return_value=[source()]), patch.object(repo, 'signatures', return_value=[]), patch.object(repo, 'finalizations', return_value=[]), patch.object(repo, 'pending_revisions', return_value=[]), patch.object(repo, 'month_rows', return_value=[]), patch.object(repo, 'report_profile', return_value={}), patch.object(repo, 'create_transition') as create:
+        with patch.object(repo, 'transition', return_value=None), patch.object(repo, 'source_months', return_value=[source()]), patch.object(repo, 'signatures', return_value=[]), patch.object(repo, 'finalizations', return_value=[]), patch.object(repo, 'pending_revisions', return_value=[]), patch.object(repo, 'month_rows', return_value=[]), patch.object(repo, 'report_profile', return_value={}), patch.object(repo, 'programme_dates', return_value={}), patch.object(repo, 'create_transition') as create:
             self.assertTrue(service.summary(record)['needs_start'])
             self.assertEqual(service.month_detail(record, '2026-07')['month'], '2026-07')
             create.assert_not_called()

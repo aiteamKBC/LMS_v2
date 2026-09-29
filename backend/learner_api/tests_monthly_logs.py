@@ -29,6 +29,11 @@ class MonthlyLogsTests(SimpleTestCase):
         self.learner = {'id': 7, 'aptem_id': 42, 'name': 'Learner', 'programme': 'Programme',
                         'email': 'learner@example.test', 'coach_email': 'coach@example.test',
                         '_profile': None, '_view_as': False}
+        required_profile = patch.object(logs.canonical, 'require_profile', return_value={
+            **self.learner, 'id': 70, 'enrolment_id': 7, 'programme_id': 'P1',
+        })
+        required_profile.start()
+        self.addCleanup(required_profile.stop)
         self.row = sources.row('progress:1', '2026-09-12T10:00:00Z', 'Reading', 'Reading', hours=1)
         # Keep this SimpleTestCase a true unit suite as the production journal
         # gains canonical/history persistence dependencies. Those integrations
@@ -96,6 +101,17 @@ class MonthlyLogsTests(SimpleTestCase):
         self.assertEqual(changed['status'], 'complete')
         self.assertEqual(changed['student_signature']['url'], signature['url'])
 
+    def test_canonical_source_lineage_does_not_discard_accepted_hours(self):
+        legacy = {**self.row, 'source_system': 'old_lms'}
+        state = logs.month_state('2026-09', [self.row, legacy], [])
+        self.assertEqual(state['actual_hours'], 2)
+        self.assertEqual(state['not_accepted_hours'], 0)
+        self.assertEqual(state['total_actual_hours'], 2)
+        self.assertEqual(
+            logs.month_state('2026-09', [self.row], [])['snapshot_digest'],
+            logs.month_state('2026-09', [legacy], [])['snapshot_digest'],
+        )
+
     def test_old_report_is_returned_with_existing_signatures_and_iframe_rows(self):
         historical = {'month': '2026-08', 'rows': [], 'student_signature': {'file_id': 'saved',
                        'signed_at': '2026-09-01', 'signer_name': 'Learner'}, 'coach_signature': None}
@@ -146,6 +162,25 @@ class MonthlyLogsTests(SimpleTestCase):
         self.assertEqual([m['month'] for m in summary['months']], ['2026-08', '2026-09'])
         self.assertEqual(summary['months'][0]['student_signature']['url'], 'saved')
         self.assertEqual(summary['completed_months'], 1)
+
+    def test_canonical_summary_exposes_one_programme_accepted_and_plan_total(self):
+        owner = {'id': 70, 'enrolment_id': 7, 'programme_id': 'P1'}
+        record = {'id': 1, 'accepted': True, 'actual_seconds': 186300, 'ksbs': [], 'segments': []}
+        with patch.object(logs.canonical, 'entries_for', return_value=[record]), \
+             patch.object(logs.canonical, 'signatures_for', return_value=[]), \
+             patch.object(logs.canonical, 'targets_for', return_value={'2026-08': 12, '2026-09': 15}), \
+             patch.object(logs.canonical, 'rows_for', return_value=[self.row]):
+            summary = logs.summary_data({**self.learner, '_canonical_profile': owner})
+        self.assertEqual(summary['training_plan_totals'], {
+            'accepted_hours': 51.75, 'planned_hours': 27,
+        })
+
+    def test_reporting_segments_count_as_one_activity_in_a_month(self):
+        split = [{**self.row, 'progress_id': 90, 'source_ref': 'canonical:90:segment:1'},
+                 {**self.row, 'progress_id': 90, 'source_ref': 'canonical:90:segment:2'}]
+        state = logs.month_state('2026-09', split, [])
+        self.assertEqual(state['row_count'], 1)
+        self.assertEqual(state['actual_hours'], 2)
 
     def test_summary_exposes_audit_planned_end_date(self):
         learner = {**self.learner, '_profile': {'coach_name': 'Coach', 'end_date': date(2026, 1, 31)}}

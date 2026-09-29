@@ -129,9 +129,29 @@ class CurrentLearningTests(unittest.TestCase):
         self.assertEqual(query.call_args_list[2].args[1], [123, 789])
         self.assertEqual(len(rows), 2)
 
+    def test_bulk_projection_bounds_shared_queries_for_the_whole_caseload(self):
+        query = Mock(side_effect=[
+            [],
+            [{'name': '"Learner".subject_activity_attempts'}],
+            [{'enrolment_id': 123, 'aptem_id': 789, **self.attempt()}],
+        ])
+        self.scope['query'] = query
+        owners = [
+            {'id': 1, 'enrolment_id': 123, 'aptem_id': 789, 'learner_type': 'commercial'},
+            {'id': 2, 'enrolment_id': 124, 'aptem_id': 790, 'learner_type': 'apprenticeship'},
+        ]
+
+        rows = self.scope['current_records_bulk'](owners, {1: [], 2: []})
+
+        self.assertEqual(query.call_count, 3)
+        self.assertEqual(len(rows[123]), 1)
+        self.assertEqual(rows[124], [])
+        self.assertIn('(learner_id,learner_kind) IN', query.call_args_list[0].args[0])
+        self.assertIn('(enrolment_id,aptem_id) IN', query.call_args_list[2].args[0])
+
     def test_dashboard_refresh_reads_new_saved_completion_and_time(self):
         scope = self.scope
-        load('canonical_learning.py', scope, {'metrics', 'recorded_seconds', 'allocations'})
+        load('canonical_learning.py', scope, {'metrics', '_metrics_from_records', 'recorded_seconds', 'allocations'})
         scope['number'] = lambda value: float(value or 0)
         scope['targets'] = lambda _: {}
         saved = []
@@ -146,7 +166,7 @@ class CurrentLearningTests(unittest.TestCase):
 
     def test_quiz_only_completion_does_not_credit_unapproved_hours(self):
         scope = self.scope
-        load('canonical_learning.py', scope, {'metrics', 'recorded_seconds', 'allocations'})
+        load('canonical_learning.py', scope, {'metrics', '_metrics_from_records', 'recorded_seconds', 'allocations'})
         scope['number'] = lambda value: float(value or 0)
         scope['targets'] = lambda _: {}
         record = {'id': 10, 'accepted': False, 'actual_seconds': 3600, 'ksbs': [],

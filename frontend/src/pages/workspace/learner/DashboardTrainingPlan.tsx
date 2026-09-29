@@ -11,11 +11,12 @@ import styles from '@/pages/learner/training-plan-timeline/TrainingPlanDetails.m
 
 /** Independent loading keeps the existing dashboard visible while plan sources resolve. */
 export function DashboardTrainingPlan({ kind, learnerId, plan, canOpenActivities = true, programmeStartDate, programmeEndDate,
-  canOpenRewards = true, showRewards = true, activityOverviewOnly = false, timelineOnly = false, programmeSnapshot }: {
+  canOpenRewards = true, showRewards = true, activityOverviewOnly = false, timelineOnly = false, programmeSnapshot,
+  pageError }: {
   kind: LearnerKind; learnerId: string; plan: DashboardPlanState; canOpenActivities?: boolean;
   programmeStartDate?: string | null; programmeEndDate?: string | null; canOpenRewards?: boolean;
   showRewards?: boolean; activityOverviewOnly?: boolean; timelineOnly?: boolean;
-  programmeSnapshot?: ProgrammeProgressSnapshot;
+  programmeSnapshot?: ProgrammeProgressSnapshot; pageError?: string | null;
 }) {
   const { data, subjects: summaries, loading, error, refresh, retryContract, schedule } = plan;
   const [params] = useSearchParams();
@@ -28,7 +29,11 @@ export function DashboardTrainingPlan({ kind, learnerId, plan, canOpenActivities
   const scrolled = useRef('');
   const hasSnapshot = !!data && !!summaries;
   const subjects = useMemo(() => data && summaries ? dashboardPlanSubjects(summaries, data) : [], [data, summaries]);
-  const weeklyFocus = canOpenActivities ? <WeeklyLearningPlan kind={kind} learnerId={learnerId}
+  // Once one plan dependency has failed and no complete snapshot exists, the
+  // error banner is the terminal state. Do not leave a sibling weekly-plan
+  // skeleton spinning indefinitely while its own retry settles.
+  const terminalError = error || pageError;
+  const weeklyFocus = canOpenActivities && (hasSnapshot || !terminalError) ? <WeeklyLearningPlan kind={kind} learnerId={learnerId}
     schedule={schedule.data} scheduleLoading={schedule.loading} scheduleError={schedule.error || undefined} /> : undefined;
   useEffect(() => {
     if (!hasSnapshot || (!initialSubjectId && hash !== '#module-timeline') || scrolled.current === scrollDestination) return;
@@ -44,7 +49,7 @@ export function DashboardTrainingPlan({ kind, learnerId, plan, canOpenActivities
       : <>
         <div className={`${styles.topRow} ${weeklyFocus && !timelineOnly ? styles.withWeeklyFocus : ''}`}>
           {!timelineOnly && weeklyFocus}
-          {!error && <div role="status" aria-label="Loading monthly learning and coaching" className={styles.loading}>
+          {!terminalError && <div role="status" aria-label="Loading monthly learning and coaching" className={styles.loading}>
             <div aria-hidden="true"><span /><span /><span /></div>
           </div>}
         </div>

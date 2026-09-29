@@ -50,6 +50,13 @@
 .learnerIndexHeader .completion strong > span { font-size: 12px; }
 .learnerIndexHeader .completion p { margin-top: 4px; font-size: 10px; }
 .learnerIndexHeader .progress { height: 4px; margin-top: 4px; }
+.planTotal { display: grid; grid-template-columns: auto repeat(2, minmax(0, 1fr)); align-items: center; gap: 18px; padding: 18px 22px; border: 1px solid #ded6eb; border-radius: 16px; background: linear-gradient(110deg, #fff, #f7f3ff); box-shadow: 0 6px 18px #30204e0a; }
+.planTotalIcon { display: grid; width: 46px; height: 46px; place-items: center; border-radius: 13px; background: var(--log-purple); color: white; font-size: 21px; }
+.planTotal > div { min-width: 0; }
+.planTotal > div + div { padding-left: 18px; border-left: 1px solid #e4ddee; }
+.planTotal p { color: var(--log-muted); font-size: 10px; font-weight: 650; letter-spacing: .05em; text-transform: uppercase; }
+.planTotal strong { display: block; margin-top: 3px; color: #1d103f; font-size: 21px; font-variant-numeric: tabular-nums; }
+.planTotal div > span { color: var(--log-muted); font-size: 10px; }
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
 .filters { display: inline-flex; flex-wrap: wrap; gap: 4px; padding: 3px; border: 1px solid #eee9f5; border-radius: 14px; background: #fff; }
 .filters button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; padding: 7px 13px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: var(--log-muted); font-size: 12px; font-weight: 500; }
@@ -140,6 +147,8 @@
   .index .identity h1::before { width: 5px; }
   .learnerMeta { margin-left: 20px; font-size: 13px; }
   .completion { padding: 16px; }
+  .planTotal { grid-template-columns: auto 1fr; gap: 12px; padding: 14px; }
+  .planTotal > div + div { grid-column: 2; padding: 10px 0 0; border-top: 1px solid #e4ddee; border-left: 0; }
   .filters { width: 100%; }
   .filters button { flex: 1; padding-inline: 7px; gap: 6px; font-size: 11px; }
   .yearFilter { width: 100%; }
