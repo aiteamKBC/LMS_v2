@@ -1432,11 +1432,10 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       }
       if (!result) return;
       endCreateProgress();
-      // The create itself writes the join link into every live-session
-      // component (topping weeks up to their delivery days) before it answers,
-      // and a create that could not do so answers with an error instead. The
-      // restore request that used to follow repeated that walk plus a full
-      // module rebuild, and the confirmation waited on all of it.
+      // The create itself writes the join link into the live-session
+      // components the author already placed before it answers. It must not
+      // author new components in content-only weeks; Restore/Re-attach is the
+      // explicit action for that.
       createDrawer.close();
       // The dialog was the create form and the create has happened, so it has
       // nothing left to show: close it rather than re-selecting the module into

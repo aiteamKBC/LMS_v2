@@ -216,8 +216,9 @@ class CalendarChecksTests(unittest.TestCase):
         result = self.create()
         self.assertEqual(result.status_code, 201, result)
         module_id, saved, settings, occurrences = self.attach.call_args.args
-        # The same walk tops weeks up to their delivery days, so no follow-up restore is needed.
-        self.assertTrue(self.attach.call_args.kwargs.get('create_missing'))
+        # Sending a calendar only links components the author already added;
+        # missing weeks stay content-only until Restore/Re-attach is requested.
+        self.assertFalse(self.attach.call_args.kwargs.get('create_missing'))
         self.assertEqual(module_id, 'MOD-SYNTHETIC')
         self.assertEqual(saved['id'], 'LIVE-SYNTHETIC')
         self.assertEqual(settings['liveSessionUrl'], result['meeting']['joinUrl'])

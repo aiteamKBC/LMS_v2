@@ -317,6 +317,21 @@ describe('ModuleFormDrawer', () => {
     await waitFor(() => expect(endDate).toHaveValue('07/09/2026'));
   });
 
+  it('keeps the cohort start date but clears the calculated end date when weeks are emptied', async () => {
+    renderDrawer({ lockGroup: true, defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1' } });
+
+    const weeks = screen.getByRole('spinbutton', { name: /weeks/i });
+    const startDate = screen.getByRole('combobox', { name: 'Start date' });
+    const endDate = screen.getByRole('combobox', { name: 'End date' });
+    await waitFor(() => expect(endDate).toHaveValue('07/09/2026'));
+    expect(startDate).toHaveValue('01/09/2026');
+
+    await userEvent.clear(weeks);
+
+    expect(startDate).toHaveValue('01/09/2026');
+    expect(endDate).toHaveValue('');
+  });
+
   it('saves a manually adjusted module end date', async () => {
     renderDrawer({ lockGroup: true, defaults: { programmeId: 'PROG-DATA', cohortId: 'COHORT-1', groupId: 'GROUP-1' } });
 
