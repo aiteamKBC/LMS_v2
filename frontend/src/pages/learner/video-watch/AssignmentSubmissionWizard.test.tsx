@@ -21,8 +21,7 @@ const props = {
   kind: 'commercial' as const, learnerId: '1', learnerName: 'Learner', programmeName: 'Programme',
   componentId: 'COMP-1', title: 'Monthly assignment', moduleTitle: 'Module', weekTitle: 'Week 1',
   plannedOtjh: 2, questionText: 'Describe your work.', ksbMappings: [], evidenceFiles: [], evidenceDetails: {},
-  timeSeconds: 28800, timeControl: <div>Automatic timer</div>, outsideWorkingHours: false,
-  insideWorkingHoursConfirmed: false, submittingProgress: false,
+  timeSeconds: 28800, timeControl: <div>Automatic timer</div>, submittingProgress: false,
   onEvidenceChanged: vi.fn(), onRestoreTime: vi.fn(), onSubmitProgress: vi.fn().mockResolvedValue(undefined),
 };
 
@@ -393,7 +392,7 @@ it('discards in-flight quality results if submission data changes before the res
   let resolveChecks!: (checks: Awaited<ReturnType<typeof checkMonthlyAssignment>>) => void;
   vi.mocked(checkMonthlyAssignment).mockImplementationOnce(() => new Promise(resolve => { resolveChecks = resolve; }));
   fireEvent.click(screen.getByRole('button', { name: 'Run quality checks' }));
-  view.rerender(<AssignmentSubmissionWizard {...props} insideWorkingHoursConfirmed />);
+  view.rerender(<AssignmentSubmissionWizard {...props} weekTitle="Week 2" />);
   await act(async () => resolveChecks(Array.from({ length: 13 }, (_, i) => ({ key: String(i), label: `Old check ${i}`, passed: true }))));
   expect(screen.getByText('Quality checks not run yet')).toBeInTheDocument();
   expect(screen.queryByText('Old check 0')).not.toBeInTheDocument();

@@ -6,6 +6,7 @@ The owner provisions the ledger using backend/sql/teams_schedule_emails.sql.
 """
 import base64
 import logging
+import re
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import quote
@@ -74,6 +75,18 @@ def _guarded_send(send, recipient, message):
     except Exception:
         # No exception text, message body or learner address enters logs.
         return 'unknown', 'mail_result_unknown'
+
+
+def valid_resend_key(value):
+    """A resend names its own batch, so "accepted once, never again" applies inside
+    that one press instead of silencing it.
+
+    The browser generates the name and repeats it across the press's batches,
+    which is what makes its retry safe. The name carries no recipient and no
+    date -- both are still read back from the stored calendar -- so all it can
+    ever decide is whether this press starts a fresh round or continues one.
+    """
+    return isinstance(value, str) and bool(re.match(r'^[A-Za-z0-9-]{8,64}$', value))
 
 
 def dispatch_batch(live_id, recipients, message, ledger, send, retry_failed=False, parallel=False):
@@ -457,12 +470,15 @@ def schedule_email(request, live_session_id):
     from . import views as v
     payload = v.json_body(request)
     added = payload.get('addedPeople') if isinstance(payload, dict) else None
-    if (not isinstance(payload, dict) or set(payload) - {'retryFailed', 'changeNotice', 'addedPeople'}
+    resend = payload.get('resendKey') if isinstance(payload, dict) else None
+    if (not isinstance(payload, dict) or set(payload) - {'retryFailed', 'changeNotice', 'addedPeople', 'resendKey'}
             or not isinstance(payload.get('retryFailed', False), bool)
             or not isinstance(payload.get('changeNotice', ''), str)
             or ('addedPeople' in payload and (payload.get('changeNotice') or not isinstance(added, list) or len(added) > 500
-                                              or not all(isinstance(value, str) for value in added)))):
-        return JsonResponse({'error': 'Supply only the retryFailed boolean and either a changeNotice or an addedPeople list.'}, status=400)
+                                              or not all(isinstance(value, str) for value in added)))
+            or ('resendKey' in payload and (payload.get('changeNotice') or 'addedPeople' in payload
+                                            or not valid_resend_key(resend)))):
+        return JsonResponse({'error': 'Supply only the retryFailed boolean and one of a changeNotice, an addedPeople list or a resendKey.'}, status=400)
     try:
         ledger = DeliveryLedger(connection)
         ledger.check()
@@ -477,7 +493,12 @@ def schedule_email(request, live_session_id):
             # People an update added: the same full schedule a creation sends,
             # under the calendar's own key, to them alone.
             recipients, organisers = added_only(recipients, organisers, added)
-        return JsonResponse(dispatch_by_role(live_session_id, recipients, organisers, learner_copy, organiser_copy,
+        # A resend is the creation email again, to everyone the saved calendar
+        # invites -- including the people it already reached. Only the ledger
+        # key changes: the message and the recipients are still the verified
+        # ones read back from the stored calendar, never anything sent here.
+        key = f'{live_session_id}@{resend}' if resend else live_session_id
+        return JsonResponse(dispatch_by_role(key, recipients, organisers, learner_copy, organiser_copy,
                                              ledger, _send_message, payload.get('retryFailed', False)))
     except (ValueError, RuntimeError) as exc:
         return JsonResponse({'error': str(exc), 'code': 'schedule_email_blocked'}, status=409)

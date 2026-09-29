@@ -41,6 +41,19 @@ def progress_day(value):
         return None
 
 
+def completion_day(row):
+    """The day a progress row's hours count on.
+
+    The declared working instant when the learner's Finish click fell outside
+    the working rules and had to be corrected, otherwise the click itself. This
+    is the same order ``coach_api.entry_activity_date`` uses, so the learner's
+    own week and month totals bucket exactly where the coach's do; the real
+    click stays readable at ``submittedAt`` for audit.
+    """
+    row = row if isinstance(row, dict) else {}
+    return progress_day(row.get('declaredCompletedAt') or row.get('submittedAt'))
+
+
 def merged_activities(historical, native, progress, attempts, links):
     """Merge only explicit identities, using the same completion rule as the cards."""
     achieved = [row for row in progress if progress_counts_as_achieved(row.get('kind'), row.get('passed'))]
@@ -122,7 +135,7 @@ def monthly_otjh_summary(activities, progress):
 
     progress_by_month = {}
     for row in progress:
-        day = progress_day(row.get('submittedAt'))
+        day = completion_day(row)
         if day:
             progress_by_month.setdefault(day.strftime('%Y-%m'), []).append(row)
 
@@ -344,7 +357,7 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None):
                         [start, end, sorted({start.strftime('%Y-%m'), end.strftime('%Y-%m')}), aptem_id])
             raw_hours, undated_hours = cur.fetchone()
             old_hours = number(raw_hours)
-    weekly_progress = [row for row in progress if (day := progress_day(row.get('submittedAt'))) and start <= day <= end]
+    weekly_progress = [row for row in progress if (day := completion_day(row)) and start <= day <= end]
     new_hours = _direct_progress_otjh(weekly_progress)
     plan_activities = list(merged_activities(historical, native, progress, attempts, links))
     result = {'weekStart': start.isoformat(), 'weekEnd': end.isoformat(), 'timezone': 'Europe/London',

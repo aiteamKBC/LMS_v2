@@ -1,8 +1,9 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { ArrowRight, BookOpen, CheckCircle2, ChevronLeft, ChevronRight, FileText, Headphones, HelpCircle, Layers3, Loader2, Lock, PenLine, Presentation, Sparkles, Video } from 'lucide-react';
+import { ArrowRight, BookOpen, CheckCircle2, ChevronLeft, ChevronRight, FileText, Headphones, HelpCircle, Layers3, Loader2, PenLine, Presentation, Sparkles, Video } from 'lucide-react';
 import { fetchLearnerFreeCourses, markFreeCourseActivityComplete, peekLearnerFreeCourses, type FreeCourse, type FreeCourseActivity } from '@/api/freeCourses';
 import type { LearnerKind } from '@/api/learnerDetail';
+import { computeLocks, hasContent, isQuiz } from './freeCourseAccess';
 import { Panel } from '@/components/ui/Panel';
 import { EmptyState, EmptyStateAction } from '@/components/ui/EmptyState';
 import { Cover } from './SubjectWorkspace';
@@ -26,52 +27,6 @@ function typeMeta(type: string): { label: string; Icon: typeof BookOpen } {
     case 'reflection': return { label: 'Reflection', Icon: PenLine };
     default: return { label: 'Reading', Icon: BookOpen };
   }
-}
-
-function isQuiz(activity: FreeCourseActivity): boolean {
-  return /quiz/i.test(activity.type);
-}
-
-/** Whether an activity has something to show. A quiz is "available" only when a
- *  quiz is linked to it in the curriculum (quizId); otherwise it reads as not
- *  available, exactly like the normal modules. */
-function hasContent(activity: FreeCourseActivity): boolean {
-  if (isQuiz(activity)) return Boolean(activity.quizId);
-  return Boolean(activity.videoUrl || activity.audioUrl || activity.contentHtml || activity.resourceUrl);
-}
-
-type LockInfo = { locked: boolean; reason: 'content' | 'prereq' | null };
-
-/** Locking rule (free courses): ONLY quizzes can lock. A quiz is locked until
- *  every material (video/reading/…) SINCE THE PREVIOUS QUIZ is completed — its
- *  own "segment". Quizzes are independent of each other: quiz 2 depends only on
- *  the materials between quiz 1 and quiz 2, never on quiz 1 or the materials
- *  before it. Non-quiz activities never lock — they are either available or,
- *  with no content authored, shown as "not available".
- *
- *  An unlinked quiz (no quizId) has no quiz to attempt, so it reads as
- *  not-available rather than locked. */
-function computeLocks(activities: FreeCourseActivity[], isDone: (activity: FreeCourseActivity) => boolean): Map<string, LockInfo> {
-  const map = new Map<string, LockInfo>();
-  let segmentMaterialsDone = true; // are all completable materials in the current segment done?
-  for (const activity of activities) {
-    if (isQuiz(activity)) {
-      if (!hasContent(activity)) {
-        map.set(activity.componentId, { locked: false, reason: 'content' }); // unlinked quiz → not available
-      } else if (activity.manualUnlock) {
-        map.set(activity.componentId, { locked: false, reason: null }); // author set it to open (manual unlock)
-      } else {
-        map.set(activity.componentId, segmentMaterialsDone ? { locked: false, reason: null } : { locked: true, reason: 'prereq' });
-      }
-      segmentMaterialsDone = true; // a quiz closes the segment; the next one starts fresh
-      continue;
-    }
-    // Non-quiz material: never locked. It gates only the NEXT quiz in its segment.
-    if (!hasContent(activity)) { map.set(activity.componentId, { locked: false, reason: 'content' }); continue; }
-    map.set(activity.componentId, { locked: false, reason: null });
-    if (!isDone(activity)) segmentMaterialsDone = false;
-  }
-  return map;
 }
 
 function activityCount(course: FreeCourse): number {
@@ -125,7 +80,7 @@ function FreeCourseCard({ course, tone, isDone, onOpen }: { course: FreeCourse; 
   // Next openable, not-done activity — shown with its real type icon, honouring
   // the same quiz-lock rule the detail view uses.
   const ordered = course.weeks.flatMap((week) => week.activities);
-  const locks = computeLocks(ordered, isDone);
+  const locks = computeLocks(ordered);
   const next = ordered.find((activity) => hasContent(activity) && !isDone(activity) && !(locks.get(activity.componentId)?.locked));
   const NextIcon = next ? typeMeta(next.type).Icon : BookOpen;
   return (
@@ -178,8 +133,8 @@ function FreeCourseDetail({ course, tone, kind, learnerId, activeId, isDone, onS
     activities: week.activities,
   })), [course]);
   const ordered = flat.flatMap((week) => week.activities);
-  const locks = computeLocks(ordered, isDone);
-  const isLocked = (activity: FreeCourseActivity) => locks.get(activity.componentId)?.locked ?? true;
+  const locks = computeLocks(ordered);
+  const isLocked = (activity: FreeCourseActivity) => locks.get(activity.componentId)?.locked ?? false;
 
   // Default to the URL activity if it's open, otherwise the next one to do.
   const openable = ordered.filter((activity) => !isLocked(activity));
@@ -189,8 +144,6 @@ function FreeCourseDetail({ course, tone, kind, learnerId, activeId, isDone, onS
     ?? ordered[0]
     ?? null;
   const progress = courseProgress(course, isDone);
-  const currentLock = current ? locks.get(current.componentId) : undefined;
-  const currentLocked = currentLock?.locked ?? false;
   const currentDone = current ? isDone(current) : false;
   const completing = current != null && completingId === current.componentId;
 
@@ -233,12 +186,7 @@ function FreeCourseDetail({ course, tone, kind, learnerId, activeId, isDone, onS
                   </div>
                   {currentDone && <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[12px] font-semibold text-emerald-700"><CheckCircle2 size={14} />Completed</span>}
                 </div>
-                {currentLocked ? (
-                  <div className="mt-4 flex items-start gap-2.5 rounded-xl border border-dashed border-foreground-200 bg-background-50 p-4 text-sm text-foreground-500">
-                    <Lock size={16} className="mt-0.5 shrink-0 text-foreground-400" />
-                    <p>Complete the materials in this section to unlock this quiz.</p>
-                  </div>
-                ) : isQuiz(current) && hasContent(current) ? (
+                {isQuiz(current) && hasContent(current) ? (
                   <div className="mt-4">
                     {currentDone ? (
                       <p className="text-sm text-emerald-700">You have passed this quiz.</p>
@@ -290,25 +238,23 @@ function FreeCourseDetail({ course, tone, kind, learnerId, activeId, isDone, onS
                     const isCurrent = current?.componentId === activity.componentId;
                     const done = isDone(activity);
                     const lock = locks.get(activity.componentId);
-                    const locked = lock?.locked ?? true;       // prereq-locked only
-                    const empty = !locked && lock?.reason === 'content'; // no content yet, still selectable
-                    const muted = locked || empty;
+                    const empty = lock?.reason === 'content'; // no content yet, still selectable
+                    const muted = empty;
                     return (
                       <li key={activity.componentId}>
                         <button
                           type="button"
-                          onClick={() => { if (!locked) onSelect(activity.componentId); }}
-                          disabled={locked}
+                          onClick={() => onSelect(activity.componentId)}
                           aria-current={isCurrent || undefined}
-                          title={locked ? 'Complete the materials in this section to unlock this quiz.' : empty ? 'Content for this activity has not been added yet.' : undefined}
+                          title={empty ? 'Content for this activity has not been added yet.' : undefined}
                           className={`flex w-full items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
-                            isCurrent ? 'bg-primary-50' : locked ? 'cursor-not-allowed bg-background-100/50' : 'hover:bg-background-50'
+                            isCurrent ? 'bg-primary-50' : 'hover:bg-background-50'
                           }`}
                         >
                           <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg ${
                             done ? 'bg-emerald-100 text-emerald-700' : isCurrent ? 'bg-primary-100 text-primary-700' : 'bg-background-100 text-foreground-500'
                           }`}>
-                            {done ? <CheckCircle2 size={14} /> : locked ? <Lock size={13} /> : <Icon size={14} />}
+                            {done ? <CheckCircle2 size={14} /> : <Icon size={14} />}
                           </span>
                           <span className="min-w-0 flex-1">
                             <span className="block text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{empty ? 'Not available yet' : label}</span>
@@ -316,7 +262,7 @@ function FreeCourseDetail({ course, tone, kind, learnerId, activeId, isDone, onS
                               done ? 'text-emerald-900' : isCurrent ? 'text-primary-700' : muted ? 'text-foreground-400' : 'text-foreground-800'
                             }`}>{activity.title}</span>
                           </span>
-                          {done ? <CheckCircle2 size={15} className="shrink-0 text-emerald-600" /> : locked ? <Lock size={14} className="shrink-0 text-foreground-400" /> : <ChevronRight size={15} className="shrink-0 text-foreground-400" />}
+                          {done ? <CheckCircle2 size={15} className="shrink-0 text-emerald-600" /> : <ChevronRight size={15} className="shrink-0 text-foreground-400" />}
                         </button>
                       </li>
                     );

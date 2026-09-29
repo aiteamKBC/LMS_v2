@@ -800,6 +800,11 @@ class LearnerProfile(models.Model):
                     entry.outside_working_hours_confirmed_at.isoformat()
                     if entry.outside_working_hours_confirmed_at else ""
                 ),
+                "declaredCompletedAt": (
+                    entry.declared_completed_at.isoformat()
+                    if entry.declared_completed_at else ""
+                ),
+                "submissionValidationReason": entry.submission_validation_reason,
                 "ksbs": [
                     row.ksb_code
                     for row in entry.ksb_links.all()
@@ -1073,6 +1078,11 @@ class LearnerProgressEntry(models.Model):
     outside_working_hours_confirmed_at = models.DateTimeField(null=True, blank=True)
     inside_working_hours_confirmed = models.BooleanField(default=False)
     inside_working_hours_confirmed_at = models.DateTimeField(null=True, blank=True)
+    # The working instant the learner declared after their real Finish click
+    # failed the working rules, and why that click failed. ``submitted_at``
+    # keeps the real click and is never rewritten.
+    declared_completed_at = models.DateTimeField(null=True, blank=True)
+    submission_validation_reason = models.CharField(max_length=32, blank=True, default='')
     feed_kind = models.CharField(max_length=30, blank=True)
     feed_action = models.TextField(blank=True)
     feed_title = models.TextField(blank=True)

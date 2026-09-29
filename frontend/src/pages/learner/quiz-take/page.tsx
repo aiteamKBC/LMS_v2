@@ -30,6 +30,8 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { startTimeTracking, type TimeTrackingSession } from '@/api/timeTracking';
 import { ComponentAccessNotice } from '@/components/feature/ComponentAccessNotice';
 import { useComponentAccessWindow } from '@/hooks/useComponentAccessWindow';
+import { CompletionTimeDialog } from '@/components/feature/CompletionTimeDialog';
+import { CompletionValidationError, type WorkingRuleReason } from '@/lib/completionValidation';
 
 const learnerNav = roleNavMap.learner;
 
@@ -139,7 +141,9 @@ export default function QuizTakePage() {
   // though the plan rows no longer link here. Sitting the quiz would file an
   // attempt in the learner's name, so they get the read-only panel instead.
   const { canProgress } = useLearnerWorkspaceAccess(id);
-  const componentAccess = useComponentAccessWindow();
+  // Scoped to this quiz so the correction dialog can name the learner's own
+  // closures. Nothing here gates taking the quiz -- `open` is always true.
+  const componentAccess = useComponentAccessWindow(null, quizId);
   const canUseComponent = canProgress && componentAccess.open;
   const moduleTitle = searchParams.get('module');
   const weekTitle = searchParams.get('week');
@@ -163,6 +167,13 @@ export default function QuizTakePage() {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  // Open only after the server refused the Submit click's instant.
+  const [correction, setCorrection] = useState<{ reason: WorkingRuleReason | ''; holidayName: string } | null>(null);
+  const [correctionError, setCorrectionError] = useState('');
+  const lastSubmissionRef = useRef<{
+    reflection: { ksbs: string[]; feedback: string; reportedTime: string };
+    skipReflection: boolean;
+  } | null>(null);
   const [result, setResult] = useState<QuizAttemptResult | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completionInFlightRef = useRef(false);
@@ -306,12 +317,17 @@ export default function QuizTakePage() {
 
   const finalizeSubmit = async (
     reflection: { ksbs: string[]; feedback: string; reportedTime: string },
-    options: { skipReflection?: boolean } = {},
+    options: { skipReflection?: boolean; declaredCompletedAt?: string } = {},
   ) => {
     if (!quiz || !kind || !id || completionInFlightRef.current || !canUseComponent) return;
     completionInFlightRef.current = true;
     setSubmitting(true);
     setSubmitError(null);
+    // Remembered so a correction re-posts the SAME submission. The answers and
+    // the frozen timer go back unchanged, so the server grades the attempt to
+    // exactly the score it would have given the refused click -- the learner
+    // never retakes anything and nothing they typed is lost.
+    lastSubmissionRef.current = { reflection, skipReflection: options.skipReflection === true };
     try {
       const tracking = trackingSessionRef.current || await trackingPromiseRef.current;
       if (!tracking) throw new Error('Quiz timing did not start. Reopen the quiz and try again.');
@@ -326,16 +342,37 @@ export default function QuizTakePage() {
         feedback: reflection.feedback,
         reportedTime: reflection.reportedTime,
         skipReflection: options.skipReflection === true,
+        declaredCompletedAt: options.declaredCompletedAt,
       });
       setReflectionChoiceOpen(false);
       setResult(res);
       setPhase('results');
+      setCorrection(null);
+      setCorrectionError('');
     } catch (e) {
+      // A working-rules refusal wrote nothing: no attempt, no progress, no
+      // OTJH. The dialog collects a working instant and the same submission
+      // goes back. A refusal OF the declared instant keeps the dialog open.
+      if (e instanceof CompletionValidationError) {
+        if (options.declaredCompletedAt) setCorrectionError(e.message);
+        else { setCorrection({ reason: e.reason, holidayName: e.holidayName }); setCorrectionError(''); }
+        setSubmitError(null);
+        return;
+      }
       setSubmitError(e instanceof Error ? e.message : 'Could not submit quiz');
     } finally {
       completionInFlightRef.current = false;
       setSubmitting(false);
     }
+  };
+
+  const submitDeclared = (declaredAt: string) => {
+    const last = lastSubmissionRef.current;
+    if (!last) return;
+    void finalizeSubmit(last.reflection, {
+      skipReflection: last.skipReflection,
+      declaredCompletedAt: declaredAt,
+    });
   };
 
   return (
@@ -433,6 +470,17 @@ export default function QuizTakePage() {
               kind, id, component, placement.moduleTitle, week,
             )}
             accessOpen={componentAccess.open}
+          />
+        )}
+        {correction && (
+          <CompletionTimeDialog
+            reason={correction.reason}
+            holidayName={correction.holidayName}
+            holidays={componentAccess.holidays ?? []}
+            submitting={submitting}
+            serverError={correctionError}
+            onSubmit={submitDeclared}
+            onClose={() => { setCorrection(null); setCorrectionError(''); }}
           />
         )}
         {reflectionChoiceOpen && (

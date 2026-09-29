@@ -71,9 +71,6 @@ export function AssignmentSubmissionWizard({
   timeSeconds,
   timeSource = 'timer',
   timeControl,
-  workingHoursDeclaration,
-  outsideWorkingHours,
-  insideWorkingHoursConfirmed,
   submittingProgress,
   onEvidenceChanged,
   onRestoreTime,
@@ -103,9 +100,6 @@ export function AssignmentSubmissionWizard({
   timeSeconds: number | null;
   timeSource?: 'timer' | 'input';
   timeControl: ReactNode;
-  workingHoursDeclaration?: ReactNode;
-  outsideWorkingHours: boolean;
-  insideWorkingHoursConfirmed: boolean;
   submittingProgress: boolean;
   onEvidenceChanged: (files: EvidenceRecord[]) => void;
   onRestoreTime: (seconds: number, source: 'timer' | 'input') => void;
@@ -234,8 +228,6 @@ export function AssignmentSubmissionWizard({
     assignmentAnswer: answers.assignmentAnswer,
     whatYouLearned: answers.whatYouLearned,
     businessImpact: answers.businessImpact,
-    outsideWorkingHours,
-    insideWorkingHoursConfirmed,
     monthlyAssignment: { ...monthly, step },
     assignmentTimeSource: detailedSeconds !== null ? 'input' : timeSource,
   });
@@ -358,7 +350,7 @@ export function AssignmentSubmissionWizard({
     return () => window.clearTimeout(timeout);
     // The identifying fields are stable for the lifetime of this wizard.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [answers, monthly, step, evidenceFiles, Math.floor((timeSeconds || 0) / 30), insideWorkingHoursConfirmed, locked]);
+  }, [answers, monthly, step, evidenceFiles, Math.floor((timeSeconds || 0) / 30), locked]);
 
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
@@ -417,10 +409,6 @@ export function AssignmentSubmissionWizard({
     }
     if (!claimedSeconds || claimedSeconds <= 0) {
       setSaveError('Enter the time spent on this assignment before submitting.');
-      return;
-    }
-    if (outsideWorkingHours && !insideWorkingHoursConfirmed) {
-      setSaveError('Confirm that you completed this assignment inside UK working hours before submitting.');
       return;
     }
     submittingRef.current = true;
@@ -609,7 +597,6 @@ export function AssignmentSubmissionWizard({
               <AppIcon className="ri-arrow-left-line" />Back
             </button>
             <div className="flex min-w-0 flex-1 flex-col items-end gap-3 sm:flex-row sm:items-center sm:justify-end">
-              {workingHoursDeclaration && <div className="w-full min-w-0 sm:max-w-md">{workingHoursDeclaration}</div>}
               <div className="shrink-0">
                 {step < 7 ? (
                   <button

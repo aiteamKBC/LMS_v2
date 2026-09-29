@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import QuizTakePage from './page';
+import { CompletionValidationError } from '@/lib/completionValidation';
 
 const mocks = vi.hoisted(() => ({
   detail: vi.fn(), quiz: vi.fn(), start: vi.fn(), submit: vi.fn(),
@@ -228,5 +229,73 @@ describe('quiz requirements loading', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
     expect(await screen.findByText(/05:00 added to actual time/)).toBeVisible();
     expect(mocks.completeReading).toHaveBeenCalledWith(1, 'commercial', '501', 2, 'test', 150, 'manual');
+  });
+});
+
+describe('quiz submit working rules', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.detail.mockResolvedValue(detail);
+    mocks.quiz.mockResolvedValue({ id: 1, title: 'Campaign quiz', questions: [{ id: 1, text: 'Choose an outcome', points: 1, type: 'single_choice', answers: [{ id: 1, text: 'Measured outcome' }] }] });
+    mocks.start.mockResolvedValue({ trackingToken: 'test', startedAt: '2026-09-13T00:00:00Z' });
+  });
+
+  const answerAndFinish = async () => {
+    renderPage();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start Quiz' }));
+    fireEvent.click(screen.getByRole('button', { name: /Measured outcome/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Finish Quiz' }));
+    await act(async () => {});
+  };
+
+  it('opens the completion dialog and re-posts the same answers when the Submit click is refused', async () => {
+    mocks.submit
+      .mockRejectedValueOnce(new CompletionValidationError('Saturday is not a working day.', 'weekend', ''))
+      .mockResolvedValue({ passed: true, achievedScore: 1, totalScore: 1, breakdown: [], attempt: { attempt: 1 } });
+
+    await answerAndFinish();
+
+    // Nothing was completed: the learner is asked for a working instant.
+    expect(await screen.findByText('Please review your completion date and time')).toBeVisible();
+    expect(screen.getByText(/Reason:/)).toBeVisible();
+
+    fireEvent.change(screen.getByLabelText('Completion date'), { target: { value: '2026-01-15' } });
+    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '14:30' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Final Submit' }));
+    await act(async () => {});
+
+    expect(mocks.submit).toHaveBeenCalledTimes(2);
+    const [first, second] = mocks.submit.mock.calls.map(call => call[3]);
+    // The answers and the frozen timer go back unchanged, so the attempt
+    // grades to exactly the score the refused click would have produced.
+    expect(second.answers).toEqual(first.answers);
+    expect(second.timeTakenSeconds).toBe(first.timeTakenSeconds);
+    expect(second.trackingToken).toBe(first.trackingToken);
+    expect(second.declaredCompletedAt).toBe('2026-01-15T14:30:00');
+    expect(screen.queryByText('Please review your completion date and time')).not.toBeInTheDocument();
+  });
+
+  it('keeps the dialog open and shows the server reason when the declared instant is also refused', async () => {
+    mocks.submit
+      .mockRejectedValueOnce(new CompletionValidationError('Sunday is not a working day.', 'weekend', ''))
+      .mockRejectedValueOnce(new CompletionValidationError('Outside official working hours.', 'outside_working_hours', ''));
+
+    await answerAndFinish();
+    fireEvent.change(await screen.findByLabelText('Completion date'), { target: { value: '2026-01-15' } });
+    fireEvent.change(screen.getByLabelText('Completion time'), { target: { value: '14:30' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Final Submit' }));
+    await act(async () => {});
+
+    expect(screen.getByText('Please review your completion date and time')).toBeVisible();
+    expect(screen.getByRole('alert')).toHaveTextContent('Outside official working hours.');
+  });
+
+  it('a valid Submit completes with no dialog and no declared instant', async () => {
+    mocks.submit.mockResolvedValue({ passed: true, achievedScore: 1, totalScore: 1, breakdown: [], attempt: { attempt: 1 } });
+
+    await answerAndFinish();
+
+    expect(screen.queryByText('Please review your completion date and time')).not.toBeInTheDocument();
+    expect(mocks.submit.mock.calls[0][3].declaredCompletedAt).toBeUndefined();
   });
 });

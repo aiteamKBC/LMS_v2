@@ -3388,7 +3388,11 @@ def date_only(value) -> date | None:
 
 
 def entry_activity_date(entry: dict) -> date | None:
-    for field in ("submittedAt", "at", "completedAt", "startedAt", "date", "createdAt"):
+    # ``declaredCompletedAt`` leads: when a learner's Finish click fell outside
+    # the working rules, the working instant they declared is the one the month
+    # buckets, the hours count and the reports read. The click itself stays on
+    # ``submittedAt`` as audit evidence and is never counted in its place.
+    for field in ("declaredCompletedAt", "submittedAt", "at", "completedAt", "startedAt", "date", "createdAt"):
         parsed = date_only(entry.get(field))
         if parsed:
             return parsed
@@ -3710,6 +3714,9 @@ def progress_entry_history_record(entry: LearnerProgressEntry) -> dict:
         "expectedOtjh": entry.expected_otjh,
         "reportedTime": entry.reported_time,
         "submittedAt": submitted_at.isoformat() if submitted_at else "",
+        "declaredCompletedAt": (
+            entry.declared_completed_at.isoformat() if entry.declared_completed_at else ""
+        ),
         "startedAt": started_at.isoformat() if started_at else "",
         "claimedSeconds": entry.claimed_seconds,
         "verifiedSeconds": entry.verified_seconds,
@@ -3718,7 +3725,9 @@ def progress_entry_history_record(entry: LearnerProgressEntry) -> dict:
 
 
 def historical_progress_date(record: dict) -> date | None:
-    value = record.get("submittedAt") or record.get("startedAt")
+    # Same rule as entry_activity_date: reporting follows the declared working
+    # instant, audit keeps the real click.
+    value = record.get("declaredCompletedAt") or record.get("submittedAt") or record.get("startedAt")
     parsed = parse_date_value(value)
     return parsed.date() if isinstance(parsed, datetime) else parsed
 
@@ -3988,8 +3997,12 @@ def build_otjh_completed_entries(
                 or clean_text(component_meta.get("week"))
             ),
         }
+        # Declared first, exactly as entry_activity_date orders it: this month's
+        # list is filtered by the declared instant, so the date shown beside an
+        # entry has to be the same one, or a September list prints October dates.
         recorded_at = (
-            clean_text(entry.get("submittedAt"))
+            clean_text(entry.get("declaredCompletedAt"))
+            or clean_text(entry.get("submittedAt"))
             or clean_text((activity or {}).get("at"))
             or clean_text(entry.get("startedAt"))
         )
@@ -4105,8 +4118,12 @@ def build_ksb_completed_details(
                 or clean_text(component_meta.get("week"))
             ),
         }
+        # Declared first, exactly as entry_activity_date orders it: this month's
+        # list is filtered by the declared instant, so the date shown beside an
+        # entry has to be the same one, or a September list prints October dates.
         recorded_at = (
-            clean_text(entry.get("submittedAt"))
+            clean_text(entry.get("declaredCompletedAt"))
+            or clean_text(entry.get("submittedAt"))
             or clean_text((activity or {}).get("at"))
             or clean_text(entry.get("startedAt"))
             or clean_text(entry.get("at"))
