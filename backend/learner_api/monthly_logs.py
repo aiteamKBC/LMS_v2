@@ -368,6 +368,20 @@ def detail_data(learner, month, *, include_open=False, include_future=False, dem
             'profile': report_profile}
 
 
+def _canonical_signature_scope(learner, owner):
+    """Return the lineage keys required by canonical monthly signatures.
+
+    ``learner_id`` is the consolidated profile id, while the table's unique
+    scope is the source learner plus programme/enrolment key.  New LMS
+    records may not have an Aptem id, so the enrolment id is the stable
+    source identity fallback.
+    """
+    enrolment_id = owner.get('enrolment_id') or learner.get('id')
+    source_learner_id = str(owner.get('aptem_id') or enrolment_id or learner.get('id') or '')
+    programme_key = f'lms:{enrolment_id or learner.get("id")}'
+    return source_learner_id, programme_key
+
+
 def mirror_mcm_learner_signature(learner, month, signature, name):
     """Copy a learner's MCM signature into that MCM's monthly log.
 
@@ -418,6 +432,7 @@ def mirror_mcm_learner_signature(learner, month, signature, name):
         old_repo.query('SELECT id FROM enrolment."Created_users" WHERE id=%s FOR UPDATE', [learner['id']])
         if canonical.enabled(learner['id']):
             owner = canonical.profile(learner['id'])
+            source_learner_id, programme_key = _canonical_signature_scope(learner, owner)
             existing = old_repo.query('''SELECT id FROM "Learner".learner_monthly_signatures
                 WHERE learner_id=%s AND report_month=%s AND signer_role='learner'
                   AND review_confirmed IS TRUE LIMIT 1''', [owner['id'], month])
@@ -426,10 +441,11 @@ def mirror_mcm_learner_signature(learner, month, signature, name):
             old_repo.query('''INSERT INTO "Learner".learner_monthly_signatures
                 (learner_id,report_month,signer_role,signer_name,review_confirmed,
                  signature_url,signature_data,capture_method,signed_at,snapshot_digest,
-                 source_system,source_ref)
-                VALUES (%s,%s,'learner',%s,true,%s,%s,'mcm',now(),%s,'lms',%s)
-                ON CONFLICT (learner_id,report_month,signer_role) DO NOTHING''',
-                [owner['id'], month, signed_name, signature, capture, snapshot_digest, source_ref])
+                 source_system,source_ref,source_learner_id,programme_key)
+                VALUES (%s,%s,'learner',%s,true,%s,%s,'mcm',now(),%s,'lms',%s,%s,%s)
+                ON CONFLICT (source_learner_id,programme_key,report_month,signer_role) DO NOTHING''',
+                [owner['id'], month, signed_name, signature, capture, snapshot_digest, source_ref,
+                 source_learner_id, programme_key])
         else:
             learner_key = f'lms:{learner["id"]}'
             existing = old_repo.query(f'''SELECT id FROM {old_repo.SIGNOFFS}
@@ -575,12 +591,15 @@ def sign(request, learner_id, month):
             'actor_account_id': request.login_account.id, 'capture_method': data['capture_method']}, default=str)
         if canonical.enabled(learner_id):
             owner = canonical.profile(learner_id)
+            source_learner_id, programme_key = _canonical_signature_scope(learner, owner)
             old_repo.query('''INSERT INTO "Learner".learner_monthly_signatures
                 (learner_id,report_month,signer_role,signer_name,review_confirmed,signature_url,
-                 signature_data,capture_method,signed_at,snapshot_digest,source_system,source_ref)
-                VALUES (%s,%s,%s,%s,true,%s,%s,%s,now(),%s,'lms',%s)''',
+                 signature_data,capture_method,signed_at,snapshot_digest,source_system,source_ref,
+                 source_learner_id,programme_key)
+                VALUES (%s,%s,%s,%s,true,%s,%s,%s,now(),%s,'lms',%s,%s,%s)
+                ON CONFLICT (source_learner_id,programme_key,report_month,signer_role) DO NOTHING''',
                 [owner['id'], month, signer_role, name, json.loads(capture)['url'], capture,
-                 data['capture_method'], report['snapshot_digest'], key])
+                 data['capture_method'], report['snapshot_digest'], key, source_learner_id, programme_key])
         else:
             old_repo.query(f'''INSERT INTO {old_repo.SIGNOFFS}
             (learner_id, programme_key, report_month, signer_role, signer_name,
