@@ -268,6 +268,49 @@ class MonthlyLogsTests(SimpleTestCase):
         self.assertEqual(result['month'], '2026-10')
         self.assertTrue(any('INSERT INTO' in call.args[0] for call in query.call_args_list))
 
+    def test_canonical_mcm_signature_uses_the_table_scope_conflict_key(self):
+        report = {'source': 'lms', 'rows': [self.row], 'profile': None,
+                  'snapshot_digest': 'canonical-mcm-digest'}
+        learner = {**self.learner, 'aptem_id': None}
+        owner = {'id': 683, 'enrolment_id': 7, 'aptem_id': None}
+        with patch.object(logs, 'detail_data', return_value=report), \
+             patch.object(logs.canonical, 'enabled', return_value=True), \
+             patch.object(logs.canonical, 'profile', return_value=owner), \
+             patch.object(logs.transaction, 'atomic', return_value=nullcontext()), \
+             patch.object(logs.old_repo, 'query', return_value=[]) as query:
+            result = logs.mirror_mcm_learner_signature(
+                learner, '2026-09', 'data:image/png;base64,mcm', 'Learner',
+            )
+
+        self.assertEqual(result['status'], 'synced')
+        insert = next(call for call in query.call_args_list if 'INSERT INTO' in call.args[0])
+        self.assertIn('source_learner_id,programme_key', insert.args[0])
+        self.assertIn('ON CONFLICT (source_learner_id,programme_key,report_month,signer_role)', insert.args[0])
+        self.assertEqual(insert.args[1][-2:], ['7', 'lms:7'])
+
+    def test_canonical_monthly_log_signing_uses_the_same_table_scope(self):
+        report = {**logs.month_state('2026-09', [self.row], []), 'rows': [self.row]}
+        learner = {**self.learner, 'aptem_id': None}
+        owner = {'id': 683, 'enrolment_id': 7, 'aptem_id': None}
+        request = self.request(
+            'post', snapshot_digest=report['snapshot_digest'], confirmed='true', capture_method='draw',
+            signature=SimpleUploadedFile('signature.png', b'fake', content_type='image/png'),
+        )
+        with patch.object(logs, 'scope', return_value=(learner, 'learner')), \
+             patch.object(logs.storage, 'sanitize', return_value=b'clean'), \
+             patch.object(logs, 'detail_data', return_value=report), \
+             patch.object(logs, 'lock_if_fully_signed'), \
+             patch.object(logs.canonical, 'enabled', return_value=True), \
+             patch.object(logs.canonical, 'profile', return_value=owner), \
+             patch.object(logs.transaction, 'atomic', return_value=nullcontext()), \
+             patch.object(logs.old_repo, 'query', return_value=[]) as query:
+            response = unwrap(logs.sign)(request, 7, '2026-09')
+
+        self.assertEqual(response.status_code, 200)
+        insert = next(call for call in query.call_args_list if 'INSERT INTO' in call.args[0])
+        self.assertIn('ON CONFLICT (source_learner_id,programme_key,report_month,signer_role)', insert.args[0])
+        self.assertEqual(insert.args[1][-2:], ['7', 'lms:7'])
+
     def test_mcm_signoff_uses_target_month_when_booking_is_later(self):
         record = SimpleNamespace(
             target_date=date(2026, 12, 16),
