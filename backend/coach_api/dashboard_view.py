@@ -59,7 +59,7 @@ def coach_dashboard(request):
     metric_event(
         "coach_dashboard_cache",
         status="MISS_COMPUTED",
-        namespace="coach-dashboard-summary:v1",
+        namespace=dashboard_cache.CACHE_NAMESPACE,
         duration_ms=round((perf_counter() - endpoint_started) * 1000, 2),
     )
     _dashboard_perf(

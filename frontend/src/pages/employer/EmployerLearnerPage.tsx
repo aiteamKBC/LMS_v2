@@ -12,6 +12,8 @@ import {
   signTrainingPlanAsEmployer,
   signWrittenAgreementAsEmployer,
   signReviewAsEmployer,
+  signEnrolmentReviewAsEmployer,
+  fetchEmployerEnrolmentReview,
   fetchEmployerReviewInstance,
   saveEmployerReviewAnswers,
   type EmployerLearnerDetail,
@@ -343,7 +345,13 @@ export default function EmployerLearnerPage() {
   const handleSign = async (name: string, signature: string) => {
     if (!signing) return;
     if (signing.kind === 'review') {
-      await signReviewAsEmployer(employerId, kind, learnerId, signing.eventKey, { name, signature });
+      // Curriculum review instances and legacy enrolment reviews share this
+      // list but not a sign endpoint.
+      if (signing.reviewInstanceId) {
+        await signReviewAsEmployer(employerId, kind, learnerId, signing.eventKey, { name, signature });
+      } else {
+        await signEnrolmentReviewAsEmployer(kind, learnerId, signing.eventKey, { name, signature });
+      }
     } else if (signing.kind === 'written-agreement') {
       await signWrittenAgreementAsEmployer(learnerId, { name, signature });
     } else if (signing.kind === 'training-plan') {
@@ -371,7 +379,11 @@ export default function EmployerLearnerPage() {
     setOpening(item.kind === 'review' ? item.eventKey : item.id);
     try {
       if (item.kind === 'review') {
-        const review = await fetchReviewForm(kind, learnerId, item.eventKey);
+        // Legacy enrolment reviews are read through the employer portal; the
+        // learner-side read refuses employers.
+        const review = item.reviewInstanceId
+          ? await fetchReviewForm(kind, learnerId, item.eventKey)
+          : await fetchEmployerEnrolmentReview(employerId, kind, learnerId, item.eventKey);
         downloadReviewPdf(review, REVIEW_QUESTION_LABELS);
       } else {
         const url = await getEnrolmentDocumentUrl(kind, learnerId, item.id);

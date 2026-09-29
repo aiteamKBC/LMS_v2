@@ -89,3 +89,36 @@
   .overall { grid-template-columns: minmax(0, 1fr) auto; }
   .overall > div:first-child { grid-column: 1 / -1; }
 }
+
+:global([data-theme='dark'] :is(.learner-dashboard, .dashboard-theme[data-workspace-role='learner'])) .charts {
+  --programme-navy: #bfa3ee;
+  --programme-navy-light: #d7c4f4;
+  --programme-navy-soft: #302748;
+}
+
+:global([data-theme='dark'] :is(.learner-dashboard, .dashboard-theme[data-workspace-role='learner'])) .monthlyCard {
+  --otjh-navy: #bfa3ee;
+  --otjh-navy-light: #8768ba;
+}
+
+:global([data-theme='dark'] :is(.learner-dashboard, .dashboard-theme[data-workspace-role='learner'])) :is(.module:hover, .module[aria-pressed='true']) {
+  @apply border-slate-600 bg-slate-800;
+}
+
+:global([data-theme='dark'] :is(.learner-dashboard, .dashboard-theme[data-workspace-role='learner'])) .moduleTrack {
+  background: #3b526c;
+}
+
+:global([data-theme='dark'] :is(.learner-dashboard, .dashboard-theme[data-workspace-role='learner'])) .moduleTrack > span {
+  background: #bfa3ee;
+}
+
+:global([data-theme='dark'] :is(.learner-dashboard, .dashboard-theme[data-workspace-role='learner'])) :is(
+  .monthlyTooltip > strong, .monthlyTooltip dd, .overall > div:first-child strong
+) {
+  color: #bfa3ee;
+}
+
+:global([data-theme='dark'] .dashboard-theme[data-workspace-role='learner']) .card h2 {
+  color: #d7c4f4;
+}

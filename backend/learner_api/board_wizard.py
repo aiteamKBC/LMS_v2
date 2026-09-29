@@ -52,6 +52,70 @@ def _s(value):
     return "" if value is None else str(value).strip()
 
 
+def record_address(learner):
+    """The learner's home address on their record, as one line.
+
+    The first-sign-in screens (first_login_details) and the staff create form
+    both write it to these columns; the wizard's Personal Details holds it as a
+    single free-text answer, so it is offered back in that shape. Lines 3 and 4
+    are town/city and county.
+    """
+    parts = (
+        getattr(learner, "address_line_1", None),
+        getattr(learner, "address_line_2", None),
+        getattr(learner, "address_line_3", None),
+        getattr(learner, "address_line_4", None),
+        getattr(learner, "current_postcode", None),
+    )
+    return ", ".join(p for p in (_s(part) for part in parts) if p)
+
+
+#: The learner's reusable signature (sql/2026-09-07_add_signature_to_created_users.sql).
+#: Unmapped on EnrolmentUser on purpose -- a mapped column missing from the
+#: database breaks every query on the table -- so it is read here by raw SQL.
+SAVED_SIGNATURE_COLUMN = "Learner_signature"
+SAVED_SIGNATURE_AT_COLUMN = "Learner_signature_saved_at"
+
+
+def saved_signature(learner_id):
+    """``(signature data URL, "YYYY-MM-DD" UK date saved)`` or ``("", "")``.
+
+    The signature a learner agreed to use on the platform when they first signed
+    in, offered back so the enrolment wizard does not ask them to sign again.
+    Missing columns (the SQL file not applied yet) and any read failure mean
+    "no saved signature": the learner can always sign by hand. The savepoint
+    keeps a failed probe from poisoning a surrounding transaction, as in
+    monthly_reports._saved_signature.
+    """
+    from zoneinfo import ZoneInfo
+
+    from django.db import connections, transaction
+
+    try:
+        with transaction.atomic(using="enrolment"):
+            with connections["enrolment"].cursor() as cur:
+                cur.execute(
+                    f'''select "{SAVED_SIGNATURE_COLUMN}", "{SAVED_SIGNATURE_AT_COLUMN}"
+                          from enrolment."Created_users"
+                         where id = %s
+                         limit 1''',
+                    [learner_id],
+                )
+                row = cur.fetchone()
+    except DatabaseError:
+        return "", ""
+    if not row or not _s(row[0]):
+        return "", ""
+    saved_at = row[1]
+    if hasattr(saved_at, "astimezone"):
+        saved_on = saved_at.astimezone(ZoneInfo("Europe/London")).date().isoformat()
+    elif hasattr(saved_at, "isoformat"):
+        saved_on = saved_at.isoformat()
+    else:
+        saved_on = ""
+    return _s(row[0]), saved_on
+
+
 def fmt_date(value):
     """Date/datetime/str -> 'DD/MM/YYYY' ('' when absent).
 

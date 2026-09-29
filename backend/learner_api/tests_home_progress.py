@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 from django.db import DatabaseError
 from django.test import SimpleTestCase, RequestFactory
 
-from .home_progress import read_home_progress, summarise_home
+from .home_progress import apply_canonical_home_metrics, read_home_progress, summarise_home
 from .overview_week import merged_activities, overview_week, read_week
 from .tests_overview_week import native, old
 
@@ -31,6 +31,37 @@ class HomeProgressTests(SimpleTestCase):
         self.assertEqual(result['modules'], {'completed': 1, 'total': 4})
         self.assertEqual(result['otjh']['planned'], 15)
         self.assertEqual(result['period']['start'], '2026-09-03')
+
+    def test_canonical_metrics_match_coach_values_and_preserve_home_only_metrics(self):
+        home = self.summary(
+            current=[native(type='assignment', expected_hours=5)],
+            submissions=[{'component_ref': 'new', 'status': 'submitted_for_tutor_review',
+                          'actual_time_hours': 2}],
+            lectures=[{'session_date': START.isoformat(), 'attendance_status': 'present'}],
+        )
+        result = apply_canonical_home_metrics(home, {
+            'otjh': {'completed_actual': 12.5, 'actual': 20, 'planned': 40},
+            'programme': {'completed': 7, 'total': 11, 'percent': 63.64, 'status': 'ready'},
+        })
+        self.assertEqual(result['otjh']['actual'], 12.5)
+        self.assertEqual(result['otjh']['planned'], 40)
+        self.assertEqual(result['otjh']['percent'], 31.25)
+        self.assertEqual(result['activities'], {'completed': 7, 'total': 11})
+        self.assertEqual(result['otjh']['submitted'], 2)
+        self.assertEqual(result['assignments'], home['assignments'])
+        self.assertEqual(result['lectures'], home['lectures'])
+        self.assertEqual(result['modules'], home['modules'])
+
+    def test_unavailable_canonical_programme_is_not_replaced_by_home_activity_counts(self):
+        home = self.summary(current=[native(expected_hours=5)])
+        result = apply_canonical_home_metrics(home, {
+            'otjh': {'completed_actual': None, 'planned': None},
+            'programme': {'status': 'unavailable'},
+        })
+        self.assertIsNone(result['activities'])
+        self.assertIsNone(result['otjh']['actual'])
+        self.assertIsNone(result['otjh']['planned'])
+        self.assertIsNone(result['otjh']['percent'])
 
     def test_assignment_hours_move_from_submitted_to_actual_once_accepted(self):
         current = [native(id='assignment', type='assignment', expected_hours=5), native(id='reading', expected_hours=10)]
@@ -178,8 +209,11 @@ class HomeProgressTests(SimpleTestCase):
              patch('learner_api.overview_week.rows', return_value=current), \
              patch('learner_api.overview_week.read_builder_activity_dates', return_value=dates), \
              patch('learner_api.overview_week._direct_progress_records', return_value=[]), \
+             patch('learner_api.overview_week.metrics_from_loaded', return_value={'canonical': True}) as metrics, \
              patch('learner_api.home_progress.read_home_progress', return_value={'sentinel': True}) as home:
             result = read_week(source, datetime(2026, 9, 10, tzinfo=timezone.utc), home_kind='apprenticeship')
         self.assertEqual(result['homeProgress'], {'sentinel': True})
         self.assertEqual(len(list(home.call_args.args[2])), 2)
+        self.assertEqual(home.call_args.kwargs['canonical_metrics'], {'canonical': True})
+        metrics.assert_called_once()
         self.assertEqual(result['modules'][0]['total'], 1)

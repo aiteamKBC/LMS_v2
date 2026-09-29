@@ -142,3 +142,20 @@
 @media (prefers-reduced-motion: reduce) {
   .tableWrap :global(tbody tr) { transition: none; }
 }
+
+:global([data-theme='dark'] body .dashboard-theme[data-workspace-role='learner']) .page :global(.learner-super-admin-hero) {
+  background: #182d48 !important;
+  border-color: #3b526c !important;
+  color: #f6f8fb !important;
+}
+:global([data-theme='dark'] body .dashboard-theme[data-workspace-role='learner']) .page :global(.learner-super-admin-hero) :is(h1, h2, h3) { color: #f6f8fb !important; }
+:global([data-theme='dark'] body .dashboard-theme[data-workspace-role='learner']) .page :global(.learner-super-admin-hero) :global(.text-foreground-500) { color: #b6c4d5 !important; }
+:global([data-theme='dark'] body .dashboard-theme[data-workspace-role='learner']) .page :global(.learner-super-admin-hero) :global(.text-primary-600) { color: #d7c4f4 !important; }
+:global([data-theme='dark'] body .dashboard-theme[data-workspace-role='learner']) .page :global(.learner-super-admin-hero) :global(.bg-primary-100\/60) { background: #302748 !important; border-color: #71558e !important; }
+:global([data-theme='dark'] body .dashboard-theme[data-workspace-role='learner']) .page :global(.progress-review-hero-metric) { background: #213854 !important; border-color: #3b526c !important; }
+:global([data-theme='dark'] body .dashboard-theme[data-workspace-role='learner']) .page :global(.progress-review-hero-metric) :is(p, span) { color: #b6c4d5; }
+:global([data-theme='dark'] body .dashboard-theme[data-workspace-role='learner']) .page :global(.progress-review-hero-metric) p:last-child { color: #f6f8fb !important; }
+:global([data-theme='dark'] body .dashboard-theme[data-workspace-role='learner']) .page :global([role='tablist']) { background: #182d48; border-color: #3b526c; }
+:global([data-theme='dark'] body .dashboard-theme[data-workspace-role='learner']) .page :global([role='tab']) { color: #b6c4d5; }
+:global([data-theme='dark'] body .dashboard-theme[data-workspace-role='learner']) .page :global([role='tab'][aria-selected='true']) { background: #304766; border-color: #526b88; color: #f6f8fb; }
+:global([data-theme='dark']) .tableWrap :global(tbody tr:hover) { background: #304766 !important; }

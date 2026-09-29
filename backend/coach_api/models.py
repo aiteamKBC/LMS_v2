@@ -143,6 +143,46 @@ class CoachCalendarEvent(models.Model):
         return f"{self.event_type} #{self.sequence} for {self.learner_name or self.learner_id}"
 
 
+class ImportedReviewInstance(models.Model):
+    """Editable coach-owned state layered over an immutable Aptem review."""
+
+    STATUS_IN_PROGRESS = "in-progress"
+    STATUS_COMPLETED = "completed"
+    STATUS_CHOICES = [
+        (STATUS_IN_PROGRESS, "In Progress"),
+        (STATUS_COMPLETED, "Completed"),
+    ]
+
+    event_key = models.CharField(max_length=255)
+    owner_email = models.EmailField(max_length=255, db_index=True)
+    learner_id = models.IntegerField(db_index=True)
+    answers = models.JSONField(default=dict, blank=True)
+    status = models.CharField(
+        max_length=32,
+        choices=STATUS_CHOICES,
+        default=STATUS_IN_PROGRESS,
+        db_index=True,
+    )
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = _table_name(
+            'coach_test_imported_review_instances',
+            'Coach"."coach_imported_review_instance',
+        )
+        constraints = [
+            models.UniqueConstraint(
+                fields=["owner_email", "event_key"],
+                name="coach_imported_review_owner_event_unique",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(status__in=["in-progress", "completed"]),
+                name="coach_imported_review_status_valid",
+            ),
+        ]
+
 class CoachCalendarSequence(models.Model):
     """Cross-process sequence allocator for a learner/session-type scope."""
 

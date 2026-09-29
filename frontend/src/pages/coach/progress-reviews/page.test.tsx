@@ -71,6 +71,9 @@ describe('progress review list navigation and filters', () => {
   it('uses the MCM month-scoped filters', async () => {
     mount();
     await screen.findByText('Scheduled Review');
+    expect(fetchEvents).toHaveBeenCalledWith(expect.any(AbortSignal), {
+      start: '2026-09-01', end: '2026-09-30', includeLiveSessions: false, includeSchedulerQueues: false,
+    });
     const filters = within(screen.getByRole('navigation', { name: 'Filter progress reviews by status' }));
     expect(filters.getAllByRole('button').map(button => button.textContent)).toEqual([
       'All3', 'Not Scheduled1', 'Scheduled1', 'In Progress0', 'Awaiting Signature0', 'Completed1',
@@ -80,7 +83,24 @@ describe('progress review list navigation and filters', () => {
     expect(screen.queryByText('Scheduled Review')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
     expect(await screen.findByText('Next Month Review')).toBeVisible();
+    expect(fetchEvents).toHaveBeenLastCalledWith(expect.any(AbortSignal), {
+      start: '2026-10-01', end: '2026-10-31', includeLiveSessions: false, includeSchedulerQueues: false,
+    });
     expect(filters.getByRole('button', { name: 'All1' })).toBeVisible();
+  });
+
+  it('keeps the last successful month visible when the coach returns to the page', async () => {
+    const first = mount();
+    expect(await screen.findByText('Scheduled Review')).toBeVisible();
+    first.unmount();
+
+    let finishRefresh!: (value: unknown) => void;
+    fetchEvents.mockImplementation(() => new Promise(resolve => { finishRefresh = resolve; }));
+    mount();
+
+    expect(screen.getByText('Scheduled Review')).toBeVisible();
+    expect(screen.queryByText('Loading progress reviews')).not.toBeInTheDocument();
+    finishRefresh({ owner: { name: 'Coach Example' }, events: reviews });
   });
 
   it('opens View on the progress review detail page without expanding the row', async () => {
@@ -106,13 +126,15 @@ describe('progress review list navigation and filters', () => {
 
   it('restores Schedule and Reschedule popups for imported Aptem reviews', async () => {
     fetchEvents.mockResolvedValue({ events: [
-      review(20, { id: 'imported-review:20', eventKey: 'imported-review:20', learner: 'Imported Unscheduled', status: 'not-scheduled', reviewSource: 'aptem', aptemReviewId: '20', hasReviewForm: true }),
-      review(21, { id: 'imported-review:21', eventKey: 'imported-review:21', learner: 'Imported Scheduled', status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00', reviewSource: 'aptem', aptemReviewId: '21', hasReviewForm: true }),
+      review(20, { id: 'imported-review:20', eventKey: 'imported-review:20', learner: 'Imported Unscheduled', status: 'not-scheduled', reviewSource: 'aptem', aptemReviewId: '20', hasReviewForm: false, reviewTemplateId: undefined }),
+      review(21, { id: 'imported-review:21', eventKey: 'imported-review:21', learner: 'Imported Scheduled', status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00', reviewSource: 'aptem', aptemReviewId: '21', hasReviewForm: false, reviewTemplateId: undefined }),
     ] });
     mount();
     await screen.findByText('Imported Scheduled');
 
-    fireEvent.click(within(screen.getByText('Imported Unscheduled').closest('tr')!).getByRole('button', { name: 'Schedule' }));
+    const unscheduledRow = within(screen.getByText('Imported Unscheduled').closest('tr')!);
+    expect(unscheduledRow.getByRole('button', { name: 'View Form' })).toBeVisible();
+    fireEvent.click(unscheduledRow.getByRole('button', { name: 'Schedule' }));
     expect(screen.getByRole('dialog', { name: 'Schedule progress review' })).toBeVisible();
     fireEvent.click(within(screen.getByRole('dialog', { name: 'Schedule progress review' })).getByRole('button', { name: 'Cancel' }));
 
@@ -124,8 +146,9 @@ describe('progress review list navigation and filters', () => {
     expect(scheduledRow.getAllByRole('button').map(button => button.textContent)).toEqual([
       'Reschedule', 'View', 'View Form', 'Create Slides',
     ]);
-    fireEvent.click(scheduledRow.getByRole('button', { name: 'View' }));
-    expect(screen.getByTestId('route')).toHaveTextContent('/coach/progress-reviews/imported-review%3A21');
+    fireEvent.click(scheduledRow.getByRole('button', { name: 'View Form' }));
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A21');
+    expect(openReview).not.toHaveBeenCalled();
   });
 
   it('opens an imported Aptem View Form directly instead of the learner profile', async () => {

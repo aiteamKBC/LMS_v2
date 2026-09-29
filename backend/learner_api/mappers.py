@@ -263,9 +263,10 @@ def _employer_label(u):
 def to_board(u):
     # Imported here, not at module scope: enrolment_api.models imports from
     # learner_api.models, so a top-level import would be circular.
-    from .board_wizard import fmt_date, merge_wizard_sections
+    from .board_wizard import fmt_date, merge_wizard_sections, record_address, saved_signature
 
     enrolled_at, enrolled_by = _split_enrolled(u.enrolled_time_and_user)
+    saved_signature_value, saved_signature_date = saved_signature(u.id)
     employer_name, employer_id = _employer_label(u)
     board = {
         "user": {
@@ -294,6 +295,12 @@ def to_board(u):
             "groupMembership": _s(u.group),
             "signatureUrl": None,
             "hasMandate": False,
+            # What the learner already gave on their record (first sign-in, or
+            # the create form), so the enrolment wizard can fill its blanks
+            # rather than ask again. See WizardContext.withRecordDefaults.
+            "address": record_address(u),
+            "savedSignature": saved_signature_value,
+            "savedSignatureDate": saved_signature_date,
         },
         "activity": {
             "aptemUsage": "00:00",
@@ -707,6 +714,10 @@ def write_fields(payload, *, require_create=False):
     if "trainingPlan" in payload:
         fields["learning_plan"] = _normalize_training_plan(payload["trainingPlan"])
     fields.update(_employer_id_field(payload))
+    if require_create and not _s(fields.get("programme_status")):
+        # Every account starts at 'Fresh user'. Left unset it was stored NULL,
+        # which some readers took for "status unknown" rather than new.
+        fields["programme_status"] = DEFAULT_PROGRAMME_STATUS
     validate_learner_dates(fields)
     return fields
 
@@ -1082,6 +1093,8 @@ def to_learner_detail(source, learner_profile):
         # the learner out. Deciding it here, where that ambiguity does not
         # exist, is the only place it can be decided correctly.
         "programmeStatus": programme_status(source) or DEFAULT_PROGRAMME_STATUS,
+        # Same as learner_summary: whether the enrolment wizard is handed in.
+        "onboardingStatus": _s(getattr(source, "onboarding_status", "")),
         "learnerType": _s(getattr(source, "learner_type", "")) or "apprenticeship",
         "programmeStartDate": _s(programme_start),
         # The learner's own recorded start, straight from

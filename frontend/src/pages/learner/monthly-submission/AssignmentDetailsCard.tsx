@@ -51,6 +51,7 @@ export function AssignmentDetailsCard({ assignment, group, kind, learnerId }: {
           <div><dt><CalendarDays size={16} aria-hidden="true" />Training Plan month</dt><dd>{group.label}{group.month && group.label !== monthName(group.month) && <small>{monthName(group.month)}</small>}</dd></div>
           <div><dt><Clock3 size={16} aria-hidden="true" />Expected OTJ hours</dt><dd>{assignment.expectedOtjh != null ? `${assignment.expectedOtjh} hours` : 'Not specified'}</dd></div>
           <div><dt>Planned date</dt><dd>{assignment.date ? new Date(`${assignment.date}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/London' }) : 'Not scheduled'}</dd></div>
+          {assignment.dueDate && <div><dt>Due date</dt><dd>{new Date(`${assignment.dueDate}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Europe/London' })}</dd></div>}
           {assignment.module && <div><dt>Module</dt><dd>{assignment.module}</dd></div>}
           {assignment.week && <div><dt>Week / topic</dt><dd>{assignment.week}</dd></div>}
         </dl>

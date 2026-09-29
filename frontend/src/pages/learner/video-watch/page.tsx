@@ -42,6 +42,9 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { ActivitySidebar } from './ActivitySidebar';
 import { isNavigableComponent, placeActivity, weekDisplayLabel, type ActivityPlacement } from './weekPreview';
 import { componentRoute } from './componentRoute';
+import { ActivityElapsedTimer } from './ActivityElapsedTimer';
+import manualTimeStyles from './ActivityManualTimeInput.module.css';
+import layoutStyles from './ComponentActivityLayout.module.css';
 import { AssignmentSubmissionWizard, type AssignmentAnswers } from './AssignmentSubmissionWizard';
 import { useSavedAssignmentAccess } from './useSavedAssignmentAccess';
 import { resolveDocEmbed } from '@/lib/docEmbed';
@@ -129,50 +132,48 @@ function ActivityTimeSpentInput({ onChange, initialSeconds = null }: { onChange:
   };
 
   const fields: { key: keyof typeof parts; label: string; ariaLabel: string }[] = [
-    { key: 'hours', label: 'hour', ariaLabel: 'Hours spent' },
-    { key: 'minutes', label: 'min', ariaLabel: 'Minutes spent' },
+    { key: 'hours', label: 'Hours', ariaLabel: 'Hours spent' },
+    { key: 'minutes', label: 'Minutes', ariaLabel: 'Minutes spent' },
   ];
 
   return (
     <div
-      className="inline-flex items-center gap-2 rounded-xl border border-background-300 bg-white px-3 py-1.5 text-foreground-700 shadow-sm transition-colors focus-within:border-primary-300 focus-within:ring-2 focus-within:ring-primary-100"
+      className={manualTimeStyles.card}
       title="Enter time spent in hours and minutes"
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) normalise();
       }}
     >
-      <AppIcon className="ri-timer-line text-sm text-foreground-500" />
-      <span className="text-[12px] font-semibold text-foreground-600">Time spent</span>
-      <span className="flex items-center gap-1">
-        {fields.map((field, index) => (
-          <span key={field.key} className="flex items-center gap-1">
-            {index > 0 && <span className="font-mono text-foreground-300">:</span>}
-            <label className="grid justify-items-center gap-0.5">
-              <input
-                type="text"
-                inputMode="numeric"
-                value={parts[field.key]}
-                onChange={(event) => updatePart(field.key, event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') event.currentTarget.blur();
-                  if (event.key === 'Escape') {
-                    event.preventDefault();
-                    const empty = { hours: '', minutes: '' };
-                    setParts(empty);
-                    onChange(null);
-                  }
-                }}
-                placeholder="00"
-                aria-label={field.ariaLabel}
-                className="w-7 bg-transparent text-center font-mono text-sm font-bold tabular-nums outline-none placeholder:text-foreground-300"
-              />
-              {/* No tracking: "HOUR" is wider than the 00 input above it, and
-                  letter-spacing pushed it into the neighbouring field. */}
-              <span className="text-[8px] font-bold uppercase text-foreground-400">{field.label}</span>
-            </label>
-          </span>
+      <div className={manualTimeStyles.heading}>
+        <span className={manualTimeStyles.icon}><AppIcon className="ri-edit-2-line" /></span>
+        <span>Manual time entry</span>
+        <span className={manualTimeStyles.badge}>Editable</span>
+      </div>
+      <div className={manualTimeStyles.fields}>
+        {fields.map((field) => (
+          <label key={field.key} className={manualTimeStyles.field}>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={parts[field.key]}
+              onChange={(event) => updatePart(field.key, event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.currentTarget.blur();
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  const empty = { hours: '', minutes: '' };
+                  setParts(empty);
+                  onChange(null);
+                }
+              }}
+              placeholder="00"
+              aria-label={field.ariaLabel}
+              className={manualTimeStyles.input}
+            />
+            <span className={manualTimeStyles.label}>{field.label}</span>
+          </label>
         ))}
-      </span>
+      </div>
     </div>
   );
 }
@@ -325,6 +326,7 @@ export default function ComponentViewPage() {
   // a page timer. The signed session still runs invisibly so the server can cap
   // and verify the submitted duration.
   const isLiveSession = (component?.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session';
+  const hasActivityPanel = isVideo || isLiveSession;
   const isAssignment = (component?.type || '').trim().toLowerCase().replace(/-/g, '_') === 'assignment';
   const completed = !!component && isComponentComplete(component, completedIds);
   const recordingAttempt = isAssignment || !completed || repeating;
@@ -672,6 +674,28 @@ export default function ComponentViewPage() {
     </div>
   );
 
+  const activityHeading = component && (
+    <div className={isVideo ? layoutStyles.videoHeading : 'min-w-0'}>
+      <span className={isVideo
+        ? layoutStyles.videoEyebrow
+        : `text-[10px] font-semibold uppercase tracking-wider inline-flex items-center gap-1 ${meta?.color || 'text-foreground-500'}`}>
+        <AppIcon className={meta?.icon || 'ri-checkbox-circle-line'} /> {meta?.label || 'Activity'}
+      </span>
+      <h1 className={isVideo ? layoutStyles.videoTitle : 'mt-1 text-xl md:text-2xl font-heading font-bold text-foreground-900 leading-tight'}>{pageTitle}</h1>
+      <div className={isVideo ? layoutStyles.videoMeta : 'mt-2 flex flex-wrap items-center gap-3 text-[13px] text-foreground-500'}>
+        {isVideo && realDuration !== null ? (
+          <span className="inline-flex items-center gap-1"><AppIcon className="ri-time-line" />{formatClock(realDuration)}</span>
+        ) : component.durationMinutes != null && (
+          <span className="inline-flex items-center gap-1"><AppIcon className="ri-time-line" />{component.durationMinutes} min</span>
+        )}
+        {component.expectedOtjh != null && component.expectedOtjh > 0 && (
+          <span className="inline-flex items-center gap-1"><AppIcon className="ri-timer-line" />{component.expectedOtjh}h OTJ</span>
+        )}
+        {weekLabel && <span className="inline-flex items-center gap-1"><AppIcon className="ri-calendar-line" />{weekLabel}</span>}
+      </div>
+    </div>
+  );
+
   return (
     <WorkspaceShell
       role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel}
@@ -749,6 +773,7 @@ export default function ComponentViewPage() {
           /* ── consume phase: content + details + sidebar ── */
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 items-start">
             <div className="min-w-0">
+              {isVideo && activityHeading}
               {!isAssignment && (
                 <ComponentContent component={{ ...component, liveSessionUrl: parsePersonalLearning(id) ? null : component.teamsLiveSessionId && component.teamsSessionNumber
                     ? `/learner_api/session-results/${kind}/${id}/${encodeURIComponent(component.teamsLiveSessionId)}/sessions/${component.teamsSessionNumber}/join/`
@@ -769,32 +794,23 @@ export default function ComponentViewPage() {
                 /> : <p className="mt-4 rounded-xl border bg-amber-50 p-4 text-sm">This live session needs its saved session number before results can be shown. Please contact your tutor.</p>
               )}
 
-              {/* Title + timer + finish */}
-              <div className="mt-4 flex items-start justify-between gap-4 flex-wrap">
-                <div className="min-w-0">
-                  <span className={`text-[10px] font-semibold uppercase tracking-wider inline-flex items-center gap-1 ${meta?.color || 'text-foreground-500'}`}>
-                    <AppIcon className={meta?.icon || 'ri-checkbox-circle-line'} /> {meta?.label || 'Activity'}
-                  </span>
-                  <h1 className="mt-1 text-xl md:text-2xl font-heading font-bold text-foreground-900 leading-tight">{pageTitle}</h1>
-                  <div className="mt-2 flex flex-wrap items-center gap-3 text-[13px] text-foreground-500">
-                    {isVideo && realDuration !== null ? (
-                      <span className="inline-flex items-center gap-1"><AppIcon className="ri-time-line" />{formatClock(realDuration)}</span>
-                    ) : component.durationMinutes != null && (
-                      <span className="inline-flex items-center gap-1"><AppIcon className="ri-time-line" />{component.durationMinutes} min</span>
-                    )}
-                    {component.expectedOtjh != null && component.expectedOtjh > 0 && (
-                      <span className="inline-flex items-center gap-1"><AppIcon className="ri-timer-line" />{component.expectedOtjh}h OTJ</span>
-                    )}
-                    {weekLabel && <span className="inline-flex items-center gap-1"><AppIcon className="ri-calendar-line" />{weekLabel}</span>}
-                  </div>
-                </div>
+              {/* Activity controls stay below the player; video details are above it. */}
+              <div className={isVideo
+                ? `mt-4 ${layoutStyles.videoArea}`
+                : isLiveSession
+                  ? `mt-4 ${layoutStyles.liveArea}`
+                  : 'mt-4 flex items-start justify-between gap-4 flex-wrap'}>
+                {!isVideo && activityHeading}
 
-                {!isAssignment && recordingAttempt && <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-3">
+                {!isAssignment && recordingAttempt && <div className={isVideo
+                  ? layoutStyles.videoActions
+                  : isLiveSession
+                    ? layoutStyles.liveActions
+                    : 'ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-3'}>
                   {!usesManualTimeOnly && (
-                    <div className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl font-mono text-sm font-semibold tabular-nums bg-background-100 text-foreground-700" title="Time on this activity">
-                      <AppIcon className="ri-timer-line" /> {formatClock(elapsedSeconds)}
-                    </div>
+                    <ActivityElapsedTimer time={formatClock(elapsedSeconds)} />
                   )}
+                  <div className={hasActivityPanel ? layoutStyles.videoTools : 'contents'}>
                   <ActivityTimeSpentInput
                     key={timerStorageKey}
                     onChange={(seconds) => {
@@ -871,9 +887,10 @@ export default function ComponentViewPage() {
                       </label>
                     )
                   )}
-                  <div className="flex min-w-0 max-w-full items-center gap-3">
+                  </div>
+                  <div className={hasActivityPanel ? layoutStyles.videoFooter : 'flex min-w-0 max-w-full items-center gap-3'}>
                     {outsideWorkingHoursDeclaration && (
-                      <div className="min-w-0 max-w-xs">{outsideWorkingHoursDeclaration}</div>
+                      <div className={hasActivityPanel ? layoutStyles.declaration : 'min-w-0 max-w-xs'}>{outsideWorkingHoursDeclaration}</div>
                     )}
                     <button
                       onClick={finishConsuming}
@@ -890,7 +907,9 @@ export default function ComponentViewPage() {
                       className={`inline-flex shrink-0 items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-xl transition-colors ${
                         (criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !insideWorkingHoursConfirmed)
                           ? 'bg-background-200 text-foreground-400 cursor-not-allowed'
-                          : 'bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer'
+                          : isVideo
+                            ? 'bg-primary-600 text-white hover:bg-primary-700 cursor-pointer'
+                            : 'bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer'
                       }`}
                     >
                       <AppIcon className={(criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !insideWorkingHoursConfirmed) ? 'ri-lock-line' : 'ri-check-line'} />
@@ -981,15 +1000,17 @@ export default function ComponentViewPage() {
                     timeSource={timeSource}
                     timeControl={(
                       <div className="space-y-3">
-                      <p className="text-sm">{timeSource === 'input' ? 'Confirmed time' : 'Automatic time'}: <span className="font-mono font-bold">{formatClock(submittedTimeSeconds)}</span></p>
-                      <ActivityTimeSpentInput
-                        initialSeconds={manualTimeSeconds}
-                        onChange={(seconds) => {
-                          setManualTimeSeconds(seconds);
-                          setTimeSource(seconds == null ? 'timer' : 'input');
-                        }}
-                      />
-                      <p className="text-xs text-slate-500">The timer runs normally. Only enter a time above if you need to correct it.</p>
+                        {timeSource === 'input'
+                          ? <p className="text-sm">Confirmed time: <span className="font-mono font-bold">{formatClock(submittedTimeSeconds)}</span></p>
+                          : <ActivityElapsedTimer time={formatClock(submittedTimeSeconds)} />}
+                        <ActivityTimeSpentInput
+                          initialSeconds={manualTimeSeconds}
+                          onChange={(seconds) => {
+                            setManualTimeSeconds(seconds);
+                            setTimeSource(seconds == null ? 'timer' : 'input');
+                          }}
+                        />
+                        <p className="text-xs text-slate-500">The timer runs normally. Only enter a time above if you need to correct it.</p>
                       </div>
                     )}
                     workingHoursDeclaration={workingHoursNotice ? outsideWorkingHoursDeclaration : null}

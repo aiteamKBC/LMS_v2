@@ -107,10 +107,10 @@ export function ActivitySidebar({
 
   return (
     <aside aria-label="Module activities" className="min-w-0 space-y-4 lg:sticky lg:top-4">
-      <div className="rounded-xl border border-background-300 bg-white overflow-hidden">
-        <div className="px-4 py-3 border-b border-background-300">
+      <div className="rounded-xl border border-primary-100 bg-white overflow-hidden">
+        <div className="px-4 py-3 border-b border-primary-100">
           <p className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-primary-600">Current week</p>
-          <h2 className="text-sm font-heading font-bold text-foreground-800">{currentWeekLabel || 'This week'}</h2>
+          <h2 className="text-sm font-heading font-bold text-primary-900">{currentWeekLabel || 'This week'}</h2>
           <p className="text-[11px] text-foreground-400 mt-0.5">
             {weekComponents.length} components{' '}
             {weekDoneCount > 0 && <span className="text-emerald-600 font-semibold"> · {weekDoneCount} done</span>}
@@ -118,7 +118,7 @@ export function ActivitySidebar({
           {hasUnavailableContent && <p className="mt-2 text-[11px] leading-4 text-foreground-500">Locked activities have no learning content available yet.</p>}
           <HolidayNoteHint note={currentWeekNote} className="mt-2" />
         </div>
-        <ul className="divide-y divide-background-300">
+        <ul className="divide-y divide-primary-100">
           {weekComponents.map((c) => {
             const cm = componentTypeMeta(c.title);
             const isCurrent = isCurrentRow(c);
@@ -139,21 +139,21 @@ export function ActivitySidebar({
                   onClick={() => accessBlocked ? onAccessBlocked?.() : clickable && navigate(routeFor(c, weekTitle))}
                   className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
                     !contentAvailable || accessBlocked
-                      ? 'cursor-not-allowed bg-background-100/70 opacity-55 grayscale'
+                      ? 'cursor-not-allowed bg-primary-50/70 opacity-55'
                       : isCurrent
                         ? 'bg-primary-50'
                         : completed
                           ? `bg-emerald-50/70 ${clickable ? 'hover:bg-emerald-50 cursor-pointer' : 'cursor-default'}`
-                          : clickable ? 'hover:bg-background-50 cursor-pointer' : 'cursor-default'
+                          : clickable ? 'hover:bg-primary-50/70 cursor-pointer' : 'cursor-default'
                   }`}
                 >
-                  <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${completed ? 'bg-emerald-100' : cm.bg}`}>
-                    <AppIcon className={completed ? 'ri-check-line text-[12px] text-emerald-700' : `${cm.icon} text-[12px] ${cm.color}`} />
+                  <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${completed ? 'bg-emerald-100' : 'bg-primary-100'}`}>
+                    <AppIcon className={completed ? 'ri-check-line text-[12px] text-emerald-700' : `${cm.icon} text-[12px] text-primary-700`} />
                   </span>
                   <span className="flex-1 min-w-0">
                     <span className="block text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{cm.label}</span>
                     <span className={`block text-[13px] font-semibold leading-snug truncate ${
-                      isCurrent ? 'text-primary-700' : completed ? 'text-emerald-900' : 'text-foreground-800'
+                      isCurrent ? 'text-primary-700' : completed ? 'text-emerald-900' : 'text-primary-800'
                     }`}>
                       {cm.detail || cm.label}
                     </span>
@@ -174,11 +174,11 @@ export function ActivitySidebar({
                   {completed ? (
                     <AppIcon className="ri-checkbox-circle-fill text-emerald-600 text-sm shrink-0" />
                   ) : !contentAvailable || accessBlocked ? (
-                    <AppIcon className="ri-lock-line shrink-0 text-sm text-foreground-400" />
+                    <AppIcon className="ri-lock-line shrink-0 text-sm text-primary-400" />
                   ) : isCurrent ? (
                     <AppIcon className="ri-focus-3-line text-primary-600 text-sm shrink-0" />
                   ) : clickable ? (
-                    <AppIcon className="ri-arrow-right-s-line text-foreground-400 text-sm shrink-0" />
+                    <AppIcon className="ri-arrow-right-s-line text-primary-500 text-sm shrink-0" />
                   ) : null}
                 </button>
                 {rowExtras?.(c, completed)}
@@ -189,12 +189,12 @@ export function ActivitySidebar({
       </div>
 
       {weeks.length > 1 && (
-        <div className="rounded-xl border border-background-300 bg-white overflow-hidden">
-          <div className="px-4 py-3 border-b border-background-300">
-            <h2 className="text-sm font-heading font-bold text-foreground-800">{moduleTitle || 'Module'}</h2>
+        <div className="rounded-xl border border-primary-100 bg-white overflow-hidden">
+          <div className="px-4 py-3 border-b border-primary-100">
+            <h2 className="text-sm font-heading font-bold text-primary-900">{moduleTitle || 'Module'}</h2>
             <p className="text-[11px] text-foreground-400 mt-0.5">{weeks.length} weeks</p>
           </div>
-          <ul className="divide-y divide-background-300">
+          <ul className="divide-y divide-primary-100">
             {weeks.map((w, index) => {
               const weekKey = w.key || `week-${index}`;
               const weekComplete = w.count > 0 && w.completed >= w.count;
@@ -206,7 +206,7 @@ export function ActivitySidebar({
               const weekNote = w.weekId ? holidayNotes.get(w.weekId) : undefined;
               return (
                 <li key={weekKey}>
-                  {monthHeadings[index] && <h3 className="border-b border-background-300 bg-background-100 px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-foreground-600">{monthHeadings[index]}</h3>}
+                  {monthHeadings[index] && <h3 className="border-b border-primary-100 bg-primary-50/80 px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-primary-800">{monthHeadings[index]}</h3>}
                   <button
                     disabled={!viewable}
                     aria-label={`${weekDisplayLabel(weeks, index)}, ${w.count} components${w.active ? ', Current' : weekComplete ? ', Done' : ''}`}
@@ -214,22 +214,22 @@ export function ActivitySidebar({
                     onClick={() => setExpandedWeek(toggleExpandedWeek(expandedWeek, weekKey))}
                     className={`w-full flex items-center gap-2.5 px-4 py-2.5 text-left transition-colors ${
                       !viewable
-                        ? 'cursor-not-allowed bg-background-100/70 opacity-55'
+                        ? 'cursor-not-allowed bg-primary-50/70 opacity-55'
                         : expanded
-                          ? 'bg-background-100 cursor-pointer'
+                          ? 'bg-primary-50/80 cursor-pointer'
                           : weekComplete
                             ? 'bg-emerald-50 text-emerald-900 hover:bg-emerald-100'
-                            : 'hover:bg-background-50 cursor-pointer'
+                            : 'hover:bg-primary-50/70 cursor-pointer'
                     }`}
                   >
                     <span className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${
-                      weekComplete ? 'bg-emerald-100 text-emerald-700' : 'bg-background-200 text-foreground-500'
+                      weekComplete ? 'bg-emerald-100 text-emerald-700' : 'bg-primary-100 text-primary-700'
                     }`}>
                       <AppIcon className={`${weekComplete ? 'ri-check-line' : 'ri-calendar-line'} text-[12px]`} />
                     </span>
                     <span className="flex-1 min-w-0">
                       <span className={`block text-[13px] font-semibold leading-snug truncate ${
-                        weekComplete ? 'text-emerald-900' : w.active ? 'text-foreground-900' : 'text-foreground-700'
+                        weekComplete ? 'text-emerald-900' : w.active ? 'text-primary-900' : 'text-primary-800'
                       }`}>
                         {weekDisplayLabel(weeks, index)}
                       </span>
@@ -247,7 +247,7 @@ export function ActivitySidebar({
                       <AppIcon className="ri-lock-line shrink-0 text-sm text-foreground-400" />
                     ) : (
                       <AppIcon
-                        className={`shrink-0 text-sm text-foreground-400 ri-arrow-${expanded ? 'up' : 'down'}-s-line`}
+                        className={`shrink-0 text-sm text-primary-500 ri-arrow-${expanded ? 'up' : 'down'}-s-line`}
                       />
                     )}
                   </button>
@@ -261,7 +261,7 @@ export function ActivitySidebar({
                       Everything is listed, including what cannot be started
                       yet, so the count above and the list below agree. */}
                   {expanded && (
-                    <ul className="border-t border-background-300 bg-background-50/60 divide-y divide-background-300/70">
+                    <ul className="border-t border-primary-100 bg-primary-50/40 divide-y divide-primary-100">
                       {weekComponentRows(w, completedIds).map((row) => {
                         const rowMeta = componentTypeMeta(row.component.title);
                         const accessBlocked = row.openable && !accessOpen;
@@ -274,18 +274,18 @@ export function ActivitySidebar({
                               title={!row.openable ? 'Learning content is not available yet.' : undefined}
                               onClick={() => accessBlocked ? onAccessBlocked?.() : row.openable && navigate(routeFor(row.component, w.week))}
                               className={`w-full flex items-center gap-2 pl-11 pr-4 py-2 text-left transition-colors ${
-                                row.openable && accessOpen ? 'hover:bg-white cursor-pointer' : 'cursor-not-allowed opacity-60'
+                                row.openable && accessOpen ? 'hover:bg-primary-50 cursor-pointer' : 'cursor-not-allowed opacity-60'
                               }`}
                             >
-                              <span className={`w-6 h-6 rounded-md flex items-center justify-center shrink-0 ${rowMeta.bg}`}>
-                                <AppIcon className={`${rowMeta.icon} text-[11px] ${rowMeta.color}`} />
+                              <span className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 bg-primary-100">
+                                <AppIcon className={`${rowMeta.icon} text-[11px] text-primary-700`} />
                               </span>
                               <span className="flex-1 min-w-0">
                                 <span className="block text-[9px] font-semibold uppercase tracking-wider text-foreground-400">
                                   {rowMeta.label}
                                 </span>
                                 <span className={`block text-[12px] font-medium leading-snug truncate ${
-                                  row.complete ? 'text-emerald-900' : 'text-foreground-800'
+                                  row.complete ? 'text-emerald-900' : 'text-primary-800'
                                 }`}>
                                   {rowMeta.detail || rowMeta.label}
                                 </span>
@@ -293,9 +293,9 @@ export function ActivitySidebar({
                               {row.complete ? (
                                 <AppIcon className="ri-checkbox-circle-fill text-emerald-600 text-[13px] shrink-0" />
                               ) : !row.openable ? (
-                                <AppIcon className="ri-lock-line text-foreground-400 text-[13px] shrink-0" />
+                                <AppIcon className="ri-lock-line text-primary-400 text-[13px] shrink-0" />
                               ) : (
-                                <AppIcon className="ri-arrow-right-s-line text-foreground-400 text-[13px] shrink-0" />
+                                <AppIcon className="ri-arrow-right-s-line text-primary-500 text-[13px] shrink-0" />
                               )}
                             </button>
                           </li>

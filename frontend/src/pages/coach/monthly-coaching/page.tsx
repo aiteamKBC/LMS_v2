@@ -15,6 +15,7 @@ import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { cn } from '@/lib/cn';
 import { statusTone, type StatusTone } from '@/lib/statusTone';
 import { roleNavMap } from '@/mocks/navigation';
+import { coachSessionKey, readCoachSessionCache, writeCoachSessionCache } from '@/features/coach/shared/coachSessionCache';
 import { LearnerAvatar } from '../shared/LearnerIdentity';
 import ProgressReviewPptxModal from '../progress-reviews/components/ProgressReviewPptxModal';
 import { slidesTargetFromEvent } from '../progress-reviews/components/slidesTarget';
@@ -149,9 +150,11 @@ export default function CoachMonthlyCoaching() {
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [slidesEvent, setSlidesEvent] = useState<CoachCalendarEvent | null>(null);
   const [slidesError, setSlidesError] = useState<string | null>(null);
-  const [events, setEvents] = useState<CoachCalendarEvent[]>([]);
-  const [ownerName, setOwnerName] = useState('Coach');
-  const [loading, setLoading] = useState(true);
+  const cacheKey = coachSessionKey('monthly-coaching', coach.email, monthKey(selectedMonth));
+  const initialCache = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string }>(cacheKey);
+  const [events, setEvents] = useState<CoachCalendarEvent[]>(() => initialCache?.events || []);
+  const [ownerName, setOwnerName] = useState(() => initialCache?.ownerName || 'Coach');
+  const [loading, setLoading] = useState(() => !initialCache);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -174,7 +177,14 @@ export default function CoachMonthlyCoaching() {
       return;
     }
     const controller = new AbortController();
-    setLoading(true);
+    const cached = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string }>(cacheKey);
+    if (cached) {
+      setEvents(cached.events);
+      setOwnerName(cached.ownerName);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     setError(null);
     fetchCoachCalendarEvents(controller.signal, {
         start: isoDate(startOfMonth(selectedMonth)),
@@ -183,11 +193,15 @@ export default function CoachMonthlyCoaching() {
         includeSchedulerQueues: false,
       })
       .then((data) => {
-        setEvents(sortEvents(normalizeResolvedReviews((data.events || []).filter(event => event.source === 'mcr'))));
-        setOwnerName(data.owner?.name || coach.name);
+        const nextEvents = sortEvents(normalizeResolvedReviews((data.events || []).filter(event => event.source === 'mcr')));
+        const nextOwnerName = data.owner?.name || coach.name;
+        writeCoachSessionCache(cacheKey, { events: nextEvents, ownerName: nextOwnerName });
+        setEvents(nextEvents);
+        setOwnerName(nextOwnerName);
       })
       .catch((err) => {
         if (err instanceof DOMException && err.name === 'AbortError') return;
+        if (cached) return;
         setEvents([]);
         setError(err instanceof Error ? err.message : 'Unable to load coaching meetings.');
       })
@@ -195,7 +209,7 @@ export default function CoachMonthlyCoaching() {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [coach.email, coach.isInitialized, coach.name, selectedMonth]);
+  }, [cacheKey, coach.email, coach.isInitialized, coach.name, selectedMonth]);
 
   const selectedMonthLabel = monthLabel(selectedMonth);
   const selectedMonthIsCurrent = monthKey(selectedMonth) === monthKey(startOfMonth());
@@ -307,7 +321,7 @@ export default function CoachMonthlyCoaching() {
       navigate(reviewInstancePath(event.reviewInstanceId), { state: reviewInstanceRouteState(event, listUrl()) });
       return;
     }
-    if (event.hasReviewForm && event.aptemReviewId) {
+    if (event.aptemReviewId) {
       navigate(reviewInstancePath(eventIdentity(event)), { state: reviewInstanceRouteState(event, listUrl()) });
       return;
     }

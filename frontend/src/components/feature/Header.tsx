@@ -256,6 +256,7 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, he
   // record, so a real staff Position wins over the coarse RBAC role name.
   const roleLabel = auth.account?.position || auth.roles?.[0]?.name || '';
   const initials = initialsOf(displayName);
+  const hasLearnerProfile = role === 'learner' && auth.account?.subjectType === 'learner' && Boolean(auth.account.subjectId);
 
   return (
     <>
@@ -338,7 +339,7 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, he
             }`}
           >
             <AccountAvatar initials={initials} className="h-8 w-8 shadow-sm shadow-primary-900/25" />
-            <span className="kbc-topbar-user-name hidden max-w-[8rem] truncate text-xs font-semibold text-white xl:inline">{workspaceLabel || roleLabel || displayName}</span>
+            <span className="kbc-topbar-user-name hidden max-w-[8rem] truncate text-xs font-semibold text-white xl:inline">{role === 'learner' ? displayName : workspaceLabel || roleLabel || displayName}</span>
             <AppIcon
               className={`ri-arrow-down-s-line hidden text-xs text-foreground-400 transition-transform duration-200 sm:inline ${profileOpen ? 'rotate-180' : ''}`}
             ></AppIcon>
@@ -367,6 +368,20 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, he
                   preference is available anywhere the profile menu is available. */}
               <div className="border-t border-background-200/70 p-1.5">
                 {role === 'learner' && <PreviousRecordMenuItem onNavigate={() => setProfileOpen(false)} />}
+                {hasLearnerProfile && (
+                  <Link
+                    role="menuitem"
+                    to="/learner/profile"
+                    onClick={() => setProfileOpen(false)}
+                    className="account-theme-row group flex w-full items-center gap-3 rounded-xl px-2.5 py-2 text-left transition-smooth hover:bg-background-100 focus:outline-none focus-visible:bg-background-100"
+                  >
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background-100 text-foreground-500 transition-smooth group-hover:bg-background-200 group-hover:text-foreground-700" aria-hidden="true">
+                      <AppIcon className="ri-user-line text-base" />
+                    </span>
+                    <span className="flex-1 text-[0.8125rem] font-semibold text-foreground-700 transition-smooth group-hover:text-foreground-900">My Profile</span>
+                    <AppIcon className="ri-arrow-right-s-line text-sm text-foreground-200" />
+                  </Link>
+                )}
                 <button
                   type="button"
                   role="menuitemcheckbox"

@@ -69,7 +69,10 @@ export function useCurriculumModules({ autoLoad = true, skipCache = false, reval
 
   useEffect(() => {
     if (!autoLoad) return;
-    return load();
+    // Do not make the initial render wait on the network when this endpoint is
+    // already cached. Revalidation remains enabled for live refreshes and can
+    // still be requested explicitly by callers of reload().
+    return load({ revalidate: false });
   }, [autoLoad, load]);
 
   // Modules are authored from the builder, the workspace and the wizard, so a

@@ -12,6 +12,7 @@ from audit_api.last_audit_ledger_views import _is_completed
 from .builder_activity_dates import read_builder_activity_dates
 from .dashboard_metrics import metrics_from_loaded, point_codes, ratio
 from .progress_rules import progress_counts_as_achieved
+from old_otjh.service import ServiceError
 from .learner_detail import SOURCE_MODELS
 from .student_activity import CURRENT_SUBJECTS_SQL, _direct_progress_records, _direct_progress_otjh
 from .student_activity_access import student_activity_available
@@ -19,6 +20,7 @@ from .student_activity_data import read_curriculum_schedules, apply_curriculum_s
 from .subject_dates import activity_schedule, as_date
 from .subject_content import clean_text
 from .training_plan_dashboard import number, rows
+from .projection_performance import measure_projection
 
 log = logging.getLogger(__name__)
 UK = ZoneInfo('Europe/London')
@@ -352,7 +354,9 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None):
             'monthlyOtjh': monthly_otjh_summary(plan_activities, progress),
             'otjh': {'actual': round(old_hours + new_hours, 4) if old_hours is not None and not undated_hours else None,
                      'historical': old_hours, 'new': round(new_hours, 4), 'undatedHistoricalRows': undated_hours}}
-    if dashboard_kind:
+    metric_kind = dashboard_kind or home_kind
+    canonical_metrics = None
+    if metric_kind:
         with connections['enrolment'].cursor() as cur:
             cur.execute('''SELECT p.component_ref AS "componentId",p.quiz_ref AS "quizId",p.kind,p.passed
                 FROM "Learner".learners l JOIN "Learner".learner_progress_entries p ON p.learner_id=l.id
@@ -365,15 +369,17 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None):
                     WHERE enrolment_id=%s AND aptem_id=%s AND completed=true
                       AND submitted_at IS NOT NULL''', [source.pk, aptem_id])
                 metric_attempts = {(str(group), str(activity)) for group, activity in cur.fetchall()}
-        result['metrics'] = metrics_from_loaded(source, dashboard_kind, migrated=migrated, native=native,
+        canonical_metrics = metrics_from_loaded(source, metric_kind, migrated=migrated, native=native,
             progress=metric_progress, direct_progress=progress, historical=historical,
             attempts=metric_attempts, links=links, history_ready=True)
+        if dashboard_kind:
+            result['metrics'] = canonical_metrics
     if home_kind:
         from .home_progress import read_home_progress
         result['homeProgress'] = read_home_progress(source, home_kind,
-            merged_activities(historical, native, progress, attempts, links), native, progress, assigned, end)
+            merged_activities(historical, native, progress, attempts, links), native, progress, assigned, end,
+            canonical_metrics=canonical_metrics)
     return result
-
 
 
 @require_GET
@@ -382,19 +388,23 @@ def overview_week(request, kind, pk):
     model = SOURCE_MODELS.get(kind)
     if model is None:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
+    section = request.GET.get('section')
     try:
-        section = request.GET.get('section')
-        if section not in (None, 'home', 'dashboard'):
-            return JsonResponse({'error': 'Invalid overview section.'}, status=400)
-        home = section == 'home'
-        fields = ['id', 'aptem_id', 'email']
-        if home:
-            fields.extend(['username', 'employer_id', 'start_date', 'end_date', 'programme', 'cohort'])
-        source = model.all_learners.only(*fields).get(pk=pk)
-        payload = read_week(source, home_kind=kind) if home else read_week(
-            source, dashboard_kind=kind if section == 'dashboard' else None)
+        with measure_projection('overview-week', kind=kind, learner_id=pk, section=section) as measurement:
+            if section not in (None, 'home', 'dashboard'):
+                return JsonResponse({'error': 'Invalid overview section.'}, status=400)
+            home = section == 'home'
+            fields = ['id', 'aptem_id', 'email']
+            if home:
+                fields.extend(['username', 'employer_id', 'start_date', 'end_date', 'programme', 'cohort'])
+            source = model.all_learners.only(*fields).get(pk=pk)
+            with measurement.stage(section or 'overview'):
+                payload = read_week(source, home_kind=kind) if home else read_week(
+                    source, dashboard_kind=kind if section == 'dashboard' else None)
     except model.DoesNotExist:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
+    except ServiceError as error:
+        return JsonResponse({'error': str(error)}, status=error.status)
     except LookupError as error:
         return JsonResponse({'error': str(error)}, status=409)
     except DatabaseError:

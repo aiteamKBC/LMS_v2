@@ -9,6 +9,7 @@ must not be called from here.
 from __future__ import annotations
 
 from collections import defaultdict
+from copy import deepcopy
 from datetime import date, timedelta
 
 from coach_api.selectors.dashboard.marking import dashboard_marking_projection
@@ -21,9 +22,11 @@ class CoachDashboardService:
     def __init__(self, owner_email: str, *, today: date | None = None):
         self.context = CoachDashboardContext(owner_email, today or date.today())
 
-    # v3 restores canonical programme/KSB ratios and carries attendance detail
-    # counts through to the embedded caseload. Do not serve persisted v2 rows.
-    SCHEMA_VERSION = 3
+    # v4 makes Aptem programme/OTJ/KSB values come from the same canonical
+    # migrated selector as the learner workspace and standalone caseload.
+    # Persisted v3 rows may still contain audit/component metrics, so they must
+    # never be served under this contract.
+    SCHEMA_VERSION = 4
 
     def build(self) -> dict:
         """Read the persistent projection; build once only if it is absent."""
@@ -41,7 +44,44 @@ class CoachDashboardService:
                 "refreshedAt": snapshot.refreshed_at.isoformat(),
             }
             return payload
+        previous = compatibility.CoachDashboardSnapshot.objects.filter(
+            owner_email=self.context.owner_email,
+        ).only("payload", "refreshed_at", "schema_version").first()
+        if previous is not None:
+            return self.refresh_metric_projection(previous.payload)
         return self.refresh()
+
+    def refresh_metric_projection(self, previous_payload: dict) -> dict:
+        """Upgrade a prior Dashboard snapshot without rebuilding unrelated domains."""
+        from coach_api import dashboard_service as compatibility
+        from coach_api import views as domain
+
+        payload = deepcopy(previous_payload)
+        learners = payload.get("learners") or []
+        rows = domain.fetch_caseload_dashboard_profiles(self.context.owner_email)
+        rows_by_id = {int(row.id): row for row in rows}
+        canonical_metrics = domain.caseload_canonical_metrics(rows)
+        aptem_by_profile = domain.caseload_aptem_ids(rows)
+        attendance_rows = domain.dashboard_attendance_rows(
+            rows, learners, aptem_by_profile=aptem_by_profile,
+        )
+        attendance_by_id = {
+            domain.to_int(item.get("id")): item for item in attendance_rows
+            if domain.to_int(item.get("id")) is not None
+        }
+        for learner in learners:
+            profile_id = domain.to_int(learner.get("id"))
+            if profile_id is None or profile_id not in rows_by_id:
+                continue
+            domain.apply_canonical_learner_metrics(learner, canonical_metrics.get(profile_id))
+            domain.apply_aptem_variance_status(learner, aptem_by_profile.get(profile_id))
+            domain.apply_attendance_summary(learner, attendance_by_id.get(profile_id))
+            learner["attendanceAvailable"] = bool(learner.get("attendanceRateAvailable"))
+        compatibility.CoachDashboardSnapshot.objects.update_or_create(
+            owner_email=self.context.owner_email,
+            defaults={"payload": payload, "schema_version": self.SCHEMA_VERSION},
+        )
+        return payload
 
     def refresh(self) -> dict:
         from coach_api import dashboard_service as compatibility
