@@ -33,4 +33,15 @@ describe('programme review timeline scrolling', () => {
     expect(within(viewport).queryByText('Planned')).not.toBeInTheDocument();
     expect(within(screen.getByRole('list', { name: 'Timeline status colours' })).getByText('Planned')).toBeInTheDocument();
   });
+
+  it('shows the meeting status on each timeline step', () => {
+    const onSelect = vi.fn();
+    render(<MemoryRouter><ProgrammeReviewTimeline label="Monthly coaching" showStatus items={[{
+      id: 'mcm-1', title: 'MCM 1', date: '2026-10-01', status: 'in-progress',
+    }]} activeId="mcm-1" onSelect={onSelect} /></MemoryRouter>);
+
+    const timeline = screen.getByRole('region', { name: 'Monthly coaching programme timeline' });
+    expect(within(timeline).getAllByText('In Progress')).toHaveLength(2);
+    expect(within(timeline).getByRole('button', { name: 'MCM 1, 1 Oct 2026, In Progress' })).toBeInTheDocument();
+  });
 });

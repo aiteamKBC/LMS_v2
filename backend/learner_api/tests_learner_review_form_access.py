@@ -146,10 +146,11 @@ class LearnerReviewSigningTests(LearnerReviewFormAccessTestCase):
         record.save(update_fields=['status'])
         return record
 
-    def _sign(self, record, mark):
-        request = SimpleNamespace(method='POST', body=json.dumps({
-            'name': 'Learner One', 'signature': mark,
-        }).encode(), login_account=SimpleNamespace(role='learner'))
+    def _sign(self, record, mark, apply_monthly_log=None):
+        payload = {'name': 'Learner One', 'signature': mark}
+        if apply_monthly_log is not None:
+            payload['applyMonthlyLogSignature'] = apply_monthly_log
+        request = SimpleNamespace(method='POST', body=json.dumps(payload).encode(), login_account=SimpleNamespace(role='learner'))
         with patch('learner_api.calendar._learner_calendar_record', return_value=record), \
              patch('old_otjh.service.resolve_record', return_value={
                  'id': 101, 'aptem_id': None, 'name': 'Learner One',
@@ -197,6 +198,15 @@ class LearnerReviewSigningTests(LearnerReviewFormAccessTestCase):
         self.assertTrue(payload['review']['signatures']['participant']['signed'])
         self.assertFalse(payload['review']['signatures']['advisor']['signed'])
         self.assertIsNone(payload['review']['signatures']['advisor']['signature'])
+
+    def test_learner_can_sign_mcm_without_copying_monthly_log(self):
+        record = self._finished_meeting()
+
+        status, payload = self._sign(record, 'data:image/png;base64,bGVhcm5lcg==', apply_monthly_log=False)
+
+        self.assertEqual(status, 200, payload)
+        self.assertEqual(payload['monthlyLogSync']['status'], 'skipped')
+        self.assertEqual(payload['monthlyLogSync']['reason'], 'learner_choice')
 
 
 class UnscheduledOccurrenceTests(LearnerReviewFormAccessTestCase):
