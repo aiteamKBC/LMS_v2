@@ -59,7 +59,11 @@ export function GroupPlacementPanel({ component, groupId, groupName, programmeId
 
   useEffect(() => {
     let active = true;
-    loadCurriculumScope()
+    // This picker can be opened after a module was created or attached in
+    // another drawer. Do not reuse the week-builder's long-lived scope cache:
+    // the programme page is already showing the new module, so this list must
+    // revalidate before deciding which modules belong to the selected group.
+    loadCurriculumScope({ force: true })
       .then(scope => {
         if (!active) return;
         setModules(scope.modules);

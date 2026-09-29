@@ -9,7 +9,7 @@
 // ============================================================================
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { clockLabel } from '../../teams-meetings/calendarTime';
+import { clockLabel, normalizedClock } from '../../teams-meetings/calendarTime';
 import { useNavigate } from 'react-router-dom';
 import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
 import {
@@ -932,6 +932,17 @@ export interface GroupFormDefaults {
   cohortId?: string;
 }
 
+/** Return a clock value a fixed number of minutes after the supplied time. */
+function clockAfterMinutes(value: unknown, minutes: number): string {
+  try {
+    const [hour, minute] = normalizedClock(value).split(':').map(Number);
+    const total = (hour * 60 + minute + minutes) % (24 * 60);
+    return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+  } catch {
+    return '';
+  }
+}
+
 export function GroupFormDrawer({
   open,
   group,
@@ -1072,6 +1083,12 @@ export function GroupFormDrawer({
     [cohorts, programmeId, programmes],
   );
 
+  const handleStartTimeChange = (value: string) => {
+    setStartTime(value);
+    const automaticEndTime = clockAfterMinutes(value, 120);
+    if (automaticEndTime) setEndTime(automaticEndTime);
+  };
+
   const submit = async () => {
     if (!name.trim()) { setError('Give the group a name.'); return; }
     if (!cohortId) { setError('Choose the cohort this group belongs to.'); return; }
@@ -1198,7 +1215,7 @@ export function GroupFormDrawer({
       </FormField>
       <div className="grid gap-4 sm:grid-cols-2">
         <FormField label="Start time" hint={clockLabel(startTime)}>
-          <TextControl type="time" value={startTime} onChange={setStartTime} />
+          <TextControl type="time" value={startTime} onChange={handleStartTimeChange} />
         </FormField>
         <FormField label="End time" hint={clockLabel(endTime)}>
           <TextControl type="time" value={endTime} onChange={setEndTime} />
