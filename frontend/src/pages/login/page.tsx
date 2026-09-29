@@ -28,6 +28,12 @@ export default function LoginPage() {
     || new URLSearchParams(location.hash.replace(/^#/, '')).get('feedback')
     || '';
 
+  // Compatibility for links sent before event feedback received its own
+  // public route. Capture the token first, then remove it from browser history.
+  useEffect(() => {
+    if (feedbackToken) window.history.replaceState(window.history.state, '', '/login');
+  }, [feedbackToken]);
+
   // A refused Microsoft sign-in comes back with ?sso_error=... . Lift it into
   // the form's error box, then strip it so a refresh cannot resurrect it.
   useEffect(() => {

@@ -7,12 +7,9 @@ vi.mock('@/api/eventFeedback', () => ({
   eventFeedbackApi: { publicAccess: vi.fn(), savePublicResponse: vi.fn() },
 }));
 
-beforeEach(() => {
-  vi.mocked(eventFeedbackApi.publicAccess).mockReset();
-  window.history.replaceState({}, '', '/login#feedback=secret');
-});
+beforeEach(() => { vi.mocked(eventFeedbackApi.publicAccess).mockReset(); });
 
-it('opens every form attached to the token event and removes the token from browser history', async () => {
+it('opens every form attached to the token event', async () => {
   vi.mocked(eventFeedbackApi.publicAccess).mockResolvedValue({
     event: { id: 2, title: 'Leadership Day', date: '27 Sep 2026', location: 'London' },
     recipient: { name: 'Guest Person' },
@@ -28,6 +25,6 @@ it('opens every form attached to the token event and removes the token from brow
   expect(await screen.findByText('Leadership Day')).toBeVisible();
   expect(screen.getByRole('tab', { name: 'Venue feedback' })).toBeVisible();
   expect(screen.getByRole('tab', { name: 'Speaker feedback' })).toBeVisible();
-  await waitFor(() => expect(window.location.hash).toBe(''));
+  await waitFor(() => expect(eventFeedbackApi.publicAccess).toHaveBeenCalledWith('secret'));
   expect(eventFeedbackApi.publicAccess).toHaveBeenCalledWith('secret');
 });

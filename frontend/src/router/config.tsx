@@ -40,6 +40,7 @@ const BadgeDetailPage = lazyRoute(() => import("../pages/learner/rewards/badge-d
 const BoardPage = lazyRoute(() => import("../pages/users/BoardPage"));
 const EmployerPortalPage = lazyRoute(() => import("../pages/employer/EmployerPortalPage"));
 const EmployerLearnerPage = lazyRoute(() => import("../pages/employer/EmployerLearnerPage"));
+const EventFeedbackPage = lazyRoute(() => import("../pages/event-feedback/page"));
 const BudgetsPage = lazyRoute(() => import("../pages/finance/budgets/page"));
 const CallLogsPage = lazyRoute(() => import("../pages/engagement/call-logs/page"));
 const CatchUpPage = lazyRoute(() => import("../pages/learner/catchup/page"));
@@ -305,6 +306,10 @@ const routes: RouteObject[] = [
     // also what makes the logo and the breadcrumb home icon do the right thing.
     path: "/",
     element: <LoginPage />,
+  },
+  {
+    path: "/event-feedback",
+    element: <EventFeedbackPage />,
   },
   {
     // The public launcher that used to be at "/". Kept reachable: it is the
@@ -1684,6 +1689,8 @@ const routes: RouteObject[] = [
  *
  * What is here and why:
  *  - "/" and "/login" are the sign-in form itself.
+ *  - "/event-feedback" opens a token-scoped form for an event attendee; an LMS
+ *    account is not required and the backend still validates the personal token.
  *  - "/forgot-password", "/set-password", "/reset-password" are reached from an
  *    emailed link by someone who by definition cannot sign in yet; each carries
  *    its own single-use token, which the backend validates.
@@ -1698,6 +1705,7 @@ const PUBLIC_PATHS = new Set([
   "/coach-booking/:slug",
   "/",
   "/login",
+  "/event-feedback",
   "/access-required",
   "/forgot-password",
   "/set-password",

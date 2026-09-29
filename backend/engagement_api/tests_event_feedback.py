@@ -8,7 +8,7 @@ from openpyxl import Workbook
 from login.api_gate import rule_for
 
 from . import event_feedback_views
-from .event_feedback import parse_attendance
+from .event_feedback import event_feedback_link, parse_attendance
 
 
 def workbook_upload(rows):
@@ -53,6 +53,13 @@ class AttendanceSpreadsheetTests(SimpleTestCase):
 
 
 class PublicEventFeedbackAccessTests(SimpleTestCase):
+    @mock.patch('engagement_api.event_feedback.frontend_base_url', return_value='https://lms.example.test')
+    def test_invitation_link_uses_dedicated_public_page(self, _frontend_base_url):
+        self.assertEqual(
+            event_feedback_link('private-token'),
+            'https://lms.example.test/event-feedback#token=private-token',
+        )
+
     def test_public_token_prefix_is_the_only_ungated_engagement_feedback_path(self):
         self.assertIsNone(rule_for('/engagement_api/feedback/public-event/'))
         self.assertIsNone(rule_for('/engagement_api/feedback/public-event/csrf/'))

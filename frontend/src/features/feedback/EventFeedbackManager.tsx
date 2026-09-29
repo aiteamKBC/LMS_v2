@@ -47,10 +47,11 @@ export function EventFeedbackManager({ event, onClose }: { event: EngagementEven
     finally { setBusy(false); }
   }
 
-  async function sendInvites() {
+  async function sendInvites(resendAll = false) {
+    if (resendAll && !window.confirm('Resend a new personal link to every attendee? Existing links will stop working.')) return;
     setBusy(true); setError(''); setNotice('');
     try {
-      const result = await eventFeedbackApi.sendInvitations(event.id);
+      const result = await eventFeedbackApi.sendInvitations(event.id, resendAll);
       setNotice(`${result.sent} invitation(s) sent; ${result.failed} failed.${result.remaining ? ` ${result.remaining} remain for another batch.` : ''}`);
       await reloadCampaign();
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not send invitations.'); }
@@ -77,7 +78,10 @@ export function EventFeedbackManager({ event, onClose }: { event: EngagementEven
 
         <section className="border-t border-foreground-200 pt-4"><h3 className="text-sm font-semibold text-foreground-800">3. Send personal links</h3>
           <p className="mt-1 text-xs text-foreground-500">{campaign?.recipients.length ?? 0} recipients · {pending} pending · {failed} failed. Each email gets a different 30-day token; only its hash is stored.</p>
-          <button type="button" disabled={busy || pending + failed === 0 || !campaign?.forms.length} onClick={() => void sendInvites()} className="mt-3 rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40">Send pending / retry failed</button>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button type="button" disabled={busy || pending + failed === 0 || !campaign?.forms.length} onClick={() => void sendInvites()} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40">Send pending / retry failed</button>
+            <button type="button" disabled={busy || !campaign?.recipients.length || !campaign.forms.length} onClick={() => void sendInvites(true)} className="rounded-lg border border-foreground-300 px-4 py-2 text-xs font-semibold text-foreground-700 disabled:opacity-40">Resend all with new links</button>
+          </div>
         </section>
         {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
         {notice && <div role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800">{notice}</div>}

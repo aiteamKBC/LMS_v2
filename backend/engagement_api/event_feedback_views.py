@@ -86,9 +86,23 @@ def event_campaign(request, event_id):
             } for item in recipients.order_by('attendee_name', 'id')],
         })
     if request.method == 'POST':
-        recipients = list(FeedbackEventRecipient.objects.filter(
-            event=event, revoked_at__isnull=True, invite_status__in=['pending', 'failed'],
-        ).order_by('id')[:100])
+        payload = json_body(request) or {}
+        resend_all = payload.get('resendAll') is True
+        if resend_all:
+            # Queue the whole active roster, but retain the established
+            # 100-message batch size so a large spreadsheet cannot hold one
+            # request open while thousands of mail calls complete.
+            FeedbackEventRecipient.objects.filter(
+                event=event, revoked_at__isnull=True,
+            ).update(
+                invite_status='pending', invitation_sent_at=None,
+                invitation_error='', updated_at=timezone.now(),
+            )
+        recipient_query = FeedbackEventRecipient.objects.filter(
+            event=event, revoked_at__isnull=True,
+            invite_status__in=['pending', 'failed'],
+        ).order_by('id')
+        recipients = list(recipient_query[:100])
         results = send_event_invitations(event, recipients)
         remaining = FeedbackEventRecipient.objects.filter(
             event=event, revoked_at__isnull=True, invite_status__in=['pending', 'failed'],

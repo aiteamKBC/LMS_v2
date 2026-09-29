@@ -23,6 +23,7 @@ from .models import Event, FeedbackEventCampaign, FeedbackEventRecipient, Feedba
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 MAX_ROWS = 5000
 TOKEN_TTL = timedelta(days=30)
+EVENT_FEEDBACK_FRONTEND_PATH = '/event-feedback'
 PRESENT_VALUES = {'present', 'attended', 'yes', 'y', '1', 'حاضر', 'حاضرة'}
 HEADER_ALIASES = {
     'name': {'name', 'full name', 'attendee name', 'student name', 'learner name', 'الاسم'},
@@ -180,7 +181,7 @@ def import_event_attendance(*, event_id, form_ids, preview, created_by):
 def event_feedback_link(token):
     # Keep the bearer value in the URL fragment so browsers do not send it in
     # the initial page request, referrer headers, or reverse-proxy access logs.
-    return f'{frontend_base_url()}/login#feedback={token}'
+    return f'{frontend_base_url()}{EVENT_FEEDBACK_FRONTEND_PATH}#token={token}'
 
 
 def send_event_invitations(event, recipients):

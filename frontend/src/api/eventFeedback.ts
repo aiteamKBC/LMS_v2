@@ -70,10 +70,10 @@ export const eventFeedbackApi = {
     }));
   },
   campaign: async (eventId: string) => jsonResponse<EventFeedbackCampaign>(await fetch(`${BASE}/events/${eventId}/campaign/`, { credentials: 'include' })),
-  sendInvitations: async (eventId: string) => jsonResponse<{ attempted: number; sent: number; failed: number; remaining: number }>(await fetch(`${BASE}/events/${eventId}/campaign/`, {
+  sendInvitations: async (eventId: string, resendAll = false) => jsonResponse<{ attempted: number; sent: number; failed: number; remaining: number }>(await fetch(`${BASE}/events/${eventId}/campaign/`, {
     method: 'POST', credentials: 'include',
     headers: { 'X-CSRFToken': await csrfToken(), 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/json' },
-    body: '{}',
+    body: JSON.stringify({ resendAll }),
   })),
   publicAccess: async (token: string) => jsonResponse<PublicEventFeedback>(await fetch(`${BASE}/public-event/`, {
     method: 'POST', credentials: 'include',

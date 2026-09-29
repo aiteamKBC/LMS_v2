@@ -12,9 +12,6 @@ export function PublicEventFeedback({ token }: { token: string }) {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    // The token has been captured in component state; remove it from the
-    // address bar/history before any link or asset navigation can leak it.
-    window.history.replaceState(window.history.state, '', '/login');
     let cancelled = false;
     eventFeedbackApi.publicAccess(token).then(result => {
       if (cancelled) return;
