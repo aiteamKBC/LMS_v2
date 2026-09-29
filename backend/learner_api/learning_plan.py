@@ -1141,7 +1141,7 @@ def module_learners(request, module_id):
 # The three onboarding reviews are the gate into delivery. Once every one of them
 # is signed by each party it needs, the learner has nothing left to complete, so
 # the status moves itself on rather than waiting for someone to remember.
-ONBOARDING_REVIEW_TYPES = ("eligibility-review", "workspace", "training-plan")
+ONBOARDING_REVIEW_TYPES = ("eligibility-review", "workspace", "training-plan", "uln-privacy")
 
 # Statuses a learner can be promoted *out of*. Anything else (Active, Completed,
 # Withdrawn, On break) is a deliberate later state, so a late signature must not

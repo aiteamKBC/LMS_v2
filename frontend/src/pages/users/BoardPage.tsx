@@ -894,7 +894,7 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
               </p>
               <SignaturePad
                 defaultName={providerName}
-                onCommit={(dataUrl) => { void signIlrAsProvider(dataUrl); }}
+                onCommit={(dataUrl) => signIlrAsProvider(dataUrl)}
                 onCancel={() => setSigningIlr(false)}
               />
             </div>
@@ -951,7 +951,7 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
               </p>
               <SignaturePad
                 defaultName={providerName}
-                onCommit={(dataUrl) => { void signPlanAsProvider(dataUrl); }}
+                onCommit={(dataUrl) => signPlanAsProvider(dataUrl)}
                 onCancel={() => setSigningPlan(false)}
               />
             </div>
@@ -1008,7 +1008,7 @@ function ComplianceDocuments({ kind, learnerId, programme }: { kind: LearnerKind
               </p>
               <SignaturePad
                 defaultName={providerName}
-                onCommit={(dataUrl) => { void signWrittenAsProvider(dataUrl); }}
+                onCommit={(dataUrl) => signWrittenAsProvider(dataUrl)}
                 onCancel={() => setSigningWritten(false)}
               />
             </div>

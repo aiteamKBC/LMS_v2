@@ -805,6 +805,7 @@ BOOKED_EVENT_TITLES = {
     "eligibility-review": "Eligibility Review & FS Discussion",
     "workspace": "RPL And Experience",
     "training-plan": "Workplace Health & Safety Declaration",
+    "uln-privacy": "ULN Privacy Notice & Learner Acknowledgement",
 }
 
 # Types whose copy should still say the learner booked the slot. Graph ownership
@@ -818,6 +819,7 @@ LEARNER_BOOKED_EVENT_TYPES = {
     "eligibility-review",
     "workspace",
     "training-plan",
+    "uln-privacy",
 }
 
 # Session types the coach can book from their own timetable page.
@@ -831,6 +833,7 @@ BOOKED_EVENT_JSON_TYPES = {
     "eligibility-review": "review",
     "workspace": "review",
     "training-plan": "review",
+    "uln-privacy": "review",
 }
 
 

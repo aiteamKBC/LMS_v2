@@ -889,6 +889,7 @@ AZURE_RECORDING_CONTAINERS_BY_TYPE = {
     "eligibility-review": os.environ.get("AZURE_RECORDINGS_ELIGIBILITY_CONTAINER") or "recordings-eligibility-review",
     "workspace": os.environ.get("AZURE_RECORDINGS_WORKSPACE_CONTAINER") or "recordings-workspace",
     "training-plan": os.environ.get("AZURE_RECORDINGS_TRAINING_PLAN_CONTAINER") or "recordings-training-plan",
+    "uln-privacy": os.environ.get("AZURE_RECORDINGS_ULN_PRIVACY_CONTAINER") or "recordings-uln-privacy",
     "other": os.environ.get("AZURE_RECORDINGS_OTHER_CONTAINER") or "recordings-other",
     # Curriculum live sessions are taught classes, not one-to-one coaching.
     "live-session": os.environ.get("AZURE_RECORDINGS_LIVE_SESSION_CONTAINER") or "recordings-live-session",

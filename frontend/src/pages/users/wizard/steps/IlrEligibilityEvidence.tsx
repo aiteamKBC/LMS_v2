@@ -133,7 +133,7 @@ export default function IlrEligibilityEvidence() {
         <p className="text-[12px] text-foreground-500">The Extended ILR has been signed, so this evidence can no longer be changed.</p>
       ) : (
         <label
-          className={`inline-flex items-center gap-2 mt-2 px-3 py-1.5 text-[12px] bg-background-100 text-foreground-600 rounded-lg border border-background-200 hover:bg-background-200 transition-smooth ${uploading || loading ? 'opacity-60 pointer-events-none' : 'cursor-pointer'}`}
+          className={`relative inline-flex items-center gap-2 mt-2 px-3 py-1.5 text-[12px] bg-background-100 text-foreground-600 rounded-lg border border-background-200 hover:bg-background-200 transition-smooth ${uploading || loading ? 'opacity-60 pointer-events-none' : 'cursor-pointer'}`}
         >
           <AppIcon className={uploading ? 'ri-loader-4-line animate-spin' : 'ri-upload-2-line'} />
           {uploading ? 'Uploading…' : 'Upload file'}

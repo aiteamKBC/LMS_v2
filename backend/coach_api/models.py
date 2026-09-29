@@ -128,6 +128,7 @@ class CoachCalendarEvent(models.Model):
                         "eligibility-review",
                         "workspace",
                         "training-plan",
+                        "uln-privacy",
                     ]
                 ),
                 name="coach_calendar_booking_seq_uniq",

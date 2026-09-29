@@ -22,6 +22,9 @@ export type ReviewSection =
   | 'skillsRadar'
   // Workplace Health & Safety Declaration
   | 'healthSafetyVetting'
+  // ULN Privacy Notice & Learner Acknowledgement
+  | 'ulnPrivacyNotice'
+  | 'learnerAcknowledgement'
   // shared
   | 'comments';
 
@@ -82,6 +85,9 @@ export interface ReviewFormAnswers {
   skillsRadar?: { notes?: string };
   // --- Workplace Health & Safety Declaration ---
   healthSafetyVetting?: Record<string, string>;
+  // --- ULN Privacy Notice & Learner Acknowledgement ---
+  ulnPrivacyNotice?: { noticeRead?: string };
+  learnerAcknowledgement?: { acknowledged?: string };
   // --- shared ---
   comments?: { text?: string };
 }

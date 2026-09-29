@@ -189,7 +189,7 @@ export type BookableSessionType =
   // the learner's case owner rather than a coach, who doesn't exist yet).
   | OnboardingReviewType;
 
-export type OnboardingReviewType = 'eligibility-review' | 'workspace' | 'training-plan';
+export type OnboardingReviewType = 'eligibility-review' | 'workspace' | 'training-plan' | 'uln-privacy';
 
 export interface OnboardingReview {
   type: OnboardingReviewType;
@@ -488,6 +488,10 @@ export interface LearnerFirstSession {
    *  yet. 'waiting' — booked, day not arrived. 'open' — the session day has
    *  come, so the programme runs normally. */
   access: 'enrolling' | 'book' | 'waiting' | 'open';
+  /** Whether it can be booked (or already is) from the learner's First Learning
+   *  Session tab — for an apprentice in Delivery, once they have signed all four
+   *  compliance documents. Older servers omit it. */
+  canBook?: boolean;
 }
 
 /**
