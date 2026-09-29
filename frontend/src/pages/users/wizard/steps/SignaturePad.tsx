@@ -72,7 +72,8 @@ export function SignaturePad({
   /** @deprecated Use `signatoryName`. Kept so older call sites keep compiling. */
   defaultName,
 }: {
-  onCommit: (dataUrl: string) => void;
+  /** Return the save's promise to keep "Signing..." up until it finishes. */
+  onCommit: (dataUrl: string) => void | Promise<unknown>;
   onCancel: () => void;
   /** Who is signing. Falls back to the signed-in account when omitted. */
   signatoryName?: string;
@@ -105,6 +106,7 @@ export function SignaturePad({
   const [err, setErr] = useState<string | null>(null);
   const [hasInk, setHasInk] = useState(false);
   const touchedRef = useRef(false);
+  const signingRef = useRef(false);
 
   // Offer the saved signature once it has loaded — unless the person has
   // already started signing, which it must not interrupt.
@@ -168,16 +170,26 @@ export function SignaturePad({
     };
   }, [mode]);
 
-  const sign = (dataUrl: string) => {
+  const sign = async (dataUrl: string) => {
     if (!name) {
       setErr('No name is on record for the signatory, so this cannot be signed.');
       return;
     }
+    // One signature per press: a second click while the first is still being
+    // recorded would send the same sign-off twice.
+    if (signingRef.current) return;
+    signingRef.current = true;
     setSaving(true);
     setErr(null);
     try {
-      onCommit(dataUrl);
+      // Awaited when the caller returns its request, so "Signing..." stays up
+      // and the buttons stay disabled until the document is actually signed.
+      await onCommit(dataUrl);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Could not sign. Please try again.');
+      return;
     } finally {
+      signingRef.current = false;
       setSaving(false);
     }
     // Kept for next time. Best-effort: the signature the person just gave has
@@ -275,7 +287,7 @@ export function SignaturePad({
                   <span className="text-[12px] text-foreground-400">No image chosen</span>
                 )}
               </div>
-              <label className="inline-flex items-center gap-2 px-3 py-1.5 text-[12px] bg-background-100 text-foreground-600 rounded-lg border border-background-200 hover:bg-background-200 transition-smooth cursor-pointer">
+              <label className="relative inline-flex items-center gap-2 px-3 py-1.5 text-[12px] bg-background-100 text-foreground-600 rounded-lg border border-background-200 hover:bg-background-200 transition-smooth cursor-pointer">
                 <i className="ri-upload-2-line" />
                 {uploaded ? 'Choose a different image' : 'Choose an image'}
                 <input

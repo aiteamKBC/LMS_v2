@@ -1886,6 +1886,17 @@ def learner_detail(request, kind, pk):
         return _error(f"Database error: {exc}", 502)
 
 
+def _first_session_unlocked(source, status):
+    if status.strip().casefold() != "delivery":
+        return False
+    learner_type = _s(getattr(source, "learner_type", "")) or "apprenticeship"
+    if learner_type.casefold() != "apprenticeship":
+        return False
+    from .learner_progression import learner_signed_compliance_documents
+
+    return learner_signed_compliance_documents(learner_type, source.id)
+
+
 @learner_self_or_staff(kwarg="pk")
 def learner_summary(request, kind, pk):
     """Return the small identity projection used by lightweight learner pages.
@@ -1932,6 +1943,9 @@ def learner_summary(request, kind, pk):
         # 'Submitted' once the learner hands in their enrolment wizard,
         # 'Completed' once staff sign it off; the learner's Reviews unlock then.
         "onboardingStatus": _s(getattr(source, "onboarding_status", "")),
+        # A Delivery apprentice's First Learning Session tab unlocks once they
+        # have signed all four compliance documents (the sidebar reads this).
+        "firstSessionUnlocked": _first_session_unlocked(source, resolved_status),
         "cohort": _s(source.cohort),
         "group": _s(source.group),
         "employer": _s(source.employer),

@@ -77,6 +77,27 @@ export const DELIVERY_NAV_IDS = [
   'learner-compliance-documents',
 ];
 
+/** Where a Delivery apprentice books their first learning session. */
+export const FIRST_SESSION_ROUTE = '/learner/first-session';
+
+/** Why it is locked: the session follows the learner's own document signatures. */
+export const FIRST_SESSION_LOCKED_REASON = 'Available once you sign all your compliance documents';
+
+/**
+ * A Delivery apprentice's First Learning Session tab. Only this stage has it:
+ * before Delivery there are no documents to sign, and from Ready to enrol the
+ * full-page first-session gate takes over.
+ */
+export function firstSessionNavItem(unlocked: boolean): SidebarNavItem {
+  return {
+    id: 'learner-first-session',
+    label: 'First Learning Session',
+    icon: 'ri-calendar-event-line',
+    href: FIRST_SESSION_ROUTE,
+    ...(unlocked ? {} : { locked: true, lockedReason: FIRST_SESSION_LOCKED_REASON }),
+  };
+}
+
 /** Commercial learners have no apprenticeship documents or onboarding reviews. */
 function withoutCommercialCompliance(items: SidebarNavItem[]): SidebarNavItem[] {
   const commercialHiddenIds = new Set([
@@ -161,6 +182,8 @@ export function navItemsForStatus(
   readyForLearning = false,
   // Unknown counts as submitted, for the same lock-out reason as isFreshStatus.
   enrolmentSubmitted = true,
+  // Unknown leaves the tab open; the page itself checks with the server.
+  firstSessionUnlocked = true,
 ): SidebarNavItem[] {
   const commercial = learnerKind?.toLowerCase() === 'commercial';
   const availableNav = navItemsForLearnerKind(fullNav, learnerKind);
@@ -176,7 +199,8 @@ export function navItemsForStatus(
   if (isDeliveryStatus(programmeStatus)) {
     if (commercial && readyForLearning) return availableNav;
     const ids = commercial ? FRESH_NAV_IDS : DELIVERY_NAV_IDS;
-    return pick(hasPreviousLearning ? [...ids, 'learner-my-learning'] : ids);
+    const items = pick(hasPreviousLearning ? [...ids, 'learner-my-learning'] : ids);
+    return commercial ? items : [...items, firstSessionNavItem(firstSessionUnlocked)];
   }
   return availableNav;
 }

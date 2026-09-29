@@ -10,6 +10,7 @@
 // ============================================================================
 import jsPDF from 'jspdf';
 import type { ReviewFormResponse, ReviewSection } from '@/api/reviewForm';
+import { LEARNER_ACKNOWLEDGEMENT, ULN_PRIVACY_FURTHER_INFO, ULN_PRIVACY_INTRO, ULN_PRIVACY_POINTS, ULN_PURPOSES } from './questions';
 
 // ---- Page geometry (mm, A4 portrait) ----
 const PAGE_W = 210;
@@ -37,6 +38,8 @@ const SECTION_TITLES: Record<ReviewSection, string> = {
   plr: 'Personal Learner Record (PLR)',
   skillsRadar: 'Skills Radar',
   healthSafetyVetting: 'Health & Safety Vetting',
+  ulnPrivacyNotice: 'Unique Learner Number (ULN) Privacy Notice',
+  learnerAcknowledgement: 'Learner Acknowledgement',
   comments: 'Comments',
 };
 
@@ -123,6 +126,20 @@ function buildRows(data: ReviewFormResponse, questionLabels: Record<string, stri
       const note = (value as { notes?: string } | null)?.notes;
       if (note) rows.push({ kind: 'text', label: "Reviewer's notes", value: note });
       continue;
+    }
+
+    // The ULN panels are read-and-confirm: the wording itself belongs in the
+    // document, so it prints whether or not the panel has been saved yet.
+    if (section === 'ulnPrivacyNotice') {
+      rows.push({ kind: 'note', text: ULN_PRIVACY_INTRO });
+      ULN_PRIVACY_POINTS.forEach((point, index) => {
+        rows.push({ kind: 'note', text: `${index + 1}. ${point}` });
+        if (index === 1) ULN_PURPOSES.forEach((purpose, i) => rows.push({ kind: 'note', text: `   ${String.fromCharCode(97 + i)}) ${purpose}` }));
+      });
+      rows.push({ kind: 'note', text: ULN_PRIVACY_FURTHER_INFO });
+    }
+    if (section === 'learnerAcknowledgement') {
+      rows.push({ kind: 'note', text: LEARNER_ACKNOWLEDGEMENT });
     }
 
     if (value == null || (typeof value === 'object' && Object.keys(value).length === 0)) {
