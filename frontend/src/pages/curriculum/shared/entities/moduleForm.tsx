@@ -705,7 +705,7 @@ export function ModuleFormDrawer({
     setTargetEndDate('');
   };
   const scheduleComplete = !selectedGroup || deliveryDaysPerWeek === Number(sessionsPerWeek);
-  const weeksEntered = Math.max(1, Number(sessionsNumber) || 1);
+  const weeksEntered = Math.max(0, Number(sessionsNumber) || 0);
   const groupStartDate = cleanText(selectedGroup?.startDate) || cleanText(selectedCohort?.startDate);
   const groupTotalSessions = Math.round(weeksEntered * Math.max(1, groupWeeklySchedule.length));
   const totalSessions = Math.round(weeksEntered * Math.max(1, deliveryDaysPerWeek));
@@ -717,7 +717,7 @@ export function ModuleFormDrawer({
     [cohortHolidays, startDate, totalSessions, weekDays, weeklySchedule],
   );
   useEffect(() => {
-    if (!open || !startDate || !scheduleComplete || !validWeeklyTimes) { setPlan(null); setPlanFor(''); setPlanLoading(false); return undefined; }
+    if (!open || !startDate || weeksEntered <= 0 || !scheduleComplete || !validWeeklyTimes) { setPlan(null); setPlanFor(''); setPlanLoading(false); return undefined; }
     let active = true;
     setPlanLoading(true);
     const timer = setTimeout(() => {
@@ -733,7 +733,7 @@ export function ModuleFormDrawer({
         .finally(() => { if (active) setPlanLoading(false); });
     }, 300);
     return () => { active = false; clearTimeout(timer); };
-  }, [cohortHolidays, open, planInputs, scheduleComplete, totalSessions, startDate, weekDays, weeklySchedule, validWeeklyTimes]);
+  }, [cohortHolidays, open, planInputs, scheduleComplete, totalSessions, startDate, weekDays, weeklySchedule, validWeeklyTimes, weeksEntered]);
 
   // The module's own calendar span -- start date plus the whole weeks entered.
   // Independent of the generated session plan, which answers a different
@@ -746,7 +746,7 @@ export function ModuleFormDrawer({
   const manualEndDate = cleanText(targetEndDate);
   // Manual wins: the generated plan can suggest an end date, but the drawer is
   // allowed to store the date the user picked.
-  const endDate = manualEndDate || calculatedEndDate || cleanText(module?.endDate);
+  const endDate = manualEndDate || (weeksEntered > 0 ? calculatedEndDate || cleanText(module?.endDate) : '');
   // Either what the date is made of, or the backend's own sentence naming what
   // is still missing before it can be calculated.
   const endDateHelper = endDate

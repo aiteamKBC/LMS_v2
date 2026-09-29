@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -186,6 +186,15 @@ function storedGroup(overrides: Partial<CurriculumGroup> = {}): CurriculumGroup 
 
 describe('group drawer scheduling slot', () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it('sets the end time two hours after a newly selected start time', () => {
+    renderGroupDrawer(storedGroup());
+
+    fireEvent.change(screen.getByDisplayValue('09:00'), { target: { value: '10:00' } });
+
+    expect(screen.getByDisplayValue('10:00')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('12:00')).toBeInTheDocument();
+  });
 
   it('keeps the slot whole when one editor moves the day and the other the time', async () => {
     const { remoteSaveArrives } = renderGroupDrawer(storedGroup());

@@ -3291,13 +3291,13 @@ def curriculum_teams_meeting(request):
         if resolved_catalogue_id:
             try:
                 saved = authoring_fetch_all(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])[0]
-                # create_missing tops every week up to its delivery days here, in
-                # the same walk. The browser used to follow each create with a
-                # restore request doing exactly that, and waited on its full
-                # module rebuild before it could show the result.
+                # Attach the verified meeting only to live-session components
+                # the author already placed. Creating a Teams calendar must not
+                # author new components in otherwise content-only weeks; the
+                # explicit Restore/Re-attach action is the opt-in path for that.
                 attach_teams_meeting_to_module_weeks(
                     resolved_catalogue_id, saved, live_session_row_to_component_settings(saved),
-                    saved_live_session_occurrences(live_session_id), create_missing=True,
+                    saved_live_session_occurrences(live_session_id), create_missing=False,
                 )
             except Exception:
                 logger.exception('The Teams calendar was saved but its component links could not be attached.')
@@ -11202,13 +11202,27 @@ def _build_curriculum_payload_from_rows(rows, visibility='operational', compact=
         # Delivery rows can outlive an authoring module's archive row. In that
         # state build_modules() still has enough data to produce a plausible
         # published row, although the structure endpoint cannot serve it.
+        #
+        # ``source_id`` is read here because a training-plan-sourced authoring
+        # row carries its own identity there rather than in
+        # ``module_catalogue_id``. On a *duplicated* module the same column
+        # means something else entirely -- the id of the module it was copied
+        # from -- so archiving a copy used to take its still-live original out
+        # of every module list with it. An id a live authoring row owns
+        # outright is therefore never treated as archived.
+        live_catalogue_ids = {
+            clean_str(row.get('module_catalogue_id'))
+            for row in (rows.get('authoring_modules') or [])
+            if not module_authoring_row_is_archived(row)
+            and clean_str(row.get('module_catalogue_id'))
+        }
         archived_catalogue_ids = {
             clean_str(value)
             for row in (rows.get('authoring_modules') or [])
             if module_authoring_row_is_archived(row)
             for value in (row.get('module_catalogue_id'), row.get('source_id'))
             if clean_str(value)
-        }
+        } - live_catalogue_ids
         modules = [
             module for module in modules
             if clean_str(module.get('moduleCatalogueId') or module.get('catalogueId') or module.get('id'))

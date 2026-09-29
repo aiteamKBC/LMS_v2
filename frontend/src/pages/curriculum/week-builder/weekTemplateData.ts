@@ -88,7 +88,14 @@ let scopeCache: Promise<CurriculumScope> | null = null;
 export function loadCurriculumScope(options: { force?: boolean } = {}): Promise<CurriculumScope> {
   if (options.force) scopeCache = null;
   if (!scopeCache) {
-    scopeCache = fetchCurriculumOverview(undefined, { compact: true })
+    scopeCache = fetchCurriculumOverview(undefined, {
+      compact: true,
+      // A placement picker can be opened immediately after a module/group
+      // write. `force` must reach the API layer as well as clearing this
+      // in-memory promise, otherwise the backend overview cache can return the
+      // same stale module list and the picker still misses the new module.
+      skipCache: Boolean(options.force),
+    })
       .then(overview => ({
         programmes: overview.programmes || [],
         cohorts: overview.cohorts || [],

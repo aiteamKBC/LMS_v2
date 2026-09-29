@@ -217,6 +217,14 @@ class TeamsWeekdaySeriesTests(CurriculumPersistenceHarness):
         self.assertEqual([item['join_url'] for item in occurrences], ['https://teams.example/event-1', 'https://teams.example/event-2'] * 2)
         self.assertEqual([item['online_meeting_id'] for item in occurrences], ['meeting-event-1', 'meeting-event-2'] * 2)
         series = self.row(views.LIVE_SESSIONS_TABLE, 'id', meeting['liveSessionId'])
+        # Creating the calendar must not author live-session components in
+        # weeks where the author left the structure content-only. That remains
+        # an explicit Restore/Re-attach operation.
+        before_restore = views.get_authoring_structure_payload(self.module_id)
+        self.assertEqual(
+            [component for week in before_restore['weekStructure'] for component in week['components'] if component['type'] == 'live-session'],
+            [],
+        )
         with patch.object(views, 'teams_meeting_base_path', side_effect=lambda organizer, meeting_id, join_url='': meeting_id):
             groups = views.live_session_meeting_groups(series, occurrences)
         self.assertEqual([[item['session_number'] for item in group] for _, group in groups], [[1, 3], [2, 4]])

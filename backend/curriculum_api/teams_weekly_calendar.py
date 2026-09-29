@@ -307,11 +307,11 @@ def save_weekday_calendar(payload, graph_settings, series=None):
         if module_id and v.authoring_module_exists(module_id):
             saved = v.authoring_fetch_all(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id])[0]
             occurrences = v.authoring_fetch_all(v.LIVE_SESSION_OCCURRENCES_TABLE, "live_session_id = %s and status <> 'cancelled'", [live_id], 'session_number')
-            # A create also tops every week up to its delivery days, in this same
-            # walk, instead of the browser following up with a restore request.
-            # An update keeps its components exactly as they are.
+            # Creating or updating a calendar only attaches it to live-session
+            # components the author already placed. New components belong to
+            # the explicit Restore/Re-attach action, never to Send itself.
             v.attach_teams_meeting_to_module_weeks(module_id, saved, v.live_session_row_to_component_settings(saved), occurrences,
-                                                   create_missing=not series)
+                                                   create_missing=False)
     except RuntimeError as exc:
         if live_id:
             v.update_authoring_rows(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id], {
