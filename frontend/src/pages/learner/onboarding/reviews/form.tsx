@@ -24,6 +24,11 @@ import {
   FS_JOB_ROLE_QUESTIONS,
   HEALTH_SAFETY_QUESTIONS,
   ILR_QUESTIONS,
+  LEARNER_ACKNOWLEDGEMENT,
+  ULN_PRIVACY_FURTHER_INFO,
+  ULN_PRIVACY_INTRO,
+  ULN_PRIVACY_POINTS,
+  ULN_PURPOSES,
   REVIEW_QUESTION_LABELS,
   RPL_QUESTIONS,
 } from './questions';
@@ -359,10 +364,11 @@ function RecordTable({ headers, rows, empty }: { headers: string[]; rows: ReactN
 
 /**
  * The enrolment review form. Which panels render is decided by the backend
- * (`sections`), so the three reviews share this page:
+ * (`sections`), so the four reviews share this page:
  *   - Eligibility Review & FS Discussion
  *   - RPL And Experience
  *   - Workplace Health & Safety Declaration
+ *   - ULN Privacy Notice & Learner Acknowledgement
  *
  * Each panel saves on its own — the backend merges sections, so one panel's Save
  * never blanks another's answers.
@@ -403,7 +409,8 @@ export default function ReviewFormPage() {
     setDirty((prev) => ({ ...prev, [section as ReviewSection]: true }));
   };
 
-  const save = async (section: ReviewSection) => {
+  /** Save one panel; `value` stands in for the panel's answers (read-and-confirm panels). */
+  const save = async (section: ReviewSection, value?: ReviewFormAnswers[keyof ReviewFormAnswers]) => {
     if (savingSection) return;
     setSavingSection(section);
     setError(null);
@@ -412,8 +419,9 @@ export default function ReviewFormPage() {
       // JSON.stringify, leaving an empty payload the server treats as "nothing
       // posted", so a panel with only optional input would never be marked done.
       const res = await saveReviewForm(kind, id, eventKey, {
-        answers: { [section]: answers[section] ?? {} } as Partial<ReviewFormAnswers>,
+        answers: { [section]: value ?? answers[section] ?? {} } as Partial<ReviewFormAnswers>,
       });
+      if (value !== undefined) setAnswers((prev) => ({ ...prev, [section]: value }));
       setData(res);
       setDirty((prev) => ({ ...prev, [section]: false }));
     } catch (e) {
@@ -790,6 +798,38 @@ export default function ReviewFormPage() {
                   value={answers.healthSafetyVetting?.[q.key] ?? ''}
                   onChange={(v) => setSection('healthSafetyVetting', { ...answers.healthSafetyVetting, [q.key]: v })} />
               ))}
+            </Panel>
+            )}
+
+            {/* --- ULN Privacy Notice & Learner Acknowledgement --- read-and-confirm:
+                saving a panel records that the learner read / confirms it. */}
+            {has('ulnPrivacyNotice') && (
+            <Panel title="Unique Learner Number (ULN) Privacy Notice" complete={!!status?.ulnPrivacyNotice} alwaysSavable
+              onSave={() => save('ulnPrivacyNotice', { noticeRead: 'Yes' })} saving={savingSection === 'ulnPrivacyNotice'} dirty={false}>
+              <div className="max-w-3xl space-y-3 text-[13px] leading-relaxed text-foreground-700">
+                <h3 className="font-heading text-[15px] font-semibold text-foreground-900">Unique Learner Number (ULN)</h3>
+                <p className="text-foreground-500">{ULN_PRIVACY_INTRO}</p>
+                <ol className="list-decimal space-y-2 pl-5">
+                  {ULN_PRIVACY_POINTS.map((point, index) => (
+                    <li key={point}>
+                      {point}
+                      {index === 1 && (
+                        <ol className="mt-1.5 list-[lower-alpha] space-y-0.5 pl-5 text-foreground-600">
+                          {ULN_PURPOSES.map((purpose) => <li key={purpose}>{purpose}</li>)}
+                        </ol>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+                <p>{ULN_PRIVACY_FURTHER_INFO}</p>
+              </div>
+            </Panel>
+            )}
+
+            {has('learnerAcknowledgement') && (
+            <Panel title="Learner Acknowledgement" complete={!!status?.learnerAcknowledgement} alwaysSavable
+              onSave={() => save('learnerAcknowledgement', { acknowledged: 'Yes' })} saving={savingSection === 'learnerAcknowledgement'} dirty={false}>
+              <p className="max-w-3xl text-[13px] leading-relaxed text-foreground-700">1. {LEARNER_ACKNOWLEDGEMENT}</p>
             </Panel>
             )}
 

@@ -29,7 +29,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from enrolment_api.auth import enrolment_login_required
+from enrolment_api.auth import employer_signing_party_error, enrolment_login_required
 
 from .apprenticeship_agreement import (
     _employer_address,
@@ -345,6 +345,9 @@ def sign_written_agreement(request, pk):
     if party not in SIGNING_PARTIES:
         allowed = "', '".join(SIGNING_PARTIES)
         return _error(f"party must be one of '{allowed}'.", 400)
+    party_error = employer_signing_party_error(request, party)
+    if party_error is not None:
+        return party_error
 
     signature = _s(payload.get("signature"))
     name = _s(payload.get("name"))

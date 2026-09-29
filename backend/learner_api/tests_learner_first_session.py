@@ -145,7 +145,10 @@ class FirstSessionAccessTests(SimpleTestCase):
 
         self.assertEqual(payload["access"], "book")
 
-    def test_an_apprentice_still_enrolling_is_not_asked_to_book(self):
+    # Documents not yet signed by the learner (tests_first_session_after_documents
+    # covers the Delivery apprentice who has signed them).
+    @patch("learner_api.learner_progression.learner_signed_compliance_documents", return_value=False)
+    def test_an_apprentice_still_enrolling_is_not_asked_to_book(self, _signed):
         """The first session comes after every enrolment step -- the wizard and
         onboarding reviews (Onboarding), then the compliance documents
         (Delivery). Until then the booking screen must not stand in front of
@@ -157,6 +160,15 @@ class FirstSessionAccessTests(SimpleTestCase):
                 ))
 
                 self.assertEqual(payload["access"], "enrolling")
+
+    @patch("learner_api.learner_progression.learner_signed_compliance_documents", return_value=True)
+    def test_a_delivery_apprentice_who_signed_their_documents_may_book_from_their_tab(self, _signed):
+        """Their own signatures on all four documents open the booking — without
+        the full-page gate taking over while the other parties still sign."""
+        payload = body(self.call(record=None, kind="apprenticeship", programme_status="Delivery"))
+
+        self.assertEqual(payload["access"], "enrolling")
+        self.assertTrue(payload["canBook"])
 
     def test_an_apprentice_ready_to_enrol_books_their_first_session(self):
         """Signing the last compliance document moves them to Ready to enrol,
@@ -357,7 +369,8 @@ class BookingBeforeActiveTests(SimpleTestCase):
         self.assertEqual(response.status_code, 409)
         self.assertIn("already booked", body(response)["error"])
 
-    def test_an_apprentice_still_enrolling_cannot_book_their_first_session(self):
+    @patch("learner_api.learner_progression.learner_signed_compliance_documents", return_value=False)
+    def test_an_apprentice_still_enrolling_cannot_book_their_first_session(self, _signed):
         """The gate stops offering it, but the calendar still lists the type,
         so the order is held here too."""
         for status in ("Fresh user", "Onboarding", "Delivery"):
@@ -368,6 +381,14 @@ class BookingBeforeActiveTests(SimpleTestCase):
 
                 self.assertEqual(response.status_code, 400)
                 self.assertIn("once your enrolment is complete", body(response)["error"])
+
+    @patch("learner_api.learner_progression.learner_signed_compliance_documents", return_value=True)
+    def test_a_delivery_apprentice_who_signed_their_documents_may_book(self, _signed):
+        response = self.book("first-session", kind="apprenticeship", programme_status="Delivery")
+
+        # Past the enrolment check; fails later on the missing date.
+        self.assertEqual(response.status_code, 400)
+        self.assertNotIn("once your enrolment is complete", body(response)["error"])
 
     def test_an_apprentice_ready_to_enrol_may_book_their_first_session(self):
         response = self.book(
