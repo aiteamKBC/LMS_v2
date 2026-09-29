@@ -13,6 +13,7 @@ interface CoachCompletedKsbDetail {
     title?: string;
     typeLabel?: string;
     kind?: string;
+    componentId?: string | null;
     source?: string;
     activityId?: string;
     completedAt?: string;

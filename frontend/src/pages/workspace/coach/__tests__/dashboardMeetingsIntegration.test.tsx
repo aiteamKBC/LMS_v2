@@ -3,7 +3,7 @@ import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import { formatDateLabel, getCurrentWorkWeekRange, type CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
-import CoachDashboard, { CompactWeeklyMeetingDetails } from '../page';
+import CoachDashboard, { clearCoachDashboardSessionCache, CompactWeeklyMeetingDetails } from '../page';
 
 const mocks = vi.hoisted(() => ({
   load: vi.fn(), schedule: vi.fn(), calendar: vi.fn(), coachFetch: vi.fn(),
@@ -37,6 +37,7 @@ function useDashboardDate() {
 }
 beforeEach(() => {
   vi.resetAllMocks();
+  clearCoachDashboardSessionCache();
   Object.assign(mocks.coach, { email: 'coach@example.invalid', name: 'Example Coach', isInitialized: true, isViewingAsCoach: false });
   mocks.calendar.mockResolvedValue({ events: [] });
   mocks.coachFetch.mockImplementation((url: string) => Promise.resolve(new Response(JSON.stringify(
@@ -108,6 +109,24 @@ it('shows the learner table only after a successful response', async () => {
   expect(mocks.load).toHaveBeenCalledWith('/coach_api/coach/dashboard', expect.objectContaining({ credentials: 'include' }));
   expect(mocks.calendar).not.toHaveBeenCalled();
   expect(mocks.coachFetch).not.toHaveBeenCalled();
+});
+
+it('keeps the loaded dashboard visible while returning to the page and refreshing in the background', async () => {
+  vi.useRealTimers();
+  const firstRender = render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  expect(await screen.findByText('Example Learner')).toBeVisible();
+  firstRender.unmount();
+
+  let finishRefresh!: (value: unknown) => void;
+  mocks.load.mockImplementation(() => new Promise(resolve => { finishRefresh = resolve; }));
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+
+  expect(screen.getByText('Example Learner')).toBeVisible();
+  expect(screen.queryByRole('status', { name: 'Loading coach dashboard' })).not.toBeInTheDocument();
+  expect(mocks.load).toHaveBeenCalledTimes(2);
+  await act(async () => {
+    finishRefresh({ owner: { name: 'Example Coach' }, learners: [], meetings: { events: [] } });
+  });
 });
 
 it('characterizes the initial dashboard request as one aggregate request with no child requests', async () => {

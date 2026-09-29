@@ -149,6 +149,105 @@ export function isTutorConflictError(error: unknown): error is CurriculumApiErro
 }
 
 /**
+ * Optimistic concurrency for the records a drawer holds open.
+ *
+ * The Module Builder's structure save has always sent back the revision it read
+ * and been refused if the module moved underneath it. The drawers and the Week
+ * Builder had nothing: each sends every field it renders, so whichever save
+ * landed second put the other editor's work back to what it was, and the only
+ * thing standing in the way was a poll happening to arrive first.
+ *
+ * These are the client half of the same guard, now on all of them. A surface
+ * reads a token, sends it back with its save, and on a refusal rebases its
+ * outstanding changes onto the stored record the refusal carries.
+ */
+
+/** The record kinds the server will fingerprint. */
+export type CurriculumRecordKind = 'programme' | 'cohort' | 'group' | 'module' | 'weekTemplate';
+
+export interface CurriculumRecordRevisions {
+  programme?: Record<string, string>;
+  cohort?: Record<string, string>;
+  group?: Record<string, string>;
+  module?: Record<string, string>;
+  weekTemplate?: Record<string, string>;
+}
+
+/**
+ * Current tokens for the records named.
+ *
+ * Off the cached curriculum overview deliberately: a token minted there would
+ * be one more thing to keep fresh, and would go stale exactly when a colleague
+ * saved. One indexed read per record instead, when a drawer opens.
+ *
+ * A record the server cannot fingerprint comes back as '', which a caller
+ * should treat as "save unguarded" rather than as a token -- that is the
+ * behaviour these screens had before any of this existed, so a fingerprint
+ * that cannot be read degrades to it rather than blocking the save.
+ */
+export function fetchCurriculumRevisions(
+  wanted: Partial<Record<CurriculumRecordKind, string[]>>,
+  signal?: AbortSignal,
+): Promise<CurriculumRecordRevisions> {
+  const query = new URLSearchParams();
+  (Object.keys(wanted) as CurriculumRecordKind[]).forEach(kind => {
+    (wanted[kind] || []).filter(Boolean).forEach(id => query.append(kind, id));
+  });
+  if (!query.toString()) return Promise.resolve({});
+  return fetchJson<{ revisions: CurriculumRecordRevisions }>(
+    `/curriculum/revisions/?${query.toString()}`,
+    { signal, skipCache: true },
+  ).then(payload => payload.revisions || {});
+}
+
+/** What a save was refused with, and what it needs to rebase onto. */
+export interface CurriculumRecordConflict<TRecord> {
+  /** The token the save carried. */
+  expectedRevision: string;
+  /** The token the record actually holds now; what the retry must send. */
+  currentRevision: string;
+  /**
+   * The stored record, so the editor can fold their outstanding changes into
+   * it without a second call. Null when the server could not read the record
+   * at all -- nothing was compared, so there is no other version to show.
+   */
+  record: TRecord | null;
+}
+
+/**
+ * A save refused because somebody else saved first.
+ *
+ * Distinguished from the tutor-schedule 409 by the `conflict` flag rather than
+ * by the status, since both endpoints raise 409 and a drawer has to be able to
+ * tell "you would double-book a tutor" from "rebase and try again".
+ */
+/**
+ * The token a guarded save carries, folded into its body.
+ *
+ * In the body rather than a separate argument so that adding the guard did not
+ * change the shape of a single existing call. Omitted when empty: an absent
+ * token means "do not check me", which is what every unguarded caller has
+ * always sent and what a surface whose token could not be read falls back to.
+ */
+export function guardedInput<TInput extends object>(input: TInput, expectedRevision?: string): TInput {
+  return expectedRevision ? { ...input, expectedRevision } : input;
+}
+
+export function recordConflict<TRecord>(
+  error: unknown,
+  kind: CurriculumRecordKind,
+): CurriculumRecordConflict<TRecord> | null {
+  if (!(error instanceof CurriculumApiError) || error.status !== 409) return null;
+  const data = error.data as Record<string, unknown> | undefined;
+  if (!data || typeof data !== 'object' || data.conflict !== true) return null;
+  return {
+    expectedRevision: String(data.expectedRevision || ''),
+    currentRevision: String(data.currentRevision || ''),
+    record: (data[kind] as TRecord | undefined) ?? null,
+  };
+}
+
+/**
  * The backend's sentence for a clash, or null when the error is something else.
  *
  * `CurriculumApiError.message` wraps it in "Curriculum API returned 409 for
@@ -199,6 +298,12 @@ export interface CurriculumProgramme {
   modules: number;
   freeComponents?: number;
   weeks: number;
+  // ksbMapped and every learnerKsb* field below arrive as 0 from the list
+  // endpoints and are filled in afterwards by fetchProgrammeKsbStats(). Each one
+  // costs a read of the programme's whole authoring tree, so computing them for
+  // a list of thirty programmes held up /overview/, /modules/ and /programmes/
+  // alike. A card renders without them and gains them a moment later; nothing
+  // reads them as "the programme has none".
   ksbMapped: number;
   ksbTotal: number;
   // Learner-consumed KSB progress across the whole programme, from the Component
@@ -3176,6 +3281,30 @@ export function fetchCurriculumProgrammes(signal?: AbortSignal, options: { skipC
   return fetchCollection<CurriculumProgramme>(`/curriculum/programmes/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate });
 }
 
+/** The KSB numbers a programme card shows, for one programme. See CurriculumProgramme.ksbMapped. */
+export interface ProgrammeKsbStats {
+  programmeId: string;
+  ksbMapped: number;
+  ksbTotal: number;
+  learnerKsbProgressPercentage: number;
+  learnerKsbConsumedWeight: number;
+  learnerKsbExpectedWeight: number;
+  learnerKsbLearnerCount: number;
+  learnerKsbCodesStarted: number;
+  learnerKsbCodesComplete: number;
+  learnerKsbCodesTotal: number;
+}
+
+export function fetchProgrammeKsbStats(id: string, signal?: AbortSignal, options: { visibility?: 'all' | 'operational'; revalidate?: boolean } = {}): Promise<ProgrammeKsbStats> {
+  const query = new URLSearchParams();
+  if (options.visibility === 'all') query.set('visibility', 'all');
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  // 30s like the other curriculum reads: the first caller after a write pays the
+  // programme's authoring-tree read, and a shorter budget aborts a request the
+  // server is still answering.
+  return fetchJson<ProgrammeKsbStats>(`/curriculum/programmes/${encodeURIComponent(id)}/ksb-stats/${suffix}`, { signal, revalidate: options.revalidate, timeoutMs: 30000 });
+}
+
 export function fetchCurriculumGroups(signal?: AbortSignal): Promise<CurriculumGroup[]> {
   return fetchCollection<CurriculumGroup>('/curriculum/groups/', { signal });
 }
@@ -3788,7 +3917,7 @@ export function saveCurriculumProgrammeOrder(order: string[]) {
 }
 
 export function updateCurriculumProgramme(id: string, input: CurriculumProgrammeInput) {
-  return patchJson<{ updated: boolean; programme: CurriculumProgramme }>(`/curriculum/programmes/${encodeURIComponent(id)}/`, input);
+  return patchJson<{ updated: boolean; programme: CurriculumProgramme; revision?: string }>(`/curriculum/programmes/${encodeURIComponent(id)}/`, input);
 }
 
 /**
@@ -3882,7 +4011,7 @@ export function createProgrammeCohort(programmeId: string, input: Omit<Curriculu
 }
 
 export function updateCurriculumCohort(id: string, input: CurriculumCohortInput) {
-  return patchJson<{ updated: boolean; id: string }>(`/curriculum/cohorts/${encodeURIComponent(id)}/`, input);
+  return patchJson<{ updated: boolean; id: string; revision?: string }>(`/curriculum/cohorts/${encodeURIComponent(id)}/`, input);
 }
 
 export function archiveCurriculumCohort(id: string) {
@@ -3898,7 +4027,7 @@ export function createCohortGroup(cohortId: string, input: Omit<CurriculumGroupI
 }
 
 export function updateCurriculumGroup(id: string, input: CurriculumGroupInput) {
-  return patchJson<{ updated: boolean; id: string; teamsCalendarsToUpdate?: StaleTeamsCalendar[] }>(`/curriculum/groups/${encodeURIComponent(id)}/`, input);
+  return patchJson<{ updated: boolean; id: string; revision?: string; teamsCalendarsToUpdate?: StaleTeamsCalendar[] }>(`/curriculum/groups/${encodeURIComponent(id)}/`, input);
 }
 
 export function archiveCurriculumGroup(id: string) {
@@ -4335,7 +4464,7 @@ export interface StaleTeamsCalendar {
 }
 
 export function updateCurriculumModule(id: string, input: CurriculumModuleInput) {
-  return patchJson<{ updated: boolean; module: CurriculumModule; teamsCalendarsToUpdate?: StaleTeamsCalendar[] }>(`/curriculum/modules/${encodeURIComponent(id)}/`, input);
+  return patchJson<{ updated: boolean; module: CurriculumModule; revision?: string; teamsCalendarsToUpdate?: StaleTeamsCalendar[] }>(`/curriculum/modules/${encodeURIComponent(id)}/`, input);
 }
 
 export function updateCurriculumModuleCover(id: string, coverImage: string) {

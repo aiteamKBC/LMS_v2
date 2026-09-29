@@ -16,6 +16,9 @@ export function CoachMonthlyLogLearners() {
   const query = useQuery({
     queryKey: ['monthly-logs', auth.account?.id, coachViewAs()?.email, 'learners'],
     queryFn: getCoachMonthlyLogLearners,
+    // A coach returning to this route should keep the successful list visible;
+    // React Query can still refresh it without reverting to the first-load UI.
+    gcTime: Infinity,
   });
   if (query.isPending) return <MonthListSkeleton />;
   if (query.error) return <EmptyState variant="error" title="Unable to load monthly logs" description={query.error.message}

@@ -114,6 +114,58 @@
 .neutral { color: #768297; background: #f2f4f8; }
 .fileArrow { color: #9ba5b4; }
 .file:hover .fileArrow { color: var(--purple); }
+
+:global([data-theme='dark']) :is(.page, .root, .summary, .toolbar) {
+  --ink: #f6f8fb;
+  --muted: #b6c4d5;
+  --purple: #d7c4f4;
+  --line: #3b526c;
+  color: var(--ink);
+}
+
+:global([data-theme='dark']) .page {
+  background-color: #101e30;
+  background-image: linear-gradient(180deg, rgb(16 30 48 / .88), #101e30 560px), url('/evidence-library-background.png');
+}
+
+:global([data-theme='dark']) :is(.toolbar, .summary, .month) {
+  background: #182d48;
+  border-color: var(--line);
+}
+
+:global([data-theme='dark']) :is(.toolbar .toolbarButton, .toolbar .choices button, .root .expandButton, .root button.monthToggle, .root button.file) {
+  background: #182d48;
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+:global([data-theme='dark']) :is(.toolbar .toolbarButton:hover, .toolbar .choices button[aria-pressed='true'], .root button.monthToggle:hover, .root button.file:hover) {
+  background: #304766;
+  color: var(--ink);
+}
+
+:global([data-theme='dark']) :is(.page .hero h1, .summaryTotal strong, .summaryStat strong) {
+  color: var(--ink);
+}
+
+:global([data-theme='dark']) :is(.eyebrow, .root button.componentToggle, .summaryIcon, .monthStamp, .monthStatus > span, .validated) {
+  color: var(--purple);
+}
+
+:global([data-theme='dark']) :is(.heroText > p:last-child, .summaryTotal > span:last-child > span, .summaryStat > span:last-child > span, .monthTitle .monthPreview, .componentCount, .fileMeta, .ksbs > span) {
+  color: var(--muted);
+}
+
+:global([data-theme='dark']) :is(.summaryIcon, .monthStamp, .monthStatus > span, .validated, .summaryDraft) { background: #302748; }
+:global([data-theme='dark']) .summaryValidated { background: #163c31; }
+:global([data-theme='dark']) .summaryPending { background: #413923; }
+:global([data-theme='dark']) .summaryNeedsWork { background: #462a32; }
+:global([data-theme='dark']) .summaryValidated strong { color: #a8e4c5; }
+:global([data-theme='dark']) .summaryPending strong { color: #f5d3a0; }
+:global([data-theme='dark']) .summaryNeedsWork strong { color: #edb1b1; }
+:global([data-theme='dark']) .summaryDraft strong { color: #d7c4f4; }
+:global([data-theme='dark']) .page .uploadButton { background: #5e378d; color: #fff; }
+:global([data-theme='dark']) .page .uploadButton:hover { background: #744ba4; }
 @media (max-width: 1200px) {
   .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .summaryTotal { grid-column: 1 / -1; border-right: 0; border-bottom: 1px solid var(--line); padding-bottom: 16px; }
@@ -160,3 +212,77 @@
   .fileMeta > span:not(:last-child)::after { content: ' ·'; color: #bbc4d1; }
 }
 @media (prefers-reduced-motion: reduce) { .chevron { transition: none; } }
+
+/* Attendance's navy surfaces and readable status accents for the full Evidence
+   page. The month stamp needs an explicit open state: its previous foreground
+   and background both resolved to the same light purple in dark mode. */
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page {
+  --ink: #f6f8fb;
+  --muted: #b6c4d5;
+  --purple: #bfa3ee;
+  --line: #3b526c;
+}
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page :is(.summary, .toolbar, .month) {
+  background: #182d48;
+  border-color: var(--line);
+  color: var(--ink);
+}
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .summary .summaryStat {
+  background: #1e344d;
+  border-color: var(--line);
+  color: var(--ink);
+}
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .summary .summaryStat:is(:hover, [aria-pressed='true']) {
+  background: #24405d;
+  border-color: var(--status-accent);
+  box-shadow: inset 3px 0 var(--status-accent);
+}
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .summaryPending { --status-accent: #e1c285; }
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .summaryValidated { --status-accent: #7bc8a8; }
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .summaryNeedsWork { --status-accent: #ed9b9b; }
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .summaryDraft { --status-accent: #bfa3ee; }
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .summaryPending .summaryIcon { background: #413923; color: #f5d3a0; }
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .summaryValidated .summaryIcon { background: #163c31; color: #a8e4c5; }
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .summaryNeedsWork .summaryIcon { background: #462a32; color: #edb1b1; }
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .summaryDraft .summaryIcon { background: #302748; color: #d7c4f4; }
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page :is(.headingIcon, .fileIcon) {
+  background: #24405d;
+  border-color: var(--line);
+  color: #d7c4f4;
+}
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page :is(.search, .toolbar .filterFields select, .toolbar .choices button, .toolbar .toolbarButton, .root .expandButton) {
+  background: #182d48;
+  border-color: var(--line);
+  color: var(--ink);
+}
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page :is(.toolbar .toolbarButton[aria-pressed='true'], .toolbar .toolbarButton[aria-expanded='true'], .toolbar .choices button[aria-pressed='true']) {
+  background: #302748;
+  border-color: #8060b1;
+  color: #e2d2fa;
+}
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .search:focus-within { border-color: #bfa3ee; box-shadow: 0 0 0 2px rgb(191 163 238 / .22); }
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .toolbar .search input { background: transparent; color: var(--ink); }
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .toolbar .search input::placeholder { color: var(--muted); }
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page :is(.filterPanel legend, .filterFields label, .year > span, .componentCount, .fileArrow, .attachment, .ksbs > span) { color: var(--muted); }
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .root button.monthToggle {
+  background: #182d48;
+  border-color: var(--line);
+  color: var(--ink);
+}
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .root .month[data-open='true'] button.monthToggle,
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .root button.monthToggle:hover { background: #1e344d; }
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .root .monthStamp {
+  background: #24405d;
+  color: #d7c4f4;
+}
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .root .month[data-open='true'] .monthStamp {
+  background: #54377d;
+  color: #fff;
+}
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .root .monthStamp :is(strong, span) { color: inherit; }
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .root button.file { background: #182d48; border-color: var(--line); color: var(--ink); }
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .root button.file:hover { background: #24405d; }
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .root .status.validated { background: #163c31; color: #a8e4c5; }
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .root .status.pending { background: #413923; color: #f5d3a0; }
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .root .status.needsWork { background: #462a32; color: #edb1b1; }
+:global(html[data-theme='dark'] .dashboard-theme[data-workspace-role='learner'] .workspace-main) .page .root .status.neutral { background: #24405d; color: #dce7f4; }

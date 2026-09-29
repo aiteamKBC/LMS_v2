@@ -147,6 +147,8 @@ describe('buildKsbMappingPrompt', () => {
     expect(prompt).toContain('CODE:classification:weight');
     expect(prompt).toMatch(/NEVER edit the "Component ID"/i);
     expect(prompt).toMatch(/main|secondary|possible/);
+    expect(prompt).toMatch(/K1\.1 and K11 are different codes/i);
+    expect(prompt).toMatch(/never remove a period/i);
   });
 
   it('falls back to the sheet’s Current KSBs when no profile is attached', () => {
@@ -267,6 +269,71 @@ describe('importModuleKsbWorkbook', () => {
     const [k1, s9] = next.weekStructure[0].components[0].ksbMappings;
     expect(k1).toMatchObject({ code: 'K1', description: 'Existing K1 definition', ksbId: 'ksb-99', sourceId: 'std:1', type: 'secondary', classification: 'secondary', weight: 25, weightClass: 'soft' });
     expect(s9).toMatchObject({ code: 'S9', description: '', type: 'main', weight: 40, weightClass: 'hard' });
+  });
+
+  it('rebases imported mappings onto the selected source', async () => {
+    const module = moduleWith([week(1, [component('C1', {
+      ksbMappings: [mapping('K1', {
+        ksbId: 'old-profile:K1',
+        sourceType: 'framework',
+        sourceId: 'old-profile',
+        description: 'Existing K1 definition',
+      })],
+    })])]);
+    const file = sheetFile([{ 'Component ID': 'C1', KSBs: 'K1, S9' }]);
+
+    const { module: next } = await importModuleKsbWorkbook(file, module, {
+      sourceType: 'framework',
+      sourceId: 'target-profile',
+    });
+    const mappings = next.weekStructure[0].components[0].ksbMappings;
+
+    expect(mappings).toEqual([
+      expect.objectContaining({
+        code: 'K1',
+        sourceType: 'framework',
+        sourceId: 'target-profile',
+        ksbId: '',
+        description: 'Existing K1 definition',
+      }),
+      expect.objectContaining({
+        code: 'S9',
+        sourceType: 'framework',
+        sourceId: 'target-profile',
+      }),
+    ]);
+  });
+
+  it('drops imported codes that are not in the selected source and clears stale mappings', async () => {
+    const module = moduleWith([week(1, [component('C1', {
+      ksbMappings: [mapping('K11', { sourceType: 'framework', sourceId: 'target-profile' })],
+    })])]);
+    const file = sheetFile([{ 'Component ID': 'C1', KSBs: 'K11, K1, S14' }]);
+
+    const { module: next, summary } = await importModuleKsbWorkbook(file, module, {
+      sourceType: 'framework',
+      sourceId: 'target-profile',
+      allowedCodes: ['K1'],
+    });
+
+    expect(next.weekStructure[0].components[0].ksbMappings.map(item => item.code)).toEqual(['K1']);
+    expect(summary.skippedTokens).toEqual([
+      'K11 (not in selected KSB source)',
+      'S14 (not in selected KSB source)',
+    ]);
+    expect(summary.codesApplied).toBe(1);
+  });
+
+  it('keeps dotted child codes distinct from their undotted siblings', async () => {
+    const file = sheetFile([{ 'Component ID': 'C1', KSBs: 'K1.1:main:40, K11:main:40' }]);
+    const { module, summary } = await importModuleKsbWorkbook(file, baseModule(), {
+      sourceType: 'framework',
+      sourceId: 'target-profile',
+      allowedCodes: ['K1.1'],
+    });
+
+    expect(module.weekStructure[0].components[0].ksbMappings.map(item => item.code)).toEqual(['K1.1']);
+    expect(summary.skippedTokens).toEqual(['K11 (not in selected KSB source)']);
   });
 
   it('parses classification and weight, defaulting when omitted', async () => {

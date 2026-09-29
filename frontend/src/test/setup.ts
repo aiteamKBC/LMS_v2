@@ -1,4 +1,8 @@
 import "@testing-library/jest-dom/vitest";
+import { afterEach } from 'vitest';
+import { clearCoachSessionCache } from '@/features/coach/shared/coachSessionCache';
+
+afterEach(() => clearCoachSessionCache());
 
 // dnd-kit's sensors query these under the hood; jsdom doesn't implement them.
 if (!window.matchMedia) {

@@ -71,4 +71,65 @@ describe('KSB selectors', () => {
     expect(rows[0]).toMatchObject({ linked: true, evidenceCount: 1 });
     expect(rows[0].evidenceActivities[0]).toMatchObject({ title: 'Observed activity', type: 'Live session' });
   });
+
+  it('resolves a generic video label through the exact completed component id', () => {
+    const data = caseFile({
+      touchedKsbCodes: ['B3'],
+      snapshot: {
+        ksbCompletedDetails: [{ code: 'B3', sources: [{ id: 'video-evidence', title: 'Video', typeLabel: 'Video', componentId: 'VIDEO-1' }] }],
+      } as CoachLearnerCaseFileData['snapshot'],
+      detail: {
+        components: [
+          { componentId: 'VIDEO-1', component: 'Resilience in practice', type: 'video', ksbMappings: [{ code: 'B3' }] },
+          { componentId: 'VIDEO-2', component: 'Unrelated video', type: 'video', ksbMappings: [{ code: 'B3' }] },
+        ],
+      } as CoachLearnerCaseFileData['detail'],
+    });
+
+    const rows = selectCaseFileKsbRows(data, [{ code: 'B3', description: 'Resilience', type: 'Behaviours', number: '3' }]);
+
+    expect(rows[0].evidenceCount).toBe(1);
+    expect(rows[0].evidenceActivities[0]).toMatchObject({ title: 'Resilience in practice', type: 'Video' });
+    expect(rows[0].evidenceActivities[0].componentId).toBeUndefined();
+  });
+
+  it('shows the saved title of a historical video outside the current component list', () => {
+    const data = caseFile({
+      touchedKsbCodes: ['B1'],
+      detail: {
+        components: [],
+        quizAttempts: [],
+        videoProgress: [{
+          kind: 'video', componentId: 'legacy-video-1', componentTitle: 'Working with change',
+          ksbs: ['B1'], startedAt: null, submittedAt: '2026-09-01T10:00:00Z', timeTaken: null,
+        }],
+      } as CoachLearnerCaseFileData['detail'],
+    });
+
+    const rows = selectCaseFileKsbRows(data, [{ code: 'B1', description: 'Behaviour', type: 'Behaviours', number: '1' }]);
+
+    expect(rows[0].evidenceCount).toBe(1);
+    expect(rows[0].evidenceActivities[0]).toMatchObject({ title: 'Working with change', type: 'Video' });
+  });
+
+  it('enriches a generic snapshot video from the matching historical completion', () => {
+    const data = caseFile({
+      touchedKsbCodes: ['B1'],
+      snapshot: {
+        ksbCompletedDetails: [{ code: 'B1', sources: [{ id: 'evidence-1', title: 'Video', typeLabel: 'Video', componentId: 'legacy-video-1' }] }],
+      } as CoachLearnerCaseFileData['snapshot'],
+      detail: {
+        components: [], quizAttempts: [],
+        videoProgress: [{
+          kind: 'video', componentId: 'legacy-video-1', componentTitle: 'Working with change',
+          ksbs: ['B1'], startedAt: null, submittedAt: '2026-09-01T10:00:00Z', timeTaken: null,
+        }],
+      } as CoachLearnerCaseFileData['detail'],
+    });
+
+    const rows = selectCaseFileKsbRows(data, [{ code: 'B1', description: 'Behaviour', type: 'Behaviours', number: '1' }]);
+
+    expect(rows[0].evidenceActivities).toHaveLength(1);
+    expect(rows[0].evidenceActivities[0].title).toBe('Working with change');
+  });
 });

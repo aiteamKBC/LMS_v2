@@ -35,6 +35,7 @@ import {
   fetchArchivedCurriculumModules,
   fetchArchivedModuleStructure,
   fetchCurriculumProgrammes,
+  fetchProgrammeKsbStats,
   type CurriculumArchivedCohort,
   type CurriculumArchivedGroup,
   type CurriculumArchivedModule,
@@ -234,7 +235,22 @@ function useCurriculumArchiveIndex(): ArchiveState {
         fetchArchivedCurriculumModules(signal),
       ]);
       if (signal?.aborted) return;
-      const archivedProgrammes = programmes.filter(programmeIsArchived);
+      // `ksbMapped` is no longer in the list payload: computing it for every
+      // programme was a read of every programme's authoring tree, and that cost
+      // sat inside the payload /curriculum/overview/ and /curriculum/modules/
+      // share. Fetched here for the archived programmes only -- there are few of
+      // them, and the archive detail panel states the figure rather than
+      // charting it, so it is worth waiting for. A programme whose numbers fail
+      // to load keeps the row and loses only that one line.
+      const archivedProgrammes = await Promise.all(
+        programmes.filter(programmeIsArchived).map(async programme => {
+          const id = String(programme.sourceId || programme.id || '').trim();
+          if (!id) return programme;
+          const stats = await fetchProgrammeKsbStats(id, signal, { visibility: 'all' }).catch(() => null);
+          return stats ? { ...programme, ksbMapped: stats.ksbMapped } : programme;
+        }),
+      );
+      if (signal?.aborted) return;
       const next = [
         ...archivedProgrammes.map(programmeRow),
         ...cohorts.map(cohortRow),

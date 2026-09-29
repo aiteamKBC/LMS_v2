@@ -40,6 +40,11 @@
 .noSession { font-size:11px; font-weight:650; color:var(--kbc-muted); margin-top:3px !important; }
 .more { font-size:11px; color:var(--kbc-muted); margin-top:9px !important; }
 
+:global([data-theme='dark']) .monthLabel {
+  color: #d7c4f4;
+  border-color: #bfa3ee;
+}
+
 @media (max-width:560px) {
   .rows > li { grid-template-columns:minmax(0,1fr); }
   .rows > li > svg { display:none; }

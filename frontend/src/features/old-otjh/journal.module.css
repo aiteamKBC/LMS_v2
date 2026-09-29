@@ -20,6 +20,21 @@
   gap: 18px;
 }
 .card { min-width: 0; overflow: hidden; border: 1px solid var(--record-border); border-radius: 10px; background: #fff; box-shadow: 0 1px 2px #182d4808, 0 6px 18px -12px #182d4826; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .page {
+  --record-brand: #bfa3ee;
+  --record-deep: #d7c4f4;
+  --record-soft: #24405d;
+  --record-ring: #526b88;
+  --record-ink: #f6f8fb;
+  --record-muted: #b6c4d5;
+  --record-border: #3b526c;
+  --record-surface: #1e344d;
+}
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .page .card { background: #182d48; border-color: var(--record-border); box-shadow: none; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .page :is(.secondaryButton, .learnerField, .monthSelect, .tableCaption span) { background: #24405d; border-color: var(--record-border); color: var(--record-ink); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .page :is(.tableCaption, .signoff .signoffFooter) { background: #1e344d; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .page .secondaryButton:hover { background: #304766; }
+:global(html[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] .workspace-main) .page .monthSelect { background-color: #24405d; color: var(--record-ink); border-color: var(--record-border); }
 .page .label { color: var(--record-muted); font-size: 9px; font-weight: 600; line-height: 1.5; letter-spacing: .12em; text-transform: uppercase; }
 :global(.dashboard-theme .workspace-main) .page.page :is(h2, h3).label { font-size: 9px; letter-spacing: .12em; }
 .page .filterField .label { font-size: 9px; letter-spacing: .12em; }

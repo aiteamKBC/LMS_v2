@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
+import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { type CurriculumModule } from '@/lib/curriculumApi';
 import { loadCurriculumScope } from './weekTemplateData';
 import { modulesForGroup } from '../shared/entities/groupModuleMatch';
 import {
   copyComponentToWeek,
+  SESSION_DATE_SETTING_KEYS,
+  TEAMS_MEETING_SETTING_KEYS,
   loadModuleStructure,
   saveModuleStructure,
   type ModuleCatalogueItem,
@@ -57,7 +59,11 @@ export function GroupPlacementPanel({ component, groupId, groupName, programmeId
 
   useEffect(() => {
     let active = true;
-    loadCurriculumScope()
+    // This picker can be opened after a module was created or attached in
+    // another drawer. Do not reuse the week-builder's long-lived scope cache:
+    // the programme page is already showing the new module, so this list must
+    // revalidate before deciding which modules belong to the selected group.
+    loadCurriculumScope({ force: true })
       .then(scope => {
         if (!active) return;
         setModules(scope.modules);
@@ -119,12 +125,58 @@ export function GroupPlacementPanel({ component, groupId, groupName, programmeId
       if (!freshStructure) { setError('That module no longer exists.'); return; }
       const missing = Array.from(selectedWeekIds).filter(id => !freshStructure.weekStructure.some(week => week.id === id));
       if (missing.length) { setError('One of the selected weeks no longer exists — go back and pick again.'); return; }
+      const hasLiveSession = component.type === 'live-session';
+      // A live session in an unselected week is not a conflict: the copy is
+      // being placed into the selected weeks only. The old module-wide check
+      // showed the warning even for empty weeks (and made a zero-component
+      // week look as though it already contained a session).
+      const selectedWeeks = freshStructure.weekStructure.filter(week => selectedWeekIds.has(week.id));
+      const targetHasLiveSession = selectedWeeks.some(week =>
+        week.components.some(item => item.type === 'live-session'));
+      let replaceExisting = false;
+      let copyWithLink = false;
+      if (hasLiveSession && targetHasLiveSession) {
+        const sourceTeamsLink = String(component.settings.liveSessionUrl || component.settings.teamsMeetingUrl || '').trim();
+        const copyChoice = sourceTeamsLink ? 'Copy with Teams link' : 'Copy without Teams link';
+        const copyDescription = sourceTeamsLink
+          ? 'add another copy with its Teams link'
+          : 'add another copy without a Teams link (the source has no link to copy)';
+        await showCurriculumConfirm({
+          title: 'Live session already exists',
+          text: `One or more selected weeks already contain a Live Session. Replace those selected sessions, or ${copyDescription}? Sessions in other weeks are not affected.`,
+          icon: 'warning',
+          confirmButtonText: 'Replace selected session',
+          cancelButtonText: 'Reject',
+          denyButtonText: copyChoice,
+          onConfirm: async () => { replaceExisting = true; },
+          onDeny: async () => { copyWithLink = true; },
+        });
+        if (!replaceExisting && !copyWithLink) {
+          setError('Placement rejected. The existing Live Session was kept.');
+          return;
+        }
+      }
       const results: PlacementResult[] = [];
       const nextWeekStructure = freshStructure.weekStructure.map(week => {
         if (!selectedWeekIds.has(week.id)) return week;
-        const clone = copyComponentToWeek(component, week.id, catalogueId);
+        const existingLive = week.components.find(item => item.type === 'live-session');
+        const copy = copyComponentToWeek(component, week.id, catalogueId);
+        // Replacing a component in a week keeps that week's existing calendar
+        // occurrence. A new week gets an unbooked authoring copy instead.
+        const clone = replaceExisting && existingLive ? {
+          ...copy,
+          settings: {
+            ...copy.settings,
+            ...Object.fromEntries([...TEAMS_MEETING_SETTING_KEYS, ...SESSION_DATE_SETTING_KEYS]
+              .filter(key => existingLive.settings[key] !== undefined)
+              .map(key => [key, existingLive.settings[key]])),
+          },
+        } : copy;
+        const components = replaceExisting
+          ? week.components.filter(item => item.type !== 'live-session')
+          : week.components;
         results.push({ moduleCatalogueId: catalogueId, weekId: week.id, componentId: clone.id });
-        return { ...week, components: [...week.components, clone] };
+        return { ...week, components: [...components, clone] };
       });
       await saveModuleStructure(catalogueId, { ...freshStructure, weekStructure: nextWeekStructure });
       void showCurriculumAlert({

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
+import { Pagination } from '@/components/ui/Pagination';
 import { cn } from '@/lib/cn';
 import { BigMetric, ProfileEmpty, ReferencePanel } from '../components/CaseFilePrimitives';
 import type { useCaseFileAttendance } from '../useCaseFileAttendance';
@@ -17,11 +18,14 @@ type Session = {
   status: string; reason?: string | null; catchupCompleted?: boolean;
 };
 
+const SESSIONS_PER_PAGE = 15;
+
 export function AttendanceTab({ attendanceState }: { attendanceState: ReturnType<typeof useCaseFileAttendance> }) {
   const attendance = attendanceState.data;
   const [attendanceSearch, setAttendanceSearch] = useState('');
   const [attendanceStatus, setAttendanceStatus] = useState('all');
   const [attendanceMonth, setAttendanceMonth] = useState('all');
+  const [attendancePage, setAttendancePage] = useState(1);
   const sessions: Session[] = (attendance?.sessionHistory || []).map(session => ({
     sessionId: session.id, sessionTitle: session.title, sessionType: session.sessionType,
     sessionDate: session.date, sessionDateLabel: formatSessionDate(session.date),
@@ -40,6 +44,9 @@ export function AttendanceTab({ attendanceState }: { attendanceState: ReturnType
       && (attendanceMonth === 'all' || session.sessionDate?.startsWith(attendanceMonth))
       && (!search || [session.sessionTitle, session.sessionType, session.reason].some(value => String(value || '').toLowerCase().includes(search)));
   });
+  const totalPages = Math.max(1, Math.ceil(filtered.length / SESSIONS_PER_PAGE));
+  const currentPage = Math.min(attendancePage, totalPages);
+  const paginatedSessions = filtered.slice((currentPage - 1) * SESSIONS_PER_PAGE, currentPage * SESSIONS_PER_PAGE);
 
   return <div className="space-y-5">
     <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
@@ -52,12 +59,13 @@ export function AttendanceTab({ attendanceState }: { attendanceState: ReturnType
     <ReferencePanel title="Session History" icon="ri-table-line" tone="primary">
       {sessions.length ? <>
         <div className={styles.attendanceToolbar}>
-          <label className={styles.attendanceSearch}><span className="sr-only">Search sessions</span><AppIcon className="ri-search-line" /><input value={attendanceSearch} onChange={event => setAttendanceSearch(event.target.value)} placeholder="Search session or reason" /></label>
-          <label className={styles.attendanceFilter}><span>Status</span><select value={attendanceStatus} onChange={event => setAttendanceStatus(event.target.value)}><option value="all">All statuses</option><option value="present">Attended</option><option value="absent">Absent</option><option value="catchup">Catch-up completed</option></select></label>
-          <label className={styles.attendanceFilter}><span>Month</span><select value={attendanceMonth} onChange={event => setAttendanceMonth(event.target.value)}><option value="all">All dates</option>{months.map(month => <option key={month} value={month}>{formatMonth(month)}</option>)}</select></label>
+          <label className={styles.attendanceSearch}><span className="sr-only">Search sessions</span><AppIcon className="ri-search-line" /><input value={attendanceSearch} onChange={event => { setAttendanceSearch(event.target.value); setAttendancePage(1); }} placeholder="Search session or reason" /></label>
+          <label className={styles.attendanceFilter}><span>Status</span><select value={attendanceStatus} onChange={event => { setAttendanceStatus(event.target.value); setAttendancePage(1); }}><option value="all">All statuses</option><option value="present">Attended</option><option value="absent">Absent</option><option value="catchup">Catch-up completed</option></select></label>
+          <label className={styles.attendanceFilter}><span>Month</span><select value={attendanceMonth} onChange={event => { setAttendanceMonth(event.target.value); setAttendancePage(1); }}><option value="all">All dates</option>{months.map(month => <option key={month} value={month}>{formatMonth(month)}</option>)}</select></label>
         </div>
         <p className={styles.attendanceResults}>{filtered.length} of {sessions.length} sessions</p>
-        <div className={styles.attendanceTableScroll}><table className={styles.attendanceTable}><thead><tr><th>Session</th><th>Date</th><th>Attendance</th><th>Reason</th></tr></thead><tbody>{filtered.map((session, index) => <tr key={`${session.sessionId}-${session.sessionDate || index}-history`}><td><strong>{display(session.sessionTitle)}</strong></td><td>{display(session.sessionDateLabel, '—')}</td><td><span className={cn(styles.attendanceStatus, statusClass(session))}>{statusLabel(session)}</span></td><td>{reason(session)}</td></tr>)}</tbody></table></div>
+        <div className={styles.attendanceTableScroll}><table className={styles.attendanceTable}><thead><tr><th>Session</th><th>Date</th><th>Attendance</th><th>Reason</th></tr></thead><tbody>{paginatedSessions.map((session, index) => <tr key={`${session.sessionId}-${session.sessionDate || index}-history`}><td><strong>{display(session.sessionTitle)}</strong></td><td>{display(session.sessionDateLabel, '—')}</td><td><span className={cn(styles.attendanceStatus, statusClass(session))}>{statusLabel(session)}</span></td><td>{reason(session)}</td></tr>)}</tbody></table></div>
+        {filtered.length > SESSIONS_PER_PAGE && <Pagination page={currentPage} totalPages={totalPages} total={filtered.length} pageSize={SESSIONS_PER_PAGE} onPageChange={setAttendancePage} noun="sessions" className={styles.attendancePagination} />}
         {filtered.length === 0 && <ProfileEmpty text="No sessions match the selected filters." />}
       </> : <ProfileEmpty text="No session history is available for this learner yet." />}
     </ReferencePanel>

@@ -6,12 +6,13 @@ repair data, or create records. Route identities are verified before reading.
 from datetime import datetime
 from html import escape
 from zoneinfo import ZoneInfo
+from collections import Counter
 import re
 
 from old_otjh.repository import query
 from old_otjh.service import ServiceError
 from .monthly_log_sources import decoded, number, row
-from .current_learning import current_records
+from .current_learning import current_records, merge_attempts, merge_submissions, project_current
 
 UK = ZoneInfo('Europe/London')
 
@@ -286,13 +287,12 @@ def recorded_course_items(courses, catalogue, records):
     return items, subjects, links
 
 
-def metrics(learner_id):
+def metrics_from_records(records, monthly_targets):
     """Count final activity records once, using accepted evidence only for hours.
 
     KSB points retain the shared activity/code definition; they are not a claim
     that the learner has achieved the entire programme's KSB framework.
     """
-    records = entries(learner_id)
     accepted = [item for item in records if item.get('accepted') is True]
     completed = [item for item in records if item.get('completed', item.get('accepted')) is True]
     def ratio(done, total):
@@ -306,7 +306,6 @@ def metrics(learner_id):
             counts[0] += item.get('accepted') is True
             counts[1] += 1
     actual = round(sum(recorded_seconds(item) for item in accepted) / 3600, 4)
-    monthly_targets = targets(learner_id)
     planned = round(sum(monthly_targets.values()), 4) if monthly_targets else None
     return {
         'migrated': True, 'aptem_planned_total': planned,
@@ -318,6 +317,128 @@ def metrics(learner_id):
                 'codes': [{'code': code, **ratio(*counts)} for code, counts in sorted(codes.items())]},
         '_ksb_evidence_sources': [],
     }
+
+
+def metrics(learner_id):
+    """Return the canonical Learner Dashboard metric contract for one learner."""
+    return metrics_from_records(entries(learner_id), targets(learner_id))
+
+
+def metrics_bulk(aptem_by_enrolment):
+    """Return the Learner Dashboard metric contract for many Aptem identities.
+
+    This is the batched equivalent of ``metrics``: it uses the same record
+    projection and the same calculator, while loading each source table once.
+    Callers provide ``{enrolment_id: aptem_id}``; canonical learners are
+    resolved only by the stable Aptem bridge and results retain enrolment keys.
+    """
+    aptem_by_enrolment = {
+        int(enrolment_id): int(str(aptem_id).strip())
+        for enrolment_id, aptem_id in (aptem_by_enrolment or {}).items()
+        if enrolment_id and str(aptem_id or '').strip().isdigit() and int(str(aptem_id).strip()) > 0
+    }
+    if not aptem_by_enrolment:
+        return {}
+    aptem_ids = sorted(set(aptem_by_enrolment.values()))
+    owners = query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.learner_type
+        FROM "Learner".learners l
+        WHERE l.aptem_id=ANY(%s)''', [aptem_ids])
+    counts = Counter(int(owner['aptem_id']) for owner in owners)
+    enrolment_by_aptem = {aptem_id: enrolment_id for enrolment_id, aptem_id in aptem_by_enrolment.items()}
+    owners = [owner for owner in owners if counts[int(owner['aptem_id'])] == 1]
+    if not owners:
+        return {}
+    canonical_ids = [owner['id'] for owner in owners]
+    # Keep each result set bounded: some long-running migrated learners have
+    # thousands of progress rows, and one giant caseload result can exceed the
+    # database statement timeout even though the SQL is a single bulk read.
+    # This remains batched (never one query per learner).
+    base = []
+    for offset in range(0, len(canonical_ids), 5):
+        batch = canonical_ids[offset:offset + 5]
+        base.extend(query('''SELECT p.learner_id,jsonb_build_object(
+                'id',p.id,'accepted',p.accepted,'kind',p.kind,
+                'component_link_source',p.component_link_source,'source_system',p.source_system,
+                'actual_seconds',p.actual_seconds,'submitted_at',p.submitted_at,
+                'component_ref',p.component_ref,'component_type',p.component_type,
+                'passed',p.passed,'quiz_ref',p.quiz_ref,'achieved_score',p.achieved_score,
+                'total_score',p.total_score,'reporting_started_at',p.reporting_started_at,
+                'reporting_ended_at',p.reporting_ended_at,'reporting_month',p.reporting_month,
+                'activity_status',p.activity_status,'source_payload',p.source_payload,
+                'claimed_seconds',p.claimed_seconds,'verified_seconds',p.verified_seconds,
+                'reported_time',p.reported_time,'expected_otjh',p.expected_otjh
+            ) AS payload
+            FROM "Learner".learner_progress_entries p
+            WHERE p.learner_id=ANY(%s) AND p.deleted_at IS NULL
+            ORDER BY p.learner_id,p.reporting_month,p.reporting_started_at NULLS LAST,p.id''', [batch]))
+    progress_ids = [decoded(record['payload'], {})['id'] for record in base]
+    ksb_rows = query('''SELECT progress_id,ksb_code FROM "Learner".learner_progress_ksbs
+        WHERE progress_id=ANY(%s) ORDER BY progress_id,position''', [progress_ids])
+    segment_rows = query('''SELECT progress_id,to_jsonb(s) AS payload
+        FROM "Learner".learner_activity_reporting_segments s
+        WHERE progress_id=ANY(%s) AND learner_id=ANY(%s)
+        ORDER BY progress_id,segment_order,id''', [progress_ids, canonical_ids])
+    source_rows = query('''SELECT s.canonical_progress_id AS progress_id,jsonb_build_object(
+            'source_id',s.id,'source_system',s.source_system,
+            'source_activity_id',s.source_activity_id,'source_course_ref',s.source_course_ref
+        ) AS payload
+        FROM "Learner".learner_activity_sources s
+        WHERE s.canonical_progress_id=ANY(%s) AND s.learner_id=ANY(%s) AND s.deleted_at IS NULL
+        ORDER BY s.canonical_progress_id,s.id''', [progress_ids, canonical_ids])
+    historical_rows = query('''SELECT link.progress_id,to_jsonb(h) AS payload
+        FROM "Learner".learner_progress_historical_components link
+        JOIN curriculum.historical_components h ON h.id=link.historical_component_ref
+          AND h.deleted_at IS NULL AND h.historical_only=true
+        WHERE link.progress_id=ANY(%s) ORDER BY link.progress_id,h.id''', [progress_ids])
+    related = {progress_id: {'ksbs': [], 'segments': [], 'sources': [], 'historical_components': []}
+               for progress_id in progress_ids}
+    for item in ksb_rows:
+        related[item['progress_id']]['ksbs'].append(item['ksb_code'])
+    for field, rows in (('segments', segment_rows), ('sources', source_rows),
+                        ('historical_components', historical_rows)):
+        for item in rows:
+            related[item['progress_id']][field].append(decoded(item['payload'], {}))
+    records_by_learner = {int(owner['id']): [] for owner in owners}
+    for record in base:
+        payload = decoded(record['payload'], {})
+        records_by_learner[int(record['learner_id'])].append({**payload, **related[payload['id']]})
+    submissions = query('''SELECT learner_id,id,component_ref,progress_entry_id,status,actual_time_hours,
+        submitted_at,activity_type,activity_title,module_title,ksb_codes,
+        full_submission->>'submissionOrigin' = 'imported_legacy' AS imported
+        FROM "Learner".learning_reflection_submissions
+        WHERE learner_id=ANY(%s) AND activity_type IN ('assignment','extra_activity')
+        ORDER BY learner_id,submitted_at NULLS FIRST,id''', [[str(value) for value in aptem_by_enrolment]])
+    submissions_by_enrolment = {}
+    for item in submissions:
+        submissions_by_enrolment.setdefault(str(item['learner_id']), []).append(item)
+    attempts_by_enrolment = {}
+    relation = query('SELECT to_regclass(%s) AS name', ['"Learner".subject_activity_attempts'])
+    if relation and relation[0].get('name'):
+        attempts = query('''SELECT enrolment_id,group_id,activity_id,bool_or(completed) AS completed,
+            max(score_percent) AS best_percent,max(submitted_at) AS submitted_at,
+            max(definition->>'title') AS title
+            FROM "Learner".subject_activity_attempts
+            WHERE enrolment_id=ANY(%s) AND submitted_at IS NOT NULL
+            GROUP BY enrolment_id,group_id,activity_id''', [list(aptem_by_enrolment)])
+        for item in attempts:
+            attempts_by_enrolment.setdefault(int(item['enrolment_id']), []).append(item)
+    target_rows = query('''SELECT learner_id,report_month,target_hours
+        FROM "Learner".learner_monthly_targets WHERE learner_id=ANY(%s)''', [canonical_ids])
+    targets_by_learner = {}
+    for item in target_rows:
+        if item.get('target_hours') is not None:
+            targets_by_learner.setdefault(int(item['learner_id']), {})[item['report_month']] = float(item['target_hours'])
+    result = {}
+    for owner in owners:
+        enrolment_id = enrolment_by_aptem[int(owner['aptem_id'])]
+        records = records_by_learner[int(owner['id'])]
+        learner_submissions = submissions_by_enrolment.get(str(enrolment_id), [])
+        markings = {str(item['component_ref']): item for item in learner_submissions if item.get('component_ref')}
+        records = merge_submissions(project_current(records, markings), learner_submissions)
+        if owner.get('aptem_id'):
+            records = merge_attempts(records, attempts_by_enrolment.get(enrolment_id, []))
+        result[enrolment_id] = metrics_from_records(records, targets_by_learner.get(int(owner['id']), {}))
+    return result
 
 
 def overlay_subjects(payload, records, summarize):

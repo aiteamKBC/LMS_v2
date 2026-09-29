@@ -95,6 +95,49 @@
 .noResults p { color: var(--log-muted); font-size: 13px; }
 .noResults button { min-height: 38px; padding: 8px 12px; border-radius: 7px; background: var(--log-soft); color: var(--log-purple); font-size: 12px; font-weight: 600; }
 .skeletonRow { display: flex; align-items: center; gap: 18px; padding: 18px 20px; border-top: 1px solid var(--log-border); }
+
+/* Match the learner Attendance palette, including the index while it loads.
+   The coach also uses this module, so keep these overrides inside its learner shell. */
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .theme {
+  --log-ink: #f6f8fb;
+  --log-muted: #b6c4d5;
+  --log-purple: #bfa3ee;
+  --log-soft: #302748;
+  --log-border: #3b526c;
+  --record-positive-bg: #302748;
+  --record-positive-ink: #e2d2fa;
+  --record-positive-border: #5c4a79;
+  color: var(--log-ink);
+}
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .theme :is(.indexHeader, .learnerIndexHeader) {
+  background: #182d48;
+  border: 1px solid var(--log-border);
+}
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .theme :is(.index .identity h1, .completion strong, .index .yearHeading h2, .index .monthIdentity h3) { color: var(--log-ink); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .theme :is(.index .eyebrow, .completionIcon, .hours dd > :first-child) { color: var(--log-purple); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .theme :is(.learnerMeta, .completionDetails > div:first-child, .completion p, .index .yearHeading > span, .monthIdentity p, .hours dt, .noResults p) { color: var(--log-muted); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .theme :is(.yearGroup, .filters, .yearFilter, .noResults, .futureMonth, .completion) {
+  background: #182d48;
+  border-color: var(--log-border);
+  box-shadow: none;
+}
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .theme .yearHeading { background: #24405d; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .theme :is(.month + .month, .skeletonRow, .pagination) { border-color: var(--log-border); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .theme .month:is(:hover, :focus-within) { background: #24405d; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .theme :is(.monthIcon, .completionIcon, .status, .filters button > span, .noResults button, .futureSecondaryAction) {
+  background: #24405d;
+  border-color: var(--log-border);
+  color: #e2d2fa;
+}
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .theme :is(.filters button, .yearFilter select, .futureSecondaryAction) { color: var(--log-ink); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .theme .filters button[aria-pressed="true"] { background: #54377d; color: #fff; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .theme .filters button[aria-pressed="true"] > span { background: #e8def7; color: #362055; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .theme .openMonth { border-color: #6d5793; color: var(--log-purple); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .theme .openMonth:hover { background: #302748; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .theme .hours dd { color: var(--log-ink); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .theme .progress { background: #2b4562; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .theme .scheduleNote { background: #1e344d; border-color: var(--log-border); color: var(--log-muted); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .theme .futureMonth { background-image: none; }
 .savedMessage { border: 1px solid var(--record-positive-border); border-radius: 10px; padding: 14px 16px; background: var(--record-positive-bg); color: var(--record-positive-ink); font-size: 13px; }
 .futureMonth { max-width: 660px; margin: clamp(40px, 10vh, 110px) auto 0; border: 1px solid #ded6eb; border-radius: 18px; background: linear-gradient(145deg, #fff 0%, #faf8fd 100%); box-shadow: 0 12px 32px rgb(49 30 79 / 8%); }
 .futureMonth :global(.ui-empty-state) { padding-block: 44px; }

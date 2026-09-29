@@ -146,3 +146,48 @@
   .moduleLabel { gap: 6px; }
   .moduleLabel > :first-child { font-size: 11px; }
 }
+
+:global([data-theme='dark'] :is(.learner-dashboard, .dashboard-theme[data-workspace-role='learner'])) .root {
+  --chart-ink: #f6f8fb;
+  --chart-purple: #bfa3ee;
+}
+
+:global([data-theme='dark'] :is(.learner-dashboard, .dashboard-theme[data-workspace-role='learner'])) :is(.chartHeader, .moduleHeading) {
+  background: #4f2d7f;
+}
+
+:global([data-theme='dark'] :is(.learner-dashboard, .dashboard-theme[data-workspace-role='learner'])) .selectedMonth {
+  background: #302748;
+  color: #f6f8fb;
+}
+
+:global([data-theme='dark'] :is(.learner-dashboard, .dashboard-theme[data-workspace-role='learner'])) .selectedMonth > span {
+  color: #b6c4d5;
+}
+
+:global([data-theme='dark'] :is(.learner-dashboard, .dashboard-theme[data-workspace-role='learner'])) :is(
+  .row, .monthCell, .reviewRow
+) {
+  border-color: #3b526c;
+}
+
+:global([data-theme='dark'] :is(.learner-dashboard, .dashboard-theme[data-workspace-role='learner'])) :is(
+  .selectedCell, .selectedRow .moduleLabel, .row:hover .moduleLabel,
+  .row:hover .track, .reviewRow, .reviewLabel, .notice,
+  .status, .viewToggle button[aria-pressed='true']
+) {
+  @apply bg-slate-800 text-slate-100;
+}
+
+:global([data-theme='dark'] :is(.learner-dashboard, .dashboard-theme[data-workspace-role='learner'])) :is(.inProgress, .completed, .notStarted) {
+  --bar-color: #bfa3ee;
+  --bar-bg: #302748;
+}
+
+:global([data-theme='dark'] :is(.learner-dashboard, .dashboard-theme[data-workspace-role='learner'])) .reviewMarker {
+  @apply border-slate-600 bg-slate-800 text-purple-200;
+}
+
+:global([data-theme='dark'] :is(.learner-dashboard, .dashboard-theme[data-workspace-role='learner'])) .inspectorMeter {
+  background: #3b526c;
+}
