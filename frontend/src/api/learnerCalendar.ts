@@ -157,7 +157,7 @@ export function learnerMeetingArtifactContentUrl(kind: LearnerKind, learnerId: s
   return options.preview ? `${base}?preview=1` : base;
 }
 
-export async function signLearnerProgressReview(kind: LearnerKind, learnerId: string, eventKey: string, input: { name: string; signature: string }): Promise<{ event: LearnerCalendarEvent; monthlyLogSync?: { status: string; month?: string; message?: string } | null }> {
+export async function signLearnerProgressReview(kind: LearnerKind, learnerId: string, eventKey: string, input: { name: string; signature: string; applyMonthlyLogSignature?: boolean }): Promise<{ event: LearnerCalendarEvent; monthlyLogSync?: { status: string; month?: string; message?: string } | null }> {
   const response = await fetch(`${BASE}/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/sign/`, {
     method: 'POST',
     credentials: 'include',

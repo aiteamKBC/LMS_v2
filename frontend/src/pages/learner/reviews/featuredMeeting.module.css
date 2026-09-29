@@ -32,13 +32,13 @@
 .loading { display: grid; gap: 1.25rem; }
 .loading div { height: 1.5rem; border-radius: .5rem; background: #eef3f9; }
 .loading div:nth-child(2) { height: 4rem; }
-:global(.dark) .card { background: #18283d; border-color: #34465d; }
-:global(.dark) .card h2, :global(.dark) .details dd, :global(.dark) .join, :global(.dark) .view { color: #e1eaf5; }
-:global(.dark) .details, :global(.dark) .join, :global(.dark) .view { border-color: #34465d; }
-:global(.dark) .subtitle, :global(.dark) .eyebrow, :global(.dark) .help, :global(.dark) .details dt, :global(.dark) .empty p { color: #a4b7cd; }
-:global(.dark) .icon, :global(.dark) .loading div { color: #d9e6f6; background: #263b55; }
-:global(.dark) .join:hover, :global(.dark) .view:hover { background: #263b55; }
-:global(.dark) .report { color: #fda4af; background: #472d3d; border-color: #7e4556; }
-:global(.dark) .syncWarning { color: #f5d79e; background: #3c3223; border-color: #715831; }
+:global(:is(.dark, [data-theme="dark"])) .card { background: #18283d; border-color: #34465d; }
+:global(:is(.dark, [data-theme="dark"])) .card h2, :global(:is(.dark, [data-theme="dark"])) .details dd, :global(:is(.dark, [data-theme="dark"])) .join, :global(:is(.dark, [data-theme="dark"])) .view { color: #e1eaf5; }
+:global(:is(.dark, [data-theme="dark"])) .details, :global(:is(.dark, [data-theme="dark"])) .join, :global(:is(.dark, [data-theme="dark"])) .view { border-color: #34465d; }
+:global(:is(.dark, [data-theme="dark"])) .subtitle, :global(:is(.dark, [data-theme="dark"])) .eyebrow, :global(:is(.dark, [data-theme="dark"])) .help, :global(:is(.dark, [data-theme="dark"])) .details dt, :global(:is(.dark, [data-theme="dark"])) .empty p { color: #a4b7cd; }
+:global(:is(.dark, [data-theme="dark"])) .icon, :global(:is(.dark, [data-theme="dark"])) .loading div { color: #d9e6f6; background: #263b55; }
+:global(:is(.dark, [data-theme="dark"])) .join:hover, :global(:is(.dark, [data-theme="dark"])) .view:hover { background: #263b55; }
+:global(:is(.dark, [data-theme="dark"])) .report { color: #fda4af; background: #472d3d; border-color: #7e4556; }
+:global(:is(.dark, [data-theme="dark"])) .syncWarning { color: #f5d79e; background: #3c3223; border-color: #715831; }
 @media (max-width: 1000px) { .footer { align-items: flex-start; flex-direction: column; } }
 @media (max-width: 600px) { .heading { flex-wrap: wrap; } .details { grid-template-columns: repeat(2, minmax(0, 1fr)); } .actions { width: 100%; } .actions > * { flex: 1 1 auto; } }

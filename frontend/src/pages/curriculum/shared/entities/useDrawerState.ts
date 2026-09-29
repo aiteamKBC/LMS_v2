@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { fetchCurriculumRevisions, recordConflict, type CurriculumRecordKind } from '@/lib/curriculumApi';
 import { sameFormValues } from './model';
 
 /**
@@ -191,4 +192,146 @@ export function useDrawerState<T>(initial: T) {
     close: () => { if (!saving) setOpen(false); },
     patch: (patchValue: Partial<T>) => setForm(previous => ({ ...previous, ...patchValue })),
   };
+}
+
+/**
+ * How many times a save will rebase and try again before it stops and says so.
+ *
+ * Three, the same as the Module Builder's. A busy record is the normal reason
+ * to be here, so one attempt is too few; an unbounded chain is a screen that
+ * never finishes saving and never explains why.
+ */
+export const RECORD_REBASE_LIMIT = 3;
+
+export interface RecordGuard<TRecord> {
+  /**
+   * The stored record a refusal handed back, for the seeding effect to merge
+   * in place of the one the drawer was opened with. Null the rest of the time.
+   */
+  stored: TRecord | null;
+  /** Changes when a refusal has been taken, to drive the retry. */
+  rebase: number;
+  /**
+   * Run a save under the guard.
+   *
+   * `run` is given the token to send, or '' when this record has none -- a
+   * record whose revision could not be read saves unguarded, exactly as it did
+   * before any of this existed, rather than being blocked.
+   *
+   * Answers `{ saved: true }` when it landed. `{ saved: false }` means somebody
+   * else got there first: the stored record is now on `stored` for the drawer
+   * to merge, and the retry follows on the next render. Anything that is not a
+   * concurrency refusal is re-thrown for the drawer's own error handling.
+   */
+  save: <T extends { revision?: string }>(
+    run: (expectedRevision: string) => Promise<T>,
+  ) => Promise<{ saved: boolean; result?: T }>;
+  /** True once a save has given up after RECORD_REBASE_LIMIT rebases. */
+  exhausted: boolean;
+}
+
+/**
+ * Server-enforced concurrency for one record in a drawer.
+ *
+ * The drawer reads a token when it opens, sends it with every save, and is
+ * refused rather than allowed to overwrite somebody who saved first. On a
+ * refusal the stored record arrives with it, the drawer's existing field merge
+ * folds this reader's outstanding changes into it, and the save runs again
+ * against the new token.
+ *
+ * Nothing here depends on the live-update poll. Polling still decides how soon
+ * a colleague's change *appears*; it no longer decides whether it survives.
+ */
+export function useRecordGuard<TRecord>(
+  kind: CurriculumRecordKind,
+  recordId: string | undefined,
+  open: boolean,
+): RecordGuard<TRecord> {
+  const revisionRef = useRef('');
+  const attemptsRef = useRef(0);
+  const [stored, setStored] = useState<TRecord | null>(null);
+  const [rebase, setRebase] = useState(0);
+  const [exhausted, setExhausted] = useState(false);
+
+  useEffect(() => {
+    revisionRef.current = '';
+    attemptsRef.current = 0;
+    setStored(null);
+    setExhausted(false);
+    if (!open || !recordId) return undefined;
+    const controller = new AbortController();
+    // Wrapped rather than chained off the call: a token that cannot be read is
+    // never a reason to stop somebody saving, and that has to hold however the
+    // read fails -- including before it returns a promise at all. The drawer
+    // then falls back to the unguarded write it has always done, and to the
+    // poll-and-merge that was its only protection before any of this.
+    (async () => {
+      try {
+        const revisions = await fetchCurriculumRevisions({ [kind]: [recordId] }, controller.signal);
+        revisionRef.current = revisions[kind]?.[recordId] || '';
+      } catch {
+        revisionRef.current = '';
+      }
+    })();
+    return () => controller.abort();
+  }, [kind, open, recordId]);
+
+  const save = useCallback(async <T extends { revision?: string }>(
+    run: (expectedRevision: string) => Promise<T>,
+  ): Promise<{ saved: boolean; result?: T }> => {
+    try {
+      const result = await run(revisionRef.current);
+      revisionRef.current = result?.revision || '';
+      attemptsRef.current = 0;
+      setStored(null);
+      return { saved: true, result };
+    } catch (error) {
+      const conflict = recordConflict<TRecord>(error, kind);
+      if (!conflict) throw error;
+      // Move onto the version that actually exists, whether or not a retry
+      // follows: the next save must be measured against the record as stored.
+      revisionRef.current = conflict.currentRevision;
+      if (!conflict.record || attemptsRef.current >= RECORD_REBASE_LIMIT) {
+        // Nothing to rebase onto, or this record is being written faster than
+        // one person can answer. The edits are still in the form either way.
+        attemptsRef.current = 0;
+        setExhausted(true);
+        throw error;
+      }
+      attemptsRef.current += 1;
+      setStored(conflict.record);
+      setRebase(count => count + 1);
+      return { saved: false };
+    }
+  }, [kind]);
+
+  return { stored, rebase, save, exhausted };
+}
+
+/**
+ * Run `save` again once a refusal has been merged into the form.
+ *
+ * A ref rather than the function itself, because the retry has to send what the
+ * merge produced -- and that only exists after the render the merge caused.
+ * Declare this after the drawer's seeding effect so it runs after it in the
+ * same commit.
+ */
+export function useRecordRebaseRetry(
+  rebase: number,
+  save: { current: (() => void | Promise<unknown>) | undefined },
+) {
+  useEffect(() => {
+    if (!rebase) return undefined;
+    // One turn later, and that is the whole point. The seeding effect merges by
+    // calling the form's setters, so at the moment this runs the merged values
+    // are scheduled but not yet rendered -- and `save.current` is still the
+    // function that was refused, closed over the values that lost. Waiting for
+    // that render is what makes the retry send the merge instead of repeating
+    // the save the server has already turned down.
+    const turn = setTimeout(() => { void save.current?.(); }, 0);
+    return () => clearTimeout(turn);
+    // `save` is a ref, deliberately not a dependency: this runs when a rebase
+    // lands, never when the save function happens to be rebuilt.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rebase]);
 }

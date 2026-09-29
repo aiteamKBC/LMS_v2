@@ -7,6 +7,8 @@ export type CurriculumAlertOptions = {
   icon?: SweetAlertIcon;
   timer?: number;
   confirmButtonText?: string;
+  denyButtonText?: string;
+  onDeny?: () => void | Promise<void>;
 };
 
 type CurriculumLoadingOptions = {
@@ -56,6 +58,8 @@ export function showCurriculumAlert({
   icon = 'success',
   timer,
   confirmButtonText = 'OK',
+  denyButtonText,
+  onDeny,
 }: CurriculumAlertOptions) {
   return Swal.fire({
     title,
@@ -63,6 +67,11 @@ export function showCurriculumAlert({
     icon,
     width: 512,
     showConfirmButton: !timer,
+    showDenyButton: Boolean(denyButtonText),
+    showLoaderOnDeny: Boolean(onDeny),
+    denyButtonText,
+    allowOutsideClick: () => !Swal.isLoading(),
+    allowEscapeKey: () => !Swal.isLoading(),
     confirmButtonText,
     timer,
     timerProgressBar: Boolean(timer),
@@ -73,7 +82,18 @@ export function showCurriculumAlert({
       htmlContainer: 'kbc-standard-swal-text',
       actions: 'kbc-standard-swal-actions',
       confirmButton: 'kbc-standard-swal-confirm',
+      denyButton: 'kbc-standard-swal-deny',
       timerProgressBar: 'kbc-standard-swal-progress',
+      loader: 'kbc-standard-swal-loader',
+    },
+    preDeny: async () => {
+      try {
+        await onDeny?.();
+        return true;
+      } catch (err) {
+        Swal.showValidationMessage(err instanceof Error ? err.message : 'Unable to download the file.');
+        return false;
+      }
     },
   });
 }

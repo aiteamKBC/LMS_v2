@@ -86,6 +86,18 @@
 .secondaryLiveCard { border-color: color-mix(in srgb, var(--kbc-learner-secondary, #f5c94f) 48%, transparent); background: color-mix(in srgb, var(--kbc-learner-secondary-soft, #fff8d8) 72%, white); }
 .secondaryLiveIcon { background: var(--kbc-learner-secondary-soft, #fff8d8); color: var(--kbc-primary-secondary, #3f2466); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--kbc-learner-secondary, #f5c94f) 38%, transparent); }
 .secondaryLiveBadge { border-color: color-mix(in srgb, var(--kbc-learner-secondary, #f5c94f) 55%, transparent) !important; background: var(--kbc-learner-secondary-soft, #fff8d8) !important; color: var(--kbc-primary-secondary, #3f2466) !important; }
+.weekSessionStatus { --progress-color: #94a3b8; --progress-track: rgb(148 163 184 / 0.3); display: grid; place-items: center; width: 1.5rem; height: 1.5rem; border-radius: 50%; }
+.weekSessionStatus > svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
+.weekSessionStatus > svg circle:first-child { stroke: var(--progress-track); }
+.weekSessionStatus > svg circle:last-child { stroke: var(--progress-color); }
+.weekSessionStatus > span { width: 0.6rem; height: 0.6rem; border-radius: 50%; background: #94a3b8; }
+.weekSessionStatus[data-state='attended'] { --progress-color: #16a34a; --progress-track: rgb(22 163 74 / 0.28); }
+.weekSessionStatus[data-state='attended'] > span { background: #6eefa0; }
+.weekSessionStatus[data-state='missed'] { --progress-color: #dc2626; --progress-track: rgb(220 38 38 / 0.28); }
+.weekSessionStatus[data-state='missed'] > span { background: #ef4444; }
+.weekSessionStatus[data-state='live'], .weekSessionStatus[data-state='current'] { --progress-color: #5e378d; --progress-track: rgb(94 55 141 / 0.28); }
+.weekSessionStatus[data-state='live'] > span, .weekSessionStatus[data-state='current'] > span { background: #8b5cf6; }
+.weekSessionStatus[data-state='reading'] { border: 2px solid #d97706; color: #92400e; }
 .root .cards > section { display: flex; flex-direction: column; grid-column: auto; min-width: 0; margin-top: 0; padding: clamp(1.125rem, 1.65cqi, 1.75rem); border: 1px solid var(--kbc-border); border-radius: 1.125rem; background: var(--kbc-surface); box-shadow: 0 2px 8px rgb(79 45 127 / .04); }
 .root .cards > section.overview { container: moduleOverview / inline-size; grid-column: auto; --learner-purple: var(--kbc-learner-primary, #4f2d7f); --learner-accent-soft: #f0eaf8; --learner-soft: #f4f7fa; --purple: var(--kbc-learner-primary, #4f2d7f); }
 .cards h2 { font-size: .9375rem; line-height: 1.4; }
@@ -225,4 +237,87 @@
   .compactRow > :nth-child(3), .compactRow > :nth-child(4), .assignmentRow > :nth-child(5) { grid-column: 2 / -1; }
   .compactRow > :last-child { grid-column: 3; grid-row: 1 / 3; }
   .assignmentRow > :last-child { grid-row: 1 / 2; }
+}
+
+/* Dashboard-only dark treatment. Other training-plan screens keep their own
+   palette, and the light declarations above remain untouched. */
+:global([data-theme='dark'] .learner-dashboard) .engagement,
+:global([data-theme='dark'] .learner-dashboard) .root .cards > section.overview {
+  --learner-purple: #bfa3ee;
+  --learner-accent-soft: #302748;
+  --learner-soft: #1e344d;
+  --purple: #bfa3ee;
+}
+
+:global([data-theme='dark'] .learner-dashboard) .secondaryLiveCard {
+  background: #413923;
+}
+
+:global([data-theme='dark'] .learner-dashboard) .monthBlockHeader {
+  @apply bg-slate-800;
+}
+
+:global([data-theme='dark'] .learner-dashboard) :is(
+  .focusHeading > p, .title h2, .monthBlockHeader h3, .progressGrid strong,
+  .compactRow strong, .compactRow > span:not(.rowIcon):not(.state),
+  .compactRow b, .monthFooterLink
+) {
+  color: #d7c4f4;
+}
+
+:global([data-theme='dark'] .learner-dashboard) :is(.attendAction, .lectureAttendAction) {
+  background: #5e378d;
+  color: #fff;
+}
+
+:global([data-theme='dark'] .learner-dashboard) .ksbMini span:nth-child(2n) {
+  color: var(--learner-purple);
+}
+
+/* The full learner training plan embeds its own light tokens. Apply the same
+   dark surfaces used in the dashboard when the component is opened elsewhere. */
+:global([data-theme='dark'] .dashboard-theme[data-workspace-role='learner']) .embeddedLearnerTheme {
+  --kbc-surface: #182d48;
+  --kbc-border: #3b526c;
+  --kbc-text: #f6f8fb;
+  --kbc-muted: #b6c4d5;
+  --learner-purple: #bfa3ee;
+  --learner-soft: #1e344d;
+  --learner-accent-soft: #302748;
+  --learner-success-soft: #163c31;
+  --learner-danger-soft: #462a32;
+  --learner-warning-soft: #413923;
+  --background-50: 0.294102 0.056505 255.375;
+  --background-100: 0.319363 0.053029 252.608;
+  --background-200: 0.363560 0.060944 250.610;
+  --background-300: 0.431038 0.051799 252.048;
+  --foreground-700: 0.921505 0.014966 251.163;
+  --foreground-800: 0.956540 0.007965 253.854;
+  --foreground-900: 0.978460 0.004531 258.324;
+  --foreground-950: 1 0 0;
+}
+
+:global([data-theme='dark'] .dashboard-theme[data-workspace-role='learner']) .engagement,
+:global([data-theme='dark'] .dashboard-theme[data-workspace-role='learner']) .root .cards > section.overview {
+  --learner-purple: #bfa3ee;
+  --learner-accent-soft: #302748;
+  --learner-soft: #1e344d;
+  --purple: #bfa3ee;
+}
+
+:global([data-theme='dark'] .dashboard-theme[data-workspace-role='learner']) .secondaryLiveCard { background: #413923; }
+:global([data-theme='dark'] .dashboard-theme[data-workspace-role='learner']) .monthBlockHeader { background: #243e5a; }
+:global([data-theme='dark'] .dashboard-theme[data-workspace-role='learner']) :is(
+  .focusHeading > p, .title h2, .monthBlockHeader h3, .progressGrid strong,
+  .compactRow strong, .compactRow > span:not(.rowIcon):not(.state),
+  .compactRow b, .monthFooterLink, .ksbMini span:nth-child(2n)
+) { color: #d7c4f4; }
+
+:global([data-theme='dark'] .dashboard-theme[data-workspace-role='learner']) :is(.attendAction, .lectureAttendAction, .lectureAttendAction:hover) {
+  background: #5e378d;
+  color: #fff;
+}
+
+:global([data-theme='dark'] .dashboard-theme[data-workspace-role='learner']) :is(.rowAction, .root .overviewGroup h3, .studyHoursProgress > span) {
+  color: #d7c4f4;
 }

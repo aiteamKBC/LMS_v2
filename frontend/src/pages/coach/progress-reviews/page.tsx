@@ -18,6 +18,7 @@ import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { cn } from '@/lib/cn';
 import { statusTone } from '@/lib/statusTone';
 import { roleNavMap } from '@/mocks/navigation';
+import { coachSessionKey, readCoachSessionCache, writeCoachSessionCache } from '@/features/coach/shared/coachSessionCache';
 import type { ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
 import { LearnerAvatar } from '../shared/LearnerIdentity';
 import { ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTimeInput } from '../shared/ScheduleControls';
@@ -975,9 +976,12 @@ export default function CoachProgressReviews() {
   const [currentPage, setCurrentPage] = useState(() => pageFromQuery(searchParams.get('page')));
   const [searchTerm, setSearchTerm] = useState(() => searchParams.get('q') || '');
   const [selectedMonth, setSelectedMonth] = useState(() => monthFromQuery(searchParams.get('month')));
-  const [events, setEvents] = useState<CoachCalendarEvent[]>([]);
-  const [ownerName, setOwnerName] = useState('Coach');
-  const [loading, setLoading] = useState(true);
+  const [allMonths, setAllMonths] = useState(() => searchParams.get('months') === 'all');
+  const cacheKey = coachSessionKey('progress-reviews', coach.email, 'all-months');
+  const initialCache = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string }>(cacheKey);
+  const [events, setEvents] = useState<CoachCalendarEvent[]>(() => initialCache?.events || []);
+  const [ownerName, setOwnerName] = useState(() => initialCache?.ownerName || 'Coach');
+  const [loading, setLoading] = useState(() => !initialCache);
   const [error, setError] = useState<string | null>(null);
   const [scheduleForm, setScheduleForm] = useState<ScheduleFormState>(EMPTY_SCHEDULE_FORM);
   const [scheduleModalEvent, setScheduleModalEvent] = useState<CoachCalendarEvent | null>(null);
@@ -992,15 +996,20 @@ export default function CoachProgressReviews() {
 
   useEffect(() => {
     const params = new URLSearchParams(searchParams);
-    if (monthKey(selectedMonth) === monthKey(startOfMonth())) {
+    if (allMonths) {
       params.delete('month');
+      params.set('months', 'all');
+    } else if (monthKey(selectedMonth) === monthKey(startOfMonth())) {
+      params.delete('month');
+      params.delete('months');
     } else {
       params.set('month', monthKey(selectedMonth));
+      params.delete('months');
     }
     setSearchParams(params, { replace: true });
     // Only the selected month belongs to this sync. Other page state is local.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedMonth, setSearchParams]);
+  }, [allMonths, selectedMonth, setSearchParams]);
 
   useEffect(() => {
     if (!coach.isInitialized) return;
@@ -1012,17 +1021,29 @@ export default function CoachProgressReviews() {
       return;
     }
     const controller = new AbortController();
+    const cached = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string }>(cacheKey);
 
     const loadReviews = async () => {
-      setLoading(true);
+      if (cached) {
+        setEvents(cached.events);
+        setOwnerName(cached.ownerName);
+        setLoading(false);
+      } else {
+        setLoading(true);
+      }
       setError(null);
       try {
-        const data = await fetchCoachCalendarEvents(controller.signal);
+        const data = await fetchCoachCalendarEvents(controller.signal, {
+          includeLiveSessions: false,
+          includeSchedulerQueues: false,
+        });
         const reviews = sortEvents(normalizeResolvedReviews((data.events || []).filter(event => event.source === 'progress-review')));
+        writeCoachSessionCache(cacheKey, { events: reviews, ownerName: data.owner?.name || coach.name });
         setEvents(reviews);
         setOwnerName(data.owner?.name || coach.name);
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return;
+        if (cached) return;
         setEvents([]);
         setError(err instanceof Error ? err.message : 'Unable to load progress reviews.');
       } finally {
@@ -1032,12 +1053,14 @@ export default function CoachProgressReviews() {
 
     loadReviews();
     return () => controller.abort();
-  }, [coach.email, coach.isInitialized, coach.name]);
+  }, [cacheKey, coach.email, coach.isInitialized, coach.name]);
 
-  const selectedMonthLabel = monthLabel(selectedMonth);
-  const selectedMonthIsCurrent = monthKey(selectedMonth) === monthKey(startOfMonth());
-  const monthTabDescription = `Progress reviews due or scheduled in ${selectedMonthLabel}.`;
-  const selectedMonthEvents = events.filter(event => isEventInMonth(event, selectedMonth));
+  const selectedMonthLabel = allMonths ? 'All months' : monthLabel(selectedMonth);
+  const selectedMonthIsCurrent = !allMonths && monthKey(selectedMonth) === monthKey(startOfMonth());
+  const monthTabDescription = allMonths
+    ? 'Past and upcoming progress reviews across all months.'
+    : `Progress reviews due or scheduled in ${selectedMonthLabel}.`;
+  const selectedMonthEvents = allMonths ? events : events.filter(event => isEventInMonth(event, selectedMonth));
   const scheduledEvents = selectedMonthEvents.filter(event => isScheduledEvent(event));
   const inProgressEvents = selectedMonthEvents.filter(event => isInProgressEvent(event));
   const awaitingSignatureEvents = selectedMonthEvents.filter(event => isAwaitingSignatureEvent(event));
@@ -1058,9 +1081,14 @@ export default function CoachProgressReviews() {
                     ? selectedMonthEvents
                     : [];
   const normalizedSearchTerm = searchTerm.trim();
-  const filteredData = normalizedSearchTerm
+  const filteredData = (normalizedSearchTerm
     ? data.filter(review => matchesReviewSearch(review, normalizedSearchTerm))
-    : data;
+    : data
+  ).slice().sort((left, right) => {
+    const leftDate = parseLocalDate(eventDisplayDate(left))?.getTime() ?? 0;
+    const rightDate = parseLocalDate(eventDisplayDate(right))?.getTime() ?? 0;
+    return rightDate - leftDate || eventIdentity(left).localeCompare(eventIdentity(right));
+  });
   const pageCount = Math.ceil(filteredData.length / REVIEWS_PER_PAGE);
   const activePage = Math.min(currentPage, Math.max(pageCount, 1));
   const paginatedReviews = filteredData.slice(
@@ -1107,7 +1135,14 @@ export default function CoachProgressReviews() {
   };
 
   const changeMonth = (nextMonth: Date) => {
+    setAllMonths(false);
     setSelectedMonth(startOfMonth(nextMonth));
+    setTab('all');
+    setCurrentPage(1);
+  };
+
+  const showAllMonths = () => {
+    setAllMonths(true);
     setTab('all');
     setCurrentPage(1);
   };
@@ -1157,7 +1192,8 @@ export default function CoachProgressReviews() {
     const query = new URLSearchParams();
     if (tab !== 'all') query.set('filter', tab);
     if (searchTerm.trim()) query.set('q', searchTerm.trim());
-    if (!selectedMonthIsCurrent) query.set('month', monthKey(selectedMonth));
+    if (allMonths) query.set('months', 'all');
+    else if (!selectedMonthIsCurrent) query.set('month', monthKey(selectedMonth));
     if (activePage > 1) query.set('page', String(activePage));
     const queryString = query.toString();
     return `/coach/progress-reviews${queryString ? `?${queryString}` : ''}`;
@@ -1300,6 +1336,7 @@ export default function CoachProgressReviews() {
                   <span className="min-w-36 text-center text-[14px] font-bold text-primary-900">{selectedMonthLabel}</span>
                   <button type="button" onClick={() => changeMonth(addMonths(selectedMonth, 1))} className="flex h-9 w-9 items-center justify-center rounded-lg border border-primary-100 bg-white text-primary-700 shadow-sm transition hover:bg-primary-50" aria-label="Next month"><AppIcon className="ri-arrow-right-s-line text-lg" /></button>
                 </div>
+                <button type="button" onClick={showAllMonths} aria-pressed={allMonths} className={cn('h-9 rounded-lg border px-3 text-[12px] font-semibold transition', allMonths ? 'border-primary-600 bg-primary-600 text-white' : 'border-primary-200 bg-primary-50 text-primary-700 hover:bg-primary-100')}>All months</button>
                 {!selectedMonthIsCurrent ? <button type="button" onClick={() => changeMonth(startOfMonth())} className="h-9 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-semibold text-primary-700 transition hover:bg-primary-100">Today</button> : null}
               </div>
               <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center xl:justify-end">

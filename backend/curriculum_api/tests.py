@@ -643,6 +643,7 @@ class CurriculumTeamsMeetingTests(TestCase):
                 'organizerEmail': 'tutor@example.com',
                 'attendees': ['student1@example.com', 'student2@example.com'],
                 'presenters': ['presenter@example.com'],
+                'coOrganizers': ['co-organizer@example.com'],
                 'localStartDateTime': '2026-07-30T15:30',
                 'startDateTimeUtc': '2026-07-30T12:30:00.000Z',
                 'durationMinutes': 60,
@@ -690,7 +691,7 @@ class CurriculumTeamsMeetingTests(TestCase):
         self.assertEqual(create_call.args[:2], ('POST', 'users/tutor%40example.com/events'))
         event_payload = create_call.kwargs['payload']
         self.assertTrue(event_payload['isOnlineMeeting'])
-        self.assertEqual(len(event_payload['attendees']), 3)
+        self.assertEqual(len(event_payload['attendees']), 4)
         self.assertEqual(event_payload['recurrence']['range']['numberOfOccurrences'], 6)
         meeting_patch = next(
             call for call in graph_request.call_args_list
@@ -722,6 +723,11 @@ class CurriculumTeamsMeetingTests(TestCase):
         # way every production reader does rather than asserting one vendor's
         # physical storage encoding.
         self.assertEqual(views.as_json_value(live_session['presenters'], []), ['presenter@example.com'])
+        self.assertEqual(views.as_json_value(live_session['co_organizers'], []), ['co-organizer@example.com'])
+        self.assertEqual(
+            views.as_json_value(live_session['attendees'], []),
+            ['student1@example.com', 'student2@example.com'],
+        )
         occurrences = views.authoring_fetch_all(
             views.LIVE_SESSION_OCCURRENCES_TABLE,
             'live_session_id = %s',
@@ -3439,6 +3445,38 @@ class CurriculumPayloadPerformanceTests(SimpleTestCase):
         """The endpoint filters after projecting, so the filter keys must survive."""
         for field in ('programmeId', 'cohortId', 'groupId', 'status'):
             self.assertIn(field, views.COMPACT_MODULE_LIST_FIELDS)
+
+    def test_operational_payload_drops_archived_authoring_module_from_delivery_list(self):
+        """A soft-archived authoring row must not leak through compact delivery rows."""
+        rows = {
+            'training': [],
+            'modules': [],
+            'authoring_modules': [
+                {'module_catalogue_id': 'MOD-ARCHIVED', 'status': 'archived'},
+                {'module_catalogue_id': 'MOD-LIVE', 'status': 'draft'},
+            ],
+            'ksb_profiles': [],
+            'program_configs': [],
+            'holidays': [],
+            'tutors': [],
+            'coaches': [],
+            'tutor_modules': [],
+        }
+        delivery_rows = [
+            {'id': 'MOD-ARCHIVED', 'moduleCatalogueId': 'MOD-ARCHIVED', 'catalogueId': 'MOD-ARCHIVED'},
+            {'id': 'MOD-LIVE', 'moduleCatalogueId': 'MOD-LIVE', 'catalogueId': 'MOD-LIVE'},
+        ]
+        with patch.object(views, 'build_modules', return_value=delivery_rows), \
+             patch.object(views, 'build_programmes', return_value=[]), \
+             patch.object(views, 'build_cohorts_and_groups', return_value=([], [])), \
+             patch.object(views, 'build_ksb_data', return_value=([], [])), \
+             patch.object(views, 'attach_module_assignment_counts'):
+            payload = views.build_curriculum_payload_from_rows(rows, compact=True)
+
+        self.assertEqual(
+            [module['moduleCatalogueId'] for module in payload['modules']],
+            ['MOD-LIVE'],
+        )
 
     def test_pagination_is_opt_in_and_reports_total_count(self):
         request = RequestFactory().get('/curriculum/modules/', {'page': 2, 'page_size': 2})

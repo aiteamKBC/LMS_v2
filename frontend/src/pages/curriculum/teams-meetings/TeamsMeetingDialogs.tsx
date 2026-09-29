@@ -8,6 +8,7 @@ import {
 import { EntraPeopleInput } from './EntraPeopleInput';
 import { CalendarActionDialog } from './CalendarActionDialog';
 import { CreateProgressPanel } from './CreateProgressPanel';
+import { updateProgressSteps } from './updateProgress';
 import { createPortal } from 'react-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { Modal } from '@/pages/users/components/Modal';
@@ -341,7 +342,8 @@ export function TeamsMeetingDialogs({ workspace }: { workspace: TeamsMeetingsWor
     openSettings, setResultsModule, resultsModule, detailError, loadDetail, holidayLabelFor,
     detailOccurrenceFor, now, setPreview, setTranscriptPreview, invitedPrefilling, prefillInvitees, preview,
     transcriptPreview, settingsDrawer, drawerTarget, saveSettings, blockedReason,
-    teamsLoaded, teamsError, createProgress, saveInvitations, updateDrawer, pushDates,
+    teamsLoaded, teamsError, createProgress, updateProgress, saveInvitations, updateDrawer, pushDates,
+    sendUpdateEmails, setSendUpdateEmails,
   } = workspace;
   return (
     <>
@@ -373,7 +375,7 @@ export function TeamsMeetingDialogs({ workspace }: { workspace: TeamsMeetingsWor
             size={selected.summary && teamsLoaded ? 'max-w-5xl' : 'max-w-3xl'}
             onClose={requestCloseSelected}
             footer={!teamsLoaded ? undefined : (
-              <>
+              <div className="flex w-full flex-wrap items-center justify-end gap-2">
                 {/* Only the actions this module can actually take: a footer of
                     greyed-out buttons reads as broken rather than as guidance.
                     Closing is the title bar's X — no second Close down here. */}
@@ -392,15 +394,15 @@ export function TeamsMeetingDialogs({ workspace }: { workspace: TeamsMeetingsWor
                   </p>
                 )}
             {selected.summary ? (
-                  <>
+                  <div className="flex w-full flex-wrap items-center justify-end gap-2">
                     <button type="button" onClick={() => openCalendarAction('reschedule')}
-                      disabled={Boolean(busy) || Boolean(blockedReason) || detailLoading || detail?.series.id !== selected.summary.liveSessionId || !graphConfigured}
-                      className="rounded-lg border px-3 py-2 text-[12px] font-bold disabled:opacity-40">Edit session dates</button>
+                      disabled={Boolean(busy) || Boolean(updateProgress) || Boolean(blockedReason) || detailLoading || detail?.series.id !== selected.summary.liveSessionId || !graphConfigured}
+                      className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-colors hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-calendar-line text-sm"></AppIcon>Edit session dates</button>
                     <button type="button" onClick={() => openCalendarAction('cancel')}
-                      disabled={Boolean(busy) || Boolean(blockedReason) || detailLoading || detail?.series.id !== selected.summary.liveSessionId || !graphConfigured}
-                      className="rounded-lg border border-red-200 px-3 py-2 text-[12px] font-bold text-red-700 disabled:opacity-40">Cancel series</button>
-                    <button type="button" onClick={() => void checkCalendarAction()} disabled={Boolean(busy) || !graphConfigured}
-                      className="rounded-lg border px-3 py-2 text-[12px] font-bold disabled:opacity-40">Check action status</button>
+                      disabled={Boolean(busy) || Boolean(updateProgress) || Boolean(blockedReason) || detailLoading || detail?.series.id !== selected.summary.liveSessionId || !graphConfigured}
+                      className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 text-[12px] font-bold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-close-circle-line text-sm"></AppIcon>Cancel series</button>
+                    <button type="button" onClick={() => void checkCalendarAction()} disabled={Boolean(busy) || Boolean(updateProgress) || !graphConfigured}
+                      className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 transition-colors hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className={busy ? 'ri-loader-4-line animate-spin text-sm' : 'ri-refresh-line text-sm'}></AppIcon>{busy ? 'Checking…' : 'Check action status'}</button>
                     {/* Both of these are shown only in the state they can act
                         in. Offered unconditionally they were noise: on a module
                         whose sessions are all attached and none has run yet,
@@ -409,7 +411,7 @@ export function TeamsMeetingDialogs({ workspace }: { workspace: TeamsMeetingsWor
                       <button
                         type="button"
                         onClick={() => void reattach(selected)}
-                        disabled={Boolean(busy) || Boolean(blockedReason)}
+                        disabled={Boolean(busy) || Boolean(updateProgress) || Boolean(blockedReason)}
                         title={`${pendingComponents} week${pendingComponents === 1 ? '' : 's'} of this module ${pendingComponents === 1 ? 'has' : 'have'} no live-session component yet. This gives each one its own, on that week's own date.`}
                         className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-600 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-50"
                       >
@@ -417,14 +419,28 @@ export function TeamsMeetingDialogs({ workspace }: { workspace: TeamsMeetingsWor
                         Add {pendingComponents} missing live session{pendingComponents === 1 ? '' : 's'}
                       </button>
                     )}
+                    <label className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-semibold text-foreground-700">
+                      <input
+                        type="checkbox"
+                        aria-label="Email existing invitees about this update"
+                        checked={sendUpdateEmails}
+                        onChange={event => setSendUpdateEmails(event.target.checked)}
+                        disabled={Boolean(busy) || Boolean(updateProgress) || updateDrawer.saving || Boolean(blockedReason) || detailLoading || !graphConfigured}
+                        className="h-4 w-4 accent-primary-600"
+                      />
+                      <span>
+                        Email existing invitees
+                        <span className="ml-1 font-normal text-foreground-500">(only when something changed; new people are emailed separately)</span>
+                      </span>
+                    </label>
                     <button
                       type="button"
                       onClick={() => void pushDates(selectedForDisplay || selected)}
                       // Waits for the calendar's own read, so the invitation
                       // fields it sends with the dates hold the saved values.
-                      disabled={!(selectedForDisplay || selected).sessions.length || Boolean(busy) || Boolean(blockedReason) || detailLoading || updateDrawer.saving || !graphConfigured}
+                      disabled={!(selectedForDisplay || selected).sessions.length || Boolean(busy) || Boolean(updateProgress) || Boolean(blockedReason) || detailLoading || updateDrawer.saving || !graphConfigured}
                       title="Move the Teams calendar onto this module's stored session dates, holiday shifts included, with any changes to the invitations below."
-                      className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white transition-smooth hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white shadow-sm transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <AppIcon className={busy === `${selected.catalogueId}:dates` ? 'ri-loader-4-line animate-spin text-sm' : 'ri-calendar-check-line text-sm'}></AppIcon>
                       {/* The calendar already exists by the time this button is
@@ -432,8 +448,8 @@ export function TeamsMeetingDialogs({ workspace }: { workspace: TeamsMeetingsWor
                           -- which is what its own confirmation has always said. */}
                       Update Teams calendar
                     </button>
-                  </>
-                ) : (
+                   </div>
+                 ) : (
                   <button
                     type="button"
                     onClick={() => void createCalendar(selected)}
@@ -448,7 +464,7 @@ export function TeamsMeetingDialogs({ workspace }: { workspace: TeamsMeetingsWor
                     Create
                   </button>
                 )}
-              </>
+              </div>
             )}
           >
             {!teamsLoaded ? (
@@ -492,7 +508,20 @@ export function TeamsMeetingDialogs({ workspace }: { workspace: TeamsMeetingsWor
               </div>
             )}
 
-            {selected.summary ? (
+            {selected.summary ? updateProgress ? (
+              <CreateProgressPanel
+                moduleName={selected.name}
+                sessionCount={(selectedForDisplay || selected).sessions.length}
+                progress={null}
+                recovery={null}
+                busy
+                onCheckAgain={() => undefined}
+                onConfirmUncertain={() => undefined}
+                steps={updateProgressSteps(updateProgress, (selectedForDisplay || selected).sessions.length)}
+                title={`Updating the Teams calendar for ${selected.name}`}
+                description="Microsoft is applying the calendar and invitation changes. The update emails are sent after the saved meeting is confirmed."
+              />
+            ) : (
               <div className="space-y-4">
                 {/* Invitations are edited beside the people they name, rather
                     than from a button on every table row. */}
@@ -587,7 +616,7 @@ export function TeamsMeetingDialogs({ workspace }: { workspace: TeamsMeetingsWor
                     const plannedUtc = (selectedForDisplay || selected).plannedStarts[index] || '';
                     const occurrence = detailOccurrenceFor(index, teamsUtc, plannedUtc);
                     if (occurrence?.status === 'cancelled') {
-                      return <span className="text-[11px] font-bold text-foreground-400">Cancelled</span>;
+                      return <span role="status" className="inline-flex items-center gap-1.5 rounded-full border border-red-200 bg-red-50 px-2.5 py-1 text-[11px] font-bold text-red-700"><AppIcon className="ri-close-circle-line text-sm"></AppIcon>Cancelled</span>;
                     }
                     // The meeting runs when Teams says it does, so the clock
                     // is read against the calendar entry when there is one
@@ -616,10 +645,10 @@ export function TeamsMeetingDialogs({ workspace }: { workspace: TeamsMeetingsWor
                         <>
                           <button type="button" disabled={Boolean(busy) || Boolean(blockedReason) || detailLoading || !graphConfigured}
                             onClick={() => openCalendarAction('reschedule', occurrence.session_number)}
-                            className="rounded border px-2 py-1 text-[11px] font-semibold">Edit time</button>
+                            className="inline-flex h-8 items-center gap-1 rounded-lg border border-background-200 bg-background-50 px-2.5 text-[11px] font-bold text-foreground-700 transition-colors hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-50"><AppIcon className="ri-time-line text-sm"></AppIcon>Edit time</button>
                           <button type="button" disabled={Boolean(busy) || Boolean(blockedReason) || detailLoading || !graphConfigured}
                             onClick={() => openCalendarAction('cancel', occurrence.session_number)}
-                            className="rounded border border-red-200 px-2 py-1 text-[11px] font-semibold text-red-700">Cancel session</button>
+                            className="inline-flex h-8 items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 text-[11px] font-bold text-red-700 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50"><AppIcon className="ri-close-circle-line text-sm"></AppIcon>Cancel session</button>
                         </>
                       )}
                       <a
@@ -707,7 +736,7 @@ export function TeamsMeetingDialogs({ workspace }: { workspace: TeamsMeetingsWor
                   <div>
                     <h3 id="teams-invitations-heading" className="text-[11px] font-bold uppercase tracking-wider text-foreground-400">Invitations and meeting settings</h3>
                     <p className="mt-1 text-[11px] text-foreground-500">
-                      Only what you change here is updated, and the join link stays the same. Everyone you add gets the Teams invitation and the LMS schedule email; nobody already invited is emailed again.
+                      Only what you change here is updated, and the join link stays the same. When you add a new email, only that person receives the Teams invitation and LMS schedule email; people already invited are not emailed again.
                     </p>
                   </div>
                   <div className="grid gap-4 sm:grid-cols-2">

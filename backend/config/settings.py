@@ -468,14 +468,17 @@ COACH_DASHBOARD_CACHE_TTL = int(os.environ.get('COACH_DASHBOARD_CACHE_TTL', '90'
 
 
 # Share expensive curriculum payloads between Django workers in production.
-# Django's built-in Redis backend uses the already-installed ``redis`` package,
-# so no additional cache dependency is required. Development and tests retain a
+# The backend subclasses Django's built-in Redis cache, which uses the
+# already-installed ``redis`` package, so no additional cache dependency is
+# required. It degrades to a process-local cache while Redis is unreachable --
+# a developer machine with no Redis running behaves like the branch below
+# instead of raising on every read. Development and tests retain a
 # process-local cache when no Redis URL is configured.
 CACHE_URL = os.environ.get('CACHE_URL') or os.environ.get('REDIS_URL')
 if CACHE_URL:
     CACHES = {
         'default': {
-            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'BACKEND': 'config.cache_backends.ResilientRedisCache',
             'LOCATION': CACHE_URL,
             'KEY_PREFIX': os.environ.get('CACHE_KEY_PREFIX', 'kbc-lms'),
             'TIMEOUT': int(os.environ.get('CACHE_DEFAULT_TIMEOUT', '300')),

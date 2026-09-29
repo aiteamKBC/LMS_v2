@@ -75,6 +75,7 @@ describe('Egypt schedule and England display', () => {
     expect(badge.children).toHaveLength(1);
     expect(screen.getAllByText('Egypt: 9:00 AM · England: 7:00 AM')).toHaveLength(1);
     expect(screen.queryByText('Egypt: 9:00 AM · England: 6:00 AM')).not.toBeInTheDocument();
+    expect(screen.getByText(/England changes between BST and GMT/)).toBeInTheDocument();
     expect(badge.parentElement).toHaveTextContent('3 sessions');
     expect(badge.parentElement).toHaveTextContent('120 min each');
     expect(screen.queryByText(/Egypt:.*Oct/)).not.toBeInTheDocument();

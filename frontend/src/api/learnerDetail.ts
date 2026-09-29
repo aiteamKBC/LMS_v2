@@ -284,6 +284,8 @@ export interface LearnerVideoProgress {
   expectedOtjh?: number | null;
   kind: 'video';
   componentId: string;
+  /** Saved title of this completion, including historical videos no longer in the current plan. */
+  componentTitle?: string;
   attempt?: number;
   ksbs?: string[];
   feedback?: string;

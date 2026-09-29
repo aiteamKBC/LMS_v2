@@ -25,6 +25,18 @@ import planLayout from '@/pages/learner/training-plan-timeline/TrainingPlanDetai
 
 type SessionRow = Extract<CurriculumRow, { kind: 'session' }>;
 type ReadingWeekRow = Extract<CurriculumRow, { kind: 'reading-week' }>;
+type SessionState = 'attended' | 'missed' | 'upcoming' | 'live' | 'unscheduled';
+
+function sessionState(week: SessionRow, now: number): SessionState {
+  if (week.attended === true) return 'attended';
+  if (week.attended === false) return 'missed';
+  if (!week.start) return 'unscheduled';
+  const start = Date.parse(week.start);
+  if (!Number.isFinite(start)) return 'unscheduled';
+  if (now < start) return 'upcoming';
+  const end = week.minutes != null && week.minutes > 0 ? start + week.minutes * 60_000 : null;
+  return end != null && now >= end ? 'missed' : 'live';
+}
 
 const STATUS_TONE: Record<ActivityStatus, 'positive' | 'info' | 'neutral'> = {
   completed: 'positive', 'in-progress': 'info', 'not-started': 'neutral',
@@ -78,6 +90,16 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
       <div className="flex items-center justify-between gap-2 border-l-4 border-primary-600 pl-2">
         <h2 className="text-base font-extrabold text-foreground-950">Weeks</h2>
       </div>
+      {weeks.length > 0 && <div role="group" aria-label="Week marker key" className="mt-2 px-2 text-[10px] font-medium text-foreground-600">
+        <div className="flex flex-wrap gap-x-3 gap-y-1.5 leading-tight">
+          <span className="inline-flex items-center gap-1.5"><span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-[#6eefa0]" />Attended</span>
+          <span className="inline-flex items-center gap-1.5"><span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-[#ef4444]" />Not attended</span>
+          <span className="inline-flex items-center gap-1.5 whitespace-nowrap"><span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-[#94a3b8]" />Upcoming</span>
+          <span className="inline-flex items-center gap-1.5"><span aria-hidden="true" className="h-2 w-2 shrink-0 rounded-full bg-[#8b5cf6]" />Current week</span>
+          {weeks.some(week => week.kind === 'reading-week') && <span className="inline-flex items-center gap-1.5"><BookOpen size={10} aria-hidden="true" className="shrink-0 text-amber-700" />Reading week</span>}
+        </div>
+        <p className="mt-3 pt-4 text-foreground-500">Outer ring shows activity progress.</p>
+      </div>}
       {candidateModules.length > 1 && <label className="mt-2.5 block text-xs font-medium text-foreground-500">Module
         <select aria-label="Module" value={resolvedModuleId || ''} onChange={event => { setSelectedModuleId(event.target.value); setSelection(null); }}
           className="mt-1 w-full rounded-lg border border-foreground-200 bg-background-50 px-2.5 py-1.5 text-xs font-semibold text-foreground-900">
@@ -96,27 +118,30 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
           const weekActivityProgress = week.kind === 'session'
             ? weekProgress(weekComponents(real, resolvedModuleId || undefined, week.weekId, week.slotNumber), completedIds)
             : null;
+          const attendance = week.kind === 'session' ? sessionState(week, now) : null;
+          const markerState = isReadingWeek ? 'reading' : isCurrent && attendance !== 'attended' ? 'current' : attendance;
           const label = week.kind === 'reading-week' ? 'Reading week' : week.weekTitle || `Week ${week.sessionNumber}`;
           const subLabel = week.kind === 'reading-week' ? 'Independent study' : '';
           const range = `${dateLabel(start)}${end ? ` – ${dateLabel(end)}` : ''}`;
           const stateLabel = state === 'past' ? 'Completed' : state === 'current' ? 'Current week' : 'Upcoming';
           return <li key={weekKey(week)} className="relative pl-9">
-            {index < weeks.length - 1 && <span aria-hidden="true" className="absolute left-[13px] top-9 bottom-[-0.25rem] w-px bg-foreground-200" />}
-            {weekActivityProgress?.total ? <span role="progressbar" aria-label={`${label} activity progress`}
+            {index < weeks.length - 1 && <span aria-hidden="true" className="absolute left-[11px] top-8 bottom-[-0.25rem] w-px bg-foreground-200" />}
+            <span role="img" aria-label={isReadingWeek ? `${label}: independent study` : `${label} session: ${attendance === 'attended' ? 'attended' : attendance === 'missed' ? 'not attended' : attendance === 'live' ? 'in progress' : attendance === 'upcoming' ? 'upcoming' : 'not scheduled'}`}
+              data-state={markerState}
+              className={cn(planLayout.weekSessionStatus, 'absolute left-0 top-2 z-10')}>
+              {isReadingWeek ? <BookOpen size={13} aria-hidden="true" />
+                : <>
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10" fill="none" strokeWidth="2" />
+                    <circle cx="12" cy="12" r="10" fill="none" strokeWidth="2" strokeLinecap="round"
+                      strokeDasharray={`${weekActivityProgress?.percent ?? 0} 100`} pathLength="100" />
+                  </svg>
+                  <span aria-hidden="true" />
+                </>}
+            </span>
+            {weekActivityProgress?.total ? <span role="progressbar" className="sr-only" aria-label={`${label} activity progress`}
               aria-valuemin={0} aria-valuemax={100} aria-valuenow={weekActivityProgress.percent}
-              aria-valuetext={`${weekActivityProgress.completed} of ${weekActivityProgress.total} activities complete`}
-              title={`${weekActivityProgress.completed} of ${weekActivityProgress.total} activities complete`}
-              className={cn('absolute left-0 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-background-50',
-                weekActivityProgress.percent === 100 ? 'text-emerald-600' : 'text-primary-600')}>
-              <svg viewBox="0 0 28 28" className="h-7 w-7 -rotate-90" aria-hidden="true">
-                <circle cx="14" cy="14" r="11" fill="none" stroke="currentColor" strokeOpacity="0.18" strokeWidth="3" />
-                <circle cx="14" cy="14" r="11" fill="none" stroke="currentColor" strokeWidth="3"
-                  strokeDasharray={`${weekActivityProgress.percent} 100`} pathLength="100" strokeLinecap="round" />
-              </svg>
-            </span> : <span aria-hidden="true" className={cn('absolute left-0 top-2 z-10 flex h-7 w-7 items-center justify-center rounded-full border-2 bg-background-50',
-              isReadingWeek ? 'border-amber-300 text-amber-700' : 'border-foreground-300')}>
-              {isReadingWeek && <BookOpen size={13} />}
-            </span>}
+              aria-valuetext={`${weekActivityProgress.completed} of ${weekActivityProgress.total} activities complete`} /> : null}
             <button type="button" aria-current={active ? 'true' : undefined}
               onClick={() => resolvedModuleId && setSelection({ moduleId: resolvedModuleId, key: weekKey(week) })}
               className={cn('block w-full rounded-lg px-2.5 py-2 text-left transition',
@@ -140,7 +165,7 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
             </button>
             {/* Outside the row's button: the curriculum team's hint is there to
                 be read, not to become part of the label that selects the week. */}
-            {week.kind === 'session' && <HolidayNoteHint note={week.holidayNote} className="mt-1.5" />}
+            {week.kind === 'session' && <HolidayNoteHint note={week.holidayNote} className="learner-dashboard-week-note mt-1.5 min-w-0 max-w-full" />}
           </li>;
         })}
       </ol>
@@ -161,7 +186,7 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
           {selectedIndex >= 0 ? <p className="mt-1 text-sm font-medium text-foreground-500">
             {(() => { const { start, end } = weekWindow(weeks, selectedIndex); return `${dateLabel(start)}${end ? ` – ${dateLabel(end)}` : ''}`; })()}
           </p> : null}
-          {selectedWeek.kind === 'session' && <HolidayNoteHint note={selectedWeek.holidayNote} className="mt-2.5 text-xs" />}
+          {selectedWeek.kind === 'session' && <HolidayNoteHint note={selectedWeek.holidayNote} className="learner-dashboard-week-note mt-2.5 min-w-0 max-w-full text-xs" />}
 
             </div>
 
@@ -234,7 +259,8 @@ function LiveSessionSummary({ week, now, headingId }: { week: SessionRow; now: n
   const startMs = Date.parse(start);
   const end = week.minutes ? new Date(startMs + week.minutes * 60_000) : null;
   const hasJoinUrl = !!week.joinUrl;
-  const sessionEnded = Number.isFinite(startMs) && startMs <= now;
+  const state = sessionState(week, now);
+  const canJoin = state === 'live' || (state === 'upcoming' && now >= startMs - 60 * 60_000);
   return <div className={cn('flex min-h-[136px] flex-col gap-4 rounded-xl border p-5 md:flex-row md:items-center md:justify-between', planLayout.secondaryLiveCard)}>
     <div className="flex min-w-0 gap-4">
       <span className={cn('flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ring-1', planLayout.secondaryLiveIcon)}>
@@ -264,15 +290,19 @@ function LiveSessionSummary({ week, now, headingId }: { week: SessionRow; now: n
           </div>
         </dl>
         {!hasJoinUrl ? <p className="mt-3 text-xs text-foreground-500">
-          {week.attended === true ? 'You attended this session.' : week.attended === false || sessionEnded ? 'This session has ended.'
+          {state === 'attended' ? 'You attended this session.' : state === 'missed' ? 'This session has ended.'
             : 'A join link has not been added yet.'}
         </p> : null}
       </div>
     </div>
-    {hasJoinUrl ? <a href={week.joinUrl!} target="_blank" rel="noopener noreferrer"
+    {hasJoinUrl ? canJoin ? <a href={week.joinUrl!} target="_blank" rel="noopener noreferrer"
       className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-primary-700 px-4 text-xs font-bold text-white shadow-sm transition hover:bg-primary-800 md:min-w-[128px]">
       Join session<ExternalLink size={13} aria-hidden="true" />
-    </a> : null}
+    </a> : <button type="button" disabled title={state === 'upcoming' ? 'Joining opens 1 hour before the session starts.'
+      : state === 'attended' ? 'You attended this session.' : 'This session has ended.'}
+      className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-foreground-200 px-4 text-xs font-bold text-foreground-500 md:min-w-[128px]">
+      Join session<ExternalLink size={13} aria-hidden="true" />
+    </button> : null}
   </div>;
 }
 
@@ -298,7 +328,7 @@ function KsbChip({ code }: { code: string }) {
     : type === 'S' ? 'border-accent-200 bg-accent-50 text-accent-700'
       : type === 'B' ? 'border-secondary-200 bg-secondary-100 text-foreground-800'
         : 'border-foreground-200 bg-background-100 text-foreground-600';
-  return <span className={cn('rounded-full border px-2 py-0.5 text-[11px] font-semibold', tone)}>{code}</span>;
+  return <span data-ksb-type={type} className={cn('learner-dashboard-ksb-chip rounded-full border px-2 py-0.5 text-[11px] font-semibold', tone)}>{code}</span>;
 }
 
 export function KsbChips({ codes }: { codes: string[] }) {

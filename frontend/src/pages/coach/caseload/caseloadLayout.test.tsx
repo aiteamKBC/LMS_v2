@@ -29,6 +29,31 @@ const insights: InsightMap = new Map([['42', {
 }]]);
 
 describe('My Learners table design', () => {
+  it('preserves learner-dashboard precision and shows OTJ actual hours when the plan is unavailable', () => {
+    render(<LearnerTable learners={[{
+      ...learner,
+      activityProgress: 88.8,
+      activityProgressAvailable: true,
+      componentsCompleted: 443,
+      componentsPlanned: 499,
+      ksbProgress: 66.8,
+      ksbCompleted: 475,
+      ksbTarget: 711,
+      liveAttendanceRate: 82,
+      liveAttendanceRateAvailable: true,
+      attendancePresent: 23,
+      attendanceSessions: 28,
+      otjhCompleted: 308.11,
+      otjhTarget: 0,
+    }]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
+      sortKey="name" sortDirection="asc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} />);
+
+    expect(screen.getByLabelText('Activities: 88.8%')).toHaveTextContent('443 / 499');
+    expect(screen.getByLabelText('KSBs: 66.8%')).toHaveTextContent('475 / 711');
+    expect(screen.getByLabelText('Attendance: 82%')).toHaveTextContent('23 / 28');
+    expect(screen.getByLabelText('OTJH: not available')).toHaveTextContent('308.11h / --');
+  });
+
   it('uses loading placeholders that match the summary and learner table layouts', () => {
     const { container } = render(<><CaseloadSummaryLoading /><CaseloadLoading /></>);
     expect(screen.getByText('Loading learners')).toBeInTheDocument();

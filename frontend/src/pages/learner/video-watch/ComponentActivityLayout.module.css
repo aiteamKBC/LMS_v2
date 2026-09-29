@@ -156,6 +156,17 @@
   margin-left: auto;
 }
 
+:global([data-theme='dark']) :is(.videoHeading, .videoActions, .liveActions) {
+  background: #182d48;
+  border-color: #3b526c;
+  color: #f6f8fb;
+}
+:global([data-theme='dark']) .videoEyebrow { background: #302748; color: #d7c4f4; }
+:global([data-theme='dark']) :is(.videoTitle, .videoMeta) { color: #f6f8fb; }
+:global([data-theme='dark']) .videoMeta > span { background: #263d5a; border-color: #526b88; }
+:global([data-theme='dark']) .videoMeta svg { color: #d7c4f4; }
+:global([data-theme='dark']) .videoFooter { border-color: #3b526c; }
+
 .liveActions .videoFooter {
   display: grid;
   grid-column: 2;

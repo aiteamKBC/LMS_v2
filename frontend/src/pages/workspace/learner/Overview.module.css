@@ -453,3 +453,97 @@
   .facts { gap: 0.5rem; margin-top: 1.25rem; }
   .fact { min-height: 4.25rem; }
 }
+
+/* The learner shell declares its light tokens on the workspace element. Give
+   this dashboard its own dark tokens so those declarations cannot shadow the
+   dark palette inherited from the document. */
+:global([data-theme='dark']) .overview {
+  --kbc-surface: #182d48;
+  --kbc-border: #3b526c;
+  --kbc-text: #f6f8fb;
+  --kbc-muted: #b6c4d5;
+  --kbc-learner-primary-dark: #f6f8fb;
+  --learner-soft: #1e344d;
+  --learner-accent-soft: #302748;
+  --learner-success-soft: #163c31;
+  --learner-danger-soft: #462a32;
+  --learner-warning-soft: #413923;
+  --learner-purple: #bfa3ee;
+  --learner-success: #7bc8a8;
+  --learner-danger: #ed9b9b;
+  --learner-warning: #e1c285;
+  --background-50: 0.294102 0.056505 255.375;
+  --background-100: 0.319363 0.053029 252.608;
+  --background-200: 0.363560 0.060944 250.610;
+  --background-300: 0.431038 0.051799 252.048;
+  --foreground-100: 0.431038 0.051799 252.048;
+  --foreground-200: 0.550142 0.038042 255.313;
+  --foreground-300: 0.708112 0.035671 251.094;
+  --foreground-400: 0.814891 0.028491 253.267;
+  --foreground-500: 0.855793 0.023452 252.196;
+  --foreground-600: 0.896042 0.024335 253.958;
+  --foreground-700: 0.921505 0.014966 251.163;
+  --foreground-800: 0.956540 0.007965 253.854;
+  --foreground-900: 0.978460 0.004531 258.324;
+  --foreground-950: 1 0 0;
+  color: var(--kbc-text);
+}
+
+:global([data-theme='dark']) .overview .metric {
+  --metric-track: #3b526c;
+  --metric-text: #f6f8fb;
+  @apply border-slate-600 bg-slate-900;
+}
+
+:global([data-theme='dark']) .overview .metricRing::after {
+  background: #182d48;
+}
+
+:global([data-theme='dark']) .overview :global([aria-label='Rewards and points']) {
+  --rewards-navy: #bfa3ee;
+  --rewards-navy-soft: #302748;
+}
+
+.overview :global(.learner-dashboard-week-note) {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.overview :global(.learner-dashboard-week-note > span) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+:global([data-theme='dark']) .overview :global(.learner-dashboard-week-note) {
+  background: #413923 !important;
+  border-color: #e1c285 !important;
+  color: #fff1cb !important;
+}
+
+:global([data-theme='dark']) .overview :global(.learner-dashboard-week-note > svg) {
+  color: #e1c285 !important;
+}
+
+:global([data-theme='dark']) .overview :global(.learner-dashboard-ksb-chip) {
+  background: #253b54 !important;
+  border-color: #5a7695 !important;
+  color: #dbe8f7 !important;
+}
+
+:global([data-theme='dark']) .overview :global(.learner-dashboard-ksb-chip[data-ksb-type='K']) {
+  background: #302748 !important;
+  border-color: #8060b1 !important;
+  color: #e8dcff !important;
+}
+
+:global([data-theme='dark']) .overview :global(.learner-dashboard-ksb-chip[data-ksb-type='S']) {
+  background: #173b3f !important;
+  border-color: #468f92 !important;
+  color: #a8e4e1 !important;
+}
+
+:global([data-theme='dark']) .overview :global(.learner-dashboard-ksb-chip[data-ksb-type='B']) {
+  background: #403224 !important;
+  border-color: #a88048 !important;
+  color: #f5d3a0 !important;
+}

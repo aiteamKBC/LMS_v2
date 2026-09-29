@@ -85,6 +85,15 @@ class CurrentLearningTests(unittest.TestCase):
                     'source_payload': {'original_source_ref': 'progress:1'}}
         self.assertEqual(self.project([retained, self.native]), [retained])
 
+    def test_list_source_payload_preserves_record_without_inventing_lineage(self):
+        retained = {'id': 9, 'source_system': 'journal', 'actual_seconds': 1200,
+                    'source_payload': ['synthetic-evidence-a', 'synthetic-evidence-b']}
+        self.assertEqual(self.project([retained]), [retained])
+        self.assertIsNone(self.scope['source_reference'](retained))
+        self.assertEqual(self.scope['source_payload_metadata'](retained['source_payload']), {})
+        self.assertEqual(self.scope['source_payload_metadata']('{"original_source_ref":"progress:1"}'),
+                         {'original_source_ref': 'progress:1'})
+
     def test_unsubmitted_and_event_rows_do_not_increment_progress(self):
         self.assertEqual(self.project([{**self.native, 'submitted_at': None},
                                       {**self.native, 'kind': 'activity_event'}]), [])

@@ -228,6 +228,7 @@
 .attendanceTable td:first-child { min-width: 220px; color: #241e48; }
 .attendanceTable td:nth-child(2) { min-width: 125px; }
 .attendanceTable td:nth-child(3) { min-width: 115px; }
+.attendancePagination { margin-top: 10px; padding-right: 0; padding-left: 0; }
 .attendanceStatus { display: inline-flex; padding: 4px 9px; border: 1px solid; border-radius: 999px; font-size: 10px; font-weight: 750; white-space: nowrap; }
 .attendanceStatusPositive { border-color: #bce8d8; background: #effbf6; color: #0d8b65; }
 .attendanceStatusNegative { border-color: #f4caca; background: #fff4f4; color: #c73535; }
