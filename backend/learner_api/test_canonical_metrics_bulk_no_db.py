@@ -5,7 +5,7 @@ from learner_api import canonical_learning
 
 
 class CanonicalMetricsBulkTests(TestCase):
-    def run_bulk(self, enrolment_ids):
+    def run_bulk(self, enrolment_ids, source_payload=None):
         owners = [
             {"id": 700 + index, "enrolment_id": enrolment_id, "aptem_id": 4000 + index, "learner_type": "apprenticeship"}
             for index, enrolment_id in enumerate(enrolment_ids)
@@ -15,6 +15,8 @@ class CanonicalMetricsBulkTests(TestCase):
              "ksbs": ["K1"], "segments": [], "sources": [], "historical_components": []}
             for index, owner in enumerate(owners)
         ]
+        if source_payload is not None:
+            base[0]["payload"].update(source_system="journal", source_payload=source_payload)
         targets = [
             {"learner_id": owner["id"], "report_month": "2026-09", "target_hours": 10}
             for owner in owners
@@ -51,6 +53,10 @@ class CanonicalMetricsBulkTests(TestCase):
         )
         self.assertEqual(result[10], expected)
         self.assertEqual(count, 9)
+
+    def test_list_source_payload_does_not_break_caseload_metrics(self):
+        result, _ = self.run_bulk([10], ["synthetic-evidence-a", "synthetic-evidence-b"])
+        self.assertEqual(result[10]["otjh"]["actual"], 1)
 
     def test_query_count_is_constant_for_a_representative_caseload(self):
         one, one_count = self.run_bulk([10])

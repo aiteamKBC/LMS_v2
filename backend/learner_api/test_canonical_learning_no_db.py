@@ -38,6 +38,7 @@ def adapter(query):
                  datetime=datetime, escape=escape, UK=ZoneInfo('Europe/London'), ServiceError=ServiceError,
                  current_records=lambda owner, records: records)
     functions('monthly_log_sources.py', scope, {'decoded', 'number', 'stable_id', 'row'})
+    functions('current_learning.py', scope, {'source_payload_metadata'})
     functions('canonical_learning.py', scope)
     return scope
 
