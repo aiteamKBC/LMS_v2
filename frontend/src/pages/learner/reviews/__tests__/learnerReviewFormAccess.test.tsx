@@ -10,7 +10,8 @@
  */
 import * as React from 'react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
-import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor, within } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import MonthlyCoachingPage from '../../monthly-coaching/page';
 import ProgressReviewsPage from '../../progress-reviews/page';
@@ -180,6 +181,22 @@ beforeEach(() => {
         quizAttempts: [], videoProgress: [], componentProgress: [],
       }));
     }
+    if (url.includes('/learner_api/monthly-logs/')) {
+      const path = new URL(url, window.location.origin).pathname;
+      const month = path.match(/\/monthly-logs\/12\/(\d{4}-\d{2})\/$/)?.[1] || '2026-09';
+      const log = {
+        source: 'lms', month, status: 'awaiting_signature', row_count: 1,
+        planned_hours: 2, actual_hours: 1, not_accepted_hours: 0, pending_revisions: 0, can_complete: false,
+        source_finalization: null, student_signature: null, coach_signature: null, snapshot_digest: 'mcm-review-digest',
+        rows: [{ id: 901, title: 'MCM activity', category: 'Coaching', activity_date: `${month}-12`, activity_time: '10:00',
+          timestamp_label: '10:00', planned_hours: 2, actual_hours: 1, accepted: true, completion_note: null, documents: [], results: [] }],
+      };
+      if (path.endsWith('/12/')) return new Response(JSON.stringify({
+        learner: { id: 12, aptem_id: 42, name: 'Aya Khater', programme: 'Business', coach_name: 'Coach One' },
+        months: [log], total_months: 1, completed_months: 0, read_only: false, csrf_token: 'csrf',
+      }));
+      return new Response(JSON.stringify(log));
+    }
     return new Response(JSON.stringify({}));
   }));
 });
@@ -198,13 +215,15 @@ function ReturnedLocation() {
 }
 
 const mountMcm = (id: string, suffix = '') => render(
-  <MemoryRouter initialEntries={[`/learner/monthly-coaching/${encodeURIComponent(id)}${suffix}`]}>
-    <Routes>
-      <Route path="/learner/monthly-coaching/:sessionId" element={<MonthlyCoachingPage />} />
-      <Route path="/learner/monthly-coaching" element={<ReturnedLocation />} />
-      <Route path="/learner/monthly-logs/:kind/:id/:month" element={<ReturnedLocation />} />
-    </Routes>
-  </MemoryRouter>,
+  <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })}>
+    <MemoryRouter initialEntries={[`/learner/monthly-coaching/${encodeURIComponent(id)}${suffix}`]}>
+      <Routes>
+        <Route path="/learner/monthly-coaching/:sessionId" element={<MonthlyCoachingPage />} />
+        <Route path="/learner/monthly-coaching" element={<ReturnedLocation />} />
+        <Route path="/learner/monthly-logs/:kind/:id/:month" element={<ReturnedLocation />} />
+      </Routes>
+    </MemoryRouter>
+  </QueryClientProvider>,
 );
 
 // The Progress Review page mounts the shared slides modal, which reads the
@@ -218,16 +237,28 @@ const mountProgressReview = (id: string) => render(
 );
 
 describe('Learner Review View opens the generic Curriculum form', () => {
-  it.each([true, false])('opens the selected MCM month logs with learner actions enabled: %s', async canProgress => {
+  it.each([true, false])('keeps the MCM log out of the page until Review & sign: %s', async canProgress => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-11-15T12:00:00Z'));
     access.canProgress = canProgress;
+    reviewDefinition.instance!.status = 'awaiting-signature';
+    events[0] = { ...events[0], status: 'awaiting-signature' };
     mountMcm(SCHEDULED_MCM);
     await screen.findByTestId('learner-review-instance-form');
 
-    fireEvent.click(screen.getByRole('link', { name: "This month's logs" }));
-
-    expect(screen.getByTestId('returned-location')).toHaveTextContent('/learner/monthly-logs/apprenticeship/12/2026-09?workflow=mcm&source=mcm');
+    expect(screen.queryByRole('region', { name: 'Monthly learning log' })).not.toBeInTheDocument();
+    expect(screen.queryByText('MCM activity')).not.toBeInTheDocument();
+    if (canProgress) {
+      fireEvent.click(screen.getByRole('button', { name: 'Review & sign' }));
+      expect(await screen.findByRole('dialog', { name: 'Review the monthly log before signing' })).toBeVisible();
+      expect(await screen.findByText('MCM activity')).toBeVisible();
+      expect(screen.getByRole('checkbox', { name: /Apply my signature to this Monthly Log as well/ })).toBeChecked();
+    } else {
+      expect(screen.queryByRole('button', { name: 'Review & sign' })).not.toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: 'Sign' })).not.toBeInTheDocument();
+    }
+    expect(screen.queryByRole('link', { name: "This month's logs" })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Open monthly log' })).not.toBeInTheDocument();
     expect(vi.mocked(fetch).mock.calls.every(call => !call[1]?.method || call[1].method === 'GET')).toBe(true);
   });
 
@@ -237,13 +268,17 @@ describe('Learner Review View opens the generic Curriculum form', () => {
       targetDate: '2026-12-16',
       scheduledDate: '2026-09-28',
       date: '2026-09-28',
+      status: 'awaiting-signature',
     })];
+    reviewDefinition.instance!.status = 'awaiting-signature';
 
     mountMcm(SCHEDULED_MCM);
     await screen.findByTestId('learner-review-instance-form');
-    fireEvent.click(screen.getByRole('link', { name: "This month's logs" }));
 
-    expect(screen.getByTestId('returned-location')).toHaveTextContent('/learner/monthly-logs/apprenticeship/12/2026-12?workflow=mcm&source=mcm');
+    fireEvent.click(screen.getByRole('button', { name: 'Review & sign' }));
+    expect(await screen.findByText('December 2026')).toBeVisible();
+    expect(await screen.findByText('MCM activity')).toBeVisible();
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes('/learner_api/monthly-logs/12/2026-12/'))).toBe(true);
   });
 
   it('shows the saved learner image and points to the pending coach without asking the learner to sign again', () => {
@@ -305,7 +340,7 @@ describe('Learner Review View opens the generic Curriculum form', () => {
       if (String(input).endsWith('/sign/')) {
         signatureWrites += 1;
         expect(init?.method).toBe('POST');
-        expect(JSON.parse(String(init?.body))).toEqual({ name: 'Aya Khater', signature: savedMark });
+        expect(JSON.parse(String(init?.body))).toEqual({ name: 'Aya Khater', signature: savedMark, applyMonthlyLogSignature: false });
         reviewDefinition = structuredClone(reviewDefinition);
         reviewDefinition.signatures.participant = { required: true, signed: true, signature: savedMark, signedName: 'Aya Khater', signedAt: '2026-09-14T15:38:56Z' };
         return new Response(JSON.stringify({ event: { ...events[0], status: 'awaiting-signature' }, review: reviewDefinition }));
@@ -313,6 +348,8 @@ describe('Learner Review View opens the generic Curriculum form', () => {
       return originalFetch(input, init);
     });
     mountMcm(SCHEDULED_MCM);
+    fireEvent.click(await screen.findByRole('button', { name: 'Review & sign' }));
+    fireEvent.click(await screen.findByRole('checkbox', { name: /Apply my signature to this Monthly Log as well/ }));
     fireEvent.click(await screen.findByRole('button', { name: 'Sign' }));
     expect(await screen.findByRole('img', { name: 'Learner signature' })).toHaveAttribute('src', savedMark);
     expect(screen.getByText('Your signature is saved')).toBeVisible();
@@ -342,14 +379,18 @@ describe('Learner Review View opens the generic Curriculum form', () => {
     expect(await screen.findByTestId('returned-location')).toHaveTextContent('/learner/monthly-coaching?kind=apprenticeship&learner=12&view=all&tab=past&page=3');
   });
 
-  it('keeps the monthly log reminder inline while the learner reviews and signs', async () => {
+  it('opens the monthly log in the Review & sign dialog', async () => {
     reviewDefinition.instance!.status = 'awaiting-signature';
     mountMcm(SCHEDULED_MCM);
 
-    expect(await screen.findByRole('button', { name: 'Sign' })).toBeVisible();
-    expect(screen.getByRole('complementary', { name: 'Monthly learning log' })).toBeVisible();
-    expect(screen.getByRole('link', { name: 'Open monthly log' })).toHaveAttribute('href', '/learner/monthly-logs/apprenticeship/12/2026-09?workflow=mcm&source=mcm');
-    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Monthly learning log' })).not.toBeInTheDocument();
+    fireEvent.click(await screen.findByRole('button', { name: 'Review & sign' }));
+    const logRegion = screen.getByRole('region', { name: 'Monthly learning log' });
+    expect(logRegion).toBeVisible();
+    expect(await screen.findByText('MCM activity')).toBeVisible();
+    expect(within(logRegion).queryAllByRole('row').some(row => /^Coach\s/.test(row.textContent?.trim() || ''))).toBe(false);
+    expect(screen.queryByRole('link', { name: 'Open monthly log' })).not.toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: /Apply my signature to this Monthly Log as well/ })).toBeChecked();
   });
 
   it('falls back to the saved meeting summary when a legacy meeting has no Curriculum form', async () => {
@@ -431,6 +472,7 @@ describe('Learner Review View opens the generic Curriculum form', () => {
     expect(screen.getByText('Curriculum-authored section')).toBeInTheDocument();
     expect(await screen.findByText('What did the learner complete?')).toBeInTheDocument();
     expect(screen.getByDisplayValue('Two modules and a reflection.')).toBeInTheDocument();
+    expect(screen.getByLabelText('Section has saved answers')).toBeInTheDocument();
     // Conditional children follow the parent's saved answer.
     expect(screen.getByText('Describe the concern')).toBeInTheDocument();
     // And nothing hard-coded survives.
@@ -518,6 +560,54 @@ describe('Learner Review View opens the generic Curriculum form', () => {
     expect(screen.getByTestId('respondent-question-summary')).toHaveTextContent('Employer questions');
     expect(screen.getByText('Employer response')).toBeInTheDocument();
     expect(screen.getByTestId('respondent-question-summary')).toHaveTextContent('1 required remaining');
+  });
+
+  it('does not mark a coach-only section complete for the learner just because it has no questions for them', () => {
+    reviewDefinition = definition({
+      sections: [{
+        id: 'SEC-1', title: 'Coach-only section', estimatedMinutes: 5, displayOrder: 1, enabled: true,
+        fields: [{
+          id: 'FLD-COACH', title: 'Coach notes', fieldType: 'text',
+          required: true, displayOrder: 1, configuration: {}, answer: '',
+        }],
+      }],
+    });
+
+    const { container } = render(<LearnerReviewInstanceForm definition={reviewDefinition} onSaveAnswers={vi.fn().mockResolvedValue(reviewDefinition)} />);
+
+    expect(screen.getByText('Coach-only section')).toBeInTheDocument();
+    // No field here was assigned to the learner, so the section must not show
+    // the same green "complete" badge used for a respondent who has actually
+    // answered everything required of them, nor a pending badge for something
+    // that was never theirs to answer. AppIcon strips its `ri-*` token before
+    // rendering (it only uses it to pick which icon to draw), so the badge is
+    // identified by the colour class that survives instead.
+    expect(container.querySelector('.text-emerald-500')).toBeNull();
+    expect(container.querySelector('.text-amber-500')).toBeNull();
+  });
+
+  it('shows a pending badge for an unanswered learner question, then the complete badge once they answer it', () => {
+    reviewDefinition = definition({
+      sections: [{
+        id: 'SEC-1', title: 'test for learner', estimatedMinutes: 5, displayOrder: 1, enabled: true,
+        fields: [{
+          id: 'FLD-LEARNER', title: 'type any thing', fieldType: 'text',
+          required: false, displayOrder: 1, configuration: { respondentRoles: ['participant'] }, answer: '',
+        }],
+      }],
+    });
+
+    const { container } = render(<LearnerReviewInstanceForm definition={reviewDefinition} onSaveAnswers={vi.fn().mockResolvedValue(reviewDefinition)} />);
+
+    // Unanswered -- even though the field isn't required -- reads as pending,
+    // not complete. (The only/first section opens automatically.)
+    expect(container.querySelector('.text-amber-500')).not.toBeNull();
+    expect(container.querySelector('.text-emerald-500')).toBeNull();
+
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Something written' } });
+
+    expect(container.querySelector('.text-emerald-500')).not.toBeNull();
+    expect(container.querySelector('.text-amber-500')).toBeNull();
   });
 
   it('a scheduled Progress Review opens the same generic form', async () => {

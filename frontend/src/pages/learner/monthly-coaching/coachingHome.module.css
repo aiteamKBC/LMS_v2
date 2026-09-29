@@ -20,11 +20,6 @@
 .current { background: #fff; border: 1px solid #e0e5ee; border-radius: 15px; padding: 18px; box-shadow: 0 4px 20px #16345705; min-width: 0; }
 .currentTop { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .current h2 { margin: 12px 0 14px; font-size: clamp(18px, 2vw, 22px); line-height: 1.25; letter-spacing: -.025em; font-weight: 700; }
-.badge { display: inline-flex; align-items: center; gap: 5px; border-radius: 7px; font-size: 11px; font-weight: 650; line-height: 1.4; padding: 4px 7px; background: #edf3fb; color: #315986; }
-.badge[data-tone=attention] { color: #845414; background: #fff4df; }
-.badge[data-tone=muted] { color: #536278; background: #eef2f6; }
-.badge[data-tone=today] { color: #167351; background: #e8f7ef; }
-.statusDot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .appointment { display: flex; gap: 11px; align-items: center; }
 .dateIcon { width: 44px; height: 46px; display: grid; place-items: center; background: #f1ecfa; color: #754bb7; border-radius: 11px; flex-shrink: 0; }
 .appointment p { font-size: 16px; line-height: 1.35; font-weight: 700; letter-spacing: -.02em; }
@@ -50,6 +45,14 @@
 .optionPanel { position: absolute; top: calc(100% + 6px); left: 0; min-width: 205px; z-index: 5; border: 1px solid #dce2eb; padding: 6px; border-radius: 12px; background: #fff; box-shadow: 0 10px 28px #19314e1c; }
 .optionPanel a, .optionPanel button { display: flex; align-items: center; gap: 7px; width: 100%; text-align: left; border: none; background: none; font-size: 12px; padding: 8px 10px; min-height: 38px; border-radius: 7px; cursor: pointer; color: #354963; }
 .optionPanel a:hover, .optionPanel button:hover { background: #f4f1fa; }
+/* The "Selected meeting" panel's Details toggle: a real button that opens its
+   options inline below the action row, instead of a floating dropdown that
+   overlaps neighbouring content the way the compact list rows' does. */
+.optionsExpanded { flex-basis: 100%; }
+.optionsExpanded summary { min-height: 38px; padding: 8px 12px; border-radius: 9px; font-weight: 650; color: #253e5b; background: #fff; border: 1px solid #d8e0eb; }
+.optionsExpanded summary:hover, .optionsExpanded[open] summary { background: #f6f3fc; border-color: #bca7dd; }
+.optionsExpanded .optionPanel { position: static; margin-top: 8px; width: auto; min-width: 0; display: flex; flex-wrap: wrap; gap: 6px; box-shadow: none; }
+.optionsExpanded .optionPanel a, .optionsExpanded .optionPanel button { width: auto; border: 1px solid #d8e0eb; }
 .sideColumn { display: grid; gap: 12px; }
 .preparation { background: #f2f4fa; border: 1px solid #e6e9f1; border-radius: 15px; padding: 16px; }
 .preparationIcon { display: grid; place-items: center; width: 32px; height: 32px; border: 1px solid #e0e3ed; border-radius: 9px; background: #fff; color: #746591; margin-bottom: 10px; }
@@ -112,7 +115,7 @@
 .skeleton span { background: #eef1f6; border-radius: 10px; height: 35px; max-width: 300px; }
 .skeleton span:nth-child(2) { height: 140px; max-width: 100%; }
 :global(:is(.dark, [data-theme="dark"])) .home { color: #e3eaf5; }
-:global(:is(.dark, [data-theme="dark"])) .current, :global(:is(.dark, [data-theme="dark"])) .archive, :global(:is(.dark, [data-theme="dark"])) .lastMeeting, :global(:is(.dark, [data-theme="dark"])) .secondaryButton, :global(:is(.dark, [data-theme="dark"])) .optionPanel, :global(:is(.dark, [data-theme="dark"])) .pagination button, :global(:is(.dark, [data-theme="dark"])) .skeleton { background: #192a40; border-color: #35465f; color: #e3eaf5; }
+:global(:is(.dark, [data-theme="dark"])) .current, :global(:is(.dark, [data-theme="dark"])) .archive, :global(:is(.dark, [data-theme="dark"])) .lastMeeting, :global(:is(.dark, [data-theme="dark"])) .secondaryButton, :global(:is(.dark, [data-theme="dark"])) .optionPanel, :global(:is(.dark, [data-theme="dark"])) .optionsExpanded summary, :global(:is(.dark, [data-theme="dark"])) .pagination button, :global(:is(.dark, [data-theme="dark"])) .skeleton { background: #192a40; border-color: #35465f; color: #e3eaf5; }
 :global(:is(.dark, [data-theme="dark"])) .preparation, :global(:is(.dark, [data-theme="dark"])) .archiveHint { background: #213049; border-color: #35465f; }
 :global(:is(.dark, [data-theme="dark"])) .intro, :global(:is(.dark, [data-theme="dark"])) .nextStep, :global(:is(.dark, [data-theme="dark"])) .preparation p, :global(:is(.dark, [data-theme="dark"])) .listIdentity p, :global(:is(.dark, [data-theme="dark"])) .archiveHint, :global(:is(.dark, [data-theme="dark"])) .coach small, :global(:is(.dark, [data-theme="dark"])) .coach .provider, :global(:is(.dark, [data-theme="dark"])) .empty p, :global(:is(.dark, [data-theme="dark"])) .appointment span:not(.dateIcon) { color: #b0bdd0; }
 :global(:is(.dark, [data-theme="dark"])) .appointment .timeZone { color: #a9b8ce !important; }

@@ -179,6 +179,42 @@ class MonthlyLogsTests(SimpleTestCase):
         self.assertTrue(detail['is_open'])
         self.assertEqual(detail['rows'], [self.row])
 
+    def test_mcm_month_is_visible_before_signature_even_without_activity(self):
+        learner = {**self.learner, 'aptem_id': None}
+        with patch.object(sources, 'activity_rows', return_value=[]), \
+             patch.object(logs, 'legacy_summary', return_value={'months': []}), \
+             patch.object(logs, 'signatures', return_value=[]), \
+             patch.object(logs, 'lock_state', return_value={
+                 'locked': False, 'locked_at': None, 'unlocked_at': None, 'unlocked_by': None,
+             }), \
+             patch.object(sources, 'first_evidence_date', return_value=None), \
+             patch.object(logs.old_repo, 'report_profile', return_value={}):
+            summary = logs.summary_data(learner, include_open=True, ensure_month='2026-09')
+            detail = logs.detail_data(learner, '2026-09', include_open=True, ensure_month='2026-09')
+
+        self.assertEqual([month['month'] for month in summary['months']], ['2026-09'])
+        self.assertEqual(summary['months'][0]['row_count'], 0)
+        self.assertEqual(detail['rows'], [])
+        self.assertEqual(detail['status'], 'awaiting_signature')
+
+    def test_mcm_future_month_can_be_loaded_and_signed(self):
+        learner = {**self.learner, 'aptem_id': None}
+        with patch.object(logs.timezone, 'localdate', return_value=date(2026, 9, 29)), \
+             patch.object(sources, 'activity_rows', return_value=[]), \
+             patch.object(logs, 'legacy_summary', return_value={'months': []}), \
+             patch.object(logs, 'signatures', return_value=[]), \
+             patch.object(logs, 'lock_state', return_value={
+                 'locked': False, 'locked_at': None, 'unlocked_at': None, 'unlocked_by': None,
+             }), \
+             patch.object(sources, 'first_evidence_date', return_value=None), \
+             patch.object(logs.old_repo, 'report_profile', return_value={}):
+            detail = logs.detail_data(learner, '2026-10', include_open=True,
+                                      include_future=True, ensure_month='2026-10')
+
+        self.assertEqual(detail['month'], '2026-10')
+        self.assertFalse(detail['is_open'])
+        self.assertEqual(detail['rows'], [])
+
     def test_open_month_cannot_be_requested_or_signed_directly(self):
         with patch.object(logs.timezone, 'localdate', return_value=date(2026, 9, 30)), \
              patch.object(sources, 'activity_rows') as activities, \
@@ -214,6 +250,23 @@ class MonthlyLogsTests(SimpleTestCase):
         self.assertIn('monthly_audit_signoffs', insert.args[0])
         self.assertIn('data:image/png;base64,mcm', insert.args[1][4])
         self.assertIn('mcm-digest', insert.args[1])
+
+    def test_mcm_signature_mirror_accepts_a_future_target_month(self):
+        report = {'source': 'lms', 'rows': [], 'profile': None,
+                  'snapshot_digest': 'future-mcm-digest'}
+        learner = {**self.learner, 'aptem_id': None}
+        with patch.object(logs.timezone, 'localdate', return_value=date(2026, 9, 29)), \
+             patch.object(logs, 'detail_data', return_value=report), \
+             patch.object(logs.canonical, 'enabled', return_value=False), \
+             patch.object(logs.transaction, 'atomic', return_value=nullcontext()), \
+             patch.object(logs.old_repo, 'query', return_value=[]) as query:
+            result = logs.mirror_mcm_learner_signature(
+                learner, '2026-10', 'data:image/png;base64,mcm', 'Learner',
+            )
+
+        self.assertEqual(result['status'], 'synced')
+        self.assertEqual(result['month'], '2026-10')
+        self.assertTrue(any('INSERT INTO' in call.args[0] for call in query.call_args_list))
 
     def test_mcm_signoff_uses_target_month_when_booking_is_later(self):
         record = SimpleNamespace(

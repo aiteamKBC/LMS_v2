@@ -164,10 +164,14 @@ export interface CaseFileReviewMeeting {
   eventKey: string;
   reviewInstanceId?: string | null;
   source: string;
+  reviewTypeCode?: string | null;
+  occurrenceNumber?: number | null;
   reviewTypeName: string;
   title: string;
   date: string;
   plannedDate: string;
+  scheduledDate: string;
+  scheduledTime: string;
   completedDate: string;
   time: string;
   detail: string;

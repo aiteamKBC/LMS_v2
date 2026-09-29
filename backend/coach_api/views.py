@@ -39,7 +39,7 @@ from coach_api.auth import (
     coach_access_required,
     is_coach_view_as,
 )
-from coach_api.errors import coach_error
+from coach_api.errors import coach_error, request_id_for
 from coach_api.cache.learners import (
     acquire_caseload_lock,
     cache_caseload,
@@ -13855,6 +13855,15 @@ def coach_review_instance_meeting_summary(request, instance_id):
     """
     if request.method != "POST":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
+
+    def summary_error(*, code: str, detail: str, status: int):
+        """Return actionable public diagnostics without exposing provider errors."""
+        return JsonResponse({
+            "detail": detail,
+            "code": code,
+            "request_id": request_id_for(request),
+        }, status=status)
+
     instance_row, error = _authorized_review_instance(request, instance_id)
     if error:
         return error
@@ -13885,7 +13894,7 @@ def coach_review_instance_meeting_summary(request, instance_id):
         try:
             transcript_text = uploaded_coach_meeting_transcript_text(uploaded_transcript)
         except ValueError as exc:
-            return JsonResponse({"detail": str(exc)}, status=400)
+            return summary_error(code="invalid_transcript_upload", detail=str(exc), status=400)
         try:
             summary, _model = openai_meeting_summary(context, transcript_text)
         except Exception:  # noqa: BLE001 - never expose provider details
@@ -13893,9 +13902,15 @@ def coach_review_instance_meeting_summary(request, instance_id):
                 "Unable to generate coach meeting summary from uploaded transcript for review instance %s",
                 instance_row.get("id"),
             )
-            return JsonResponse({
-                "detail": "The Meeting Summary could not be generated from the uploaded transcript. Your current Review answer has not been changed.",
-            }, status=502)
+            return summary_error(
+                code="meeting_summary_ai_failed",
+                detail=(
+                    "The transcript was accepted, but the AI Meeting Summary could not be generated. "
+                    "Check the OpenAI API key, model access, quota, or server connection, then try again. "
+                    "Your current Review answer has not been changed."
+                ),
+                status=502,
+            )
         # Empty unless something qualifies THIS result, matching what
         # _review_instance_meeting_summary_source sends for a clean read. The
         # client supplies its own wording for the ordinary case and shows a
@@ -13920,9 +13935,11 @@ def coach_review_instance_meeting_summary(request, instance_id):
         })
 
     if not record:
-        return JsonResponse({
-            "detail": "This Review is not linked to a scheduled Teams meeting. Upload the meeting transcript as a .vtt file, or enter the summary manually.",
-        }, status=409)
+        return summary_error(
+            code="meeting_summary_meeting_not_linked",
+            detail="This Review is not linked to a scheduled Teams meeting. Upload the meeting transcript as a .vtt file, or enter the summary manually.",
+            status=409,
+        )
 
     # A valid stored artifact is idempotent. In particular, a coach-edited AI
     # artifact must never be replaced simply because this button was pressed.
@@ -13932,7 +13949,11 @@ def coach_review_instance_meeting_summary(request, instance_id):
 
     snapshot, error_payload, status_code = fetch_coach_meeting_graph_snapshot(record)
     if error_payload:
-        return JsonResponse(error_payload, status=status_code)
+        return JsonResponse({
+            **error_payload,
+            "code": error_payload.get("code") or "teams_source_unavailable",
+            "request_id": request_id_for(request),
+        }, status=status_code)
     persist_coach_meeting_snapshots(
         record,
         artifacts=snapshot["artifacts"],
@@ -13943,20 +13964,36 @@ def coach_review_instance_meeting_summary(request, instance_id):
         # This is the moment the .vtt upload exists for, so it says so: Teams
         # holds no transcript for a meeting that was moved, not recorded, or
         # still processing, and the coach usually has the file already.
-        return JsonResponse({
-            "detail": "The Teams transcript is not available yet. Upload the meeting transcript as a .vtt file, "
-                      "or enter the summary manually. Your current Review answer has not been changed.",
-        }, status=409)
+        return summary_error(
+            code="teams_transcript_unavailable",
+            detail=(
+                "The Teams meeting was reached, but no transcript is available yet. "
+                "Wait for Teams transcription to finish, upload the .vtt transcript, or enter the summary manually. "
+                "Your current Review answer has not been changed."
+            ),
+            status=409,
+        )
 
     generated = ensure_coach_meeting_summary(record, retry_failed=True)
     if not generated:
-        return JsonResponse({
-            "detail": "The Meeting Summary could not be generated. Your current Review answer has not been changed.",
-        }, status=502)
+        return summary_error(
+            code="meeting_summary_storage_unavailable",
+            detail=(
+                "The Teams transcript was found, but the generated summary could not be saved. "
+                "Check the server logs and try again. Your current Review answer has not been changed."
+            ),
+            status=502,
+        )
     if clean_text(generated.get("status")) == "failed":
-        return JsonResponse({
-            "detail": "Meeting Summary generation failed. Your current Review answer has not been changed.",
-        }, status=502)
+        return summary_error(
+            code="meeting_summary_ai_failed",
+            detail=(
+                "The Teams transcript was found, but the AI Meeting Summary could not be generated. "
+                "Check the OpenAI API key, model access, quota, or server connection, then try again. "
+                "Your current Review answer has not been changed."
+            ),
+            status=502,
+        )
     return JsonResponse({"meetingSummarySource": _review_instance_meeting_summary_source(instance_row, definition)})
 
 

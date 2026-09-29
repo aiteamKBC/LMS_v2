@@ -36,6 +36,8 @@ interface ReviewFormRendererProps {
   /** Optional non-coach respondent whose writable questions should be
    * labelled in the shared renderer. */
   respondentRole?: 'participant' | 'employer';
+  /** Show a green indicator when a read-only viewer has saved content. */
+  showSavedAnswerStatus?: boolean;
   openSectionId: string;
   onOpenSectionChange: (sectionId: string) => void;
   renderFieldAddon?: (field: ReviewFieldDefinition) => ReactNode;
@@ -72,15 +74,18 @@ function computeSectionRespondentSummary(
   let count = 0;
   let required = 0;
   let missing = 0;
+  let unanswered = 0;
   const walk = (fields: ReviewFieldDefinition[], visible: boolean) => {
     for (const field of fields) {
       const displayOnly = field.fieldType === 'title_description' || field.fieldType === 'action_button';
       const canRespond = visible && !displayOnly && fieldAllowsRespondent(field, role);
       if (canRespond) {
         count += 1;
+        const answered = fieldAnswered(field, answers);
+        if (!answered) unanswered += 1;
         if (field.required) {
           required += 1;
-          if (!fieldAnswered(field, answers)) missing += 1;
+          if (!answered) missing += 1;
         }
       }
       if (field.fieldType === 'boolean_case_block') {
@@ -91,11 +96,24 @@ function computeSectionRespondentSummary(
     }
   };
   if (section.enabled) walk(section.fields, true);
-  return { count, required, missing };
+  // `unanswered` counts every field opened up to this respondent, not just the
+  // required ones -- a section they were asked to fill in should not read as
+  // "done" while an optional question of theirs is still blank.
+  return { count, required, missing, unanswered };
 }
 
 function sectionRequiredFields(section: ReviewSectionDefinition) {
   return section.fields.filter((field) => field.required);
+}
+
+function sectionHasAnsweredFields(section: ReviewSectionDefinition, answers: Record<string, unknown>) {
+  const walk = (fields: ReviewFieldDefinition[]): boolean => fields.some((field) => (
+    fieldAnswered(field, answers)
+    || (field.fieldType === 'boolean_case_block' && (
+      walk(field.yesFields || []) || walk(field.noFields || [])
+    ))
+  ));
+  return section.enabled && walk(section.fields);
 }
 
 export function ReviewFormRenderer({
@@ -106,6 +124,7 @@ export function ReviewFormRenderer({
   readOnly,
   fieldReadOnly,
   respondentRole,
+  showSavedAnswerStatus = false,
   openSectionId,
   onOpenSectionChange,
   renderFieldAddon,
@@ -134,8 +153,10 @@ export function ReviewFormRenderer({
                 ? computeSectionRespondentSummary(section, answers, respondentRole)
                 : null;
               const complete = respondentSummary
-                ? respondentSummary.missing === 0
+                ? respondentSummary.count > 0 && respondentSummary.unanswered === 0
                 : computeMissingRequiredFields([section], answers).size === 0;
+              const savedAnswer = showSavedAnswerStatus && sectionHasAnsweredFields(section, answers);
+              const pending = Boolean(respondentSummary && respondentSummary.count > 0 && respondentSummary.unanswered > 0);
               const stepNumber = sectionIndex + 1;
               return (
                 <li key={section.id}>
@@ -152,11 +173,13 @@ export function ReviewFormRenderer({
                       'flex h-8 w-8 shrink-0 items-center justify-center rounded-full border text-xs font-bold',
                       selected
                         ? 'border-primary-600 bg-primary-600 text-white'
-                        : complete
+                        : complete || savedAnswer
                           ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                          : 'border-background-300 bg-white text-foreground-500',
+                          : pending
+                            ? 'border-amber-200 bg-amber-50 text-amber-700'
+                            : 'border-background-300 bg-white text-foreground-500',
                     )}>
-                      {complete && !selected ? <AppIcon className="ri-check-line"></AppIcon> : stepNumber}
+                      {(complete || savedAnswer) && !selected ? <AppIcon className="ri-check-line"></AppIcon> : stepNumber}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block text-[11px] font-bold uppercase tracking-[0.1em]">Step {stepNumber}</span>
@@ -253,8 +276,10 @@ export function ReviewFormRenderer({
           : null;
         const requiredFields = sectionRequiredFields(section);
         const complete = respondentSummary
-          ? respondentSummary.missing === 0
+          ? respondentSummary.count > 0 && respondentSummary.unanswered === 0
           : requiredFields.every((field) => fieldAnswered(field, answers));
+        const savedAnswer = showSavedAnswerStatus && sectionHasAnsweredFields(section, answers);
+        const pending = Boolean(respondentSummary && respondentSummary.count > 0 && respondentSummary.unanswered > 0);
         return (
           <section id={`review-section-${section.id}`} key={section.id} className={cn('overflow-hidden rounded-2xl border bg-background-50 transition-all', open ? 'border-primary-300 shadow-sm' : respondentSummary?.count ? 'border-primary-300 bg-primary-50/30' : 'border-background-200')}>
             <button
@@ -279,7 +304,14 @@ export function ReviewFormRenderer({
                   </span>
                 ) : null}
               </span>
-              {complete ? <AppIcon className="ri-checkbox-circle-fill text-lg text-emerald-500"></AppIcon> : null}
+              {complete || savedAnswer ? (
+                <AppIcon
+                  aria-label={savedAnswer && !complete ? 'Section has saved answers' : 'Section complete'}
+                  className="ri-checkbox-circle-fill text-lg text-emerald-500"
+                ></AppIcon>
+              ) : pending ? (
+                <AppIcon className="ri-time-line text-lg text-amber-500"></AppIcon>
+              ) : null}
               <span className={cn('flex h-8 w-8 items-center justify-center rounded-full bg-background-100 text-foreground-500 transition-transform', open && 'rotate-180')}>
                 <AppIcon className="ri-arrow-down-s-line"></AppIcon>
               </span>
