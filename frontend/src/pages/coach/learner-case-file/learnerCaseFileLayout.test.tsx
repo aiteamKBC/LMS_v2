@@ -204,15 +204,25 @@ describe('Learner Case File design', () => {
 
   it('shows learner review summaries, classification, filters, canonical dates and only available actions', () => {
     const completedReview = {
-      id: 'review-1', eventKey: 'review-1', reviewInstanceId: 'instance-1', source: 'progress-review',
-      reviewTypeName: 'Progress Review', title: 'Progress Review', date: '10 Sep 2026', plannedDate: '08 Sep 2026',
-      completedDate: '10 Sep 2026', time: '10:00', detail: '', status: 'completed', statusLabel: 'Completed',
+      id: 'review-1', eventKey: 'review-1', reviewInstanceId: 'instance-1', source: 'mcr',
+      reviewTypeCode: 'mcm', reviewTypeName: 'Progress Review', title: 'Progress Review', date: '10 Sep 2026', plannedDate: '08 Sep 2026',
+      scheduledDate: '10 Sep 2026', scheduledTime: '10:00', completedDate: '10 Sep 2026',
+      time: '10:00', detail: '', status: 'completed', statusLabel: 'Completed',
       isNext: false, reviewer: 'Test Coach', hasForm: true, hasTranscript: false, hasAttendance: true,
     } satisfies CaseFileReviewMeeting;
     const upcomingMeeting = {
       id: 'meeting-1', eventKey: 'meeting-1', source: 'mcr', reviewTypeName: 'Monthly Coaching Meeting',
-      title: 'Monthly Coaching Meeting', date: '28 Sep 2026', plannedDate: '28 Sep 2026', completedDate: '--',
+      reviewTypeCode: 'mcm',
+      title: 'Monthly Coaching Meeting', date: '02 Oct 2026', plannedDate: '28 Sep 2026',
+      scheduledDate: '02 Oct 2026', scheduledTime: '09:00', completedDate: '--',
       time: '09:00', detail: '', status: 'confirmed', statusLabel: 'Confirmed', isNext: true,
+      reviewer: 'Test Coach', hasForm: false, hasTranscript: false, hasAttendance: false,
+    } satisfies CaseFileReviewMeeting;
+    const customReview = {
+      id: 'career-1', eventKey: 'career-1', source: 'review', reviewTypeCode: 'career_review',
+      reviewTypeName: 'Career Review', title: 'Career Review', date: '30 Sep 2026', plannedDate: '30 Sep 2026',
+      scheduledDate: '30 Sep 2026', scheduledTime: '11:00', completedDate: '--',
+      time: '11:00', detail: '', status: 'scheduled', statusLabel: 'Scheduled', isNext: false,
       reviewer: 'Test Coach', hasForm: false, hasTranscript: false, hasAttendance: false,
     } satisfies CaseFileReviewMeeting;
     mocks.data = {
@@ -222,24 +232,50 @@ describe('Learner Case File design', () => {
       reviewGroups: [
         { key: 'progress review', title: 'Progress Review', items: [completedReview] },
         { key: 'monthly coaching meeting', title: 'Monthly Coaching Meeting', items: [upcomingMeeting] },
+        { key: 'career review', title: 'Career Review', items: [customReview] },
       ],
     };
     render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42&tab=reviews']}><LearnerCaseFile /></MemoryRouter>);
 
-    expect(screen.getByLabelText('Review summary')).toHaveTextContent('2Total Reviews');
+    expect(screen.getByLabelText('Review summary')).toHaveTextContent('3Total Reviews');
     expect(screen.getByLabelText('Review summary')).toHaveTextContent('1Progress Reviews');
     expect(screen.getByLabelText('Review summary')).toHaveTextContent('1Monthly Coaching Meetings');
     expect(screen.getByRole('cell', { name: '08 Sep 2026' })).toBeInTheDocument();
     expect(screen.getByRole('cell', { name: '10 Sep 2026' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Scheduled Date & Time' })).toBeInTheDocument();
+    expect(screen.getByRole('cell', { name: '02 Oct 2026 at 09:00' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'View Form' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'View Attendance' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'View Transcript' })).not.toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Completed' }));
+    const typeFilters = within(screen.getByLabelText('Review type filters'));
+    const statusFilters = within(screen.getByLabelText('Review status filters'));
+    fireEvent.click(typeFilters.getByRole('button', { name: 'Monthly Coaching Meeting' }));
+    expect(screen.getByText('Monthly Coaching Meeting', { selector: 'td' })).toBeInTheDocument();
+    expect(screen.queryByText('Progress Review', { selector: 'td' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Career Review', { selector: 'td' })).not.toBeInTheDocument();
+    fireEvent.click(typeFilters.getByRole('button', { name: 'Progress Review' }));
     expect(screen.getByText('Progress Review', { selector: 'td' })).toBeInTheDocument();
     expect(screen.queryByText('Monthly Coaching Meeting', { selector: 'td' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Upcoming' }));
+    fireEvent.click(typeFilters.getByRole('button', { name: 'Review' }));
+    expect(screen.getByText('Career Review', { selector: 'td' })).toBeInTheDocument();
+    expect(screen.queryByText('Progress Review', { selector: 'td' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Monthly Coaching Meeting', { selector: 'td' })).not.toBeInTheDocument();
+
+    // Switching back from the generic Review filter must not leak the PR group
+    // into the MCM results, even when the row carries stale MCM code metadata.
+    fireEvent.click(typeFilters.getByRole('button', { name: 'Monthly Coaching Meeting' }));
+    expect(screen.queryByText('Progress Review', { selector: 'td' })).not.toBeInTheDocument();
     expect(screen.getByText('Monthly Coaching Meeting', { selector: 'td' })).toBeInTheDocument();
+
+    fireEvent.click(typeFilters.getByRole('button', { name: 'All' }));
+    fireEvent.click(statusFilters.getByRole('button', { name: 'Completed' }));
+    expect(screen.getByText('Progress Review', { selector: 'td' })).toBeInTheDocument();
+    expect(screen.queryByText('Monthly Coaching Meeting', { selector: 'td' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Career Review', { selector: 'td' })).not.toBeInTheDocument();
+    fireEvent.click(statusFilters.getByRole('button', { name: 'Upcoming' }));
+    expect(screen.getByText('Monthly Coaching Meeting', { selector: 'td' })).toBeInTheDocument();
+    expect(screen.getByText('Career Review', { selector: 'td' })).toBeInTheDocument();
     expect(screen.queryByText('Progress Review', { selector: 'td' })).not.toBeInTheDocument();
   });
 
@@ -249,6 +285,23 @@ describe('Learner Case File design', () => {
     expect(screen.getByTestId('imported-review-form')).toHaveTextContent('apprenticeship:125:reviews:A72');
     expect(screen.queryByRole('heading', { name: 'Review History' })).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Review summary')).not.toBeInTheDocument();
+  });
+
+  it('does not leak a mixed Progress Review row from an MCM group', () => {
+    const mcm = {
+      id: 'mcm-1', eventKey: 'mcm-1', source: 'mcr', reviewTypeCode: 'mcm',
+      reviewTypeName: 'Monthly Coaching Meeting', title: 'Monthly Coaching Meeting',
+      date: '02 Oct 2026', plannedDate: '28 Sep 2026', scheduledDate: '02 Oct 2026', scheduledTime: '09:00',
+      completedDate: '--', time: '09:00', detail: '', status: 'scheduled', statusLabel: 'Scheduled',
+      isNext: false, reviewer: 'Test Coach', hasForm: false, hasTranscript: false, hasAttendance: false,
+    } satisfies CaseFileReviewMeeting;
+    const leakedProgress = { ...mcm, id: 'pr-leaked', eventKey: 'pr-leaked', reviewTypeCode: 'progress_review', reviewTypeName: 'Progress Review', title: 'Progress Review', source: 'progress-review' } satisfies CaseFileReviewMeeting;
+    mocks.data = { ...caseFileData, reviewGroups: [{ key: 'monthly coaching meeting', title: 'Monthly Coaching Meeting', items: [mcm, leakedProgress] }] };
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42&tab=reviews']}><LearnerCaseFile /></MemoryRouter>);
+
+    fireEvent.click(within(screen.getByLabelText('Review type filters')).getByRole('button', { name: 'Monthly Coaching Meeting' }));
+    expect(screen.getByText('Monthly Coaching Meeting', { selector: 'td' })).toBeInTheDocument();
+    expect(screen.queryByText('Progress Review', { selector: 'td' })).not.toBeInTheDocument();
   });
 
   it('keeps the reviews loading skeleton distinct from the empty state', () => {
@@ -271,6 +324,8 @@ describe('Learner Case File design', () => {
       title: `Review ${index + 1}`,
       date: `${String(index + 1).padStart(2, '0')} Sep 2026`,
       plannedDate: `${String(index + 1).padStart(2, '0')} Sep 2026`,
+      scheduledDate: `${String(index + 1).padStart(2, '0')} Sep 2026`,
+      scheduledTime: '09:00',
       completedDate: '--',
       time: '09:00',
       detail: '',

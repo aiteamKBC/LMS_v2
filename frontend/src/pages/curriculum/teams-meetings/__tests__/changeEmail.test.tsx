@@ -37,17 +37,16 @@ async function confirmReview() {
   await userEvent.click(screen.getByRole('button', { name: 'Save and send' }));
 }
 
-it('offers the change email unticked, and reports no email unless it is ticked', async () => {
-  const pending = reviewCalendar({ ...calendar, offerChangeEmail: true }, 'Europe/London');
-  const box = await screen.findByRole('checkbox', { name: /Email attendees and organisers/ });
-  expect(box).not.toBeChecked();
+it('does not offer an optional change email and sends it for an update', async () => {
+  const pending = reviewCalendar({ ...calendar, notifyOnUpdate: true }, 'Europe/London');
+  expect(screen.queryByRole('checkbox', { name: /Email attendees and organisers/ })).toBeNull();
   await confirmReview();
-  await expect(pending).resolves.toEqual({ notifyAttendees: false });
+  await expect(pending).resolves.toEqual({ notifyAttendees: true });
 });
 
-it('reports the email choice when the author ticks it', async () => {
-  const pending = reviewCalendar({ ...calendar, offerChangeEmail: true }, 'Europe/London');
-  await userEvent.click(await screen.findByRole('checkbox', { name: /Email attendees and organisers/ }));
+it('keeps the review free of a change email checkbox', async () => {
+  const pending = reviewCalendar({ ...calendar, notifyOnUpdate: true }, 'Europe/London');
+  expect(screen.queryByRole('checkbox', { name: /Email attendees and organisers/ })).toBeNull();
   await confirmReview();
   await expect(pending).resolves.toEqual({ notifyAttendees: true });
 });
@@ -60,16 +59,16 @@ it('does not offer the change email where there is no change to describe', async
   await expect(pending).resolves.toEqual({ notifyAttendees: false });
 });
 
-it('sends nothing after an update the author chose not to email about', async () => {
+it('sends nothing after a save that changed nothing everyone has to be told', async () => {
   const pending = finishTeamsUpdate({ updated: true, meeting: { liveSessionId: 'LIVE-ONE' }, changeNotice: 'signed', notifyAttendees: false }, calendar);
   await resultOpen();
-  expect(screen.getByText('Not sent — you chose not to email')).toBeVisible();
+  expect(screen.getByText('Not sent — nothing changed that everyone invited has to be told')).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: 'Done' }));
   await pending;
   expect(submitChangeEmails).not.toHaveBeenCalled();
 });
 
-it('sends the signed change notice when the author ticked the email', async () => {
+it('sends the signed change notice when the calendar moved', async () => {
   const pending = finishTeamsUpdate({ updated: true, meeting: { liveSessionId: 'LIVE-ONE' }, changeNotice: 'signed', notifyAttendees: true }, calendar);
   await resultOpen();
   expect(screen.getByText('3 of 3 submitted to Microsoft')).toBeVisible();

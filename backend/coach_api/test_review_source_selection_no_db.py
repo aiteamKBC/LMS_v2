@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 from django.test import RequestFactory, SimpleTestCase
+from django.db import DatabaseError
 
 from coach_api import views
 from coach_api.models import CoachCalendarEvent
@@ -53,6 +54,21 @@ class EffectiveAptemIdentityTests(SimpleTestCase):
 
 
 class SharedReviewSourceResolverTests(SimpleTestCase):
+    @patch("coach_api.views.resolve_curriculum_programme_id", return_value=None)
+    @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
+    @patch("coach_api.views.fetch_aptem_review_events", side_effect=DatabaseError("statement timeout"))
+    @patch("coach_api.views.resolve_effective_aptem_ids", return_value=({1: 101}, set()))
+    def test_aptem_timeout_is_reported_without_failing_the_whole_timetable(
+        self, _identities, _fetch_aptem, _source_rows, _programme,
+    ):
+        result = views.resolve_coach_review_events("coach@example.invalid", "Coach", [learner(1)])
+
+        self.assertEqual(result["events"], [])
+        self.assertIn(
+            {"learnerId": "1", "code": "aptem_reviews_unavailable"},
+            result["reviewGenerationIssues"],
+        )
+
     @patch("coach_api.views.resolve_curriculum_review_occurrences")
     @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
     @patch("coach_api.views.fetch_aptem_review_events")
@@ -83,7 +99,7 @@ class SharedReviewSourceResolverTests(SimpleTestCase):
     @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
     @patch("coach_api.views.fetch_aptem_review_events")
     @patch("coach_api.views.resolve_effective_aptem_ids", return_value=({1: 101}, set()))
-    def test_aptem_learner_without_aptem_mcm_gets_curriculum_mcm_only(
+    def test_aptem_learner_without_imported_mcm_does_not_get_curriculum_fallback(
         self, _identities, fetch_aptem, _source_rows, _templates, _anchor, _window,
         _programme, occurrences, build_event,
     ):
@@ -99,27 +115,24 @@ class SharedReviewSourceResolverTests(SimpleTestCase):
 
         result = views.resolve_coach_review_events("coach@example.invalid", "Coach", [learner(1)])
 
-        self.assertEqual(
-            [(event["source"], event["reviewSource"]) for event in result["events"]],
-            [("progress-review", "aptem"), ("mcr", "curriculum")],
-        )
+        self.assertEqual(result["events"], [aptem_event])
+        occurrences.assert_not_called()
+        build_event.assert_not_called()
         self.assertEqual(result["reviewGenerationIssues"], [])
-        self.assertEqual(result["sourceCounts"]["curriculumMcmFallbackLearners"], 1)
+        self.assertEqual(result["sourceCounts"]["curriculumMcmFallbackLearners"], 0)
         self.assertEqual(result["aptemProfileIds"], {1})
 
     @patch("coach_api.views.resolve_curriculum_review_occurrences", return_value=[])
+    @patch("coach_api.views.fetch_aptem_mcm_profile_ids", return_value={1})
     @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
     @patch("coach_api.views.fetch_aptem_review_events")
     @patch("coach_api.views.resolve_effective_aptem_ids", return_value=({1: 101}, set()))
     def test_windowed_resolution_checks_aptem_mcm_outside_the_window(
-        self, _identities, fetch_aptem, _source_rows, curriculum_occurrences,
+        self, _identities, fetch_aptem, _source_rows, _mcm_profiles, curriculum_occurrences,
     ):
         # The Aptem MCM falls outside the requested month, so the windowed
         # fetch is empty, but the learner still has Aptem MCMs -- no fallback.
-        aptem_mcm = {"eventKey": "imported-review:A-2", "source": "mcr", "reviewSource": "aptem", "learnerId": "1"}
-        fetch_aptem.side_effect = lambda *args, **kwargs: (
-            ([], set()) if kwargs.get("start_date") else ([aptem_mcm], {1})
-        )
+        fetch_aptem.return_value = ([], set())
 
         result = views.resolve_coach_review_events(
             "coach@example.invalid", "Coach", [learner(1)],
@@ -644,7 +657,7 @@ class TimetableResolvedReviewStreamTests(SimpleTestCase):
     @patch("coach_api.views.fetch_standalone_event_records")
     @patch("coach_api.views.collect_live_session_events", return_value=[])
     @patch("coach_api.views.resolve_coach_review_events")
-    @patch("coach_api.views.fetch_caseload_dashboard_profiles")
+    @patch("coach_api.views.fetch_caseload_timetable_profiles")
     @patch("coach_api.views.fetch_owner_active_learner_profiles", return_value=[])
     @patch("coach_api.views.coach_staff_display_name", return_value="Coach")
     def test_calendar_includes_aptem_events_and_drops_coexisting_curriculum_record(

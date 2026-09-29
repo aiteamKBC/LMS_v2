@@ -76,9 +76,12 @@ export function coachingSessionState(
   const cancelled = ['cancelled', 'deleted', 'superseded'].includes(bookingStatus)
     || normalize(session.status) === 'cancelled';
   const calendarStatus = normalize(session.status);
+  const attendanceStatus = normalize(attendance?.status);
+  const eventBookingStatus = normalize(session.bookingStatus);
   const status = ['completed', 'awaiting-signature'].includes(reviewStatus)
     ? reviewStatus : ['completed', 'awaiting-signature'].includes(calendarStatus)
-      ? calendarStatus : normalize(attendance?.status) || calendarStatus;
+      ? calendarStatus : [attendanceStatus, eventBookingStatus, calendarStatus].includes('in-progress')
+        ? 'in-progress' : attendanceStatus || eventBookingStatus || calendarStatus;
   const scheduledDate = attendance ? validDate(attendance.date) : validDate(session.scheduledDate);
   const targetDate = validDate(session.targetDate) || validDate(session.date);
   const date = scheduledDate || targetDate;
@@ -132,11 +135,11 @@ export function coachingSessionState(
   if (booked && scheduledDate && scheduledDate < today) {
     // A past date cannot prove absence if attendance has not loaded or has no
     // matching row. Only the attendance endpoint can mark a meeting missed.
-    return result('past', 'Awaiting update', 'Open this meeting to check the attendance and next steps.', 'view', 'View meeting');
+    return result('past', status === 'in-progress' ? 'In Progress' : 'Awaiting update', 'Open this meeting to check the attendance and next steps.', 'view', 'View meeting');
   }
   if (booked) {
     const canJoin = isToday && Boolean(joinUrl);
-    return result('upcoming', isToday ? 'Today' : 'Scheduled',
+    return result('upcoming', status === 'in-progress' ? 'In Progress' : isToday ? 'Today' : 'Scheduled',
       isToday ? 'Have your learning updates and questions ready for your coach.' : 'Make a note of your progress and anything you want to discuss.',
       canJoin ? 'join' : 'prepare', canJoin ? 'Join meeting' : 'Prepare for meeting');
   }

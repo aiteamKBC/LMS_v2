@@ -55,11 +55,15 @@ def project_current(records, markings):
     return result + list(native.values())
 
 
+def source_payload_metadata(value):
+    """Read keyed lineage metadata without changing non-object saved payloads."""
+    if isinstance(value, str):
+        value = json.loads(value)
+    return value if isinstance(value, dict) else {}
+
+
 def source_reference(record):
-    payload = record.get('source_payload') or {}
-    if isinstance(payload, str):
-        payload = json.loads(payload)
-    return payload.get('original_source_ref')
+    return source_payload_metadata(record.get('source_payload')).get('original_source_ref')
 
 
 def merge_attempts(records, attempts):

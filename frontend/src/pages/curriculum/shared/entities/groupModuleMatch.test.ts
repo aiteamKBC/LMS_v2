@@ -22,4 +22,11 @@ describe('group module matching', () => {
       { groupId: 'GROUP-FINAL', groupName: 'Final Group', programmeId: 'PROGRAMME-1' },
     )).toBe(true);
   });
+
+  it('keeps a module linked by group ID when its programme ID is stale', () => {
+    expect(moduleMatchesGroup(
+      { groupId: 'GROUP-FINAL', group: 'Final Group', programmeId: 'OLD-PROGRAMME' },
+      { groupId: 'GROUP-FINAL', groupName: 'Final Group', programmeId: 'PROGRAMME-1' },
+    )).toBe(true);
+  });
 });

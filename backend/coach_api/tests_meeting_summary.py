@@ -287,7 +287,7 @@ class ReviewMeetingSummaryEndpointTests(SimpleTestCase):
         ), patch("coach_api.views.ensure_coach_meeting_summary") as generate:
             response = unwrap(coach_review_instance_meeting_summary)(self.request, "REVI-1")
         self.assertEqual(response.status_code, 409)
-        self.assertIn("transcript is not available", response.content.decode())
+        self.assertIn("no transcript is available", response.content.decode())
         generate.assert_not_called()
 
     def test_failed_summary_gets_one_explicit_retry(self):
@@ -341,6 +341,48 @@ class ReviewMeetingSummaryEndpointTests(SimpleTestCase):
         generate.assert_called_once_with(self.record, "Uploaded discussion.")
         graph.assert_not_called()
         stored_generation.assert_not_called()
+
+    def test_uploaded_vtt_reports_a_safe_ai_failure_code_and_request_id(self):
+        request = RequestFactory().post(
+            "/coach/reviews/REVI-1/meeting-summary",
+            {"transcript": SimpleUploadedFile(
+                "meeting.vtt",
+                b"WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nThe coach and learner reviewed progress.",
+                content_type="text/vtt",
+            )},
+        )
+        request.coach_email = "coach@example.test"
+        contexts = self.patches()
+        with contexts[0], contexts[1], contexts[2], contexts[3], patch(
+            "coach_api.views.openai_meeting_summary",
+            side_effect=RuntimeError("provider details must stay server-side"),
+        ):
+            response = unwrap(coach_review_instance_meeting_summary)(request, "REVI-1")
+
+        payload = json.loads(response.content)
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(payload["code"], "meeting_summary_ai_failed")
+        self.assertTrue(payload["request_id"])
+        self.assertIn("Check the OpenAI API key", payload["detail"])
+        self.assertNotIn("provider details must stay server-side", payload["detail"])
+
+    def test_generate_from_teams_reports_when_the_transcript_is_missing(self):
+        snapshot = {"artifacts": [], "attendanceReports": [], "attendanceTracker": {}}
+        contexts = self.patches()
+        with contexts[0], contexts[1], contexts[2], contexts[3], patch(
+            "coach_api.views.stored_coach_meeting_summary", return_value=None,
+        ), patch(
+            "coach_api.views.fetch_coach_meeting_graph_snapshot", return_value=(snapshot, None, 200),
+        ), patch("coach_api.views.persist_coach_meeting_snapshots"), patch(
+            "coach_api.views.stored_coach_meeting_transcript_for_summary", return_value=None,
+        ):
+            response = unwrap(coach_review_instance_meeting_summary)(self.request, "REVI-1")
+
+        payload = json.loads(response.content)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(payload["code"], "teams_transcript_unavailable")
+        self.assertTrue(payload["request_id"])
+        self.assertIn("no transcript is available", payload["detail"])
 
     def test_progress_review_uploaded_vtt_generates_for_its_mapped_summary_field(self):
         """Progress Reviews use the same transcript pipeline as MCM reviews."""

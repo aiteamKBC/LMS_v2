@@ -106,3 +106,21 @@ describe('createLearnerReviewAddition', () => {
     })).rejects.toThrow(/not enabled for this learner/);
   });
 });
+
+describe('generateReviewMeetingSummary', () => {
+  it('surfaces the backend diagnostic code and reference when generation fails', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ csrfToken: 'server-token' }))
+      .mockResolvedValueOnce(jsonResponse({
+        detail: 'The transcript was accepted, but the AI Meeting Summary could not be generated.',
+        code: 'meeting_summary_ai_failed',
+        request_id: 'request-123',
+      }, 502));
+    vi.stubGlobal('fetch', fetchMock);
+    const { generateReviewMeetingSummary } = await import('./reviewInstances');
+
+    await expect(generateReviewMeetingSummary('REVI-1')).rejects.toThrow(
+      /meeting_summary_ai_failed.*request-123/,
+    );
+  });
+});

@@ -34,6 +34,26 @@ def counts(items, predicate):
     return {'completed': sum(bool(predicate(item)) for item in items), 'total': len(items)}
 
 
+def apply_canonical_home_metrics(home, metrics):
+    """Overlay the learner/coach shared metrics without replacing home-only data."""
+    if not metrics:
+        return home
+    result = {**home, 'otjh': {**home['otjh']}}
+    otjh = metrics.get('otjh') or {}
+    actual = otjh.get('completed_actual') if 'completed_actual' in otjh else otjh.get('actual')
+    planned = otjh.get('planned')
+    result['otjh'].update({
+        'actual': actual,
+        'planned': planned,
+        'percent': round(actual / planned * 100, 2) if actual is not None and planned else None,
+    })
+    programme = metrics.get('programme') or {}
+    result['activities'] = ({'completed': programme.get('completed'),
+                             'total': programme.get('total')}
+                            if programme.get('status') in {'ready', 'empty'} else None)
+    return result
+
+
 def summarise_home(activities, native, progress, submissions, assigned, start, end,
                    lectures, historical_hours=0):
     """Aggregate explicit activity identities; never infer identity from titles."""
@@ -133,7 +153,8 @@ def summarise_home(activities, native, progress, submissions, assigned, start, e
 
 
 def read_home_progress(
-    source, kind, activities, native, progress, assigned, end, *, attendance_module_ids=None,
+    source, kind, activities, native, progress, assigned, end, *,
+    attendance_module_ids=None, canonical_metrics=None,
 ):
     start, _, _ = _group_dates(source)
     with connections['enrolment'].cursor() as cur:
@@ -149,20 +170,13 @@ def read_home_progress(
     except (DatabaseError, psycopg.Error):
         log.warning('Home attendance unavailable for enrolment %s', source.pk, exc_info=True)
         lectures = None
-    result = summarise_home(
+    home = summarise_home(
         activities, native, progress, submissions, assigned, start, end, lectures, historical_hours,
     )
     # Actual and Planned are one programme-wide SSOT pair. Missing consolidated
     # identity fails closed instead of switching to another data source.
-    otjh = canonical_learning.metrics(source.pk)['otjh']
-    actual = otjh['actual']
-    planned = otjh.get('planned')
-    result['otjh']['actual'] = actual
-    result['otjh']['planned'] = planned
+    metrics = canonical_metrics if canonical_metrics is not None else canonical_learning.metrics(source.pk)
+    result = apply_canonical_home_metrics(home, metrics)
+    planned = (metrics.get('otjh') or {}).get('planned') if metrics else None
     result['otjh']['missingPlannedActivities'] = 0 if planned is not None else None
-    result['otjh']['percent'] = (
-        round(actual / planned * 100, 2)
-        if actual is not None and planned
-        else None
-    )
     return result

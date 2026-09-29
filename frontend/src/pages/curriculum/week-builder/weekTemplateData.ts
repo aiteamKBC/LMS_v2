@@ -88,7 +88,14 @@ let scopeCache: Promise<CurriculumScope> | null = null;
 export function loadCurriculumScope(options: { force?: boolean } = {}): Promise<CurriculumScope> {
   if (options.force) scopeCache = null;
   if (!scopeCache) {
-    scopeCache = fetchCurriculumOverview(undefined, { compact: true })
+    scopeCache = fetchCurriculumOverview(undefined, {
+      compact: true,
+      // A placement picker can be opened immediately after a module/group
+      // write. `force` must reach the API layer as well as clearing this
+      // in-memory promise, otherwise the backend overview cache can return the
+      // same stale module list and the picker still misses the new module.
+      skipCache: Boolean(options.force),
+    })
       .then(overview => ({
         programmes: overview.programmes || [],
         cohorts: overview.cohorts || [],
@@ -126,11 +133,24 @@ export interface WeekTemplate {
   author: string;
   createdAt?: string;
   updatedAt?: string;
+  /**
+   * The version this copy was read at, sent back on save so the server can
+   * refuse a write built on a template somebody else has already replaced.
+   * Absent on a template that has never been stored.
+   */
+  revision?: string;
   components: ModuleComponent[];
 }
 
 /** Body accepted by create/update. Components reuse ModuleComponent verbatim. */
 export interface WeekTemplateInput {
+  /**
+   * The version the editor read, sent back so the server can refuse a save
+   * built on a template somebody else has already replaced. Omitted means "do
+   * not check me" -- the unguarded write every caller did before this existed,
+   * and what a template whose revision could not be read falls back to.
+   */
+  expectedRevision?: string;
   courseType: WeekTemplateCourseType;
   title: string;
   summary?: string;
@@ -186,6 +206,7 @@ interface RawWeekTemplate {
   author?: string;
   createdAt?: string;
   updatedAt?: string;
+  revision?: string;
   components?: RawWeekTemplateComponent[];
 }
 
@@ -205,6 +226,43 @@ interface RawWeekTemplateComponent {
   settings?: Record<string, unknown>;
 }
 
+/**
+ * A failed week-template request, with the body kept.
+ *
+ * The message is unchanged from what this used to throw, so every existing
+ * caller reads the same sentence. What is new is `data`: a save refused because
+ * somebody else saved first carries the stored template with it, and the editor
+ * needs that to rebase rather than a sentence about it.
+ */
+export class WeekTemplateApiError extends Error {
+  status: number;
+  data: unknown;
+
+  constructor(message: string, status: number, data?: unknown) {
+    super(message);
+    this.name = 'WeekTemplateApiError';
+    this.status = status;
+    this.data = data;
+    Object.setPrototypeOf(this, WeekTemplateApiError.prototype);
+  }
+}
+
+/** A save refused because the template moved under the editor. */
+export interface WeekTemplateConflict {
+  currentRevision: string;
+  template: WeekTemplate | null;
+}
+
+export function weekTemplateConflict(error: unknown): WeekTemplateConflict | null {
+  if (!(error instanceof WeekTemplateApiError) || error.status !== 409) return null;
+  const data = error.data as { conflict?: boolean; currentRevision?: string; weekTemplate?: RawWeekTemplate } | undefined;
+  if (!data || data.conflict !== true) return null;
+  return {
+    currentRevision: String(data.currentRevision || ''),
+    template: data.weekTemplate ? mapWeekTemplate(data.weekTemplate) : null,
+  };
+}
+
 async function request<T>(path: string, init?: WeekTemplateRequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
@@ -215,13 +273,19 @@ async function request<T>(path: string, init?: WeekTemplateRequestInit): Promise
   });
   if (!response.ok) {
     let detail = '';
+    let payload: unknown;
     try {
-      const payload = await response.json();
-      detail = payload?.error ? `: ${payload.error}` : '';
+      payload = await response.json();
+      const errorText = (payload as { error?: string } | undefined)?.error;
+      detail = errorText ? `: ${errorText}` : '';
     } catch {
       detail = '';
     }
-    throw new Error(`Week template API returned ${response.status} for ${path}${detail}`);
+    throw new WeekTemplateApiError(
+      `Week template API returned ${response.status} for ${path}${detail}`,
+      response.status,
+      payload,
+    );
   }
   return response.json();
 }
@@ -391,6 +455,7 @@ function mapWeekTemplate(raw: RawWeekTemplate): WeekTemplate {
     author: raw.author || '',
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
+    revision: raw.revision,
     components: (raw.components || []).map(component => mapComponent(component, raw.id)),
   };
 }

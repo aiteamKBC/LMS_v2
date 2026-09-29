@@ -29,6 +29,12 @@ import { recalcWeekTemplate, type WeekTemplate } from './weekTemplateData';
  * changed this" buries the one disagreement that is real.
  */
 const DERIVED_TEMPLATE_FIELDS = [
+  // The concurrency token. It describes which version a copy was read at, not
+  // anything anybody authored, and it moves on every write -- so weighing it
+  // would report a disagreement on every single merge. The caller sets it from
+  // the stored template afterwards, because that is the version the next save
+  // has to be checked against.
+  'revision',
   'totalOtjh',
   'points',
   'componentCount',

@@ -12,6 +12,7 @@ import { formatProgrammeLevel, sortEntities, visibleNotes, PROGRAMME_SORT_OPTION
 import { SelectMenu } from '@/components/feature/SelectField';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
+import { useProgrammeKsbStats, withProgrammeKsbStats } from '@/hooks/useProgrammeKsbStats';
 import { useCurriculumData } from '@/hooks/useCurriculumData';
 import { useCurriculumStaffProfiles } from '@/hooks/useCurriculumStaffProfiles';
 import { curriculumNavItems } from '@/mocks/navigation';
@@ -399,7 +400,17 @@ export default function CurriculumProgrammes() {
   // Only the operational list. Archived programmes are read on the Curriculum
   // archive page, which is the one place they are shown now, so asking for them
   // here would only be a payload nothing renders.
-  const { programmes, loading, error, reload, removeProgramme, markProgrammeArchived, upsertProgramme } = useCurriculumProgrammes({ visibility: 'operational', revalidate: true });
+  const { programmes: listedProgrammes, loading, error, reload, removeProgramme, markProgrammeArchived, upsertProgramme } = useCurriculumProgrammes({ visibility: 'operational', revalidate: true });
+  // The cards' KSB numbers arrive after the cards do. They are the most
+  // expensive thing on this screen by a wide margin -- one read of the whole
+  // authoring tree per programme -- and they used to be computed inside the list
+  // payload, which is shared with /curriculum/overview/ and /curriculum/modules/
+  // and so held up the Module Builder too. See useProgrammeKsbStats.
+  const programmeKsbStats = useProgrammeKsbStats(listedProgrammes, { visibility: 'operational' });
+  const programmes = useMemo(
+    () => listedProgrammes.map(programme => withProgrammeKsbStats(programme, programmeKsbStats)),
+    [listedProgrammes, programmeKsbStats],
+  );
   const { data: curriculumData, reload: reloadCurriculumData } = useCurriculumData({ autoLoad: false, compact: true, includeHolidays: true, refreshModules: true, compactModules: true });
   const ksbDescriptions = useMemo(() => buildProgrammeKsbDescriptionLookup(ksbSets, standards), [ksbSets, standards]);
 

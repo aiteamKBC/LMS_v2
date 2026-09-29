@@ -56,9 +56,10 @@ function reviewDate(review?: LearnerCalendarEvent | null): string | null {
 
 function progressReviewTitle(review?: LearnerCalendarEvent | null): string {
   if (review?.importedReview) return review.importedReview.name || review.title || 'Review';
-  if (review?.reviewTemplateId) return `${review.title} #${review.occurrenceNumber || review.sequence}`;
+  const occurrence = review?.occurrenceNumber ?? review?.sequence;
+  if (review?.reviewTemplateId) return `${review.title}${occurrence != null ? ` #${occurrence}` : ' — Manual Review'}`;
   const month = monthLabel(reviewDate(review));
-  return `Progress Review${month ? ` — ${month}` : ''}${review?.sequence ? ` #${review.sequence}` : ''}`;
+  return `Progress Review${month ? ` — ${month}` : ''}${occurrence != null ? ` #${occurrence}` : ''}`;
 }
 
 function reviewTypeLabel(review?: LearnerCalendarEvent | null): string {

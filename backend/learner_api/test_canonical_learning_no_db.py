@@ -41,6 +41,7 @@ def adapter(query):
                      owner['enrolment_id']: records.get(owner['id'], []) for owner in owners
                  })
     functions('monthly_log_sources.py', scope, {'decoded', 'number', 'stable_id', 'row'})
+    functions('current_learning.py', scope, {'source_payload_metadata'})
     functions('canonical_learning.py', scope)
     return scope
 
@@ -419,7 +420,7 @@ class CanonicalLearningTests(unittest.TestCase):
             old_repo=SimpleNamespace(query=query), old=SimpleNamespace(ServiceError=ServiceError),
             detail_data=lambda *a, **kw: report, lock_state=lambda *_: {'locked': False},
             lock_if_fully_signed=Mock(), JsonResponse=lambda value: value, json=json, base64=base64)
-        functions('monthly_logs.py', scope, {'sign'})
+        functions('monthly_logs.py', scope, {'_canonical_signature_scope', 'sign'})
         request = SimpleNamespace(POST={'snapshot_digest': 'digest', 'confirmed': 'true', 'capture_method': 'draw'},
             FILES={'signature': object()}, GET={}, login_account=SimpleNamespace(display_name='Synthetic learner', email='', id=1))
         scope['sign'](request, 271, '2026-08')

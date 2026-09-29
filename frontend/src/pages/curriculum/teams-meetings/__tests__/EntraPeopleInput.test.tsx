@@ -60,6 +60,17 @@ it('accepts full manual emails while Entra is unavailable and deduplicates', asy
   expect(screen.getByTestId('value').textContent?.split('\n')).toHaveLength(1);
 });
 
+it('restores the last removed email with Ctrl+Z in its original position', async () => {
+  const user = userEvent.setup();
+  render(<Picker initial={'first@example.invalid\nremoved@example.invalid\nlast@example.invalid'} />);
+  await user.click(screen.getByRole('button', { name: 'Remove removed@example.invalid' }));
+  expect(screen.queryByRole('button', { name: 'Remove removed@example.invalid' })).not.toBeInTheDocument();
+  await user.keyboard('{Control>}z{/Control}');
+  expect(screen.getByTestId('value').textContent?.split('\n')).toEqual([
+    'first@example.invalid', 'removed@example.invalid', 'last@example.invalid',
+  ]);
+});
+
 it('aborts stale searches and keeps newer results', async () => {
   let resolveOld!: (value: { people: typeof people; hasMore: boolean }) => void;
   vi.mocked(searchEntraPeople).mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve; }));

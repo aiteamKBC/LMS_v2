@@ -55,6 +55,30 @@ beforeEach(() => {
   sessionStorage.clear();
 });
 
+it.each(['coach', 'learner', 'curriculum'])(
+  'shows the shared back button by default in the %s workspace', role => {
+    showWorkspace(role);
+    expect(screen.getByRole('button', { name: 'Back to previous page' })).toBeVisible();
+  },
+);
+
+it('does not add the shared back button to other workspaces', () => {
+  showWorkspace('admin');
+  expect(screen.queryByRole('button', { name: 'Back to previous page' })).toBeNull();
+});
+
+it('allows a focused learner page to hide the shared back button explicitly', () => {
+  const config = roleNavMap.learner;
+  render(
+    <MemoryRouter initialEntries={['/learner/onboarding']}>
+      <WorkspaceShell role="learner" roleLabel={config.label} navItems={config.items} pageTitle="Onboarding" showBackButton={false}>
+        <CurrentRoute />
+      </WorkspaceShell>
+    </MemoryRouter>,
+  );
+  expect(screen.queryByRole('button', { name: 'Back to previous page' })).toBeNull();
+});
+
 it.each(['commercial', 'apprenticeship'] as const)('highlights Dashboard after opening it from %s Home', kind => {
   const path = `/workspace/learner/${kind}/101/dashboard`;
   const { rail } = showWorkspace('learner', path);

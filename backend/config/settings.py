@@ -508,8 +508,11 @@ READ_MODEL_OUTBOX_RETENTION_DAYS = int(os.environ.get('READ_MODEL_OUTBOX_RETENTI
 
 
 # Share expensive curriculum payloads between Django workers in production.
-# Django's built-in Redis backend uses the already-installed ``redis`` package,
-# so no additional cache dependency is required. Development and tests retain a
+# The backend subclasses Django's built-in Redis cache, which uses the
+# already-installed ``redis`` package, so no additional cache dependency is
+# required. It degrades to a process-local cache while Redis is unreachable --
+# a developer machine with no Redis running behaves like the branch below
+# instead of raising on every read. Development and tests retain a
 # process-local cache when no Redis URL is configured.
 CACHE_URL = os.environ.get('CACHE_URL') or os.environ.get('REDIS_URL')
 if CACHE_URL:
@@ -527,7 +530,7 @@ if CACHE_URL:
     )
     CACHES = {
         'default': {
-            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'BACKEND': 'config.cache_backends.ResilientRedisCache',
             'LOCATION': CACHE_URL,
             'KEY_PREFIX': os.environ.get('CACHE_KEY_PREFIX', 'kbc-lms'),
             'TIMEOUT': int(os.environ.get('CACHE_DEFAULT_TIMEOUT', '300')),
@@ -949,6 +952,7 @@ AZURE_RECORDING_CONTAINERS_BY_TYPE = {
     "eligibility-review": os.environ.get("AZURE_RECORDINGS_ELIGIBILITY_CONTAINER") or "recordings-eligibility-review",
     "workspace": os.environ.get("AZURE_RECORDINGS_WORKSPACE_CONTAINER") or "recordings-workspace",
     "training-plan": os.environ.get("AZURE_RECORDINGS_TRAINING_PLAN_CONTAINER") or "recordings-training-plan",
+    "uln-privacy": os.environ.get("AZURE_RECORDINGS_ULN_PRIVACY_CONTAINER") or "recordings-uln-privacy",
     "other": os.environ.get("AZURE_RECORDINGS_OTHER_CONTAINER") or "recordings-other",
     # Curriculum live sessions are taught classes, not one-to-one coaching.
     "live-session": os.environ.get("AZURE_RECORDINGS_LIVE_SESSION_CONTAINER") or "recordings-live-session",

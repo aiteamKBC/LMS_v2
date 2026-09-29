@@ -85,6 +85,15 @@ class CurrentLearningTests(unittest.TestCase):
                     'source_payload': {'original_source_ref': 'progress:1'}}
         self.assertEqual(self.project([retained, self.native]), [retained])
 
+    def test_list_source_payload_preserves_record_without_inventing_lineage(self):
+        retained = {'id': 9, 'source_system': 'journal', 'actual_seconds': 1200,
+                    'source_payload': ['synthetic-evidence-a', 'synthetic-evidence-b']}
+        self.assertEqual(self.project([retained]), [retained])
+        self.assertIsNone(self.scope['source_reference'](retained))
+        self.assertEqual(self.scope['source_payload_metadata'](retained['source_payload']), {})
+        self.assertEqual(self.scope['source_payload_metadata']('{"original_source_ref":"progress:1"}'),
+                         {'original_source_ref': 'progress:1'})
+
     def test_unsubmitted_and_event_rows_do_not_increment_progress(self):
         self.assertEqual(self.project([{**self.native, 'submitted_at': None},
                                       {**self.native, 'kind': 'activity_event'}]), [])
@@ -151,11 +160,13 @@ class CurrentLearningTests(unittest.TestCase):
 
     def test_dashboard_refresh_reads_new_saved_completion_and_time(self):
         scope = self.scope
-        load('canonical_learning.py', scope, {'metrics', '_metrics_from_records', 'recorded_seconds', 'allocations'})
+        load('canonical_learning.py', scope, {'metrics', 'metrics_from_records', 'recorded_seconds', 'allocations'})
         scope['number'] = lambda value: float(value or 0)
-        scope['targets'] = lambda _: {}
+        owner = {'id': 1}
+        scope['require_profile'] = lambda _: owner
+        scope['targets_for'] = lambda _: {}
         saved = []
-        scope['entries'] = lambda _: self.project(saved)
+        scope['entries_for'] = lambda _: self.project(saved)
         self.assertEqual(scope['metrics'](123)['programme']['completed'], 0)
         saved.append(self.native)
         result = scope['metrics'](123)
@@ -166,12 +177,14 @@ class CurrentLearningTests(unittest.TestCase):
 
     def test_quiz_only_completion_does_not_credit_unapproved_hours(self):
         scope = self.scope
-        load('canonical_learning.py', scope, {'metrics', '_metrics_from_records', 'recorded_seconds', 'allocations'})
+        load('canonical_learning.py', scope, {'metrics', 'metrics_from_records', 'recorded_seconds', 'allocations'})
         scope['number'] = lambda value: float(value or 0)
-        scope['targets'] = lambda _: {}
+        owner = {'id': 1}
+        scope['require_profile'] = lambda _: owner
+        scope['targets_for'] = lambda _: {}
         record = {'id': 10, 'accepted': False, 'actual_seconds': 3600, 'ksbs': [],
                   'source_payload': {'original_source_ref': 'la:5:9'}}
-        scope['entries'] = lambda _: scope['merge_attempts']([record], [self.attempt()])
+        scope['entries_for'] = lambda _: scope['merge_attempts']([record], [self.attempt()])
         result = scope['metrics'](123)
         self.assertEqual(result['programme']['completed'], 1)
         self.assertEqual(result['programme']['total'], 1)

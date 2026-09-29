@@ -1440,6 +1440,10 @@ function AccessibleReadingMaterial({
       ? DOMPurify.sanitize(savedDocument.html)
       : sourceHtml,
   );
+  // React 19 re-applies innerHTML whenever this object's identity changes, so a
+  // fresh literal on every render (the parent re-renders each second for the
+  // activity timer) would tear down and recreate any embedded <video>/<iframe>.
+  const innerHtml = useMemo(() => ({ __html: html }), [html]);
   const [preferences, setPreferences] = useState<ReadingPreferences>(() => readStoredJson(readingStorageKey(componentId, 'preferences'), DEFAULT_READING_PREFERENCES));
   const [saved, setSaved] = useState(true);
   const [speaking, setSpeaking] = useState(false);
@@ -1545,7 +1549,7 @@ function AccessibleReadingMaterial({
           <div
             ref={contentRef}
             className="relative z-0 max-w-none [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:font-heading [&_h2]:text-lg [&_h2]:font-bold [&_h3]:mb-1.5 [&_h3]:mt-3 [&_h3]:font-heading [&_h3]:text-base [&_h3]:font-semibold [&_p]:mb-3 [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-5 [&_li]:mb-1 [&_strong]:font-semibold [&_em]:italic [&_a]:text-blue-600 [&_a]:underline"
-            dangerouslySetInnerHTML={{ __html: html }}
+            dangerouslySetInnerHTML={innerHtml}
           />
         </div>
       )}

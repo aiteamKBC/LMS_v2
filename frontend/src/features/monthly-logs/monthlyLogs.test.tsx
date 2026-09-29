@@ -134,6 +134,28 @@ describe('monthly logs', () => {
     expect(screen.getByText(/Signing opens after the month ends/)).toBeVisible();
   });
 
+  it('shows an MCM-linked log before the learner signs the MCM', async () => {
+    const emptyMcmMonth = { ...current, rows: [], row_count: 0, actual_hours: 0, planned_hours: 0 };
+    vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [emptyMcmMonth] });
+    vi.mocked(getLogMonth).mockResolvedValue(emptyMcmMonth);
+    page('/learner/monthly-logs/apprenticeship/7/2026-09?workflow=mcm&source=mcm');
+    expect(await screen.findByText('September 2026')).toBeVisible();
+    expect(screen.queryByRole('button', { name: /Sign as learner/ })).not.toBeInTheDocument();
+    expect(screen.getByText(/learner signs the MCM once/i)).toBeVisible();
+    expect(getLogSummary).toHaveBeenCalledWith('7', expect.any(AbortSignal), 'learner', '2026-09', 'mcm');
+  });
+
+  it('loads a future MCM-linked month so its signature can be mirrored', async () => {
+    const futureMcmMonth = { ...current, month: '2999-01', rows: [], row_count: 0, actual_hours: 0, planned_hours: 0 };
+    vi.mocked(getLogSummary).mockResolvedValue({ ...summary, months: [futureMcmMonth] });
+    vi.mocked(getLogMonth).mockResolvedValue(futureMcmMonth);
+    page('/learner/monthly-logs/apprenticeship/7/2999-01?workflow=mcm&source=mcm');
+    expect(await screen.findByText('January 2999')).toBeVisible();
+    expect(screen.queryByText('January 2999 has not started yet')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Sign as learner/ })).not.toBeInTheDocument();
+    expect(getLogMonth).toHaveBeenCalledWith('7', '2999-01', expect.any(AbortSignal), 'learner', false, 'mcm');
+  });
+
   it('shows a friendly scheduled state instead of requesting a future monthly log', async () => {
     page('/learner/monthly-logs/commercial/7/2999-01?source=attendance%3Aocc-8');
     expect(await screen.findByText('January 2999 has not started yet')).toBeVisible();

@@ -339,12 +339,14 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None):
             'monthlyOtjh': monthly_otjh_summary(plan_activities, progress),
             'otjh': {'actual': round(old_hours + new_hours, 4) if old_hours is not None and not undated_hours else None,
                      'historical': old_hours, 'new': round(new_hours, 4), 'undatedHistoricalRows': undated_hours}}
-    canonical_metrics = canonical_learning.metrics(source.pk) if dashboard_kind else None
+    canonical_metrics = canonical_learning.metrics(source.pk) if (dashboard_kind or home_kind) else None
     if canonical_metrics is not None:
         canonical_otjh = canonical_metrics['otjh']
         result['otjh'] = {
-            'actual': canonical_otjh['actual'],
-            'historical': canonical_otjh.get('historical', canonical_otjh['actual']),
+            'actual': canonical_otjh.get('completed_actual', canonical_otjh.get('actual')),
+            'historical': canonical_otjh.get(
+                'historical', canonical_otjh.get('completed_actual', canonical_otjh.get('actual')),
+            ),
             'new': canonical_otjh.get('new', 0),
             'planned': canonical_otjh.get('planned'),
             'undatedHistoricalRows': 0,
@@ -357,7 +359,7 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None):
         from .home_progress import read_home_progress
         result['homeProgress'] = read_home_progress(source, home_kind,
             merged_activities(historical, native, progress, attempts, links), native, progress, assigned, end,
-            attendance_module_ids=attendance_module_ids)
+            attendance_module_ids=attendance_module_ids, canonical_metrics=canonical_metrics)
     return result
 
 
