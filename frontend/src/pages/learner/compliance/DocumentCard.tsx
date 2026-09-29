@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
 
 // ============================================================================
@@ -64,6 +64,16 @@ export function DocumentCard({
   fmtDate,
 }: Props) {
   const [signing, setSigning] = useState(false);
+  const signingPanel = useRef<HTMLDivElement>(null);
+
+  // The box opens below the card's buttons — off-screen for the last card, in
+  // a workspace that hides its scrollbars, so pressing Sign looked as if the
+  // button had just vanished. Bring it into view and move focus to it.
+  useEffect(() => {
+    if (!signing) return;
+    signingPanel.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    signingPanel.current?.focus({ preventScroll: true });
+  }, [signing]);
 
   const sign = (mark: string) => {
     setSigning(false);
@@ -143,7 +153,13 @@ export function DocumentCard({
       {/* Signing produces the learner's own name in a script face — the same
           mark every time, so there is nothing saved to pick from. */}
       {issued && signing && (
-        <div className="border-t border-foreground-200/50 p-5 space-y-3">
+        <div
+          ref={signingPanel}
+          tabIndex={-1}
+          role="region"
+          aria-label={`Sign ${title}`}
+          className="border-t border-foreground-200/50 p-5 space-y-3 scroll-mt-4 outline-none"
+        >
           <p className="text-[12px] text-foreground-500">
             Sign below to confirm you agree to these details.
           </p>

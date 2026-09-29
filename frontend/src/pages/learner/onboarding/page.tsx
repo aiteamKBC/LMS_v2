@@ -209,7 +209,7 @@ export default function LearnerOnboardingPage() {
         {!loading && !loadError && board && (
           <WizardProvider userId={myLearner.id} isCommercial={isCommercial} board={board}>
             {/* Straight to the reviews they now need to book, not the profile —
-                booking all three is what completes their enrolment. */}
+                booking all four is what completes their enrolment. */}
             <LearnerWizard currentIndex={currentIndex} onDone={() => navigate(ONBOARDING_REVIEWS_ROUTE)} />
           </WizardProvider>
         )}

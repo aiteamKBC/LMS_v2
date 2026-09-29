@@ -28,13 +28,13 @@ afterEach(cleanup);
 function setup() {
   render(<MemoryRouter initialEntries={['/learner/compliance-documents']}><Routes>
     <Route path="/learner/compliance-documents" element={<Page />} />
-    <Route path="/workspace/learner" element={<h1>Dashboard destination</h1>} />
+    <Route path="/learner/first-session" element={<h1>First session destination</h1>} />
   </Routes></MemoryRouter>);
 }
-it('returns to Dashboard after the last learner signature, while other parties can still be unsigned', async () => {
+it('goes to the first learning session booking after the last learner signature, while other parties can still be unsigned', async () => {
   setup(); const button = await screen.findByRole('button', { name: 'Written Agreement' });
   await act(async () => fireEvent.click(button));
-  expect(await screen.findByRole('heading', { name: 'Dashboard destination' })).toBeVisible();
+  expect(await screen.findByRole('heading', { name: 'First session destination' })).toBeVisible();
   expect(state.invalidate).toHaveBeenCalledWith('apprenticeship', '125');
 });
 it.each(['remaining', 'fail', 'staff'])('keeps the documents open for %s', async reason => {
@@ -42,5 +42,5 @@ it.each(['remaining', 'fail', 'staff'])('keeps the documents open for %s', async
   setup(); const button = await screen.findByRole('button', { name: 'Written Agreement' });
   await act(async () => fireEvent.click(button));
   await screen.findByRole('button', { name: 'Written Agreement' });
-  expect(screen.queryByRole('heading', { name: 'Dashboard destination' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: 'First session destination' })).not.toBeInTheDocument();
 });

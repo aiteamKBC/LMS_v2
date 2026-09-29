@@ -61,6 +61,37 @@ export const HEALTH_SAFETY_QUESTIONS: ReviewQuestion[] = [
   { key: 'liabilityInsurance', label: "Do you have an Employer's Liability Insurance certificate (and Public Liability if applicable)?" },
 ];
 
+// ---- ULN Privacy Notice & Learner Acknowledgement ----
+// Read-and-confirm panels: the wording is the content; saving a panel records
+// that the learner read it (ulnPrivacyNotice.noticeRead / learnerAcknowledgement.acknowledged).
+
+export const ULN_PRIVACY_INTRO =
+  "A Unique Learner Number (ULN) is a 10-digit number used to identify an individual learner and link them to their education, training and qualification records. It is managed through the Department for Education (DfE) Learning Records Service (LRS) and is connected to the learner's Personal Learning Record (PLR).";
+
+export const ULN_PRIVACY_POINTS: string[] = [
+  'Kent Business College (KBC) will use the personal information you provide during enrolment to locate and verify your existing ULN. Where you do not already have a ULN, the information may be used to create one for you through the Learning Records Service.',
+  'KBC will use your ULN for legitimate apprenticeship and education purposes, including:',
+  'Your ULN is linked to your Personal Learning Record, which may contain details of qualifications and achievements recorded by recognised education and training organisations.',
+  'Your personal information and ULN may be shared with the Department for Education and other authorised organisations where required for the administration, funding, delivery or assurance of your apprenticeship. Your information will be handled in accordance with applicable UK data protection legislation.',
+];
+
+/** The purposes listed under point 2. */
+export const ULN_PURPOSES: string[] = [
+  'confirming your identity and learner record',
+  'checking relevant qualifications and prior learning',
+  'registering and administering your apprenticeship',
+  'submitting and maintaining your Individualised Learner Record (ILR)',
+  'supporting apprenticeship funding and eligibility checks',
+  'recording learning, qualifications and achievements',
+  'meeting Department for Education audit, assurance and regulatory requirements',
+];
+
+export const ULN_PRIVACY_FURTHER_INFO =
+  'Further information about how your information is used is available in the current Department for Education Learning Records Service Privacy Notice and the applicable ILR Privacy Notice.';
+
+export const LEARNER_ACKNOWLEDGEMENT =
+  'I confirm that I have been provided with, or given access to, the relevant Department for Education privacy information. I understand what a ULN is and that Kent Business College may use my personal information and ULN to verify my learner record, administer my apprenticeship, maintain my ILR and meet relevant funding and regulatory requirements.';
+
 /**
  * Every question's on-screen wording, keyed by answer key. The PDF export uses
  * this so the document reads like the form rather than like the stored JSON.
@@ -72,5 +103,7 @@ export const REVIEW_QUESTION_LABELS: Record<string, string> = Object.fromEntries
     ...FS_JOB_ROLE_QUESTIONS,
     ...RPL_QUESTIONS,
     ...HEALTH_SAFETY_QUESTIONS,
+    { key: 'noticeRead', label: 'The learner has read the ULN privacy notice' },
+    { key: 'acknowledged', label: 'The learner confirms the acknowledgement above' },
   ].map((q) => [q.key, q.label]),
 );

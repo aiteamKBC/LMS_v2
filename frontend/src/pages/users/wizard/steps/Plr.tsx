@@ -271,7 +271,7 @@ function PlrForm({
             ))}
           </div>
         )}
-        <label className={`inline-flex items-center gap-2 px-3 py-1.5 text-[12px] bg-background-100 text-foreground-600 rounded-lg border border-background-200 hover:bg-background-200 transition-smooth ${evidence.uploading ? 'opacity-60 pointer-events-none' : 'cursor-pointer'}`}>
+        <label className={`relative inline-flex items-center gap-2 px-3 py-1.5 text-[12px] bg-background-100 text-foreground-600 rounded-lg border border-background-200 hover:bg-background-200 transition-smooth ${evidence.uploading ? 'opacity-60 pointer-events-none' : 'cursor-pointer'}`}>
           <AppIcon className={evidence.uploading ? 'ri-loader-4-line animate-spin' : 'ri-upload-2-line'} />
           {evidence.uploading ? 'Uploading…' : 'Select file…'}
           <input
