@@ -15,6 +15,7 @@ import { submitVideoProgress } from '@/api/videos';
 import { submitComponentProgress } from '@/api/components';
 import { startTimeTracking, type TimeTrackingSession, type TrackingCountingMode } from '@/api/timeTracking';
 import { EvidenceFilesButton, EvidencePreviewModal, type EvidencePreview } from '@/components/feature/EvidenceFilesButton';
+import { AssignmentEvidence } from '@/components/feature/AssignmentEvidence';
 import {
   buildLearnerJourney, componentTypeMeta, componentContentKind, componentNoun, hasComponentContent, isOpenableComponent, gradePercent, formatHoursMinutes,
   componentCriteria, componentRequiresEvidence, completedComponentIds, isComponentComplete,
@@ -490,7 +491,7 @@ export default function ComponentViewPage() {
   // made a 1h42m video look like 102 hours.
   const plannedTimeLabel = plannedHours != null ? formatHoursMinutes(plannedHours) : '';
 
-  const trackingMode: TrackingCountingMode = isVideo && parsed?.kind !== 'vimeo'
+  const trackingMode: TrackingCountingMode = isVideo
     ? 'active_playback'
     : 'visible_page';
 
@@ -534,22 +535,23 @@ export default function ComponentViewPage() {
     return () => { cancelled = true; };
   }, [phase, recordingAttempt, openable, componentId, kind, id, canUseComponent, isVideo, trackingMode, timerStorageKey]);
 
-  // Only visible time counts for ordinary page content. Audio is intentionally
-  // allowed to keep counting in a background tab because playback can continue
-  // while the learner works elsewhere. Hidden tabs throttle intervals, so audio
-  // uses the real wall-clock delta instead of assuming every callback is exactly
-  // one second apart.
+  // Ordinary page content counts only while visible. Media counts while it is
+  // genuinely playing, even when the learner switches tab or opens another
+  // application. Hidden tabs throttle intervals, so active audio/video uses
+  // wall-clock deltas rather than assuming each callback is exactly one second.
   useEffect(() => {
-    if (phase !== 'consume' || !recordingAttempt || !canUseComponent || (!unsupported && !playerPlaying)) return;
-    let lastAudioTickAt = Date.now();
+    const activeMedia = isVideo || isAudio;
+    if (phase !== 'consume' || !recordingAttempt || !canUseComponent) return;
+    if (activeMedia ? !playerPlaying : (!unsupported && !playerPlaying)) return;
+    let lastTickAt = Date.now();
     timerRef.current = setInterval(() => {
-      if (isAudio || document.visibilityState === 'visible') {
+      if (activeMedia || document.visibilityState === 'visible') {
         const now = Date.now();
-        const increment = isAudio
-          ? Math.floor((now - lastAudioTickAt) / 1000)
+        const increment = activeMedia
+          ? Math.floor((now - lastTickAt) / 1000)
           : 1;
         if (increment < 1) return;
-        if (isAudio) lastAudioTickAt += increment * 1000;
+        if (activeMedia) lastTickAt += increment * 1000;
         setWallElapsed((seconds) => {
           const next = seconds + increment;
           saveActivityTimerElapsed(timerStorageKey, next);
@@ -558,7 +560,7 @@ export default function ComponentViewPage() {
       }
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [phase, recordingAttempt, canUseComponent, unsupported, playerPlaying, isAudio, timerStorageKey]);
+  }, [phase, recordingAttempt, canUseComponent, unsupported, playerPlaying, isVideo, isAudio, timerStorageKey]);
 
   const finishConsuming = () => {
     if (!recordingAttempt) return;
@@ -801,6 +803,18 @@ export default function ComponentViewPage() {
                       setTimeSource(seconds == null && !usesManualTimeOnly ? 'timer' : 'input');
                     }}
                   />
+                  {activityEvidenceContext && canUseComponent && (
+                    <AssignmentEvidence
+                      kind={activityEvidenceContext.kind}
+                      learnerId={activityEvidenceContext.learnerId}
+                      componentId={activityEvidenceContext.componentId}
+                      trainingPlanDetails={activityEvidenceContext.trainingPlanDetails}
+                      onUploaded={activityEvidenceContext.onUploaded}
+                      onFileSelected={setPendingEvidenceFileName}
+                      inputId={evidenceInputId}
+                      showPanel={false}
+                    />
+                  )}
                   {activityEvidenceContext && canUseComponent && (
                     evidenceFileLabel ? (
                       <span className="inline-flex items-center gap-1.5">
@@ -2217,7 +2231,15 @@ export function ComponentBody({ component, contentKind, parsed, title, onDuratio
           <div><p className="text-sm font-semibold text-foreground-900">{title}</p><p className="text-xs text-foreground-400">Listen, then finish and reflect below.</p></div>
         </div>
         {audioSource ? (
-          <audio controls preload="metadata" className="w-full" src={audioSource}>Your browser does not support audio playback.</audio>
+          <audio
+            controls
+            preload="metadata"
+            className="w-full"
+            src={audioSource}
+            onPlay={() => onPlayingChange(true)}
+            onPause={() => onPlayingChange(false)}
+            onEnded={() => { onPlayingChange(false); onEnded(); }}
+          >Your browser does not support audio playback.</audio>
         ) : component.audioUrl ? (
           <>
             {/* Not a direct media file (e.g. a podcast listening page) — fetch
