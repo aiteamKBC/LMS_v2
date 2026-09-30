@@ -14,6 +14,7 @@ import type { CoachCalendarEvent } from '../../../shared/calendarEvents';
 const fetchReviewPack = vi.fn();
 const fetchLatestRun = vi.fn();
 const generateProgressReview = vi.fn();
+const publishProgressReview = vi.fn();
 const fetchProgressReviewDownloadUrl = vi.fn();
 const toastSuccess = vi.fn();
 const toastError = vi.fn();
@@ -27,6 +28,7 @@ vi.mock('@/api/progressReviews', async () => {
     fetchMcmPack: (...args: unknown[]) => fetchReviewPack(...args),
     fetchMcmLatestRun: (...args: unknown[]) => fetchLatestRun(...args),
     generateProgressReview: (...args: unknown[]) => generateProgressReview(...args),
+    publishProgressReview: (...args: unknown[]) => publishProgressReview(...args),
     fetchProgressReviewDownloadUrl: (...args: unknown[]) => fetchProgressReviewDownloadUrl(...args),
   };
 });
@@ -81,6 +83,7 @@ beforeEach(() => {
   fetchReviewPack.mockReset();
   fetchLatestRun.mockReset();
   generateProgressReview.mockReset();
+  publishProgressReview.mockReset();
   fetchProgressReviewDownloadUrl.mockReset();
   toastSuccess.mockClear();
   toastError.mockClear();
@@ -95,7 +98,7 @@ describe('ProgressReviewPptxModal', () => {
 
     await waitFor(() => expect(fetchReviewPack).toHaveBeenCalled());
     expect(fetchReviewPack).toHaveBeenCalledWith('101', '2026-10-26');
-    expect(fetchLatestRun).toHaveBeenCalledWith('101', '2026-10-26');
+    expect(fetchLatestRun).toHaveBeenCalledWith('101', '2026-10-26', { includeDraft: true });
     expect(fetchReviewPack).not.toHaveBeenCalledWith('683', expect.anything());
     expect(fetchLatestRun).not.toHaveBeenCalledWith('683', expect.anything());
   });
@@ -107,7 +110,7 @@ describe('ProgressReviewPptxModal', () => {
     expect(screen.getByText(/Aya Aya Test/)).toBeInTheDocument();
     expect(screen.getByText(/Final Test/)).toBeInTheDocument();
     expect(fetchReviewPack).toHaveBeenCalledWith('101', '2026-10-26');
-    expect(fetchLatestRun).toHaveBeenCalledWith('101', '2026-10-26');
+    expect(fetchLatestRun).toHaveBeenCalledWith('101', '2026-10-26', { includeDraft: true });
     expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
     expect(screen.queryByText(/select.*learner/i)).not.toBeInTheDocument();
 
@@ -133,7 +136,7 @@ describe('ProgressReviewPptxModal', () => {
     expect(screen.queryByText('Generate PPTX')).not.toBeInTheDocument();
   });
 
-  it('walks through generating -> generated -> download', async () => {
+  it('keeps generated slides as a draft until the owner saves them', async () => {
     let resolveGenerate!: (value: unknown) => void;
     generateProgressReview.mockReturnValue(new Promise((resolve) => { resolveGenerate = resolve; }));
     fetchProgressReviewDownloadUrl.mockResolvedValue('https://example.blob.core.windows.net/deck.pptx?sig=1');
@@ -145,12 +148,23 @@ describe('ProgressReviewPptxModal', () => {
     await user.click(screen.getByText('Generate PPTX'));
     expect(screen.getByText('Generating slides from LMS data…')).toBeInTheDocument();
 
-    resolveGenerate({ reviewId: 'run-2', learnerId: 101, generationStatus: 'completed', sourceWarnings: [] });
-    await waitFor(() => expect(screen.getByText('Slides ready')).toBeInTheDocument());
+    resolveGenerate({ reviewId: 'run-2', learnerId: 101, generationStatus: 'draft', sourceWarnings: [] });
+    await waitFor(() => expect(screen.getByText('Draft ready — not saved')).toBeInTheDocument());
     expect(generateProgressReview).toHaveBeenCalledWith('101', '2026-10-26');
+
+    publishProgressReview.mockResolvedValue({ reviewId: 'run-2', generationStatus: 'completed', sourceWarnings: [] });
+    await user.click(screen.getByText('Save slides'));
+    await waitFor(() => expect(screen.getByText('Slides ready')).toBeInTheDocument());
 
     await user.click(screen.getByText('Download PPTX'));
     await waitFor(() => expect(fetchProgressReviewDownloadUrl).toHaveBeenCalledWith('run-2'));
+  });
+
+  it('shows an existing draft only to its owner', async () => {
+    fetchLatestRun.mockResolvedValue({ exists: true, reviewId: 'draft-1', generationStatus: 'draft' });
+    render(<ProgressReviewPptxModal open target={slidesTargetFromEvent(REVIEW)} onClose={vi.fn()} />);
+    expect(await screen.findByText('Draft ready — not saved')).toBeVisible();
+    expect(screen.getByText('Save slides')).toBeVisible();
   });
 
   it('shows a blocking error message and lets the user try again on failure', async () => {
