@@ -281,6 +281,28 @@ describe('Attendance lecture workspace', () => {
     expect(within(liveAlternative).queryByRole('button', { name: 'Book Catchup Session' })).not.toBeInTheDocument();
   });
 
+  it('links a catch-up to a reported absence with the workspace request token', async () => {
+    payload.lectures = [lecture({ id: 'missed', sessionId: 'teams:missed', title: 'Reported lecture', date: '2026-09-11',
+      status: 'absent', catchupStatus: 'pending', canReportAbsence: false, absenceReport: { id: 7, status: 'approved' } })];
+    const booked = { id: 'catch-up:12:5', eventKey: 'catch-up:12:5', title: 'Catch-up Session', source: 'catch-up', type: 'coaching',
+      sequence: 5, status: 'scheduled', date: '2099-01-05', targetDate: '2099-01-05', scheduledDate: '2099-01-05', scheduledTime: '11:00',
+      durationMinutes: 30, coachName: 'Coach', coachEmail: 'coach@example.test', meetingProvider: '', meetingLink: '', notes: '' };
+    const originalFetch = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (input, init) => String(input).includes('/calendar/') && !init?.method
+      ? new Response(JSON.stringify({ events: [booked] })) : originalFetch(input, init));
+    mount();
+    const row = await screen.findByRole('article', { name: 'Reported lecture' });
+    fireEvent.click(within(row).getByRole('button', { name: 'Book Catchup Session' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Book Catchup Session' });
+    fireEvent.change(await within(dialog).findByLabelText('Catch-up booking'), { target: { value: booked.eventKey } });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Link catch-up to this absence' }));
+    await waitFor(() => expect(posts.some(post => post.url.includes('/session-catchup/'))).toBe(true));
+    const call = vi.mocked(fetch).mock.calls.find(([url]) => String(url).includes('/session-catchup/'))!;
+    expect(new Headers(call[1]?.headers).get('X-CSRFToken')).toBe('test-csrf');
+    expect(JSON.parse(String(call[1]?.body))).toEqual({ reportId: 7, eventKey: booked.eventKey });
+    expect(screen.queryByText('Unable to initialise request verification.')).not.toBeInTheDocument();
+  });
+
   it('starts a linked absence report when booking recovery for an unreported missed lecture', async () => {
     payload.lectures = [lecture({ id: 'missed', sessionId: 'teams:missed', title: 'Missed lecture',
       date: '2026-09-01', status: 'absent', catchupStatus: null, canReportAbsence: true, absenceReport: null })];

@@ -1,4 +1,3 @@
-import { coachFetch } from '@/lib/coachFetch';
 import { invalidateLearnerReads } from '@/api/learnerRead';
 import { useCallback, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -156,8 +155,11 @@ export default function AttendancePage() {
     if (!catchup?.absenceReport || !catchupBooking) return;
     setBookingBusy(true); setAttendError('');
     try {
-      const response = await coachFetch(`/learner_api/session-catchup/${learner.kind}/${learner.id}/`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+      // The attendance workspace carries its own CSRF token: learners cannot read /coach_api/csrf.
+      if (!data?.csrfToken) throw new Error('Please refresh the page before linking the catch-up.');
+      const response = await fetch(`/learner_api/session-catchup/${learner.kind}/${learner.id}/`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': data.csrfToken },
         body: JSON.stringify({ reportId: catchup.absenceReport.id, eventKey: catchupBooking.eventKey }),
       });
       const result = await response.json();
