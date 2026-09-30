@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { HtmlPreview, ProtectedFilePreview, QuizPreview, SourcePreview } from './ContentPreview';
 import { contentUrl } from './report';
@@ -67,7 +67,7 @@ it('previews source quiz questions separately when the learner attempt is missin
   expect(frame.getAttribute('srcdoc')).toContain('diagram.png');
   expect(frame.getAttribute('srcdoc')).toContain('Option one');
   expect(frame.getAttribute('srcdoc')).not.toMatch(/onerror|Your answer|Correct answer|passed/);
-  expect(screen.getByRole('alert')).toHaveTextContent('do not replace the missing attempt');
+  expect(screen.getByRole('alert')).toHaveTextContent('Learner answers are unavailable. This view shows the original quiz questions only.');
 });
 
 it('previews private PDFs using an authenticated fetch and releases the local URL', async () => {
@@ -113,4 +113,41 @@ it('renders an authorized saved material file inside the report', async () => {
   render(<ProtectedFilePreview file={{ id: 99, display_name: 'Original reading.pdf', content_type: 'application/pdf', url: '/audit_api/old-otjh/material-documents/3/99/?month=2026-07&aptem_id=42' }} />);
   expect(await screen.findByTitle('Original reading.pdf')).toHaveAttribute('src', 'blob:original-material');
   expect(fetch).toHaveBeenCalledWith(expect.stringContaining('/material-documents/3/99/'), expect.objectContaining({ credentials: 'include' }));
+});
+
+
+it('decodes JSON text options returned by the database without crashing', () => {
+  const options = JSON.stringify([{ option_text: 'Keep this option <script>unsafe</script>' }]);
+  render(<QuizPreview title="Text options" quiz={{ state: 'unavailable', attempt: null,
+    definition: { description: null, questions: [{ question_id: 1, question_order: 1,
+      question_text: 'Question?', answer_options: options as unknown as { option_text: string }[] }] } }} />);
+  const html = screen.getByTitle('Original quiz questions: Text options').getAttribute('srcdoc');
+  expect(html).toContain('Keep this option');
+  expect(html).not.toContain('<script>');
+});
+
+it('shows a recoverable message for invalid option data', () => {
+  render(<QuizPreview title="Invalid options" quiz={{ state: 'unavailable', attempt: null,
+    definition: { description: null, questions: [{ question_id: 1, question_order: 1,
+      question_text: 'Question?', answer_options: {} as { option_text: string }[] }] } }} />);
+  expect(screen.getByRole('alert')).toHaveTextContent('answer options could not be read');
+  expect(document.querySelector('iframe')).toBeNull();
+});
+
+
+it('plays extensionless Azure video routes in a responsive native player with retry', () => {
+  render(<SourcePreview title="Lecture video" html={null} contentType="video/mp4"
+    url="/learner_api/monthly-logs/1/2025-07/activities/7/materials/10/" />);
+  const video = screen.getByTitle('Lecture video');
+  expect(video.tagName).toBe('VIDEO');
+  expect(video).toHaveAttribute('controls');
+  expect(video).toHaveAttribute('playsinline');
+  expect(video).toHaveAttribute('preload', 'metadata');
+  expect(video).toHaveClass('aspect-video', 'w-full', 'object-contain');
+  expect(document.querySelector('iframe')).toBeNull();
+  fireEvent.error(video);
+  expect(screen.getByRole('alert')).toHaveTextContent('video could not be loaded');
+  fireEvent.click(screen.getByRole('button', { name: 'Retry video' }));
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.getByTitle('Lecture video')).not.toBe(video);
 });
