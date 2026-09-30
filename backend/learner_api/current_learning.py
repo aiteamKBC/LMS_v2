@@ -14,6 +14,26 @@ def instant(value):
     return value.astimezone(ZoneInfo('Europe/London')) if value else None
 
 
+def actual_time_seconds(value):
+    """Return saved hours as seconds, including legacy ``MM:SS`` values."""
+    if value in (None, ''):
+        return None
+    if isinstance(value, str) and ':' in value:
+        parts = value.split(':')
+        if len(parts) == 2:
+            try:
+                minutes, seconds = (int(part) for part in parts)
+            except ValueError:
+                return None
+            if minutes >= 0 and 0 <= seconds < 60:
+                return minutes * 60 + seconds
+            return None
+    try:
+        return float(value) * 3600
+    except (TypeError, ValueError):
+        return None
+
+
 def project_current(records, markings):
     """Project unsynchronised direct saves using the existing time/pass rules.
 
@@ -42,7 +62,9 @@ def project_current(records, markings):
         if p.get('component_type') == 'assignment':
             accepted = bool(marking and marking.get('status') in {'accepted', 'partial'})
             if marking and marking.get('actual_time_hours') is not None:
-                seconds = float(marking['actual_time_hours']) * 3600
+                saved_seconds = actual_time_seconds(marking['actual_time_hours'])
+                if saved_seconds is not None:
+                    seconds = saved_seconds
         p.update(accepted=accepted, completed=accepted, actual_seconds=seconds,
                  reporting_month=at.strftime('%Y-%m'), reporting_started_at=at,
                  reporting_ended_at=at, activity_status='Completed' if accepted else 'Submitted')
@@ -118,7 +140,7 @@ def merge_submissions(records, submissions):
         result.append({'id': f"reflection:{s['id']}", 'component_title': s.get('activity_title'),
             'component_ref': s.get('component_ref'), 'module_title': s.get('module_title'),
             'kind': s['activity_type'], 'accepted': accepted, 'completed': accepted,
-            'actual_seconds': float(s['actual_time_hours']) * 3600 if s.get('actual_time_hours') is not None else None,
+            'actual_seconds': actual_time_seconds(s.get('actual_time_hours')),
             'reporting_month': at.strftime('%Y-%m'), 'reporting_started_at': at,
             'activity_status': s.get('status'), 'ksbs': codes, 'sources': [], 'segments': [],
             'source_payload': {'original_source_ref': f"reflection:{s['id']}"}})

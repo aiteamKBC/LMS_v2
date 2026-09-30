@@ -68,6 +68,17 @@ class CurrentLearningTests(unittest.TestCase):
         self.assertTrue(accepted['accepted'])
         self.assertEqual(accepted['actual_seconds'], 1800)
 
+    def test_legacy_component_clock_is_read_as_minutes_and_seconds(self):
+        p = {**self.native, 'kind': 'component', 'passed': None, 'component_type': 'assignment'}
+        projected = self.project([p], {'C1': {
+            'status': 'submitted_for_tutor_review', 'actual_time_hours': '11:00'}})[0]
+        self.assertEqual(projected['actual_seconds'], 660)
+
+        submission = dict(id='legacy', submitted_at=self.native['submitted_at'],
+            activity_type='extra_activity', status='accepted', actual_time_hours='02:30', ksb_codes=[])
+        merged = self.scope['merge_submissions']([], [submission])
+        self.assertEqual(merged[0]['actual_seconds'], 150)
+
     def test_retries_do_not_add_hours_or_remove_previous_pass(self):
         rows = self.project([self.native, {**self.native, 'id': 2, 'claimed_seconds': 2400},
             {**self.native, 'id': 3, 'claimed_seconds': 9000, 'passed': False}])
