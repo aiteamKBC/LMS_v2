@@ -38,6 +38,34 @@ function expandMonthAndWeek(month = 'February 2026') {
 describe('learner subject cards', () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it('filters old Aptem modules separately from new Curriculum modules', async () => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({
+      covers: {}, current_subjects: [{ id: 'MOD-NEW', title: 'New curriculum module' }],
+    });
+    render(<StudentActivityPanel data={data} real={{ components: [{
+      moduleId: 'MOD-NEW', module: 'New curriculum module', componentId: 'NEW-1',
+      component: 'New activity', type: 'reading', week: 'Week 1',
+    }] } as LearnerDetail} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+
+    await screen.findByRole('heading', { name: 'New curriculum module' });
+    expect(screen.getByRole('heading', { name: 'Leadership' })).toBeVisible();
+    expect(screen.getByRole('tab', { name: 'All modules' })).toHaveAttribute('aria-selected', 'true');
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Old LMS' }));
+    expect(screen.getByRole('heading', { name: 'Leadership' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'New curriculum module' })).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Old LMS' })).toHaveAttribute('aria-selected', 'true');
+
+    fireEvent.click(screen.getByRole('tab', { name: 'New LMS' }));
+    expect(screen.getByRole('heading', { name: 'New curriculum module' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Leadership' })).not.toBeInTheDocument();
+    expect(screen.getByText(/1 shown/)).toBeVisible();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'All modules' }));
+    expect(screen.getByRole('heading', { name: 'New curriculum module' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Leadership' })).toBeVisible();
+  });
+
   it('shows scheduled learning and working help destinations in the catalogue sidebar', async () => {
     vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {} });
     render(<StudentActivityPanel data={data} real={{ components: [

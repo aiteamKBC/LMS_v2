@@ -45,8 +45,8 @@ EVIDENCE_ITEMS = '"fetching_evidence"."evidence_items"'
 # An override row changes what the explorer (and transfers) DISPLAY; a
 # replacement row supersedes the shown file while the Aptem original stays
 # archived and viewable (part=original).
-EVIDENCE_OVERRIDES = '"structured_manual_activities"."evidence_overrides"'
-EVIDENCE_REPLACEMENTS = '"structured_manual_activities"."evidence_replacements"'
+EVIDENCE_OVERRIDES = '"Learner"."evidence_overrides"'
+EVIDENCE_REPLACEMENTS = '"Learner"."evidence_replacements"'
 REPLACEMENT_CONTAINER = "evidence-replacements"
 
 _OVERRIDE_TABLES_READY = False

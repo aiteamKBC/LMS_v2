@@ -104,6 +104,7 @@ from audit_api.last_audit_ledger_views import _connection as audit_connection
 from learner_api.student_activity_access import student_activity_available
 from learner_api import canonical_learning
 from learner_api.student_activity_data import read_audit_hour_totals_bulk, read_evidenced_ksb_counts_bulk
+from old_otjh.service import ServiceError
 from learner_api.attendance import (
     _summarize_attendance,
     combined_attendance_rows,
@@ -2687,7 +2688,7 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
                         'finalKsbTotal': ksb.get('total'),
                         'finalKsbPercent': ksb.get('percent'),
                     })
-            except (DatabaseError, ValueError) as exc:
+            except (DatabaseError, ValueError, ServiceError) as exc:
                 logger.warning("Could not read canonical coach metrics for learner %s: %s", profile_id, exc)
                 # Preserve partial-success semantics: one bad learner does not
                 # discard metrics already loaded for the rest of the caseload.
@@ -13521,6 +13522,151 @@ def _imported_review_has_usable_form(review: dict, *, has_normalized_sections: b
     )
 
 
+def _imported_progress_metric(*, actual, expected, planned, actual_percent, expected_percent):
+    variance = (
+        round(actual_percent - expected_percent, 2)
+        if actual_percent is not None and expected_percent is not None
+        else None
+    )
+    return {
+        "actual": actual,
+        "expected": expected,
+        "planned": planned,
+        "actualPercent": actual_percent,
+        "expectedPercent": expected_percent,
+        "variancePercent": variance,
+        "varianceDirection": "above" if variance is not None and variance >= 0 else "below" if variance is not None else "",
+    }
+
+
+def _imported_progress_date(text: str, label: str) -> str | None:
+    match = re.search(rf"{re.escape(label)}\s*:?\s*(\d{{1,2}}\s+[A-Za-z]{{3,9}}\s+\d{{4}})", text, re.IGNORECASE)
+    if not match:
+        return None
+    for date_format in ("%d %b %Y", "%d %B %Y"):
+        try:
+            return datetime.strptime(match.group(1), date_format).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def _imported_progress_snapshot_from_review(review: dict) -> dict | None:
+    """Translate Aptem's historical Learning Progress sentence into the
+    canonical visual snapshot contract without replacing it with live data.
+    """
+    progress_sections = [
+        section for section in review.get("sections") or []
+        if isinstance(section, dict) and clean_text(section.get("name")).casefold() == "learning progress"
+    ]
+    text = " ".join(clean_text(section.get("rawText")) for section in progress_sections).strip()
+    # Aptem exports typographic dashes and non-breaking spaces in otherwise
+    # identical labels (for example ``Off–The–Job``).  Normalise presentation
+    # characters before matching; the original imported answer remains
+    # untouched in the review form.
+    text = re.sub(r"[\u2010-\u2015\u2212]", "-", text)
+    text = re.sub(r"\s+", " ", text.replace("\u00a0", " ")).strip()
+    activities = re.search(
+        r"Learning Plan Activities\s+(\d+)\s+of\s+(\d+)\s+Completed",
+        text,
+        re.IGNORECASE,
+    )
+    hours = re.search(
+        r"Off[-\s]*The[-\s]*Job Hours Overall Progress\s+(\d+(?:\.\d+)?)%\s*\((\d+(?:\.\d+)?)h\).*?Planned Hours \(ILR\)\s+(\d+(?:\.\d+)?)h",
+        text,
+        re.IGNORECASE,
+    )
+    if not activities or not hours:
+        return None
+
+    completed_activities = int(activities.group(1))
+    planned_activities = int(activities.group(2))
+    target_values = re.search(
+        r"Submitted Remaining Target\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)",
+        text,
+        re.IGNORECASE,
+    )
+    target_activities = int(target_values.group(4)) if target_values else None
+    programme_actual_percent = round(completed_activities / planned_activities * 100, 2) if planned_activities else None
+    programme_expected_percent = (
+        round(target_activities / planned_activities * 100, 2)
+        if planned_activities and target_activities is not None
+        else None
+    )
+    completed_hours = float(hours.group(2))
+    planned_hours = float(hours.group(3))
+    hours_actual_percent = float(hours.group(1))
+    calculated_from = _imported_progress_date(text, "Timeline Start")
+    calculated_at = review.get("completedDate") or review.get("plannedDate")
+    return {
+        "calculationMethod": "aptem_imported_text",
+        "schemaVersion": 1,
+        "formulaVersion": "aptem_imported_text_v1",
+        "calculatedFrom": calculated_from or calculated_at or "",
+        "calculatedAt": calculated_at or calculated_from or "",
+        "calculatedBy": "Aptem import",
+        "weeksElapsed": None,
+        "programmeProgress": _imported_progress_metric(
+            actual=completed_activities,
+            expected=target_activities,
+            planned=planned_activities,
+            actual_percent=programme_actual_percent,
+            expected_percent=programme_expected_percent,
+        ),
+        "offTheJobHours": _imported_progress_metric(
+            actual=completed_hours,
+            expected=None,
+            planned=planned_hours,
+            actual_percent=hours_actual_percent,
+            expected_percent=None,
+        ),
+        "ksbProgress": {
+            "available": False,
+            "title": "Apprenticeship Standard progress",
+            "reason": "KSB progress was not available in this Aptem import.",
+            "actualPercent": None,
+            "expectedPercent": None,
+        },
+    }
+
+
+def _imported_review_progress_snapshot(learner, review: dict, *, calculated_by: str):
+    """Build a display-only progress snapshot for a legacy Aptem learner.
+
+    Imported reviews do not own a Curriculum review-instance row where a
+    frozen snapshot can be stored.  The coach workspace can still reuse the
+    canonical Learning Progress renderer for the learner currently linked to
+    the Aptem record.  Failure to resolve a complete plan must not make the
+    historical review itself unavailable; in that case the imported text is
+    left in place as the honest fallback.
+    """
+    imported_snapshot = _imported_progress_snapshot_from_review(review)
+    if imported_snapshot is not None:
+        return imported_snapshot
+    try:
+        commercial_rows, enrolment_rows = fetch_source_schedule_rows([learner])
+        learner_start_date, _reason = resolve_review_anchor_date(
+            int(learner.id), commercial_rows, enrolment_rows,
+        )
+        if learner_start_date is None:
+            return None
+        source = commercial_rows.get(int(learner.id)) or enrolment_rows.get(int(learner.id))
+        return build_progress_snapshot(
+            source or learner,
+            learner,
+            learner_start_date=learner_start_date,
+            calculated_at=timezone.now(),
+            calculated_by=calculated_by,
+        )
+    except (DatabaseError, UnresolvedTrainingPlanTarget, ValueError):
+        logger.info(
+            "Legacy Aptem Learning Progress is unavailable for learner %s",
+            getattr(learner, "id", None),
+            exc_info=True,
+        )
+        return None
+
+
 def _imported_review_definition(owner_email: str, event_key: str) -> dict | None:
     """Adapt one owned Aptem review to the native form-definition contract.
 
@@ -13644,6 +13790,11 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
     review_type = clean_text(review.get("type"))
     monthly_types = {clean_text(value).casefold() for value in REVIEW_TYPES["monthly-coaching"]}
     review_type_code = "aptem_mcm" if review_type.casefold() in monthly_types else "aptem_progress_review"
+    progress_snapshot = (
+        _imported_review_progress_snapshot(learner, review, calculated_by=owner_email)
+        if review_type_code == "aptem_progress_review"
+        else None
+    )
     signatures = {
         role: {"required": False, "signed": False, "signedBy": None, "signedName": None, "signedAt": None, "signature": None}
         for role in curriculum_review_instances.SIGNATURE_ROLES
@@ -13658,7 +13809,7 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
         if summary_only
         else saved_instance.completed_at.isoformat() if saved_instance and saved_instance.completed_at else None
     )
-    return {
+    definition = {
         "readOnly": summary_only,
         "source": "aptem",
         "formAvailable": form_available,
@@ -13687,10 +13838,16 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
         "sections": adapted_sections,
         "signatures": signatures,
         "manualOverride": None,
-        "progressSnapshot": None,
-        "ragHistory": [],
-        "pdf": {"available": False, "reason": "Imported Aptem reviews do not have a Curriculum PDF."},
+        "progressSnapshot": progress_snapshot,
+        "ragHistory": (
+            curriculum_review_instances.progress_review_rag_history(profile_id)
+            if progress_snapshot is not None
+            else []
+        ),
     }
+    from curriculum_api.review_pdf import pdf_availability
+    definition["pdf"] = pdf_availability(definition)
+    return definition
 
 
 @coach_access_required

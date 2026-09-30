@@ -31,6 +31,11 @@ export function monthlyLogActualOtjh(months: Record<string, { completed: number 
 }
 
 export function contractPlannedOtjh(contract: TrainingPlanContract | undefined) {
+  if (contract?.journalTargets !== undefined) {
+    const values = Object.values(contract.journalTargets);
+    return values.some(value => !Number.isFinite(value) || value < 0) ? null
+      : Math.round(values.reduce((total, value) => total + value, 0) * 10_000) / 10_000;
+  }
   if (contract?.contractStatus !== 'ready') return null;
   const months = Object.values(contract.months);
   if (!months.length || months.some(month => month.planned == null || !Number.isFinite(month.planned) || month.planned < 0)) return null;
@@ -86,7 +91,11 @@ export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, 
     return () => { controller.abort(); };
   }, [active, id, identity, attempt]);
   const refresh = () => { week.refresh(); schedule.refresh(); retryContract(); };
-  const contractData = contract?.identity === identity ? contract.data : { months: {}, contractStatus: 'loading' };
+  const rawContract = contract?.identity === identity ? contract.data : { months: {}, contractStatus: 'loading' };
+  const contractData = rawContract.journalTargets === undefined ? rawContract : { ...rawContract,
+    months: Object.fromEntries([...new Set([...Object.keys(rawContract.months), ...Object.keys(rawContract.journalTargets)])]
+      .map(month => [month, { ...rawContract.months[month], planned: rawContract.journalTargets?.[month] ?? 0 }])),
+  };
   const auditData = audit?.identity === identity ? audit.data : { months: {}, cutoffMonth: undefined, plannedEndDate: null };
   const auditError = audit?.identity === identity ? audit.error : '';
   const requiredOtjh = week.data?.metrics?.otjh.planned ?? null;

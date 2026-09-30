@@ -111,6 +111,27 @@ describe('review reopen flow', () => {
     expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
   });
 
+  it('renders canonical Learning Progress for an imported Aptem progress review without duplicating its raw section', async () => {
+    const importedDefinition: ReviewInstanceFormDefinition = {
+      ...definition('in-progress'),
+      source: 'aptem',
+      progressSnapshot: snapshotFixture(),
+      instance: { ...definition('in-progress').instance, id: 'imported-review:A-2', reviewTemplateId: '' },
+      template: { ...definition('in-progress').template, id: '', reviewTypeCode: 'aptem_progress_review' },
+      sections: [{
+        id: 'aptem-section:progress', title: 'Learning Progress', estimatedMinutes: 0, displayOrder: 1, enabled: true,
+        fields: [{ id: 'aptem-text:progress', title: 'Imported text', fieldType: 'title_description', required: false, displayOrder: 0, configuration: { imported: true, description: 'Legacy progress text' } }],
+      }],
+    };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(importedDefinition);
+
+    mount();
+
+    expect(await screen.findByRole('img', { name: /Learning Plan Progress/i })).toBeVisible();
+    expect(screen.queryByText('Imported text')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Recalculate|Calculate/i })).not.toBeInTheDocument();
+  });
+
   it('shows an owned summary-only import without edit or completion actions', async () => {
     const summaryOnlyDefinition: ReviewInstanceFormDefinition = {
       ...definition('not-scheduled'),
@@ -618,6 +639,25 @@ describe('Review Meeting Summary integration', () => {
 });
 
 describe('Monthly Coaching Meeting signature summary + signed PDF', () => {
+  it('shows the same PDF download for a completed imported Aptem MCM', async () => {
+    const imported = mcmDefinition('completed');
+    imported.source = 'aptem';
+    imported.instance = { ...imported.instance, id: 'imported-review:A-13276', reviewTemplateId: '' };
+    imported.template = { ...imported.template, id: '', reviewTypeCode: 'aptem_mcm' };
+    imported.signatures.advisor = { required: false, signed: false };
+    imported.signatures.participant = { required: false, signed: false };
+    imported.pdf = { available: true, reason: '' };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(imported);
+    vi.mocked(downloadReviewInstancePdf).mockResolvedValue(undefined);
+
+    mount();
+
+    const download = await screen.findByRole('button', { name: 'Download signed PDF' });
+    expect(download).toBeEnabled();
+    fireEvent.click(download);
+    await waitFor(() => expect(downloadReviewInstancePdf).toHaveBeenCalledWith('imported-review:A-13276'));
+  });
+
   it('shows the full signature summary and a disabled PDF button once at the signature stage, for the mcm review type only', async () => {
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(mcmDefinition('awaiting-signature'));
     mount();

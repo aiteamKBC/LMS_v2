@@ -140,22 +140,21 @@ class LocalSubjectContentTests(unittest.TestCase):
         self.assertNotIn('source_material_file', public['media'][0])
 
     def test_blob_redirect_requires_ownership_and_available_backup(self):
-        storage = ModuleType('learner_api.evidence_storage')
-        storage.azure_configured = lambda: True
-        storage.get_read_sas = Mock(return_value='https://storage.example/short-lived')
+        storage = ModuleType('learner_api.material_storage')
+        storage.read_url = Mock(return_value='https://storage.example/short-lived')
         owned = Mock(return_value=(8, {'_source': {'_material_blob_ready': True,
             'material_blob_container': 'materials', 'material_blob_name': 'lesson.pdf'}}))
         self.scope.update(_owned_material=owned, _error=lambda message, status: status,
                           HttpResponseRedirect=lambda url: {'Location': url})
         view = function('source_material_file', self.scope)
-        with patch.dict(sys.modules, {'learner_api.evidence_storage': storage}):
+        with patch.dict(sys.modules, {'learner_api.material_storage': storage}):
             response = view(None, 'commercial', 3, 5, 1)
             self.assertEqual(response['Cache-Control'], 'private, no-store')
-            storage.get_read_sas.assert_called_once_with('materials', 'lesson.pdf', ttl_minutes=5)
-            storage.get_read_sas.reset_mock()
+            storage.read_url.assert_called_once_with(owned.return_value[1]['_source'], settings)
+            storage.read_url.reset_mock()
             owned.side_effect = LookupError('Not owned')
             self.assertEqual(view(None, 'commercial', 3, 5, 1), 404)
-            storage.get_read_sas.assert_not_called()
+            storage.read_url.assert_not_called()
 
     def test_material_query_follows_foreign_key_and_rejects_ambiguous_rows(self):
         path = Path(__file__).with_name('student_activity_data.py')
@@ -168,7 +167,7 @@ class LocalSubjectContentTests(unittest.TestCase):
         result = scope['read_student_material'](self.cursor, 8, 5, 1, include_source=True)
         self.assertEqual(result['reading_html'], 'Local content')
         sql, params = self.cursor.execute.call_args.args
-        self.assertIn('material.id=catalogue.source_material_id', sql)
+        self.assertIn('material.material_id=catalogue.source_material_id', sql)
         self.assertIn('material.deleted_at IS NULL', sql)
         self.assertIn('membership.learner_id=l.id', sql)
         self.assertEqual(params, [1, 8, 5, 'material:1'])
