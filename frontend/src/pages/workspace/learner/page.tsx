@@ -146,12 +146,12 @@ export default function LearnerOverview() {
     ?? real?.learningAccess?.startDate
     ?? dashboardPlan.data?.programmeStartDate
     ?? real?.programmeStartDate;
-  const programmeEndDate = dashboardPlan.auditPlannedEndDate
+  const programmeEndDate = dashboardPlan.plannedEndDate
     ?? real?.programmeEndDate
     ?? dashboardPlan.data?.programmeEndDate
     ?? real?.learnerEndDate;
   const startDateDisplay = formatProgrammeStartDate(programmeStartDate) || (loading ? 'Loading…' : EMPTY_VALUE);
-  const plannedEndDisplay = dashboardPlan.auditLoading
+  const plannedEndDisplay = dashboardPlan.targetsLoading
     ? 'Loading…'
     : formatProgrammeStartDate(programmeEndDate) || (loading ? 'Loading…' : EMPTY_VALUE);
   const plan = learnerHeaderPlan(scheduleRead.data?.modules || [], knownLearner || {},
@@ -267,19 +267,19 @@ export default function LearnerOverview() {
     ? EMPTY_VALUE : `${attendanceValue} / ${attendanceTotalValue}`;
 
   const otjPlannedHours = !metrics.data ? null : metrics.data.migrated
-    ? metrics.data.aptem_planned_total ?? null : dashboardPlan.otjh.planned;
+    ? metrics.data.aptem_planned_total ?? metrics.data.otjh.planned ?? null : dashboardPlan.otjh.planned;
   const otjPlannedLoading = metrics.loading || (!metrics.data?.migrated && dashboardPlan.otjh.plannedLoading);
-  // The dashboard headline follows Monthly Logs. This includes retained
-  // historical months and accepted LMS months, using the same total shown in
-  // the Monthly Logs screen rather than the separate metrics roll-up.
-  const otjActualHours = dashboardPlan.otjh.actual;
+  // Use the same canonical Actual total as the OTJ Hours page. Monthly Logs is
+  // still the per-month view, but it can omit the open month and must not leave
+  // this programme-wide headline showing an older partial total.
+  const otjActualHours = metrics.data?.otjh.actual ?? null;
   const otjPercent = otjActualHours != null && otjPlannedHours != null && otjPlannedHours > 0
     ? Math.round((otjActualHours / otjPlannedHours) * 100)
     : null;
   const otjPlannedValue = otjPlannedHours != null ? `${otjPlannedHours.toFixed(2)} h`
     : otjPlannedLoading ? 'Loading…' : 'Unavailable';
   const otjActualValue = otjActualHours != null ? `${otjActualHours.toFixed(2)} h`
-    : dashboardPlan.otjh.actualLoading ? 'Loading...' : 'Unavailable';
+    : metrics.loading ? 'Loading...' : 'Unavailable';
   const ksb = metrics.data?.ksb;
   const ksbPercent = ksb?.percent ?? null;
   const ksbValue = ksbPercent == null ? EMPTY_VALUE : `${ksbPercent}%`;
@@ -493,6 +493,7 @@ export default function LearnerOverview() {
         <DashboardTrainingPlan key={`plan:${learnerKind}:${id}`} kind={learnerKind} learnerId={id} plan={dashboardPlan} canOpenActivities
           programmeStartDate={programmeStartDate}
           programmeEndDate={programmeEndDate}
+          pageError={loadError}
           canOpenRewards={!reviewingLearner} />
       </PageContainer>
     </WorkspaceShell>

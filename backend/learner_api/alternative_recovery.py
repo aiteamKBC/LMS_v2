@@ -296,23 +296,30 @@ def alternative_target_details(
     return data
 
 
-def approved_alternative_guests(database: str = "enrolment") -> dict[str, set[str]]:
+def approved_alternative_guests(
+    database: str = "enrolment", current_emails_by_enrolment: dict[int, str] | None = None,
+) -> dict[str, set[str]]:
     """Current learner emails expected only for their approved target occurrence."""
-    reports = list(
-        CoachAbsenceReport.objects.filter(
-            status=CoachAbsenceReport.STATUS_APPROVED,
-            recovery_method=ALTERNATIVE_METHOD,
-            catchup_event_key__startswith=ALTERNATIVE_KEY_PREFIX,
-        ).values("learner_id", "learner_email", "catchup_event_key")
+    reports_query = CoachAbsenceReport.objects.filter(
+        status=CoachAbsenceReport.STATUS_APPROVED,
+        recovery_method=ALTERNATIVE_METHOD,
+        catchup_event_key__startswith=ALTERNATIVE_KEY_PREFIX,
     )
+    if current_emails_by_enrolment is not None:
+        if not current_emails_by_enrolment:
+            return defaultdict(set)
+        reports_query = reports_query.filter(learner_id__in=current_emails_by_enrolment)
+    reports = list(reports_query.values("learner_id", "learner_email", "catchup_event_key"))
     if not reports:
         return defaultdict(set)
-    current_emails = {
-        profile.enrolment_id: str(profile.email or "").strip().casefold()
-        for profile in LearnerProfile.objects.using(database).filter(
-            enrolment_id__in=[report["learner_id"] for report in reports]
-        )
-    }
+    current_emails = current_emails_by_enrolment
+    if current_emails is None:
+        current_emails = {
+            profile.enrolment_id: str(profile.email or "").strip().casefold()
+            for profile in LearnerProfile.objects.using(database).filter(
+                enrolment_id__in=[report["learner_id"] for report in reports]
+            ).only('enrolment_id', 'email')
+        }
     guests = defaultdict(set)
     for report in reports:
         occurrence_id = alternative_occurrence_id(report["catchup_event_key"])

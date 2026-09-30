@@ -54,6 +54,21 @@ export interface DirectOtjhActivity {
   passed?: boolean | null;
 }
 
+export interface CanonicalOtjhActivity {
+  id: string;
+  kind: string;
+  componentId?: string | null;
+  quizId?: string | number | null;
+  componentTitle: string;
+  componentType: string;
+  moduleTitle?: string | null;
+  actualSeconds: number;
+  expectedOtjh?: number | null;
+  submittedAt?: string | null;
+  passed?: boolean | null;
+  ksbs: string[];
+}
+
 export interface StudentActivityResponse {
   progress_basis?: 'recorded_activities';
   learner_name: string;
@@ -73,6 +88,9 @@ export interface StudentActivityResponse {
    *  per-learner denominator to divide by. */
   audit_ksb_evidenced?: number | null;
   direct_otjh_activities?: DirectOtjhActivity[];
+  /** Complete accepted ledger from Learner.learner_progress_entries. When
+   * present it replaces mixed legacy/direct activity-log projections. */
+  canonical_otjh_activities?: CanonicalOtjhActivity[];
   planned_total: number | null;
   mapped_count: number;
   planned_mapped_count: number;

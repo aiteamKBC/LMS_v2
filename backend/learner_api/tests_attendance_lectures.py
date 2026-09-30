@@ -87,6 +87,21 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertNotIn('jsonb_array_elements_text', schedule_sql)
         self.assertNotIn('live_session_join_launches', schedule_sql)
 
+    def test_schedule_reuses_already_loaded_home_assignment(self):
+        conn = MagicMock()
+        cur = conn.cursor.return_value.__enter__.return_value
+        with patch('learner_api.attendance_lectures.connections', {'enrolment': conn}), \
+             patch('learner_api.attendance_lectures.dict_rows', return_value=[]):
+            read_native_occurrences(
+                SimpleNamespace(id=12, email='learner@example.test'),
+                module_ids=['assigned-module', 'assigned-module', ''],
+            )
+
+        cur.execute.assert_called_once()
+        schedule_sql, schedule_params = cur.execute.call_args.args
+        self.assertIn('s.module_catalogue_id=ANY(%s)', schedule_sql)
+        self.assertEqual(schedule_params, ['learner@example.test', ['assigned-module']])
+
     def test_empty_json_plan_still_uses_normalized_module_assignments(self):
         conn = MagicMock()
         cur = conn.cursor.return_value.__enter__.return_value

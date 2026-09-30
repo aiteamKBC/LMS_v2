@@ -216,6 +216,16 @@ class RoleRuleTests(PrefixRoleTestCase):
             self._refusal("/curriculum_api/curriculum/presentations/slides/", "learner")
         )
 
+    def test_allowlisted_diagnostics_transport_accepts_every_signed_in_role(self):
+        path = "/curriculum_api/performance/record/"
+        for role in ("learner", "employer", "staff", "admin"):
+            with self.subTest(role=role):
+                self.assertIsNone(self._refusal(path, role))
+
+        with _gate_on():
+            refusal = refusal_for(path, None)
+        self.assertEqual(refusal.status_code, 401)
+
     def test_learners_may_read_the_curriculum_refresh_counter(self):
         path = "/curriculum_api/curriculum/cache-epoch/"
         self.assertIsNone(self._refusal(path, "learner"))

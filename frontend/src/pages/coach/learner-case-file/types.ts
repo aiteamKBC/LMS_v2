@@ -1,6 +1,7 @@
 import type { CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
 import type { CoachReviewGenerationIssue } from '@/pages/coach/shared/calendarEvents';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
+import type { StudentActivityResponse } from '@/api/studentActivity';
 import type { JourneyModule } from '@/utils/learnerJourney';
 import type { CaseFileActivityStates } from './activityState';
 
@@ -202,6 +203,8 @@ export interface CoachLearnerCaseFileData {
   attendance: CoachAttendanceLearner | null;
   evidence: CoachMarkingQueueItem | null;
   detail: LearnerDetail | null;
+  /** Exact recorded-learning payload used by the learner's My Learning page. */
+  learningActivity?: StudentActivityResponse | null;
   journey: JourneyModule[];
   activityStates?: CaseFileActivityStates;
   peers: CoachCaseloadLearner[];

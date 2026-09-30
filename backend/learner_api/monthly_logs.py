@@ -80,29 +80,19 @@ def scope(request, learner_id):
     elif request.GET.get('perspective') == 'learner' and is_own_learner_record(account, learner_id):
         # Their own record in the learner workspace is the ordinary learner
         # experience; every other record keeps the coach/admin rules below.
-        learner = old.resolve_record(learner_id)
-        if learner['aptem_id'] and (not old.normalize(account.email)
-                                    or old.normalize(account.email) != old.normalize(learner['email'])):
-            old.identity_error()
         role = 'learner'
     else:
         actor = old.coach_actor(account)
         if actor['role'] == 'monitor':
             raise old.ServiceError('Coach access is required.', 'forbidden', 403)
         role = actor['role']
-    canonical_profile = canonical.profile(learner_id)
-    if canonical_profile is not None:
-        learner = {**canonical_profile, 'id': learner_id}
-    elif role == 'learner':
-        learner = old.resolve_authenticated_learner(account)
-    else:
-        learner = old.resolve_record(learner_id)
+    canonical_profile = canonical.require_profile(learner_id)
+    learner = {**canonical_profile, 'id': learner_id}
     if role == 'learner' and old.normalize(account.email) != old.normalize(learner.get('email')):
         raise old.ServiceError('Learner not found.', 'not_found', 404)
-    profile = canonical_profile or sources.profile(learner_id)
-    if canonical_profile is not None:
-        learner = {**learner, 'aptem_id': profile['aptem_id'], 'name': profile['name'],
-                   'programme': profile['programme']}
+    profile = canonical_profile
+    learner = {**learner, 'aptem_id': profile['aptem_id'], 'name': profile['name'],
+               'programme': profile['programme']}
     coach_email = old.normalize((profile or {}).get('coach_email') or learner.get('coach_email'))
     if role == 'coach' and coach_email != actor['email']:
         raise old.ServiceError('Learner not found.', 'not_found', 404)
@@ -118,7 +108,8 @@ def scope(request, learner_id):
         raise old.ServiceError('This coach workspace is read-only.', 'forbidden', 403)
     request.admin_learner_action = admin_action
     request.admin_learner_id = learner_id
-    return {**learner, '_profile': profile, '_view_as': bool(view_as) or (learner_preview and not admin_action)}, 'learner' if admin_action else role
+    return {**learner, '_profile': profile, '_canonical_profile': canonical_profile,
+            '_view_as': bool(view_as) or (learner_preview and not admin_action)}, 'learner' if admin_action else role
 
 
 def valid_month(month):
@@ -247,7 +238,13 @@ def lock_if_fully_signed(learner_id, month):
 
 
 def month_state(month, rows, signs, training_plan_target=None, *, learner_id=None):
-    digest = old.digest(rows)
+    # ``source_system`` is a read-only classification added to canonical rows
+    # for the unified Actual predicate.  It is not learner-entered content and
+    # must not invalidate an existing signed month's snapshot hash.
+    digest_rows = [{key: value for key, value in item.items() if key != 'source_system'} for item in rows]
+    digest = old.digest(digest_rows)
+    actual_rows = [r for r in rows if canonical.counts_as_actual(r)]
+    counted_rows = list(rows)
     # As in Previous learning record, source updates never erase a saved
     # signature or revoke completion. Each capture retains its reviewed rows.
     matching = [s for s in signs if s['report_month'] == month]
@@ -260,10 +257,11 @@ def month_state(month, rows, signs, training_plan_target=None, *, learner_id=Non
             'is_open': month == timezone.localdate().strftime('%Y-%m'),
             'status': 'complete' if student else 'awaiting_signature',
             'student_signature': student, 'coach_signature': coach,
-            'row_count': len(rows), 'planned_hours': sum(float(r['planned_hours'] or 0) for r in rows),
-            'actual_hours': sum(float(r['actual_hours'] or 0) for r in rows if r['accepted']),
-            'not_accepted_hours': sum(float(r['actual_hours'] or 0) for r in rows if not r['accepted']),
-            'total_actual_hours': sum(float(r['actual_hours'] or 0) for r in rows),
+            'row_count': len({r.get('progress_id') or r.get('source_ref') for r in rows}),
+            'planned_hours': sum(float(r['planned_hours'] or 0) for r in rows),
+            'actual_hours': sum(float(r['actual_hours'] or 0) for r in actual_rows),
+            'not_accepted_hours': sum(float(r['actual_hours'] or 0) for r in counted_rows if not r['accepted']),
+            'total_actual_hours': sum(float(r['actual_hours'] or 0) for r in counted_rows),
             'training_plan_target': training_plan_target, 'pending_revisions': 0, 'can_complete': False,
             'source_finalization': None, 'snapshot_digest': digest,
             'locked': lock['locked'], 'locked_at': lock['locked_at'],
@@ -287,8 +285,6 @@ def current_months(learner, signs=(), *, include_open=False, include_future=Fals
         if ensure_month and allowed_month(ensure_month):
             grouped.setdefault(ensure_month, [])
         return grouped
-    # A signed month remains in the journal even if its last source row is
-    # subsequently removed, just as retained previous-record months do.
     for signature in signs:
         month = signature['report_month']
         if allowed_month(month) and (not learner.get('aptem_id') or month > old_repo.CUTOFF):
@@ -297,7 +293,6 @@ def current_months(learner, signs=(), *, include_open=False, include_future=Fals
         month = row['activity_date'][:7]
         if month > open_month or (month == open_month and not include_open):
             continue
-        # Historical months continue to use the Previous learning record source.
         if learner.get('aptem_id') and month <= old_repo.CUTOFF:
             continue
         grouped[month].append(row)
@@ -305,7 +300,6 @@ def current_months(learner, signs=(), *, include_open=False, include_future=Fals
         for month, audit_rows in history.later_rows(learner, open_month).items():
             if month == open_month and not include_open:
                 continue
-            # Resolve the existing owner-scoped document URLs before merging.
             public_detail(learner, {'rows': audit_rows})
             grouped[month] = history.merge_rows(grouped.get(month, []), audit_rows)
     for rows in grouped.values():
@@ -321,14 +315,49 @@ def current_months(learner, signs=(), *, include_open=False, include_future=Fals
 
 
 def summary_data(learner, *, include_open=False, include_future=False, ensure_month=None):
-    retained = legacy_summary(learner)
-    signs = signatures(learner)
-    months = [{**m, 'source': 'legacy'} for m in retained['months']]
-    targets = canonical.targets(learner['id']) if canonical.enabled(learner['id']) else None
-    months.extend(month_state(month, rows, signs, targets.get(month, 0 if journal_sources.enabled() else None) if targets is not None else sources.monthly_target(learner, month), learner_id=learner['id'])
-                  for month, rows in current_months(learner, signs, include_open=include_open,
-                                                     include_future=include_future,
-                                                     ensure_month=ensure_month).items())
+    canonical_owner = learner.get('_canonical_profile')
+    if canonical_owner is not None:
+        retained = {'months': []}
+        records = canonical.entries_for(canonical_owner)
+        signs = canonical.signatures_for(canonical_owner)
+        targets = canonical.targets_for(canonical_owner)
+        grouped = defaultdict(list)
+        open_month = timezone.localdate().strftime('%Y-%m')
+        def allowed_month(month):
+            return (
+                month < open_month
+                or (include_open and month == open_month)
+                or (include_future and month > open_month)
+            )
+        for item in canonical.rows_for(canonical_owner, records):
+            month = item.get('reporting_month')
+            if month and allowed_month(month):
+                grouped[month].append(item)
+        for month in {*targets, *(sign['report_month'] for sign in signs)}:
+            if allowed_month(month):
+                grouped.setdefault(month, [])
+        if ensure_month and allowed_month(ensure_month):
+            grouped.setdefault(ensure_month, [])
+        months = [month_state(month, rows, signs, targets.get(month), learner_id=learner['id'])
+                  for month, rows in grouped.items()]
+        programme_metrics = canonical.metrics_from_records(records, targets)['otjh']
+        training_plan_totals = {
+            'accepted_hours': programme_metrics.get('completed_actual', programme_metrics.get('actual')),
+            'planned_hours': programme_metrics['planned'],
+        }
+    else:
+        retained = legacy_summary(learner)
+        signs = signatures(learner)
+        months = [{**m, 'source': 'legacy'} for m in retained['months']]
+        months.extend(month_state(month, rows, signs, sources.monthly_target(learner, month), learner_id=learner['id'])
+                      for month, rows in current_months(
+                          learner, signs, include_open=include_open,
+                          include_future=include_future, ensure_month=ensure_month,
+                      ).items())
+        training_plan_totals = {
+            'accepted_hours': round(sum(float(month.get('actual_hours') or 0) for month in months), 4),
+            'planned_hours': round(sum(float(month.get('training_plan_target') or 0) for month in months), 4),
+        }
     months.sort(key=lambda m: m['month'])
     profile = learner.get('_profile') or {}
     audit_profile = retained.get('profile') or {}
@@ -338,6 +367,7 @@ def summary_data(learner, *, include_open=False, include_future=False, ensure_mo
                        'planned_end_date': audit_profile.get('planned_end_date') or profile.get('end_date')},
             'months': months, 'total_months': len(months),
             'completed_months': sum(m['status'] == 'complete' for m in months),
+            'training_plan_totals': training_plan_totals,
             'read_only': learner['_view_as']}
 
 
