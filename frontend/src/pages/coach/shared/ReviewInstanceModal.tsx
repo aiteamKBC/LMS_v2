@@ -27,7 +27,7 @@ const isAbortError = (err: unknown): boolean => err instanceof DOMException && e
 
 /** Review Types with a signed PDF export, by the Review Type's stable code --
  *  mirrors curriculum_api.review_pdf.EXPORTABLE_REVIEW_TYPES. */
-const EXPORTABLE_REVIEW_TYPES = ['mcm', 'progress_review'];
+const EXPORTABLE_REVIEW_TYPES = ['mcm', 'aptem_mcm', 'progress_review'];
 
 function MeetingSummaryInlineEditor({
   fieldId,
@@ -731,18 +731,20 @@ export function ReviewInstanceModal({
                 code, never by the template's name. Calculating is locked once
                 the review reaches the signature step, so the figures a party
                 signs cannot move afterwards. */}
-            {definition.template.reviewTypeCode === 'progress_review' ? (
+            {['progress_review', 'aptem_progress_review'].includes(definition.template.reviewTypeCode || '') ? (
               <ReviewProgressPanel
                 snapshot={definition.progressSnapshot}
                 ragHistory={definition.ragHistory}
-                canCalculate={!isSignatureStage}
+                canCalculate={definition.source !== 'aptem' && !isSignatureStage}
                 calculating={calculating}
                 onCalculate={() => { void calculateProgress(); }}
               />
             ) : null}
 
             <ReviewFormRenderer
-              sections={definition.sections}
+              sections={definition.source === 'aptem' && definition.progressSnapshot
+                ? definition.sections.filter((section) => section.title.trim().toLocaleLowerCase() !== 'learning progress')
+                : definition.sections}
               answers={answers}
               onAnswerChange={handleAnswerChange}
               errors={showErrors ? { missingFieldIds } : undefined}
