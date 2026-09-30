@@ -54,6 +54,27 @@ describe('installSessionExpiryHandler', () => {
     expect(onExpired).not.toHaveBeenCalled();
   });
 
+  it('does not turn public event-token failures into a session logout', async () => {
+    respondWith = () => new Response('{}', { status: 401 });
+    const onExpired = install();
+
+    await window.fetch('/engagement_api/feedback/public-event/');
+    await window.fetch('/engagement_api/feedback/public-event/csrf/');
+    await window.fetch('/engagement_api/event-check-in/');
+    await window.fetch('/engagement_api/event-check-in/csrf/');
+
+    expect(onExpired).not.toHaveBeenCalled();
+  });
+
+  it('still reports a 401 from protected Engagement APIs', async () => {
+    respondWith = () => new Response('{}', { status: 401 });
+    const onExpired = install();
+
+    await window.fetch('/engagement_api/feedback/my-forms/');
+
+    expect(onExpired).toHaveBeenCalledTimes(1);
+  });
+
   it('ignores a 403, which means the role is wrong, not the session', async () => {
     respondWith = () => new Response('{}', { status: 403 });
     const onExpired = install();

@@ -7,6 +7,7 @@ from django.db import IntegrityError, connection, transaction
 from django.db.models import Count, F, Sum
 from django.http import JsonResponse
 from django.utils import timezone as dj_timezone
+from django.utils.dateparse import parse_date, parse_time
 
 from . import ai
 from .helpers import json_body, json_error, require_fields
@@ -83,19 +84,25 @@ def recognition_to_dict(recognition):
     }
 
 
-def event_to_dict(event):
-    return {
+def event_to_dict(event, *, include_check_in=False):
+    data = {
         'id': event.id,
         'title': event.title,
         'description': event.description,
         'date': event.date,
         'time': event.time,
+        'eventDate': event.event_date.isoformat() if event.event_date else None,
+        'startTime': event.start_time.strftime('%H:%M') if event.start_time else None,
+        'endTime': event.end_time.strftime('%H:%M') if event.end_time else None,
         'location': event.location,
         'type': event.type,
         'attendees': event.attendees,
         'status': event.status,
         'organizer': event.organizer,
     }
+    if include_check_in:
+        data['checkInToken'] = str(event.check_in_token)
+    return data
 
 
 def event_booking_to_dict(booking):
@@ -834,7 +841,8 @@ def recognition_detail(request, pk):
 def events_collection(request):
     if request.method == 'GET':
         events = Event.objects.all().order_by('-created_at')
-        return JsonResponse({'events': [event_to_dict(e) for e in events]})
+        include_check_in = is_staff(request)
+        return JsonResponse({'events': [event_to_dict(e, include_check_in=include_check_in) for e in events]})
 
     if request.method != 'POST':
         return json_error('Method not allowed.', status=405)
@@ -848,7 +856,8 @@ def events_collection(request):
         return json_error('Invalid JSON body.')
 
     missing = require_fields(payload, [
-        'title', 'description', 'date', 'time', 'location', 'type', 'organizer',
+        'title', 'description', 'eventDate', 'startTime', 'endTime',
+        'location', 'type', 'organizer',
     ])
     if missing:
         return json_error('Missing required fields.', fields=missing)
@@ -856,18 +865,27 @@ def events_collection(request):
     if payload['type'] not in dict(Event.TYPE_CHOICES):
         return json_error('Invalid type.', status=400)
 
+    event_date = parse_date(str(payload['eventDate']))
+    start_time = parse_time(str(payload['startTime']))
+    end_time = parse_time(str(payload['endTime']))
+    if not event_date or not start_time or not end_time or start_time >= end_time:
+        return json_error('Choose a valid event date and an end time after the start time.')
+
     event = Event.objects.create(
         title=payload['title'],
         description=payload['description'],
-        date=payload['date'],
-        time=payload['time'],
+        date=event_date.strftime('%d %b %Y').lstrip('0'),
+        time=f'{start_time.strftime("%H:%M")} - {end_time.strftime("%H:%M")}',
+        event_date=event_date,
+        start_time=start_time,
+        end_time=end_time,
         location=payload['location'],
         type=payload['type'],
         attendees=payload.get('attendees', 0),
         status=payload.get('status', 'upcoming'),
         organizer=payload['organizer'],
     )
-    return JsonResponse({'created': True, 'event': event_to_dict(event)}, status=201)
+    return JsonResponse({'created': True, 'event': event_to_dict(event, include_check_in=True)}, status=201)
 
 
 def event_detail(request, pk):
@@ -877,7 +895,7 @@ def event_detail(request, pk):
         return json_error('Event not found.', status=404)
 
     if request.method == 'GET':
-        return JsonResponse({'event': event_to_dict(event)})
+        return JsonResponse({'event': event_to_dict(event, include_check_in=is_staff(request))})
 
     if request.method == 'DELETE':
         error = staff_error(request)
@@ -902,16 +920,34 @@ def event_detail(request, pk):
     if 'status' in payload and payload['status'] not in dict(Event.STATUS_CHOICES):
         return json_error('Invalid status.', status=400)
 
+    structured = {}
+    if any(field in payload for field in ('eventDate', 'startTime', 'endTime')):
+        event_date = parse_date(str(payload.get('eventDate') or event.event_date or ''))
+        start_time = parse_time(str(payload.get('startTime') or event.start_time or ''))
+        end_time = parse_time(str(payload.get('endTime') or event.end_time or ''))
+        if not event_date or not start_time or not end_time or start_time >= end_time:
+            return json_error('Choose a valid event date and an end time after the start time.')
+        structured = {
+            'event_date': event_date,
+            'start_time': start_time,
+            'end_time': end_time,
+            'date': event_date.strftime('%d %b %Y').lstrip('0'),
+            'time': f'{start_time.strftime("%H:%M")} - {end_time.strftime("%H:%M")}',
+        }
+
     direct_fields = [
-        'title', 'description', 'date', 'time', 'location', 'type',
+        'title', 'description', 'location', 'type',
         'attendees', 'status', 'organizer',
     ]
     for field in direct_fields:
         if field in payload:
             setattr(event, field, payload[field])
 
+    for field, value in structured.items():
+        setattr(event, field, value)
+
     event.save()
-    return JsonResponse({'event': event_to_dict(event)})
+    return JsonResponse({'event': event_to_dict(event, include_check_in=True)})
 
 
 def event_bookings_collection(request):
@@ -1143,7 +1179,7 @@ def attendance_to_dict(record):
     }
 
 
-def _mark_attendance_records(request, payload, *, save_mark, rule_key, event_reference, reason):
+def _mark_attendance_records(request, payload, *, save_mark, rule_key, event_reference, reason, can_award=None):
     """Shared bulk-mark logic for club meetings and events.
 
     `save_mark(learner_id, learner_name, status)` upserts the attendance row
@@ -1168,7 +1204,7 @@ def _mark_attendance_records(request, payload, *, save_mark, rule_key, event_ref
                 continue
             attendance = save_mark(learner_id, learner_name, status, marker)
             saved.append(attendance)
-            if status == 'present':
+            if status == 'present' and (can_award is None or can_award(learner_id)):
                 try:
                     grant_points(
                         rule_key, learner_id, learner_name,
@@ -1250,6 +1286,9 @@ def event_attendance_collection(request, event_id):
             roster.append({
                 'learnerId': booking.learner_id,
                 'learnerName': booking.learner_name,
+                'email': mark.attendee_email if mark and mark.attendee_email else booking.learner_email,
+                'attendeeType': mark.attendee_type if mark else 'learner',
+                'attendanceSource': mark.attendance_source if mark else 'booking',
                 'status': mark.status if mark else None,
                 'markedBy': mark.marked_by if mark else None,
                 'markedAt': mark.marked_at.isoformat() if mark else None,
@@ -1263,6 +1302,9 @@ def event_attendance_collection(request, event_id):
             roster.append({
                 'learnerId': mark.learner_id,
                 'learnerName': mark.learner_name,
+                'email': mark.attendee_email,
+                'attendeeType': mark.attendee_type,
+                'attendanceSource': mark.attendance_source,
                 'status': mark.status,
                 'markedBy': mark.marked_by,
                 'markedAt': mark.marked_at.isoformat(),
@@ -1289,6 +1331,7 @@ def event_attendance_collection(request, event_id):
         rule_key='event_attended',
         event_reference=lambda lid: f'event:{event.id}:learner:{lid}',
         reason=f'Attended "{event.title}"',
+        can_award=lambda learner_id: not learner_id.startswith('guest:'),
     )
     if error:
         return error

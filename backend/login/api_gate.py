@@ -212,6 +212,8 @@ def rule_for(path):
     # other Engagement endpoint.
     if path.startswith('/engagement_api/feedback/public-event/'):
         return None
+    if path.startswith('/engagement_api/event-check-in/'):
+        return None
     if path.startswith(('/learner_api/certificates/verify/', '/learner_api/personal-learning/verify/')):
         return None
     from old_otjh.gate import is_transition_path

@@ -32,7 +32,7 @@ from learner_api.profile_photo import normalize_photo
 from .helpers import json_body, json_error
 from .models import (
     FeedbackAnswer, FeedbackAssignment, FeedbackDelivery, FeedbackDeliveryRecipient,
-    FeedbackEventRecipient, FeedbackForm, FeedbackQuestion, FeedbackResponse,
+    FeedbackEventCampaign, FeedbackEventRecipient, FeedbackForm, FeedbackQuestion, FeedbackResponse,
     FeedbackSection, FeedbackUpload,
 )
 from .permissions import (
@@ -807,13 +807,16 @@ def learner_forms(request):
         Q(assignments__target_type='learner', assignments__target_id=learner_id),
     ).distinct()
     forms = forms.filter(Q(start_date__isnull=True) | Q(start_date__lte=now))
-    responses = {r.form_id: r for r in FeedbackResponse.objects.filter(learner_id=learner_id, delivery__isnull=True)}
+    responses = {r.form_id: r for r in FeedbackResponse.objects.filter(
+        learner_id=learner_id, delivery__isnull=True, event_recipient__isnull=True,
+    )}
     items = []
     for form in forms:
         assignment = _assignment_for(form, learner_id)
         response = responses.get(form.id)
         items.append({
-            'id': form.id, 'deliveryId': None, 'title': form.title, 'description': form.description,
+            'id': form.id, 'deliveryId': None, 'eventRecipientId': None,
+            'title': form.title, 'description': form.description,
             'sessionTitle': '', 'sessionStartsAt': None,
             'assignedAt': _iso(assignment.assigned_at if assignment else None),
             'dueDate': _iso((assignment.due_date if assignment else None) or form.due_date),
@@ -843,12 +846,50 @@ def learner_forms(request):
             'dueDate': _iso(recipient.due_date or form.due_date),
             'status': 'completed' if response and response.status == 'completed' else ('in_progress' if response else 'not_started'),
             'responseId': response.id if response else None,
+            'eventRecipientId': None,
         })
+    event_recipients = list(FeedbackEventRecipient.objects.select_related('event').filter(
+        learner_id=learner_id, revoked_at__isnull=True,
+        # Preparing an event roster is enough to assign its forms to an
+        # authenticated learner. Only guests need the later email-publish step.
+        invite_status__in=['pending', 'sent'],
+        event__feedback_campaigns__status='open',
+        event__feedback_campaigns__form__status='published',
+        event__feedback_campaigns__form__form_type='post_event',
+    ).distinct().order_by('-invitation_sent_at', '-updated_at'))
+    for recipient in event_recipients:
+        campaigns = FeedbackEventCampaign.objects.select_related('form').filter(
+            event=recipient.event, status='open', form__status='published', form__form_type='post_event',
+        ).order_by('form__title', 'form_id')
+        responses = {
+            response.form_id: response for response in FeedbackResponse.objects.filter(
+                event_recipient=recipient, learner_id=learner_id,
+            )
+        }
+        for campaign in campaigns:
+            form = campaign.form
+            response = responses.get(form.id)
+            items.append({
+                'id': form.id,
+                'deliveryId': None,
+                'eventRecipientId': recipient.id,
+                'title': form.title,
+                'description': form.description,
+                'sessionTitle': recipient.event.title,
+                'sessionStartsAt': None,
+                'assignedAt': _iso(recipient.invitation_sent_at or recipient.updated_at),
+                'dueDate': _iso(form.due_date),
+                'status': 'completed' if response and response.status == 'completed' else ('in_progress' if response else 'not_started'),
+                'responseId': response.id if response else None,
+            })
+    # These sources are queried independently. Keep newly assigned work at the
+    # top instead of appending a new event below an older feedback backlog.
+    items.sort(key=lambda item: item.get('assignedAt') or '', reverse=True)
     return JsonResponse({'forms': items})
 
 
 def _form_recipient_rows(form):
-    """Return staff-visible assignment rows across every version of a template."""
+    """Return staff-visible recipients with a type-neutral assignment context."""
     family_ids = [form.id]
     if form.form_type == 'post_lecture':
         family_ids = list(FeedbackForm.objects.filter(
@@ -863,9 +904,19 @@ def _form_recipient_rows(form):
     manual_assignments = list(FeedbackAssignment.objects.filter(
         form_id__in=family_ids,
     ).order_by('-assigned_at', '-id'))
+    event_recipients = []
+    if form.form_type == 'post_event':
+        event_recipients = list(FeedbackEventRecipient.objects.select_related(
+            'event',
+        ).filter(
+            event__feedback_campaigns__form_id__in=family_ids,
+            event__feedback_campaigns__status='open',
+            revoked_at__isnull=True,
+        ).distinct().order_by('-invitation_sent_at', '-updated_at', '-id'))
 
     learner_ids = {str(item.learner_id) for item in delivery_recipients}
     learner_ids.update(str(item.target_id) for item in manual_assignments if item.target_id)
+    learner_ids.update(str(item.learner_id) for item in event_recipients if item.learner_id)
     all_assignment = next((item for item in manual_assignments if item.target_type == 'all_learners'), None)
     learners_query = EnrolmentUser.all_learners.all()
     if all_assignment is None:
@@ -879,7 +930,12 @@ def _form_recipient_rows(form):
     }
     manual_status = {
         str(item.learner_id): item.status
-        for item in responses if item.delivery_id is None
+        for item in responses
+        if item.delivery_id is None and getattr(item, 'event_recipient_id', None) is None
+    }
+    event_status = {
+        (item.form_id, item.event_recipient_id): item.status
+        for item in responses if getattr(item, 'event_recipient_id', None) is not None
     }
     rows = []
     for recipient in delivery_recipients:
@@ -895,6 +951,12 @@ def _form_recipient_rows(form):
             'email': getattr(learner, 'email', '') or '',
             'programme': recipient.programme or getattr(learner, 'programme', '') or '',
             'source': 'attendance',
+            'sourceKey': f'lecture:{delivery.id}',
+            'sourceType': 'lecture',
+            'sourceLabel': 'Lecture attendance',
+            'sourceTitle': delivery.session_title,
+            'sourceSubtitle': delivery.module_name,
+            'sourceStartsAt': _iso(delivery.starts_at),
             'sessionTitle': delivery.session_title,
             'sessionStartsAt': _iso(delivery.starts_at),
             'moduleName': delivery.module_name,
@@ -923,13 +985,73 @@ def _form_recipient_rows(form):
             'email': learner.email or '',
             'programme': learner.programme or '',
             'source': 'manual',
+            'sourceKey': 'manual',
+            'sourceType': 'manual',
+            'sourceLabel': 'Manual assignment',
+            'sourceTitle': 'Manual assignment',
+            'sourceSubtitle': '',
+            'sourceStartsAt': None,
             'sessionTitle': '', 'sessionStartsAt': None, 'moduleName': '',
             'assignedAt': _iso(assignment.assigned_at),
             'dueDate': _iso(assignment.due_date or form.due_date),
             'responseStatus': manual_status.get(learner_id, 'not_started'),
             'formVersion': form.version,
         })
+    for recipient in event_recipients:
+        learner_id = str(recipient.learner_id or '')
+        learner = learners.get(learner_id)
+        event = recipient.event
+        rows.append({
+            'key': f'event-{event.id}-{recipient.id}',
+            'deliveryId': None, 'occurrenceKey': '',
+            'learnerId': learner_id,
+            'learnerName': recipient.attendee_name,
+            'email': recipient.attendee_email,
+            'programme': getattr(learner, 'programme', '') or '',
+            'source': 'event_attendance',
+            'sourceKey': f'event:{event.id}',
+            'sourceType': 'event',
+            'sourceLabel': 'Event attendance',
+            'sourceTitle': event.title,
+            'sourceSubtitle': event.location,
+            'sourceStartsAt': _iso(event.event_date),
+            # Legacy lecture fields remain present while callers migrate to
+            # the neutral source fields above.
+            'sessionTitle': event.title, 'sessionStartsAt': None, 'moduleName': '',
+            'assignedAt': _iso(recipient.invitation_sent_at or recipient.updated_at),
+            'dueDate': _iso(form.due_date),
+            'responseStatus': event_status.get((form.id, recipient.id), 'not_started'),
+            'formVersion': form.version,
+            'recipientType': 'learner' if learner_id else 'guest',
+        })
     return rows
+
+
+def _recipient_source_summaries(rows):
+    """Summarise assignment origins without coupling the UI to form types."""
+    sources = {}
+    for row in rows:
+        key = row.get('sourceKey')
+        if not key:
+            continue
+        source = sources.setdefault(key, {
+            'key': key,
+            'type': row.get('sourceType') or 'manual',
+            'label': row.get('sourceLabel') or 'Assignment',
+            'title': row.get('sourceTitle') or '',
+            'subtitle': row.get('sourceSubtitle') or '',
+            'startsAt': row.get('sourceStartsAt'),
+            'assignedCount': 0,
+            'responseCount': 0,
+        })
+        source['assignedCount'] += 1
+        if row.get('responseStatus') == 'completed':
+            source['responseCount'] += 1
+    return sorted(
+        sources.values(),
+        key=lambda source: (source['startsAt'] or '', source['key']),
+        reverse=True,
+    )
 
 
 def _recipient_lecture_summaries(rows):
@@ -967,6 +1089,10 @@ def form_recipients(request, pk):
         return json_error('Feedback form not found.', status=404)
     rows = _form_recipient_rows(form)
     lectures = _recipient_lecture_summaries(rows)
+    sources = _recipient_source_summaries(rows)
+    source_key = _clean(request.GET.get('source'))
+    if source_key:
+        rows = [row for row in rows if row.get('sourceKey') == source_key]
     delivery_id = _clean(request.GET.get('deliveryId'))
     if delivery_id:
         try:
@@ -976,8 +1102,8 @@ def form_recipients(request, pk):
         rows = [row for row in rows if row.get('deliveryId') == selected_delivery_id]
     search = _clean(request.GET.get('search')).casefold()
     if search:
-        fields = ('learnerName', 'email', 'programme', 'sessionTitle', 'moduleName')
-        rows = [row for row in rows if any(search in str(row[field]).casefold() for field in fields)]
+        fields = ('learnerName', 'email', 'programme', 'sourceTitle', 'sourceSubtitle')
+        rows = [row for row in rows if any(search in str(row.get(field, '')).casefold() for field in fields)]
     try:
         page = max(int(request.GET.get('page', 1)), 1)
         page_size = min(max(int(request.GET.get('pageSize', 50)), 1), 100)
@@ -988,12 +1114,26 @@ def form_recipients(request, pk):
     return JsonResponse({
         'recipients': rows[start:start + page_size],
         'lectures': lectures,
+        'sources': sources,
         'total': total, 'page': page, 'pageSize': page_size,
     })
 
 
-def _learner_feedback_context(learner_id, *, form_id=None, delivery_id=None):
+def _learner_feedback_context(learner_id, *, form_id=None, delivery_id=None, event_recipient_id=None):
     now = timezone.now()
+    if event_recipient_id is not None:
+        try:
+            recipient = FeedbackEventRecipient.objects.select_related('event').get(
+                pk=event_recipient_id, learner_id=learner_id,
+                revoked_at__isnull=True, invite_status='sent',
+            )
+            campaign = FeedbackEventCampaign.objects.select_related('form').get(
+                event=recipient.event, form_id=form_id, status='open',
+                form__status='published', form__form_type='post_event',
+            )
+        except (FeedbackEventRecipient.DoesNotExist, FeedbackEventCampaign.DoesNotExist):
+            return None, None, None
+        return campaign.form, None, recipient
     if delivery_id is not None:
         try:
             recipient = FeedbackDeliveryRecipient.objects.select_related('delivery__form').get(
@@ -1016,7 +1156,7 @@ def _learner_feedback_context(learner_id, *, form_id=None, delivery_id=None):
     return form, None, None
 
 
-def learner_form_detail(request, pk=None, delivery_id=None):
+def learner_form_detail(request, pk=None, delivery_id=None, event_recipient_id=None):
     learner_id, error = learner_read_scope(request)
     if error:
         return error
@@ -1025,12 +1165,17 @@ def learner_form_detail(request, pk=None, delivery_id=None):
     if not learner_id:
         return json_error('Choose a learner to preview feedback.', status=400)
     learner_id = str(learner_id)
-    form, delivery, _recipient = _learner_feedback_context(learner_id, form_id=pk, delivery_id=delivery_id)
+    form, delivery, recipient = _learner_feedback_context(
+        learner_id, form_id=pk, delivery_id=delivery_id, event_recipient_id=event_recipient_id,
+    )
     if form is None:
         return json_error('Feedback form not found.', status=404)
-    response = FeedbackResponse.objects.filter(
-        form=form, delivery=delivery, learner_id=learner_id,
-    ).prefetch_related('answers').first()
+    response_filter = {'form': form, 'learner_id': learner_id}
+    if event_recipient_id is not None:
+        response_filter['event_recipient'] = recipient
+    else:
+        response_filter.update({'delivery': delivery, 'event_recipient__isnull': True})
+    response = FeedbackResponse.objects.filter(**response_filter).prefetch_related('answers').first()
     answers = {str(a.question_id): a.answer for a in response.answers.all()} if response else {}
     data = form_dict(form, include_structure=True)
     data['delivery'] = None if delivery is None else {
@@ -1089,13 +1234,15 @@ def _answer_empty(question, value):
     return False
 
 
-def learner_response_save(request, pk=None, delivery_id=None):
+def learner_response_save(request, pk=None, delivery_id=None, event_recipient_id=None):
     learner_id, learner_name, error = require_learner_identity(request)
     if error:
         return error
     if request.method != 'POST':
         return json_error('Method not allowed.', status=405)
-    form, delivery, _recipient = _learner_feedback_context(learner_id, form_id=pk, delivery_id=delivery_id)
+    form, delivery, recipient = _learner_feedback_context(
+        learner_id, form_id=pk, delivery_id=delivery_id, event_recipient_id=event_recipient_id,
+    )
     if form is None:
         return json_error('Feedback form not found.', status=404)
     payload = json_body(request) or {}
@@ -1111,9 +1258,12 @@ def learner_response_save(request, pk=None, delivery_id=None):
     for question_id, value in answers.items():
         if not _valid_answer(questions[str(question_id)], value):
             return json_error(f'Invalid answer for question {question_id}.')
-    existing_response = FeedbackResponse.objects.filter(
-        form=form, delivery=delivery, learner_id=learner_id,
-    ).prefetch_related('answers').first()
+    response_filter = {'form': form, 'learner_id': learner_id}
+    if event_recipient_id is not None:
+        response_filter['event_recipient'] = recipient
+    else:
+        response_filter.update({'delivery': delivery, 'event_recipient__isnull': True})
+    existing_response = FeedbackResponse.objects.filter(**response_filter).prefetch_related('answers').first()
     if existing_response and existing_response.status == 'completed' and not form.allow_edit_after_submission:
         return json_error('This response has already been submitted.', status=409)
     effective_answers = {str(a.question_id): a.answer for a in existing_response.answers.all()} if existing_response else {}
@@ -1133,8 +1283,13 @@ def learner_response_save(request, pk=None, delivery_id=None):
     except EnrolmentUser.DoesNotExist:
         return json_error('Learner account not found.', status=404)
     with transaction.atomic():
+        create_identity = {'form': form, 'learner_id': learner_id}
+        if event_recipient_id is not None:
+            create_identity['event_recipient'] = recipient
+        else:
+            create_identity['delivery'] = delivery
         response, _ = FeedbackResponse.objects.select_for_update().get_or_create(
-            form=form, delivery=delivery, learner_id=learner_id,
+            **create_identity,
             defaults={'learner_name': learner_name or learner.username or '', 'programme': learner.programme or ''},
         )
         if response.status == 'completed' and not form.allow_edit_after_submission:

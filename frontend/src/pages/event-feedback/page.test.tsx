@@ -19,9 +19,11 @@ it('reads the personal token without requiring an LMS session and removes it fro
   expect(eventFeedbackApi.publicAccess).toHaveBeenCalledWith('private-token');
   await waitFor(() => expect(window.location.pathname).toBe('/event-feedback'));
   expect(window.location.hash).toBe('');
+  expect(window.history.state.eventFeedbackToken).toBe('private-token');
 });
 
 it('prefers the fragment token while supporting query links', () => {
   expect(eventFeedbackToken('?token=query-token', '#token=fragment-token')).toBe('fragment-token');
   expect(eventFeedbackToken('?token=query-token', '')).toBe('query-token');
+  expect(eventFeedbackToken('', '', { eventFeedbackToken: 'history-token' })).toBe('history-token');
 });

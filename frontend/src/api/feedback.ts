@@ -111,6 +111,7 @@ export interface LearnerFeedbackListItem {
   id: number; title: string; description: string; assignedAt: string | null;
   dueDate: string | null; status: LearnerFeedbackStatus; responseId: number | null;
   deliveryId: number | null; sessionTitle: string; sessionStartsAt: string | null;
+  eventRecipientId?: number | null;
 }
 
 export interface FeedbackResponse {
@@ -129,10 +130,17 @@ export interface FeedbackAnalyticsData {
 export interface FeedbackLearnerOption { id: string; name: string; email: string; programme: string; cohort: string }
 export interface FeedbackRecipient {
   key: string; learnerId: string; learnerName: string; email: string; programme: string;
-  source: 'manual' | 'attendance'; deliveryId: number | null; occurrenceKey: string;
+  source: 'manual' | 'attendance' | 'event_attendance'; deliveryId: number | null; occurrenceKey: string;
+  sourceKey: string; sourceType: 'manual' | 'lecture' | 'event' | string;
+  sourceLabel: string; sourceTitle: string; sourceSubtitle: string; sourceStartsAt: string | null;
   sessionTitle: string; sessionStartsAt: string | null; moduleName: string;
   assignedAt: string | null; dueDate: string | null;
-  responseStatus: LearnerFeedbackStatus; formVersion: number;
+  responseStatus: LearnerFeedbackStatus; formVersion: number; recipientType?: 'learner' | 'guest';
+}
+export interface FeedbackAssignmentSource {
+  key: string; type: 'manual' | 'lecture' | 'event' | string; label: string;
+  title: string; subtitle: string; startsAt: string | null;
+  assignedCount: number; responseCount: number;
 }
 export interface FeedbackLectureOption {
   deliveryId: number; occurrenceKey: string; sessionTitle: string; moduleName: string;
@@ -197,10 +205,10 @@ export const feedbackApi = {
   duplicateForm: (id: number) => request<{ form: FeedbackForm }>(`/forms/${id}/duplicate/`, { method: 'POST' }),
   learners: (search = '') => request<{ learners: FeedbackLearnerOption[] }>(`/learners/?search=${encodeURIComponent(search)}`),
   assign: (id: number, targetType: 'all_learners' | 'learner', targetIds: string[], dueDate?: string | null) => request(`/forms/${id}/assignments/`, { method: 'POST', body: JSON.stringify({ targetType, targetIds, dueDate }) }),
-  recipients: (id: number, search = '', page = 1, pageSize = 50, deliveryId?: number | null) => {
+  recipients: (id: number, search = '', page = 1, pageSize = 50, sourceKey?: string) => {
     const params = new URLSearchParams({ search, page: String(page), pageSize: String(pageSize) });
-    if (deliveryId != null) params.set('deliveryId', String(deliveryId));
-    return request<{ recipients: FeedbackRecipient[]; lectures: FeedbackLectureOption[]; total: number; page: number; pageSize: number }>(`/forms/${id}/recipients/?${params}`);
+    if (sourceKey) params.set('source', sourceKey);
+    return request<{ recipients: FeedbackRecipient[]; sources: FeedbackAssignmentSource[]; lectures: FeedbackLectureOption[]; total: number; page: number; pageSize: number }>(`/forms/${id}/recipients/?${params}`);
   },
   responses: (filters?: { formId?: number; status?: string; learner?: string }) => {
     const params = new URLSearchParams();
@@ -214,8 +222,10 @@ export const feedbackApi = {
   myForms: (learnerId?: string | number | null) => request<{ forms: LearnerFeedbackListItem[] }>(`/my-forms/${learnerPreviewQuery(learnerId)}`),
   myForm: (id: number, learnerId?: string | number | null) => request<{ form: FeedbackForm }>(`/my-forms/${id}/${learnerPreviewQuery(learnerId)}`),
   myDelivery: (id: number, learnerId?: string | number | null) => request<{ form: FeedbackForm }>(`/my-deliveries/${id}/${learnerPreviewQuery(learnerId)}`),
+  myEventForm: (recipientId: number, formId: number, learnerId?: string | number | null) => request<{ form: FeedbackForm }>(`/my-event-recipients/${recipientId}/forms/${formId}/${learnerPreviewQuery(learnerId)}`),
   saveResponse: (id: number, answers: Record<string, FeedbackAnswerValue>, submit = false) => request<{ response: { id: number; status: string; submittedAt: string | null; updatedAt: string } }>(`/my-forms/${id}/response/`, { method: 'POST', body: JSON.stringify({ answers, submit }) }),
   saveDeliveryResponse: (id: number, answers: Record<string, FeedbackAnswerValue>, submit = false) => request<{ response: { id: number; status: string; submittedAt: string | null; updatedAt: string } }>(`/my-deliveries/${id}/response/`, { method: 'POST', body: JSON.stringify({ answers, submit }) }),
+  saveEventResponse: (recipientId: number, formId: number, answers: Record<string, FeedbackAnswerValue>, submit = false) => request<{ response: { id: number; status: string; submittedAt: string | null; updatedAt: string } }>(`/my-event-recipients/${recipientId}/forms/${formId}/response/`, { method: 'POST', body: JSON.stringify({ answers, submit }) }),
   uploadPhoto: async (formId: number, questionId: number, file: File, deliveryId?: number): Promise<FeedbackPhotoAnswer> => {
     const formData = new FormData();
     formData.append('photo', file);

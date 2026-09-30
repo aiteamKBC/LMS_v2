@@ -13,17 +13,15 @@ import {
 } from '@/api/engagement';
 import { EventCardSkeletonGrid } from '@/pages/engagement/EngagementSkeletons';
 import { EventFeedbackManager } from '@/features/feedback/EventFeedbackManager';
+import { QRCodeSVG } from 'qrcode.react';
 
 const engagementNav = roleNavMap.engagement;
 
 // Type drives each card's identity: medallion + a left accent strip.
 // Full literal class strings so Tailwind's JIT keeps them.
 const typeConfig: Record<string, { icon: string; bg: string; text: string; bar: string }> = {
-  workshop: { icon: 'ri-presentation-line', bg: 'bg-primary-100', text: 'text-primary-700', bar: 'bg-primary-400' },
-  social: { icon: 'ri-cake-line', bg: 'bg-accent-100', text: 'text-accent-700', bar: 'bg-accent-400' },
-  networking: { icon: 'ri-group-line', bg: 'bg-secondary-100', text: 'text-secondary-700', bar: 'bg-secondary-400' },
-  competition: { icon: 'ri-trophy-line', bg: 'bg-emerald-100', text: 'text-emerald-700', bar: 'bg-emerald-400' },
-  celebration: { icon: 'ri-star-line', bg: 'bg-amber-100', text: 'text-amber-700', bar: 'bg-amber-400' },
+  offline: { icon: 'ri-map-pin-2-line', bg: 'bg-primary-100', text: 'text-primary-700', bar: 'bg-primary-400' },
+  online: { icon: 'ri-global-line', bg: 'bg-secondary-100', text: 'text-secondary-700', bar: 'bg-secondary-400' },
 };
 
 // The stored date is a display string ('13 Jun 2026'); convert it back to the
@@ -44,7 +42,7 @@ interface EventFormData {
   startTime: string;
   endTime: string;
   location: string;
-  type: 'workshop' | 'social' | 'networking' | 'competition' | 'celebration';
+  type: 'offline' | 'online';
   organizer: string;
 }
 
@@ -65,7 +63,7 @@ const blankForm: EventFormData = {
   startTime: '',
   endTime: '',
   location: '',
-  type: 'workshop',
+  type: 'offline',
   organizer: 'Tom Harrington',
 };
 
@@ -87,9 +85,9 @@ function EventForm({
         <label className="block text-[11px] font-semibold text-foreground-700 mb-1.5">Event Type <span className="text-red-500">*</span></label>
         <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1 flex-wrap">
           {(Object.keys(typeConfig) as Array<keyof typeof typeConfig>).map(t => (
-            <button key={t} type="button" onClick={() => setForm(f => ({ ...f, type: t as EventFormData['type'] }))} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${form.type === t ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
+            <button key={t} type="button" disabled={t === 'online'} onClick={() => setForm(f => ({ ...f, type: t as EventFormData['type'] }))} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap ${t === 'online' ? 'cursor-not-allowed opacity-45' : 'cursor-pointer'} ${form.type === t ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
               <AppIcon className={`${typeConfig[t].icon} text-sm`}></AppIcon>
-              {t.charAt(0).toUpperCase() + t.slice(1)}
+              {t.charAt(0).toUpperCase() + t.slice(1)}{t === 'online' ? ' · Coming soon' : ''}
             </button>
           ))}
         </div>
@@ -191,6 +189,7 @@ export default function EventsPage() {
   // DELETE dialog
   const [deleteEventId, setDeleteEventId] = useState<string | null>(null);
   const [feedbackEvent, setFeedbackEvent] = useState<Event | null>(null);
+  const [qrEvent, setQrEvent] = useState<Event | null>(null);
 
   // Attendance modal — mark who showed up; 'present' awards event_attended points.
   const [attendanceEventId, setAttendanceEventId] = useState<string | null>(null);
@@ -221,8 +220,9 @@ export default function EventsPage() {
       const created = await createEvent({
         title: addForm.title.trim(),
         description: addForm.description.trim(),
-        date: new Date(addForm.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
-        time: `${addForm.startTime} - ${addForm.endTime}`,
+        eventDate: addForm.date,
+        startTime: addForm.startTime,
+        endTime: addForm.endTime,
         location: addForm.location.trim(),
         type: addForm.type,
         organizer: addForm.organizer.trim(),
@@ -242,9 +242,9 @@ export default function EventsPage() {
     setEditForm({
       title: event.title,
       description: event.description,
-      date: toDateInputValue(event.date),
-      startTime: (startTime || '').trim(),
-      endTime: (endTime || '').trim(),
+      date: event.eventDate || toDateInputValue(event.date),
+      startTime: event.startTime || (startTime || '').trim(),
+      endTime: event.endTime || (endTime || '').trim(),
       location: event.location,
       type: event.type,
       organizer: event.organizer,
@@ -261,8 +261,9 @@ export default function EventsPage() {
       const updated = await updateEvent(editEventId, {
         title: editForm.title.trim(),
         description: editForm.description.trim(),
-        date: new Date(editForm.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }),
-        time: `${editForm.startTime} - ${editForm.endTime}`,
+        eventDate: editForm.date,
+        startTime: editForm.startTime,
+        endTime: editForm.endTime,
         location: editForm.location.trim(),
         type: editForm.type,
         organizer: editForm.organizer.trim(),
@@ -376,7 +377,7 @@ export default function EventsPage() {
             ))}
           </div>
           <div className="flex items-center gap-1 bg-background-100 rounded-lg p-1 overflow-x-auto">
-            {['all', 'workshop', 'social', 'networking', 'competition', 'celebration'].map(t => (
+            {['all', 'offline', 'online'].map(t => (
               <button key={t} onClick={() => setTypeFilter(t)} className={`px-3 py-1.5 rounded-md text-[11px] font-semibold transition-smooth whitespace-nowrap cursor-pointer ${typeFilter === t ? 'bg-[#541EA0] text-white shadow-sm' : 'text-foreground-500 hover:text-foreground-700'}`}>
                 {t === 'all' ? 'All Types' : t.charAt(0).toUpperCase() + t.slice(1)}
               </button>
@@ -432,6 +433,9 @@ export default function EventsPage() {
                   <button onClick={() => openAttendance(event)} className="flex items-center gap-1 px-2 py-1.5 bg-secondary-50 text-secondary-700 rounded-lg text-[11px] font-medium hover:bg-secondary-100 transition-smooth cursor-pointer whitespace-nowrap">
                     <AppIcon className="ri-checkbox-circle-line"></AppIcon> Attendance
                   </button>
+                  {event.type === 'offline' && <button onClick={() => setQrEvent(event)} className="flex items-center gap-1 px-2 py-1.5 bg-emerald-50 text-emerald-700 rounded-lg text-[11px] font-medium hover:bg-emerald-100 transition-smooth cursor-pointer whitespace-nowrap">
+                    <AppIcon className="ri-qr-code-line"></AppIcon> QR
+                  </button>}
                   <button onClick={() => setFeedbackEvent(event)} className="flex items-center gap-1 px-2 py-1.5 bg-primary-50 text-primary-700 rounded-lg text-[11px] font-medium hover:bg-primary-100 transition-smooth cursor-pointer whitespace-nowrap">
                     <AppIcon className="ri-chat-3-line"></AppIcon> Feedback
                   </button>
@@ -562,7 +566,7 @@ export default function EventsPage() {
 
                   <div className="p-5 overflow-y-auto space-y-2">
                     {attendanceRoster.length === 0 && (
-                      <p className="text-[11px] text-foreground-400 text-center py-4">No learners booked onto this event yet.</p>
+                      <p className="text-[11px] text-foreground-400 text-center py-4">No booked learners or QR attendees yet.</p>
                     )}
                     {attendanceRoster.map(entry => {
                       const mark = attendanceDraft[entry.learnerId];
@@ -571,6 +575,8 @@ export default function EventsPage() {
                           <div className="w-7 h-7 rounded-full bg-secondary-100 text-secondary-700 flex items-center justify-center text-[10px] font-bold shrink-0">{entry.learnerName.charAt(0)}</div>
                           <div className="min-w-0 flex-1">
                             <p className="text-[12px] font-semibold text-foreground-900 truncate">{entry.learnerName}</p>
+                            {entry.email && <p className="truncate text-[9px] text-foreground-400">{entry.email}</p>}
+                            {entry.attendanceSource === 'qr' && <span className={`mr-1 text-[9px] font-semibold ${entry.attendeeType === 'learner' ? 'text-primary-600' : 'text-amber-600'}`}>QR · {entry.attendeeType}</span>}
                             {entry.booked === false && <span className="text-[9px] font-semibold text-amber-600">Walk-in (not booked)</span>}
                           </div>
                           <div className="flex items-center gap-1 shrink-0">
@@ -598,7 +604,27 @@ export default function EventsPage() {
           </div>
         )}
         {feedbackEvent && <EventFeedbackManager event={feedbackEvent} onClose={() => setFeedbackEvent(null)} />}
+        {qrEvent && <EventQrDialog event={qrEvent} onClose={() => setQrEvent(null)} />}
       </div>
     </WorkspaceShell>
   );
+}
+
+function EventQrDialog({ event, onClose }: { event: Event; onClose: () => void }) {
+  const url = `${window.location.origin}/event-check-in#token=${encodeURIComponent(event.checkInToken || '')}`;
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    await navigator.clipboard.writeText(url);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  }
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+    <section className="w-full max-w-md rounded-2xl bg-white p-6 text-center shadow-xl" onClick={e => e.stopPropagation()}>
+      <div className="flex items-start justify-between text-left"><div><h2 className="text-lg font-bold text-foreground-900">Attendance QR</h2><p className="text-xs text-foreground-500">{event.title}</p></div><button aria-label="Close" onClick={onClose} className="rounded-lg p-2 text-foreground-500 hover:bg-background-100"><AppIcon className="ri-close-line" /></button></div>
+      <div className="mx-auto mt-5 w-fit rounded-2xl border border-foreground-200 bg-white p-4"><QRCodeSVG value={url} size={240} level="H" marginSize={2} /></div>
+      <p className="mt-4 text-xs text-foreground-600">Active from 00:00 on the day before the event until 23:59 on the event day.</p>
+      <p className="mt-2 break-all rounded-lg bg-background-100 p-3 text-left text-[10px] text-foreground-500">{url}</p>
+      <button onClick={() => void copy()} className="mt-4 rounded-lg bg-[#541EA0] px-5 py-2.5 text-xs font-semibold text-white">{copied ? 'Copied' : 'Copy check-in link'}</button>
+    </section>
+  </div>;
 }

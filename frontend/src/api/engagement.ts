@@ -76,7 +76,16 @@ async function request<T>(url: string, options?: { method?: string; body?: strin
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  let data: any = null;
+  if (text) {
+    try {
+      data = JSON.parse(text);
+    } catch {
+      throw new Error(res.ok
+        ? 'The server returned an invalid response.'
+        : `The server could not complete the request (${res.status}). Check the backend logs.`);
+    }
+  }
   if (!res.ok) throw new Error((data && data.error) || `Request failed (${res.status})`);
   invalidateLearnerReads();
   return data as T;
@@ -254,17 +263,22 @@ export interface EngagementEvent {
   date: string;
   time: string;
   location: string;
-  type: 'workshop' | 'social' | 'networking' | 'competition' | 'celebration';
+  eventDate: string | null;
+  startTime: string | null;
+  endTime: string | null;
+  type: 'offline' | 'online';
   attendees: number;
   status: 'upcoming' | 'ongoing' | 'completed';
   organizer: string;
+  checkInToken?: string;
 }
 
 export interface EventInput {
   title: string;
   description: string;
-  date: string;
-  time: string;
+  eventDate: string;
+  startTime: string;
+  endTime: string;
   location: string;
   type: EngagementEvent['type'];
   organizer: string;
@@ -493,6 +507,9 @@ export interface AttendanceRosterEntry {
   status: 'present' | 'absent' | null;
   markedBy: string | null;
   markedAt: string | null;
+  email?: string;
+  attendeeType?: 'learner' | 'guest';
+  attendanceSource?: 'qr' | 'manual' | 'booking';
   // Only present on the event roster — false marks a walk-in who wasn't booked.
   booked?: boolean;
 }
@@ -510,6 +527,9 @@ function toRosterEntry(r: any): AttendanceRosterEntry {
     status: r.status ?? null,
     markedBy: r.markedBy ?? null,
     markedAt: r.markedAt ?? null,
+    ...(r.email !== undefined ? { email: r.email } : {}),
+    ...(r.attendeeType !== undefined ? { attendeeType: r.attendeeType } : {}),
+    ...(r.attendanceSource !== undefined ? { attendanceSource: r.attendanceSource } : {}),
     ...(r.booked !== undefined ? { booked: r.booked } : {}),
   };
 }

@@ -18,7 +18,7 @@ from login.invitations import frontend_base_url
 from login.models import LoginAccount
 from login.security import generate_token, hash_token
 
-from .models import Event, FeedbackEventCampaign, FeedbackEventRecipient, FeedbackForm
+from .models import Event, EventAttendance, FeedbackEventCampaign, FeedbackEventRecipient, FeedbackForm
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 MAX_ROWS = 5000
@@ -178,6 +178,60 @@ def import_event_attendance(*, event_id, form_ids, preview, created_by):
     return event, forms, imported
 
 
+@transaction.atomic
+def import_qr_attendance(*, event_id, form_ids, created_by):
+    """Attach the event's QR-confirmed attendees to selected feedback forms."""
+    event = Event.objects.filter(pk=event_id).first()
+    if event is None:
+        raise ValueError('Event not found.')
+    form_ids = list(dict.fromkeys(int(value) for value in form_ids))
+    forms = list(FeedbackForm.objects.filter(
+        id__in=form_ids, form_type='post_event', status='published', is_current=True,
+    ))
+    if not form_ids or len(forms) != len(form_ids):
+        raise ValueError('Choose published Post-event feedback forms only.')
+    if FeedbackForm.objects.filter(
+        id__in=form_ids, sections__questions__question_type='photo_upload',
+    ).exists():
+        raise ValueError('Post-event forms sent to guests cannot contain photo upload questions.')
+    FeedbackEventCampaign.objects.filter(event=event).exclude(form_id__in=form_ids).update(status='closed')
+    for form in forms:
+        FeedbackEventCampaign.objects.update_or_create(
+            event=event, form=form, defaults={'status': 'open', 'created_by': created_by},
+        )
+    attendance = list(EventAttendance.objects.filter(
+        event=event, status='present', attendance_source='qr',
+    ).exclude(attendee_email='').order_by('id'))
+    active_emails = [item.attendee_email.casefold() for item in attendance]
+    FeedbackEventRecipient.objects.filter(
+        event=event, revoked_at__isnull=True,
+    ).exclude(attendee_email__in=active_emails).update(
+        revoked_at=timezone.now(), token_hash=None, token_expires_at=None,
+    )
+    imported = []
+    for item in attendance:
+        learner_id = item.learner_id if item.attendee_type == 'learner' else ''
+        recipient, _ = FeedbackEventRecipient.objects.update_or_create(
+            event=event, attendee_email=item.attendee_email.casefold(),
+            defaults={
+                'attendee_name': item.learner_name,
+                'learner_id': learner_id,
+                'attendance_source': 'qr',
+                'attendance_reference': f'event_attendance:{item.id}',
+                'revoked_at': None,
+                'invite_status': 'pending',
+                # Preparing a changed campaign must revoke any previously
+                # issued guest bearer link until staff publishes again.
+                'token_hash': None,
+                'token_expires_at': None,
+                'invitation_sent_at': None,
+                'invitation_error': '',
+            },
+        )
+        imported.append(recipient)
+    return event, forms, imported
+
+
 def event_feedback_link(token):
     # Keep the bearer value in the URL fragment so browsers do not send it in
     # the initial page request, referrer headers, or reverse-proxy access logs.
@@ -189,6 +243,18 @@ def send_event_invitations(event, recipients):
     results = []
     form_count = FeedbackEventCampaign.objects.filter(event=event, status='open').count()
     for recipient in recipients:
+        if recipient.learner_id:
+            recipient.token_hash = None
+            recipient.token_expires_at = None
+            recipient.invite_status = 'sent'
+            recipient.invitation_sent_at = timezone.now()
+            recipient.invitation_error = ''
+            recipient.save(update_fields=[
+                'token_hash', 'token_expires_at', 'invite_status',
+                'invitation_sent_at', 'invitation_error', 'updated_at',
+            ])
+            results.append({'id': recipient.id, 'email': recipient.attendee_email, 'sent': True, 'channel': 'lms'})
+            continue
         token = generate_token()
         recipient.token_hash = hash_token(token)
         recipient.token_expires_at = timezone.now() + TOKEN_TTL

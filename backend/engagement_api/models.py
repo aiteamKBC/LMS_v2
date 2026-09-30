@@ -106,15 +106,9 @@ class Recognition(models.Model):
 
 
 class Event(models.Model):
-    """An engagement event (workshop, social, competition, etc.)."""
+    """An online or offline engagement event."""
 
-    TYPE_CHOICES = [
-        ('workshop', 'Workshop'),
-        ('social', 'Social'),
-        ('networking', 'Networking'),
-        ('competition', 'Competition'),
-        ('celebration', 'Celebration'),
-    ]
+    TYPE_CHOICES = [('offline', 'Offline'), ('online', 'Online')]
     STATUS_CHOICES = [
         ('upcoming', 'Upcoming'),
         ('ongoing', 'Ongoing'),
@@ -127,11 +121,15 @@ class Event(models.Model):
     # display strings, e.g. '13 Jun 2026' / '13:00 - 15:00'.
     date = models.CharField(max_length=100)
     time = models.CharField(max_length=100)
+    event_date = models.DateField(null=True, blank=True)
+    start_time = models.TimeField(null=True, blank=True)
+    end_time = models.TimeField(null=True, blank=True)
     location = models.CharField(max_length=255)
     type = models.CharField(max_length=20, choices=TYPE_CHOICES)
     attendees = models.IntegerField(default=0)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='upcoming')
     organizer = models.CharField(max_length=255)
+    check_in_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -289,6 +287,11 @@ class EventAttendance(models.Model):
     event = models.ForeignKey(Event, on_delete=models.CASCADE, related_name='attendance', db_column='event_id')
     learner_id = models.CharField(max_length=100)
     learner_name = models.CharField(max_length=255)
+    attendee_email = models.EmailField(max_length=320, blank=True, default='')
+    attendee_type = models.CharField(
+        max_length=20, choices=[('learner', 'Learner'), ('guest', 'Guest')], default='learner',
+    )
+    attendance_source = models.CharField(max_length=30, default='manual')
     status = models.CharField(max_length=20, choices=STATUS_CHOICES)
     marked_by = models.CharField(max_length=255, null=True, blank=True)
     marked_at = models.DateTimeField(auto_now=True)

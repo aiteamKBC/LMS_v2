@@ -1,6 +1,6 @@
 from django.urls import path
 
-from . import event_feedback_views, feedback, views
+from . import event_checkin, event_feedback_views, feedback, views
 
 urlpatterns = [
     # Reusable feedback-form engine. Staff management and learner-owned routes
@@ -25,11 +25,15 @@ urlpatterns = [
     path('feedback/my-deliveries/<int:delivery_id>/', feedback.learner_form_detail, name='feedback-my-delivery-detail'),
     path('feedback/my-deliveries/<int:delivery_id>/response/', feedback.learner_response_save, name='feedback-my-delivery-response'),
     path('feedback/my-deliveries/<int:delivery_id>/questions/<int:question_id>/photo/', feedback.learner_photo_upload, name='feedback-delivery-photo-upload'),
+    path('feedback/my-event-recipients/<int:event_recipient_id>/forms/<int:pk>/', feedback.learner_form_detail, name='feedback-my-event-form-detail'),
+    path('feedback/my-event-recipients/<int:event_recipient_id>/forms/<int:pk>/response/', feedback.learner_response_save, name='feedback-my-event-form-response'),
     path('feedback/uploads/<uuid:upload_id>/', feedback.feedback_upload_content, name='feedback-upload-content'),
     path('feedback/events/<int:event_id>/attendance-import/', event_feedback_views.attendance_import, name='feedback-event-attendance-import'),
     path('feedback/events/<int:event_id>/campaign/', event_feedback_views.event_campaign, name='feedback-event-campaign'),
     path('feedback/public-event/csrf/', event_feedback_views.public_csrf, name='feedback-public-event-csrf'),
     path('feedback/public-event/', event_feedback_views.public_event_access, name='feedback-public-event'),
+    path('event-check-in/csrf/', event_checkin.public_csrf, name='event-check-in-csrf'),
+    path('event-check-in/', event_checkin.event_check_in, name='event-check-in'),
     path('rewards/', views.rewards_collection, name='rewards-collection'),
     path('rewards/<int:pk>/', views.reward_detail, name='reward-detail'),
     path('voucher-claims/', views.voucher_claims_collection, name='voucher-claims-collection'),

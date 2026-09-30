@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { feedbackUploadUrl, type FeedbackAnswerValue, type FeedbackNameAnswer, type FeedbackPhotoAnswer, type FeedbackQuestion, type FeedbackSection } from '@/api/feedback';
 
 interface Props {
@@ -40,6 +40,49 @@ export function FeedbackStepProgress({ sections, activeSection, onStepChange }: 
       })}
     </ol>
   </nav>;
+}
+
+interface FeedbackFormExperienceProps extends Props {
+  title: string;
+  description?: string;
+  instructions?: string;
+  activeSection: number;
+  onStepChange?: (index: number) => void;
+  onBack?: () => void;
+  onNext?: () => void;
+  onSubmit?: () => void;
+  submitting?: boolean;
+  footerStatus?: ReactNode;
+}
+
+/**
+ * The canonical respondent experience shared by learner, guest and future
+ * feedback delivery types. Authentication changes how answers are transported,
+ * not how the form itself is presented or navigated.
+ */
+export function FeedbackFormExperience({
+  title, description, instructions, sections, answers, onChange,
+  readOnly = false, activeSection, invalidQuestionIds, onPhotoUpload,
+  onStepChange, onBack, onNext, onSubmit, submitting = false, footerStatus,
+}: FeedbackFormExperienceProps) {
+  const isLast = activeSection >= sections.length - 1;
+  return <>
+    <FeedbackFormHeader title={title} description={description} instructions={instructions} />
+    <FeedbackStepProgress sections={sections} activeSection={activeSection} onStepChange={onStepChange} />
+    <FormRenderer sections={sections} activeSection={activeSection} answers={answers}
+      invalidQuestionIds={invalidQuestionIds} onChange={onChange}
+      onPhotoUpload={onPhotoUpload} readOnly={readOnly} />
+    {sections.length > 0 && <div className="mt-7 grid grid-cols-[1fr_auto_1fr] items-center gap-3 border-t border-foreground-100 pt-5">
+      <div className="flex items-center gap-3">
+        {activeSection > 0 && onBack && <button type="button" onClick={onBack} className="rounded-md bg-[#34405f] px-6 py-2.5 text-xs font-semibold text-white">Back</button>}
+        {footerStatus}
+      </div>
+      {!readOnly && (!isLast
+        ? <button type="button" onClick={onNext} className="rounded-md bg-[#34405f] px-6 py-2.5 text-xs font-semibold text-white">Next</button>
+        : <button type="button" disabled={submitting} onClick={onSubmit} className="rounded-md bg-[#541EA0] px-6 py-2.5 text-xs font-semibold text-white disabled:opacity-50">{submitting ? 'Submitting…' : 'Submit'}</button>)}
+      <p className="text-right text-xs text-foreground-500">{activeSection + 1}/{sections.length}</p>
+    </div>}
+  </>;
 }
 
 export function FormRenderer({ sections, answers, onChange, readOnly = false, activeSection, invalidQuestionIds, onPhotoUpload }: Props) {

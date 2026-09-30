@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import Swal from 'sweetalert2';
 import { feedbackApi, type LearnerFeedbackListItem } from '@/api/feedback';
@@ -22,14 +22,30 @@ export default function LearnerFeedbackPage() {
   const preview = Boolean(account && !isLearner);
   const [forms, setForms] = useState<LearnerFeedbackListItem[]>([]);
   const [loading, setLoading] = useState(true);
-  useEffect(() => {
+  const loadForms = useCallback(async () => {
     if (!isInitialized) return;
     if (!learnerId) { setForms([]); setLoading(false); return; }
     setLoading(true);
-    feedbackApi.myForms(preview ? learnerId : undefined).then(result => setForms(Array.isArray(result.forms) ? result.forms : []))
-      .catch(error => void Swal.fire({ icon: 'error', title: 'Could not load feedback', text: error.message }))
-      .finally(() => setLoading(false));
+    try {
+      const result = await feedbackApi.myForms(preview ? learnerId : undefined);
+      setForms(Array.isArray(result.forms) ? result.forms : []);
+    } catch (error) {
+      void Swal.fire({ icon: 'error', title: 'Could not load feedback', text: error instanceof Error ? error.message : 'Please try again.' });
+    } finally {
+      setLoading(false);
+    }
   }, [isInitialized, learnerId, preview]);
+  useEffect(() => {
+    void loadForms();
+    const refreshOnFocus = () => { void loadForms(); };
+    const refreshWhenVisible = () => { if (!document.hidden) void loadForms(); };
+    window.addEventListener('focus', refreshOnFocus);
+    document.addEventListener('visibilitychange', refreshWhenVisible);
+    return () => {
+      window.removeEventListener('focus', refreshOnFocus);
+      document.removeEventListener('visibilitychange', refreshWhenVisible);
+    };
+  }, [loadForms]);
   const nav = roleNavMap.learner;
   const previewQuery = preview && learnerId
     ? `?learnerId=${encodeURIComponent(learnerId)}${learnerKind ? `&kind=${encodeURIComponent(learnerKind)}` : ''}`
@@ -45,13 +61,18 @@ export default function LearnerFeedbackPage() {
       <div className="rounded-2xl bg-gradient-to-r from-[#541EA0] to-[#7C3AED] p-6 text-white"><h1 className="font-heading text-2xl font-bold !text-white">Feedback</h1><p className="mt-1 text-sm text-purple-100">Share your experience and continue any forms you have saved.</p></div>
       {preview && learnerId && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs font-medium text-amber-800">Viewing this learner’s feedback assignments. Preview is read-only; only the learner can submit a response.</div>}
       <div className="overflow-hidden rounded-xl border border-foreground-200/60 bg-background-50">
-        <div className="border-b p-4"><h2 className="text-sm font-semibold">Assigned forms</h2></div>
+        <div className="flex items-center justify-between border-b p-4"><h2 className="text-sm font-semibold">Assigned forms</h2><button type="button" disabled={loading} onClick={() => void loadForms()} className="rounded-lg border border-foreground-200 px-3 py-1.5 text-xs font-semibold text-primary-700 disabled:opacity-50"><i className="ri-refresh-line mr-1" />Refresh</button></div>
         {loading ? <p className="p-8 text-center text-sm text-foreground-400">Loading…</p> : <div className="divide-y">
-          {forms.map(form => <button key={form.deliveryId ? `delivery-${form.deliveryId}` : `form-${form.id}`} onClick={() => navigate(`${form.deliveryId ? `/learner/feedback/delivery/${form.deliveryId}` : `/learner/feedback/${form.id}`}${previewQuery}`)} className="flex w-full items-center gap-4 p-4 text-left hover:bg-primary-50/40">
+          {forms.map(form => {
+            const path = form.deliveryId ? `/learner/feedback/delivery/${form.deliveryId}` : `/learner/feedback/${form.id}`;
+            const params = new URLSearchParams(previewQuery.replace(/^\?/, ''));
+            if (form.eventRecipientId) params.set('eventRecipientId', String(form.eventRecipientId));
+            const search = params.toString();
+            return <button key={form.eventRecipientId ? `event-${form.eventRecipientId}-${form.id}` : form.deliveryId ? `delivery-${form.deliveryId}` : `form-${form.id}`} onClick={() => navigate(`${path}${search ? `?${search}` : ''}`)} className="flex w-full items-center gap-4 p-4 text-left hover:bg-primary-50/40">
             <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary-50 text-primary-600"><i className="ri-survey-line" /></span>
             <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-foreground-900">{form.title}</span>{form.sessionTitle && <span className="block truncate text-xs font-medium text-foreground-600">{form.sessionTitle}{form.sessionStartsAt ? ` · ${formatDate(form.sessionStartsAt)}` : ''}</span>}<span className="block text-xs text-foreground-400">Assigned {formatDate(form.assignedAt)} · Due {formatDate(form.dueDate)}</span></span>
             <Status status={form.status} /><i className="ri-arrow-right-s-line text-foreground-400" />
-          </button>)}
+          </button>; })}
           {!forms.length && <p className="p-10 text-center text-sm text-foreground-400">{preview && !learnerId ? 'Choose a learner from My Learning to preview their feedback.' : 'You have no feedback forms assigned right now.'}</p>}
         </div>}
       </div>

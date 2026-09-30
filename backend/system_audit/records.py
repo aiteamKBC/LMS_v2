@@ -1341,6 +1341,7 @@ def register_engagement_records():
         title='title', context=('date', 'location', 'status'), status='status',
         columns=(
             'id', 'title', 'description', 'date', 'time', 'location', 'type',
+            'event_date', 'start_time', 'end_time',
             'attendees', 'status', 'organizer',
         ),
     )
@@ -1367,8 +1368,10 @@ def register_engagement_records():
         parent='learner_id', status='status',
         columns=(
             'id', 'event_id', 'learner_id', 'learner_name',
+            'attendee_email', 'attendee_type', 'attendance_source',
             'status', 'marked_by', 'marked_at',
         ),
+        redact=('attendee_email',),
     )
 
     register_model(

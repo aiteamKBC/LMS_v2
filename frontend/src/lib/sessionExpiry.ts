@@ -54,6 +54,15 @@ const SESSION_API_PREFIXES = [
   '/api/batch/',
 ];
 
+// These Engagement endpoints deliberately authenticate with a scoped bearer
+// token instead of an LMS session. A refusal here means the QR/feedback link
+// is invalid or expired; it must never sign a public visitor out or redirect
+// them to the workspace login page.
+const PUBLIC_TOKEN_API_PREFIXES = [
+  '/engagement_api/feedback/public-event/',
+  '/engagement_api/event-check-in/',
+];
+
 let listener: Listener | null = null;
 let notified = false;
 let originalFetch: typeof window.fetch | null = null;
@@ -79,7 +88,8 @@ function samePathname(input: RequestInfo | URL): string | null {
 }
 
 function isSessionApi(pathname: string): boolean {
-  return SESSION_API_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+  return !PUBLIC_TOKEN_API_PREFIXES.some((prefix) => pathname.startsWith(prefix))
+    && SESSION_API_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 }
 
 /** Report a 401 that means the session has ended. Safe to call repeatedly. */

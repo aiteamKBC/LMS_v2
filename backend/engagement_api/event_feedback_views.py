@@ -9,7 +9,7 @@ from django.middleware.csrf import get_token
 from django.utils import timezone
 
 from .event_feedback import (
-    import_event_attendance, parse_attendance, recipient_for_token,
+    import_event_attendance, import_qr_attendance, parse_attendance, recipient_for_token,
     send_event_invitations,
 )
 from .feedback import _answer_empty, _iso, _section_dict, _valid_answer
@@ -84,9 +84,31 @@ def event_campaign(request, event_id):
                 'learnerId': item.learner_id or None, 'inviteStatus': item.invite_status,
                 'sentAt': _iso(item.invitation_sent_at), 'error': item.invitation_error,
             } for item in recipients.order_by('attendee_name', 'id')],
+            'qrAttendance': [{
+                'name': item.learner_name,
+                'email': item.attendee_email,
+                'attendeeType': item.attendee_type,
+                'checkedInAt': _iso(item.marked_at),
+            } for item in event.attendance.filter(
+                status='present', attendance_source='qr',
+            ).order_by('learner_name', 'id')],
         })
     if request.method == 'POST':
         payload = json_body(request) or {}
+        if payload.get('action') == 'prepare':
+            try:
+                event, forms, recipients = import_qr_attendance(
+                    event_id=event_id,
+                    form_ids=payload.get('formIds') or [],
+                    created_by=actor_name(request) or 'Staff',
+                )
+            except (TypeError, ValueError) as exc:
+                return json_error(str(exc) or 'Choose at least one Post-event feedback form.')
+            return JsonResponse({
+                'eventId': event.id,
+                'formCount': len(forms),
+                'recipientCount': len(recipients),
+            })
         resend_all = payload.get('resendAll') is True
         if resend_all:
             # Queue the whole active roster, but retain the established

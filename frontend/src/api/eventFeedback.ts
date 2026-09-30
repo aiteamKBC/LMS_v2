@@ -34,6 +34,7 @@ export interface EventFeedbackCampaign {
   event: { id: number; title: string };
   forms: Array<{ id: number; title: string; status: string }>;
   recipients: Array<{ id: number; name: string; email: string; learnerId: string | null; inviteStatus: 'pending' | 'sent' | 'failed'; sentAt: string | null; error: string }>;
+  qrAttendance: Array<{ name: string; email: string; attendeeType: 'learner' | 'guest'; checkedInAt: string }>;
 }
 
 export interface PublicEventForm {
@@ -70,6 +71,11 @@ export const eventFeedbackApi = {
     }));
   },
   campaign: async (eventId: string) => jsonResponse<EventFeedbackCampaign>(await fetch(`${BASE}/events/${eventId}/campaign/`, { credentials: 'include' })),
+  prepareQrAttendance: async (eventId: string, formIds: number[]) => jsonResponse<{ recipientCount: number; formCount: number }>(await fetch(`${BASE}/events/${eventId}/campaign/`, {
+    method: 'POST', credentials: 'include',
+    headers: { 'X-CSRFToken': await csrfToken(), 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'prepare', formIds }),
+  })),
   sendInvitations: async (eventId: string, resendAll = false) => jsonResponse<{ attempted: number; sent: number; failed: number; remaining: number }>(await fetch(`${BASE}/events/${eventId}/campaign/`, {
     method: 'POST', credentials: 'include',
     headers: { 'X-CSRFToken': await csrfToken(), 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/json' },

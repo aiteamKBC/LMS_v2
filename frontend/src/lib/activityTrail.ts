@@ -54,6 +54,11 @@ const EXCLUDED_PREFIXES = [
   '/set-password',
   '/verify-certificate',
   '/verify-personal-certificate',
+  // Event QR check-in and guest feedback are bearer-token public pages. An
+  // audit write here would call the authenticated Curriculum API and its 401
+  // would look like an expired LMS session to the global session handler.
+  '/event-check-in',
+  '/event-feedback',
   // Public booking pages must not call the authenticated audit endpoint.
   '/coach-booking/',
   '/learner/quiz/',

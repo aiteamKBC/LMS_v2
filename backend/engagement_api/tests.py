@@ -352,6 +352,59 @@ class FeedbackValidationTests(SimpleTestCase):
         self.assertEqual(rows[0]['source'], 'attendance')
         self.assertEqual(rows[0]['responseStatus'], 'completed')
 
+    def test_recipient_rows_show_event_learners_and_guests_with_event_context(self):
+        form = SimpleNamespace(id=31, form_type='post_event', template_key='template-2', due_date=None, version=1)
+        event = SimpleNamespace(
+            id=8, title='Leadership Day', location='Main Hall',
+            event_date=datetime(2026, 9, 29).date(),
+        )
+        learner_recipient = SimpleNamespace(
+            id=44, event=event, learner_id='7', attendee_name='Synthetic Learner',
+            attendee_email='learner@example.test', invitation_sent_at=None,
+            updated_at=datetime(2026, 9, 29, 10, tzinfo=timezone.utc),
+        )
+        guest_recipient = SimpleNamespace(
+            id=45, event=event, learner_id='', attendee_name='Guest Attendee',
+            attendee_email='guest@example.test', invitation_sent_at=None,
+            updated_at=datetime(2026, 9, 29, 10, 5, tzinfo=timezone.utc),
+        )
+        learner = SimpleNamespace(id=7, username='Synthetic Learner', email='learner@example.test', programme='Marketing')
+        completed = SimpleNamespace(
+            form_id=31, delivery_id=None, event_recipient_id=44,
+            learner_id='7', status='completed',
+        )
+        empty_delivery_query = mock.MagicMock()
+        empty_delivery_query.filter.return_value.order_by.return_value = []
+        empty_assignment_query = mock.MagicMock()
+        empty_assignment_query.order_by.return_value = []
+        event_query = mock.MagicMock()
+        event_query.filter.return_value.distinct.return_value.order_by.return_value = [guest_recipient, learner_recipient]
+        learner_query = mock.MagicMock()
+        learner_query.filter.return_value = [learner]
+        with (
+            mock.patch.object(feedback.FeedbackDeliveryRecipient.objects, 'select_related', return_value=empty_delivery_query),
+            mock.patch.object(feedback.FeedbackAssignment.objects, 'filter', return_value=empty_assignment_query),
+            mock.patch.object(feedback.FeedbackEventRecipient.objects, 'select_related', return_value=event_query),
+            mock.patch.object(feedback.EnrolmentUser.all_learners, 'all', return_value=learner_query),
+            mock.patch.object(feedback.FeedbackResponse.objects, 'filter', return_value=[completed]),
+        ):
+            rows = feedback._form_recipient_rows(form)
+
+        self.assertEqual([row['learnerName'] for row in rows], ['Guest Attendee', 'Synthetic Learner'])
+        self.assertEqual(rows[0]['sourceType'], 'event')
+        self.assertEqual(rows[0]['sourceKey'], 'event:8')
+        self.assertEqual(rows[0]['recipientType'], 'guest')
+        self.assertEqual(rows[1]['programme'], 'Marketing')
+        self.assertEqual(rows[1]['recipientType'], 'learner')
+        self.assertEqual(rows[1]['responseStatus'], 'completed')
+
+        sources = feedback._recipient_source_summaries(rows)
+        self.assertEqual(sources, [{
+            'key': 'event:8', 'type': 'event', 'label': 'Event attendance',
+            'title': 'Leadership Day', 'subtitle': 'Main Hall', 'startsAt': '2026-09-29',
+            'assignedCount': 2, 'responseCount': 1,
+        }])
+
     def test_recipient_lecture_summaries_group_counts_and_sort_newest_first(self):
         rows = [
             {'deliveryId': 3, 'occurrenceKey': 'older', 'sessionTitle': 'Session 1', 'moduleName': 'Martech', 'sessionStartsAt': '2026-09-17T09:30:00+00:00', 'responseStatus': 'completed'},
@@ -438,11 +491,16 @@ class FeedbackValidationTests(SimpleTestCase):
         recipient_query = mock.MagicMock()
         recipient_query.filter.return_value = recipient_query
         recipient_query.order_by.return_value = [recipient]
+        event_recipient_query = mock.MagicMock()
+        event_recipient_query.filter.return_value = event_recipient_query
+        event_recipient_query.distinct.return_value = event_recipient_query
+        event_recipient_query.order_by.return_value = []
         with (
             _patched(_account(role='staff', subject_type='staff')),
             mock.patch.object(feedback, '_forms_queryset', return_value=forms_query),
             mock.patch.object(feedback.FeedbackResponse.objects, 'filter', side_effect=[[], []]),
             mock.patch.object(feedback.FeedbackDeliveryRecipient.objects, 'select_related', return_value=recipient_query),
+            mock.patch.object(feedback.FeedbackEventRecipient.objects, 'select_related', return_value=event_recipient_query),
         ):
             response = feedback.learner_forms(RequestFactory().get('/?learnerId=61'))
 
@@ -456,6 +514,46 @@ class FeedbackValidationTests(SimpleTestCase):
         with _patched(_account(role='staff', subject_type='staff')):
             response = feedback.learner_forms(RequestFactory().get('/'))
         self.assertEqual(response.status_code, 400)
+
+    def test_learner_event_feedback_is_listed_with_event_recipient_identity(self):
+        event = SimpleNamespace(id=8, title='Leadership Day')
+        form = SimpleNamespace(id=31, title='Event feedback', description='Tell us more', due_date=None)
+        event_recipient = SimpleNamespace(
+            id=44, event=event, invitation_sent_at=datetime(2026, 9, 29, 10, tzinfo=timezone.utc),
+            updated_at=datetime(2026, 9, 29, 9, tzinfo=timezone.utc),
+        )
+        forms_query = mock.MagicMock()
+        forms_query.filter.return_value = forms_query
+        forms_query.distinct.return_value = forms_query
+        forms_query.__iter__.return_value = iter([])
+        delivery_query = mock.MagicMock()
+        delivery_query.filter.return_value = delivery_query
+        delivery_query.order_by.return_value = []
+        event_recipient_query = mock.MagicMock()
+        event_recipient_query.filter.return_value = event_recipient_query
+        event_recipient_query.distinct.return_value = event_recipient_query
+        event_recipient_query.order_by.return_value = [event_recipient]
+        campaign_query = mock.MagicMock()
+        campaign_query.filter.return_value = campaign_query
+        campaign_query.order_by.return_value = [SimpleNamespace(form=form)]
+        with (
+            _patched(_account(role='learner', subject_type='learner', subject_id='61')),
+            mock.patch.object(feedback, '_forms_queryset', return_value=forms_query),
+            mock.patch.object(feedback.FeedbackResponse.objects, 'filter', side_effect=[[], [], []]),
+            mock.patch.object(feedback.FeedbackDeliveryRecipient.objects, 'select_related', return_value=delivery_query),
+            mock.patch.object(feedback.FeedbackEventRecipient.objects, 'select_related', return_value=event_recipient_query),
+            mock.patch.object(feedback.FeedbackEventCampaign.objects, 'select_related', return_value=campaign_query),
+        ):
+            response = feedback.learner_forms(RequestFactory().get('/'))
+
+        self.assertEqual(response.status_code, 200)
+        item = json.loads(response.content)['forms'][0]
+        self.assertEqual(item['eventRecipientId'], 44)
+        self.assertEqual(item['sessionTitle'], 'Leadership Day')
+        self.assertEqual(
+            event_recipient_query.filter.call_args.kwargs['invite_status__in'],
+            ['pending', 'sent'],
+        )
 
     def test_staff_feedback_preview_cannot_submit_for_the_learner(self):
         with _patched(_account(role='staff', subject_type='staff')):

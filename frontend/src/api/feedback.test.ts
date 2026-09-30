@@ -26,17 +26,17 @@ describe('feedback API write protection', () => {
     });
   });
 
-  it('loads the named recipients for a form with lecture, search, and pagination filters', async () => {
+  it('loads the named recipients for a form with source, search, and pagination filters', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({ recipients: [], total: 0, page: 2, pageSize: 25 }),
     });
     vi.stubGlobal('fetch', fetchMock);
 
-    await feedbackApi.recipients(19, 'Martech learner', 2, 25, 31);
+    await feedbackApi.recipients(19, 'Martech learner', 2, 25, 'lecture:31');
 
     expect(fetchMock).toHaveBeenCalledWith(
-      '/engagement_api/feedback/forms/19/recipients/?search=Martech+learner&page=2&pageSize=25&deliveryId=31',
+      '/engagement_api/feedback/forms/19/recipients/?search=Martech+learner&page=2&pageSize=25&source=lecture%3A31',
       expect.objectContaining({ credentials: 'include' }),
     );
   });

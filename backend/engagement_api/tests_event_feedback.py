@@ -63,6 +63,8 @@ class PublicEventFeedbackAccessTests(SimpleTestCase):
     def test_public_token_prefix_is_the_only_ungated_engagement_feedback_path(self):
         self.assertIsNone(rule_for('/engagement_api/feedback/public-event/'))
         self.assertIsNone(rule_for('/engagement_api/feedback/public-event/csrf/'))
+        self.assertIsNone(rule_for('/engagement_api/event-check-in/'))
+        self.assertIsNone(rule_for('/engagement_api/event-check-in/csrf/'))
         self.assertIsNotNone(rule_for('/engagement_api/feedback/events/4/campaign/'))
 
     def test_unknown_token_returns_same_safe_error(self):

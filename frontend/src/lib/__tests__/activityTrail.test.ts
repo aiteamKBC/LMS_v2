@@ -113,6 +113,16 @@ describe('LMS activity recorder', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('does not send authenticated audit requests from public event pages', async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 401 });
+    recordPageView('/event-check-in#token=check-in-token');
+    recordPageView('/event-feedback#token=feedback-token');
+    recordAction('tab', { tab: 'Event feedback' });
+    await vi.advanceTimersByTimeAsync(5000);
+    flushActivity();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('continues recording coach directory administration', async () => {
     recordPageView('/admin/coach_directory');
     await vi.advanceTimersByTimeAsync(2500);

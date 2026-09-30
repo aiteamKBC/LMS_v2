@@ -41,6 +41,7 @@ const BoardPage = lazyRoute(() => import("../pages/users/BoardPage"));
 const EmployerPortalPage = lazyRoute(() => import("../pages/employer/EmployerPortalPage"));
 const EmployerLearnerPage = lazyRoute(() => import("../pages/employer/EmployerLearnerPage"));
 const EventFeedbackPage = lazyRoute(() => import("../pages/event-feedback/page"));
+const EventCheckInPage = lazyRoute(() => import("../pages/event-check-in/page"));
 const BudgetsPage = lazyRoute(() => import("../pages/finance/budgets/page"));
 const CallLogsPage = lazyRoute(() => import("../pages/engagement/call-logs/page"));
 const CatchUpPage = lazyRoute(() => import("../pages/learner/catchup/page"));
@@ -311,6 +312,10 @@ const routes: RouteObject[] = [
   {
     path: "/event-feedback",
     element: <EventFeedbackPage />,
+  },
+  {
+    path: "/event-check-in",
+    element: <EventCheckInPage />,
   },
   {
     // The public launcher that used to be at "/". Kept reachable: it is the
@@ -1714,6 +1719,7 @@ const PUBLIC_PATHS = new Set([
   "/",
   "/login",
   "/event-feedback",
+  "/event-check-in",
   "/access-required",
   "/forgot-password",
   "/set-password",

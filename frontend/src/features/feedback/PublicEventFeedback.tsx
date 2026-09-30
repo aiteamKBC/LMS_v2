@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { eventFeedbackApi, type PublicEventFeedback as PublicEventFeedbackData } from '@/api/eventFeedback';
 import type { FeedbackAnswerValue } from '@/api/feedback';
-import { FeedbackFormHeader, FormRenderer } from './FormRenderer';
+import { FeedbackFormExperience } from './FormRenderer';
+import { missingRequiredQuestionIds } from './formPresentation';
 
 export function PublicEventFeedback({ token }: { token: string }) {
   const [data, setData] = useState<PublicEventFeedbackData | null>(null);
@@ -10,6 +11,8 @@ export function PublicEventFeedback({ token }: { token: string }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [step, setStep] = useState(0);
+  const [invalidQuestionIds, setInvalidQuestionIds] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     let cancelled = false;
@@ -25,8 +28,34 @@ export function PublicEventFeedback({ token }: { token: string }) {
 
   const active = useMemo(() => data?.forms.find(form => form.id === activeId) ?? null, [data, activeId]);
 
+  function chooseForm(formId: number) {
+    setActiveId(formId);
+    setStep(0);
+    setInvalidQuestionIds(new Set());
+    setError('');
+  }
+
+  function updateAnswer(questionId: number, value: FeedbackAnswerValue) {
+    setInvalidQuestionIds(current => { const next = new Set(current); next.delete(questionId); return next; });
+    setAnswers(current => ({ ...current, [activeId!]: { ...(current[activeId!] || {}), [String(questionId)]: value } }));
+  }
+
+  function nextStep() {
+    if (!active) return;
+    const missing = missingRequiredQuestionIds(active.sections[step], answers[active.id] || {});
+    setInvalidQuestionIds(missing);
+    if (!missing.size) setStep(value => Math.min(value + 1, active.sections.length - 1));
+  }
+
   async function submit() {
     if (!active) return;
+    const invalidBySection = active.sections.map(section => missingRequiredQuestionIds(section, answers[active.id] || {}));
+    const firstInvalidSection = invalidBySection.findIndex(ids => ids.size > 0);
+    if (firstInvalidSection >= 0) {
+      setStep(firstInvalidSection);
+      setInvalidQuestionIds(invalidBySection[firstInvalidSection]);
+      return;
+    }
     setSaving(true); setError('');
     try {
       const result = await eventFeedbackApi.savePublicResponse(token, active.id, answers[active.id] || {}, true);
@@ -52,13 +81,16 @@ export function PublicEventFeedback({ token }: { token: string }) {
       <p className="mt-3 text-sm text-foreground-700">Welcome, {data.recipient.name}. This personal link gives access only to your event forms.</p>
     </div>
     {data.forms.length > 1 && <div className="mb-5 flex flex-wrap gap-2" role="tablist" aria-label="Event feedback forms">
-      {data.forms.map(form => <button key={form.id} type="button" role="tab" aria-selected={form.id === active.id} onClick={() => { setActiveId(form.id); setError(''); }} className={`rounded-lg px-3 py-2 text-xs font-semibold ${form.id === active.id ? 'bg-primary-600 text-white' : 'bg-background-100 text-foreground-700'}`}>{form.title}{form.response.status === 'completed' ? ' ✓' : ''}</button>)}
+      {data.forms.map(form => <button key={form.id} type="button" role="tab" aria-selected={form.id === active.id} onClick={() => chooseForm(form.id)} className={`rounded-lg px-3 py-2 text-xs font-semibold ${form.id === active.id ? 'bg-primary-600 text-white' : 'bg-background-100 text-foreground-700'}`}>{form.title}{form.response.status === 'completed' ? ' ✓' : ''}</button>)}
     </div>}
-    <FeedbackFormHeader title={active.title} description={active.description} instructions={active.instructions} />
     {completed ? <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-5 text-center text-sm font-semibold text-emerald-800">Thank you. Your feedback has been submitted.</div> : <>
-      <FormRenderer sections={active.sections} answers={answers[active.id] || {}} onChange={(questionId, value) => setAnswers(current => ({ ...current, [active.id]: { ...(current[active.id] || {}), [String(questionId)]: value } }))} />
+      <FeedbackFormExperience title={active.title} description={active.description} instructions={active.instructions}
+        sections={active.sections} activeSection={step} answers={answers[active.id] || {}}
+        invalidQuestionIds={invalidQuestionIds} onChange={updateAnswer}
+        onStepChange={index => { if (index <= step) { setStep(index); setInvalidQuestionIds(new Set()); } }}
+        onBack={() => { setStep(value => Math.max(value - 1, 0)); setInvalidQuestionIds(new Set()); }}
+        onNext={nextStep} onSubmit={() => void submit()} submitting={saving} />
       {error && <div role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
-      <div className="mt-5 flex justify-end"><button type="button" disabled={saving} onClick={() => void submit()} className="rounded-lg bg-primary-600 px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{saving ? 'Submitting…' : 'Submit feedback'}</button></div>
     </>}
   </PublicShell>;
 }
