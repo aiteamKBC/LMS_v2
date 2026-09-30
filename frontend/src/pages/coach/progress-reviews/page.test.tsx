@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
+import { clearCoachSessionCache } from '@/features/coach/shared/coachSessionCache';
 import type { CoachCalendarEvent } from '../shared/calendarEvents';
 import CoachProgressReviews from './page';
 
@@ -89,6 +90,48 @@ describe('progress review list navigation and filters', () => {
     expect(filters.getByRole('button', { name: 'All1' })).toBeVisible();
   });
 
+  it('shows whole-programme totals while the list stays month-scoped', async () => {
+    mount();
+    await screen.findByText('Scheduled Review');
+    expect(fetchEvents).toHaveBeenCalledWith(expect.any(AbortSignal), { includeLiveSessions: false, includeSchedulerQueues: false });
+    const stats = within(await screen.findByRole('region', { name: 'Whole programme' }));
+    expect(stats.getByText('4')).toBeVisible();
+    expect(stats.getByRole('meter', { name: 'Completed share' })).toHaveAttribute('aria-valuenow', '25');
+    expect(stats.getByRole('meter', { name: 'Scheduled share' })).toHaveAttribute('aria-valuenow', '25');
+    expect(stats.getByRole('meter', { name: 'Not scheduled share' })).toHaveAttribute('aria-valuenow', '50');
+    expect(screen.queryByText('Next Month Review')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
+    expect(await screen.findByText('Next Month Review')).toBeVisible();
+    expect(within(screen.getByRole('region', { name: 'Whole programme' })).getByText('4')).toBeVisible();
+  });
+
+  it('shows every status in the programme card so the rows add up to the total', async () => {
+    clearCoachSessionCache();
+    fetchEvents.mockResolvedValue({ events: [...reviews, review(5, { learner: 'Cancelled Review', status: 'cancelled' })] });
+    mount();
+    await screen.findByRole('meter', { name: 'Not scheduled share' });
+    const stats = within(screen.getByRole('region', { name: 'Whole programme' }));
+    expect(stats.getByText('5')).toBeVisible();
+    // Existing review normalization files cancelled under Not scheduled.
+    const meters = stats.getAllByRole('meter');
+    expect(meters.map(meter => meter.getAttribute('aria-label'))).toEqual([
+      'Not scheduled share', 'Scheduled share', 'In progress share', 'Awaiting signature share', 'Completed share',
+    ]);
+    expect(meters.map(meter => Number(meter.getAttribute('aria-valuenow')))).toEqual([60, 20, 0, 0, 20]);
+    expect(stats.queryByRole('meter', { name: 'Other share' })).toBeNull();
+  });
+
+  it('reports a programme totals failure instead of showing zero counts', async () => {
+    clearCoachSessionCache();
+    fetchEvents.mockImplementation((_signal: AbortSignal, options: { start?: string }) => (
+      options.start ? Promise.resolve({ events: reviews }) : Promise.reject(new Error('Programme totals failed.'))
+    ));
+    mount();
+    const stats = within(await screen.findByRole('region', { name: 'Whole programme' }));
+    expect(await stats.findByRole('alert')).toHaveTextContent('Programme totals failed.');
+    expect(stats.queryByRole('meter')).toBeNull();
+  });
+
   it('keeps the last successful month visible when the coach returns to the page', async () => {
     const first = mount();
     expect(await screen.findByText('Scheduled Review')).toBeVisible();
@@ -143,8 +186,9 @@ describe('progress review list navigation and filters', () => {
     fireEvent.click(within(screen.getByRole('dialog', { name: 'Reschedule progress review' })).getByRole('button', { name: 'Cancel' }));
 
     const scheduledRow = within(screen.getByText('Imported Scheduled').closest('tr')!);
-    expect(scheduledRow.getAllByRole('button').map(button => button.textContent)).toEqual([
-      'Reschedule', 'View', 'View Form', 'Create Slides',
+    // View is an icon-only button, last on the right.
+    expect(scheduledRow.getAllByRole('button').map(button => button.getAttribute('aria-label') || button.textContent)).toEqual([
+      'Reschedule', 'View Form', 'Create Slides', 'View',
     ]);
     fireEvent.click(scheduledRow.getByRole('button', { name: 'View Form' }));
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A21');

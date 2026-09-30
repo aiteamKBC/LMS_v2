@@ -1,4 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { AnimatedProgressCircle } from '@/components/ui/AnimatedProgressCircle';
 import { Link } from 'react-router-dom';
 import { BookOpen, CalendarDays, CalendarOff, ChevronLeft, ChevronRight, Clock3, ExternalLink, Search, Users, Video } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
@@ -133,7 +134,7 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
                 : <>
                   <svg viewBox="0 0 24 24" aria-hidden="true">
                     <circle cx="12" cy="12" r="10" fill="none" strokeWidth="2" />
-                    <circle cx="12" cy="12" r="10" fill="none" strokeWidth="2" strokeLinecap="round"
+                    <AnimatedProgressCircle cx="12" cy="12" r="10" fill="none" strokeWidth="2" strokeLinecap="round"
                       strokeDasharray={`${weekActivityProgress?.percent ?? 0} 100`} pathLength="100" />
                   </svg>
                   <span aria-hidden="true" />

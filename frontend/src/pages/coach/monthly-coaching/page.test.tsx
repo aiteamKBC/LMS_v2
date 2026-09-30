@@ -47,7 +47,7 @@ function meeting(index: number, overrides: Partial<CoachCalendarEvent> = {}): Co
 const meetings = [
   meeting(1, { learner: 'Overdue Learner', targetDate: '2026-09-01' }),
   meeting(2, { learner: 'Due Soon Learner', learnerType: 'commercial' }),
-  meeting(3, { learner: 'Scheduled Learner', enrolmentId: '42', status: 'scheduled', scheduledDate: '2026-09-22', scheduledTime: '10:30', group: 'Beta' }),
+  meeting(3, { learner: 'Scheduled Learner', email: 'scheduled@example.test', programme: 'Level 3 Coaching', enrolmentId: '42', status: 'scheduled', scheduledDate: '2026-09-22', scheduledTime: '10:30', group: 'Beta' }),
   meeting(4, { learner: 'In Progress Learner', status: 'in-progress', scheduledDate: '2026-09-14' }),
   meeting(9, { learner: 'Awaiting Signature Learner', status: 'awaiting-signature', scheduledDate: '2026-09-11' }),
   meeting(5, { learner: 'Completed Learner', status: 'completed', scheduledDate: '2026-09-10', group: undefined, cohort: 'Gamma' }),
@@ -115,7 +115,7 @@ describe('restored monthly coaching list', () => {
     expect(visibleLearners()).toHaveLength(1);
     expect(screen.getByText('Scheduled Learner')).toBeVisible();
     fireEvent.change(screen.getByRole('combobox', { name: 'Search coaching meetings by learner' }), { target: { value: 'No match' } });
-    expect(screen.getByText('No learner matches this search.')).toBeVisible();
+    expect(screen.getByText('No matching meetings found.')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Clear search' }));
     fireEvent.click(screen.getByRole('button', { name: /Group\s*Group: Beta/ }));
     fireEvent.click(screen.getByRole('option', { name: 'Cohort: Gamma' }));
@@ -193,9 +193,11 @@ describe('restored monthly coaching list', () => {
     fireEvent.click(within(screen.getByRole('dialog', { name: 'Schedule meeting' })).getByRole('button', { name: 'Cancel' }));
 
     const scheduledRow = within(screen.getByText('Imported Scheduled').closest('tr')!);
-    expect(scheduledRow.getAllByRole('button').map(button => button.textContent)).toEqual([
-      'Reschedule', 'View', 'View Form', 'View Slides',
+    // View is an eye icon just before the overflow menu, which stays last.
+    expect(scheduledRow.getAllByRole('button').map(button => button.getAttribute('aria-label') || button.textContent)).toEqual([
+      'Reschedule', 'View Form', 'View Slides', 'View', 'More actions for Imported Scheduled',
     ]);
+    expect(scheduledRow.getByRole('button', { name: 'More actions for Imported Scheduled' })).toBeVisible();
     fireEvent.click(scheduledRow.getByRole('button', { name: 'View Form' }));
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A21');
     expect(openReview).not.toHaveBeenCalled();
@@ -227,8 +229,11 @@ describe('restored monthly coaching list', () => {
     await screen.findByText('Scheduled Learner');
     const table = screen.getByRole('table');
     expect(within(table).getAllByRole('columnheader').map(header => header.textContent)).toEqual([
-      'Learner', 'Cohort', 'Date & time', 'Status', 'Schedule', 'Actions',
+      'Learner', 'Programme', 'Date & time', 'Status', 'Schedule', 'Actions',
     ]);
+    const cells = within(screen.getByText('Scheduled Learner').closest('tr')!).getAllByRole('cell');
+    expect(cells[0]).toHaveTextContent('Scheduled Learnerscheduled@example.test');
+    expect(cells[1]).toHaveTextContent('Level 3 Coaching');
     expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'View Form' })).toBeVisible();
     expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'View Slides' })).toBeVisible();
     expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'View' })).toBeVisible();
@@ -327,11 +332,69 @@ describe('restored monthly coaching list', () => {
     expect(screen.getByTestId('route')).toHaveTextContent(returnTo!);
   });
 
+  it('derives the header, calendar dots and monthly stats from the selected month', async () => {
+    mount();
+    await screen.findByText('Scheduled Learner');
+    expect(screen.getByText('Manage and track your coaching meetings for', { exact: false })).toHaveTextContent('September 2026');
+    const calendar = within(screen.getByRole('region', { name: 'Meeting calendar for September 2026' }));
+    expect(calendar.getByRole('gridcell', { name: '2026-09-22: Scheduled' })).toBeInTheDocument();
+    expect(calendar.getByRole('gridcell', { name: '2026-09-10: Completed' })).toBeInTheDocument();
+    expect(calendar.getByRole('gridcell', { name: '2026-09-23' })).toBeInTheDocument();
+    const stats = within(screen.getByRole('region', { name: 'This month' }));
+    expect(stats.getByText('Total meetings').parentElement?.previousSibling).toHaveTextContent('6');
+    expect(stats.getByRole('meter', { name: 'Completed share' })).toHaveAttribute('aria-valuenow', '17');
+    expect(stats.getAllByRole('meter').map(meter => meter.getAttribute('aria-label'))).toEqual([
+      'Not scheduled share', 'Scheduled share', 'In progress share', 'Awaiting signature share', 'Completed share',
+    ]);
+    expect(stats.getByRole('meter', { name: 'Not scheduled share' })).toHaveAttribute('aria-valuenow', '33');
+
+    fireEvent.click(calendar.getByRole('button', { name: 'Calendar next month' }));
+    expect(await screen.findByText('Next Month Learner')).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Meeting calendar for October 2026' })).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'This month' })).getByRole('meter', { name: 'Completed share' })).toHaveAttribute('aria-valuenow', '0');
+  });
+
+  it('shows the month empty state while keeping the calendar and zero stats', async () => {
+    fetchEvents.mockResolvedValue({ events: [] });
+    mount();
+    expect(await screen.findByText('No meetings found for this month.')).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Meeting calendar for September 2026' })).toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'This month' })).getByRole('meter', { name: 'Scheduled share' })).toHaveAttribute('aria-valuenow', '0');
+  });
+
+  it('switches to the grid view with the same actions and keeps it in the URL', async () => {
+    mount();
+    await screen.findByText('Scheduled Learner');
+    fireEvent.click(screen.getByRole('button', { name: 'Grid view' }));
+    expect(screen.queryByRole('table')).toBeNull();
+    expect(screen.getByTestId('route')).toHaveTextContent('view=grid');
+    const card = within(screen.getByText('Scheduled Learner').closest('li')!);
+    expect(card.getByRole('button', { name: 'Reschedule' })).toBeVisible();
+    expect(card.getByRole('button', { name: 'View Slides' })).toBeVisible();
+    expect(visibleLearners()).toHaveLength(6);
+  });
+
+  it('offers only safe overflow actions and never cancels a Teams meeting', async () => {
+    mount();
+    await screen.findByText('Scheduled Learner');
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for Scheduled Learner' }));
+    const menu = within(screen.getByRole('menu', { name: 'Actions for Scheduled Learner' }));
+    expect(menu.getByRole('menuitem', { name: /Cancel meeting/ })).toBeDisabled();
+    expect(menu.getByRole('menuitem', { name: 'Copy link' })).toBeDisabled();
+    fireEvent.click(menu.getByRole('menuitem', { name: 'Edit meeting' }));
+    expect(within(screen.getByRole('dialog', { name: 'Schedule meeting' })).getByRole('combobox', { name: 'Learner' })).toHaveValue('mcr:3');
+    expect(scheduleEvent).not.toHaveBeenCalled();
+
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Schedule meeting' })).getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'More actions for Completed Learner' }));
+    expect(within(screen.getByRole('menu', { name: 'Actions for Completed Learner' })).getByRole('menuitem', { name: 'Edit meeting' })).toBeDisabled();
+  });
+
   it('reports API errors without showing a successful empty list', async () => {
     fetchEvents.mockRejectedValue(new Error('Calendar unavailable'));
     mount();
     expect(await screen.findByText('Calendar unavailable')).toBeVisible();
-    expect(screen.queryByText('No coaching meetings found.')).toBeNull();
+    expect(screen.queryByText('No meetings found for this month.')).toBeNull();
   });
 
   it('requires coach identity before loading meetings', () => {

@@ -526,10 +526,11 @@ function ProgressStat({ href, label, value, summary, valueLabel = 'Current', tar
     >
       <div className={overviewStyles.metricTop}>
         <span
-          className={overviewStyles.metricRing}
+          key={ringPercent}
+          className={`${overviewStyles.metricRing} kbc-animated-conic-ring`}
           role="img"
           aria-label={`${label}: ${ringLabel}`}
-          style={{ '--metric-progress': `${ringPercent}%` } as CSSProperties}
+          style={{ '--kbc-ring-target': `${ringPercent}%` } as CSSProperties}
         >
           <span className={overviewStyles.metricRingValue}>{ringLabel}</span>
         </span>
