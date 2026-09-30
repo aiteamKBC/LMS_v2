@@ -14,6 +14,7 @@ import { hoursToRoundedMinutes, roundedMinutesToHours } from '@/lib/format';
 import { reviewCalendar } from '../teams-meetings/calendarReview';
 import { normalizedClock } from '../teams-meetings/calendarTime';
 import {
+  ADDITIONAL_TEAMS_MEETING_SETTING_KEYS,
   componentTypeGroups,
   componentTypes,
   getDefaultComponentSettings,
@@ -1445,6 +1446,10 @@ export const TEAMS_MEETING_SETTING_KEYS = [
   'teamsWebLink',
   'teamsDurationMinutes',
   'sessionRescheduled',
+  // The one-off week meeting is the original's too: its organiser invited its
+  // own guests to one date, and a copy placed in another week must arrive with
+  // no link at all rather than pointing people at somebody else's meeting.
+  ...ADDITIONAL_TEAMS_MEETING_SETTING_KEYS,
 ] as const;
 
 /**
@@ -2768,6 +2773,130 @@ export function fetchTeamsCreateStatus(moduleCatalogueId: string) {
     `/curriculum/teams-meetings/create-status/?moduleCatalogueId=${encodeURIComponent(moduleCatalogueId)}`,
     { timeoutMs: 15000 },
   );
+}
+
+/**
+ * One extra Teams meeting on a single week, with its own host and guests.
+ *
+ * A different record from the module's calendar, not a variation of it: its own
+ * organiser, its own invitation list, one date, and a join link kept under the
+ * component's `extraTeams*` settings. It never creates, updates, supersedes or
+ * redirects the module's own meeting — see `backend/curriculum_api/teams_week_meeting.py`
+ * for how the two are held apart on both sides.
+ *
+ * The backend refuses a week with no live-session component, and refuses a live
+ * session that already holds a Teams link, so nothing here can replace a link
+ * that exists.
+ */
+export interface WeekTeamsMeetingInput {
+  weekId: string;
+  componentId: string;
+  title: string;
+  organizerEmail: string;
+  attendees: string[];
+  presenters: string[];
+  coOrganizers: string[];
+  localStartDateTime: string;
+  startDateTimeUtc: string;
+  durationMinutes: number;
+  lobbyBypass: string;
+  recording: string;
+  spokenLanguage: string;
+  details: string;
+  requestResponses: boolean;
+  allowNewTimeProposals: boolean;
+  transactionId: string;
+  scheduleTimeZone?: 'Africa/Cairo' | 'Europe/London';
+}
+
+export interface WeekTeamsMeetingResult {
+  created: boolean;
+  /** Whether Microsoft confirmed the invitation write that mails everyone named. */
+  invitationsSent: boolean;
+  /** Every address Microsoft confirmed on the meeting — organiser's guests, in all roles. */
+  invited: string[];
+  meeting: {
+    liveSessionId: string;
+    weekId: string;
+    componentId: string;
+    eventId: string;
+    onlineMeetingId: string;
+    joinUrl: string;
+    webLink: string;
+    meetingOptionsUrl: string;
+    organizerEmail: string;
+    attendees: string[];
+    presenters: string[];
+    coOrganizers: string[];
+    startDateTimeUtc: string;
+    durationMinutes: number;
+    subject: string;
+    settingsApplied: boolean;
+  };
+  componentSettings: ComponentSettings;
+  warnings: string[];
+}
+
+export async function createWeekTeamsMeeting(moduleCatalogueId: string, input: WeekTeamsMeetingInput) {
+  return apiJson<WeekTeamsMeetingResult>(
+    `/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/week-teams-meetings/`,
+    { method: 'POST', body: JSON.stringify(input), timeoutMs: 45000 },
+  ).then(result => {
+    // Same reason as the module create below: this POST goes through this
+    // module's own client, so nothing else invalidates the curriculum GET cache.
+    clearCurriculumGetCache();
+    return result;
+  });
+}
+
+/**
+ * Change an additional week meeting, or cancel it.
+ *
+ * Its own endpoint, never `updateTeamsMeetingSchedule`: that one ends by
+ * re-attaching its series across every live-session component of the module,
+ * which would put one week's private link on all of them. The server refuses a
+ * week meeting sent to it for the same reason.
+ *
+ * `notifyAttendees` decides only whether people ALREADY invited are told.
+ * Anyone this save adds is always reached, because Microsoft puts a meeting on
+ * someone's calendar only when something is sent to them.
+ */
+export type WeekTeamsMeetingEdit =
+  Omit<WeekTeamsMeetingInput, 'weekId' | 'componentId' | 'organizerEmail' | 'transactionId'>
+  & { notifyAttendees: boolean };
+
+export interface WeekTeamsMeetingUpdateResult {
+  updated: boolean;
+  notifiedExisting: boolean;
+  /** Everyone this save added, who were sent the meeting individually. */
+  forwardedTo: string[];
+  meeting: WeekTeamsMeetingResult['meeting'];
+  componentSettings: ComponentSettings;
+  warnings: string[];
+}
+
+export async function updateWeekTeamsMeeting(
+  moduleCatalogueId: string,
+  liveSessionId: string,
+  input: WeekTeamsMeetingEdit,
+) {
+  return apiJson<WeekTeamsMeetingUpdateResult>(
+    `/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/week-teams-meetings/${encodeURIComponent(liveSessionId)}/`,
+    { method: 'PATCH', body: JSON.stringify(input), timeoutMs: 45000 },
+  ).then(result => {
+    clearCurriculumGetCache();
+    return result;
+  });
+}
+
+export async function cancelWeekTeamsMeeting(moduleCatalogueId: string, liveSessionId: string) {
+  return apiJson<{ cancelled: boolean; componentId: string; warnings: string[] }>(
+    `/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/week-teams-meetings/${encodeURIComponent(liveSessionId)}/`,
+    { method: 'DELETE', timeoutMs: 45000 },
+  ).then(result => {
+    clearCurriculumGetCache();
+    return result;
+  });
 }
 
 export async function createTeamsMeeting(

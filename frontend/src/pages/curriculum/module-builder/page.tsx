@@ -1382,7 +1382,7 @@ export default function ModuleBuilder() {
       setActionMessage(err instanceof Error ? err.message : 'Unable to load module structure.');
       // Whatever failed was reading this same module's structure, so the same
       // click tried again is a real retry, not a guess.
-      setActionMessageRetry(() => () => { void openModule(module, openSettings); });
+      setActionMessageRetry(() => () => { void openModule(module, openSettings, historyMode); });
     } finally {
       setOpeningModule(null);
       setOpeningModuleComplete(false);
@@ -3266,7 +3266,10 @@ export default function ModuleBuilder() {
                     onKsbMap={() => { void openKsbMap(module); }}
                     ksbMapLoading={ksbMapLoadingId === (module.catalogueId || moduleStructureIdentifier(module) || module.title)}
                     onLearners={() => openLearnerAction(module)}
-                    onBuild={() => openModule(module)}
+                    // Opening a module from the catalogue is a real drill-in:
+                    // keep the catalogue entry in browser history so Back
+                    // returns to this list instead of the page that led here.
+                    onBuild={() => openModule(module, false, 'push')}
                     onSettings={() => openPlacementForm(module)}
                     onDuplicate={() => duplicateModule(module)}
                     onDelete={() => confirmDeleteModule(module)}
@@ -3358,7 +3361,7 @@ export default function ModuleBuilder() {
             onBuild={() => {
               const module = ksbMapDisplayModule;
               setKsbMapModule(null);
-              void openModule(module);
+              void openModule(module, false, 'push');
             }}
           />
         )}
@@ -5061,11 +5064,32 @@ function TypeSpecificFields({
               <TextInput label="Teams meeting URL" value={getString('liveSessionUrl')} onChange={value => onSettingChange('liveSessionUrl', value)} />
             </div>
           )}
+          {/* This live session is delivered by its own additional meeting, so
+              that meeting IS its Teams link — the module's calendar skips this
+              session entirely and never writes its link here. Read-only: the
+              meeting lives in Microsoft, booked with its own organiser and
+              guests from the Additional week meeting tab. */}
+          {getString('extraTeamsMeetingUrl') && (
+            <div className="mt-3 rounded-lg border border-violet-200 bg-violet-50/70 px-3 py-2.5">
+              <p className="text-[10px] font-bold uppercase text-violet-700">This session runs as an additional meeting</p>
+              <a href={getString('extraTeamsMeetingUrl')} target="_blank" rel="noreferrer" className="mt-1 block truncate text-[12px] font-bold text-primary-600 hover:text-primary-700">
+                <AppIcon className="ri-microsoft-teams-line mr-1"></AppIcon>
+                {getString('extraTeamsSubject') || 'Open the additional meeting link'}
+              </a>
+              <p className="mt-1 truncate text-[10px] font-semibold text-foreground-500">
+                {getString('extraTeamsOrganizerEmail') ? `Organizer: ${getString('extraTeamsOrganizerEmail')} · ` : ''}
+                Not on this module&rsquo;s Teams calendar, and not counted among its sessions.
+              </p>
+            </div>
+          )}
         </div>
         <TextArea label="Session outline" value={getString('sessionPurpose')} onChange={value => onSettingChange('sessionPurpose', value)} rows={3} />
         {teamsMeetingOpen && (
           <TeamsMeetingModal
             module={module}
+            /* Opened from this live session, so the additional-meeting tab
+               starts on the week this live session actually belongs to. */
+            initialWeekId={component.weekId}
             onRestored={restored => {
               const saved = restored.weekStructure.flatMap(item => item.components).find(item => item.id === component.id);
               if (saved) onChange({ settings: { ...component.settings, ...saved.settings } });
