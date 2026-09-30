@@ -4,6 +4,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type ReactNode,
 } from 'react';
 import { EntraPeopleInput } from './EntraPeopleInput';
 import { CalendarActionDialog } from './CalendarActionDialog';
@@ -333,14 +334,36 @@ function MeetingSettingsFields({ form, patch }: {
  * Rendered by the Teams Meetings page and by a module's own screen alike, so
  * both show the same calendar the same way and act on it through the same code.
  */
-export function TeamsMeetingDialogs({ workspace }: { workspace: TeamsMeetingsWorkspace }) {
+/**
+ * An extra tab alongside the module's own calendar.
+ *
+ * The Teams Meetings page passes none and is unchanged: without one there is no
+ * tab strip and this dialog is exactly what it has always been. The Module
+ * Builder passes the additional-week-meeting form. The two tabs share nothing
+ * but the dialog frame — the module calendar's state, its footer actions and
+ * its backend calls are untouched while the second tab is open, and the second
+ * tab carries its own Create button rather than borrowing the footer's.
+ */
+export interface TeamsDialogSecondTab {
+  label: string;
+  /** Replaces the module's name/cohort line while this tab is open. */
+  subtitle?: string;
+  render: () => ReactNode;
+}
+
+export function TeamsMeetingDialogs({ workspace, secondTab }: {
+  workspace: TeamsMeetingsWorkspace;
+  secondTab?: TeamsDialogSecondTab;
+}) {
+  const [activeTab, setActiveTab] = useState<'calendar' | 'second'>('calendar');
+  const onSecondTab = Boolean(secondTab) && activeTab === 'second';
   const {
     calendarActionTarget, loadTeamsState, notifyChanged, setSelectedId, setCalendarActionTarget, selected,
     requestCloseSelected, notice, openCalendarAction, busy, detailLoading, detail, graphConfigured,
     checkCalendarAction, pendingComponents, reattach, selectedForDisplay, createCalendar, createDrawer, createRecovery,
     runCalendarSync, calendarSyncing, runArtifactSync, artifactSyncing, autoSyncEnabled, setAutoSyncEnabled,
     openSettings, setResultsModule, resultsModule, detailError, loadDetail, holidayLabelFor,
-    detailOccurrenceFor, now, setPreview, setTranscriptPreview, invitedPrefilling, prefillInvitees, preview,
+    detailOccurrenceFor, now, setPreview, setTranscriptPreview, invitedPrefilling, prefillNotice, prefillInvitees, preview,
     transcriptPreview, settingsDrawer, drawerTarget, saveSettings, blockedReason,
     teamsLoaded, teamsError, createProgress, updateProgress, saveInvitations, updateDrawer, pushDates, resendSchedule,
     sendUpdateEmails, setSendUpdateEmails,
@@ -366,7 +389,9 @@ export function TeamsMeetingDialogs({ workspace }: { workspace: TeamsMeetingsWor
               <span className="block min-w-0">
                 <span className="block truncate">{selected.name}</span>
                 <span className="mt-1 block truncate text-[11px] font-semibold text-foreground-400">
-                  {[selected.cohortName, selected.groupName, selected.programmeName].filter(Boolean).join(' · ') || 'Teams meeting'}
+                  {(onSecondTab && secondTab?.subtitle)
+                    || [selected.cohortName, selected.groupName, selected.programmeName].filter(Boolean).join(' · ')
+                    || 'Teams meeting'}
                 </span>
               </span>
             )}
@@ -374,7 +399,10 @@ export function TeamsMeetingDialogs({ workspace }: { workspace: TeamsMeetingsWor
                and a wide box around two sentences is what made this look bare. */
             size={selected.summary && teamsLoaded ? 'max-w-5xl' : 'max-w-3xl'}
             onClose={requestCloseSelected}
-            footer={!teamsLoaded ? undefined : (
+            /* The footer drives the module's own calendar. The second tab has
+               its own button inside it, so this is hidden rather than left
+               there acting on a calendar the reader is not looking at. */
+            footer={!teamsLoaded || onSecondTab ? undefined : (
               <div className="flex w-full flex-wrap items-center justify-end gap-2">
                 {/* Only the actions this module can actually take: a footer of
                     greyed-out buttons reads as broken rather than as guidance.
@@ -480,7 +508,33 @@ export function TeamsMeetingDialogs({ workspace }: { workspace: TeamsMeetingsWor
               </div>
             )}
           >
-            {!teamsLoaded ? (
+            {secondTab && (
+              /* Only ever rendered when a caller supplies a second tab, so the
+                 Teams Meetings page shows no tab strip at all. */
+              <div role="tablist" aria-label="Teams meeting type" className="mb-4 flex flex-wrap gap-1 rounded-xl border border-background-200 bg-background-100/70 p-1">
+                {([
+                  { key: 'calendar' as const, label: 'Module Teams calendar' },
+                  { key: 'second' as const, label: secondTab.label },
+                ]).map(tab => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={activeTab === tab.key}
+                    onClick={() => setActiveTab(tab.key)}
+                    className={`inline-flex h-9 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-lg px-3 text-[12px] font-bold transition-smooth ${
+                      activeTab === tab.key
+                        ? 'bg-primary-600 text-white shadow-sm'
+                        : 'text-foreground-600 hover:bg-background-200'
+                    }`}
+                  >
+                    <AppIcon className={tab.key === 'calendar' ? 'ri-calendar-schedule-line text-sm' : 'ri-calendar-2-line text-sm'}></AppIcon>
+                    <span className="truncate">{tab.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            {onSecondTab ? secondTab?.render() : !teamsLoaded ? (
               teamsError ? (
                 <div className="space-y-3">
                   <p role="alert" className="text-sm text-red-700">{teamsError}</p>
@@ -762,6 +816,7 @@ export function TeamsMeetingDialogs({ workspace }: { workspace: TeamsMeetingsWor
                       form={updateDrawer.form}
                       patch={updateDrawer.patch}
                       prefilling={invitedPrefilling}
+                      prefillNotice={prefillNotice}
                       onPrefill={() => void prefillInvitees(selected, updateDrawer.patch)}
                     />
                   </div>
@@ -820,6 +875,7 @@ export function TeamsMeetingDialogs({ workspace }: { workspace: TeamsMeetingsWor
                   patch={createDrawer.patch}
                   holidayLabelFor={holidayLabelFor}
                   prefilling={invitedPrefilling}
+                  prefillNotice={prefillNotice}
                   onPrefill={() => void prefillInvitees(selected, createDrawer.patch)}
                 />
                 {createRecovery?.phase === 'failed' ? (

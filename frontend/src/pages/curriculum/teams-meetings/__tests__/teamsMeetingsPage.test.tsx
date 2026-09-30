@@ -811,7 +811,7 @@ describe('Teams Meetings page', () => {
     expect(dialog.queryByRole('button', { name: 'Remove mahmoudfouda015@gmail.com' })).not.toBeInTheDocument();
     expect(fetchModuleMeetingInvitees).not.toHaveBeenCalled();
 
-    await userEvent.click(dialog.getByRole('button', { name: "Prefill from the module's tutor and learner plans" }));
+    await userEvent.click(dialog.getByRole('button', { name: "Prefill from the module's assigned learners" }));
     await waitFor(() => expect(dialog.getByRole('button', { name: 'Remove mahmoudfouda015@gmail.com' })).toBeInTheDocument());
     expect(fetchModuleMeetingInvitees).toHaveBeenCalledWith('MOD-3');
   });
