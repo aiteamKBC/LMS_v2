@@ -392,6 +392,9 @@ export default function CoachMeetingDetail() {
     : event?.status === 'awaiting-signature'
       ? 'Sign Form'
       : 'Open Form';
+  const showBookingNotes = Boolean(
+    event && !isProgressReview && !['mcr', 'progress-review', 'review'].includes(event.source || ''),
+  );
 
   return (
     <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle={isProgressReview ? 'Review Details' : 'Meeting Details'} pageSubtitle={isProgressReview ? 'Progress review workspace' : 'Monthly coaching meeting workspace'} userName={ownerName} userRole="Progress Coach">
@@ -476,12 +479,14 @@ export default function CoachMeetingDetail() {
                 </div>
               </Panel>
 
-              <Panel className="bg-white">
-                <SectionHeading icon="ri-sticky-note-line" title="Notes" />
-                <p className="mt-4 text-[13px] leading-6 text-foreground-600">
-                  {event.notes || `No notes have been added to this ${isProgressReview ? 'review' : 'meeting'}.`}
-                </p>
-              </Panel>
+              {showBookingNotes ? (
+                <Panel className="bg-white">
+                  <SectionHeading icon="ri-sticky-note-line" title="Notes" />
+                  <p className="mt-4 text-[13px] leading-6 text-foreground-600">
+                    {event.notes || 'No notes have been added to this meeting.'}
+                  </p>
+                </Panel>
+              ) : null}
             </div>
 
             {url ? (

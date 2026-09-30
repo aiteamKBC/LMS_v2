@@ -8,6 +8,7 @@ from .teams_schedule_delivery import schedule_email
 from .teams_calendar_state import sync_calendar_state
 from .teams_directory import search_teams_directory
 from .teams_calendar_actions import calendar_action
+from .teams_week_meeting import curriculum_week_teams_meeting, curriculum_week_teams_meeting_detail
 from . import session_results
 
 
@@ -103,6 +104,11 @@ urlpatterns = [
     path('curriculum/modules/<str:module_catalogue_id>/session-plan/', views.curriculum_module_session_plan, name='curriculum-module-session-plan'),
     path('curriculum/modules/<str:module_catalogue_id>/ai-material/', views.curriculum_module_ai_material, name='curriculum-module-ai-material'),
     path('curriculum/modules/<str:module_catalogue_id>/teams-meetings/restore/', views.curriculum_module_teams_meeting_restore, name='curriculum-module-teams-meeting-restore'),
+    # A one-off meeting on a single week, with its own organiser and guests.
+    # Separate from the module's calendar above in both directions -- see
+    # teams_week_meeting.py.
+    path('curriculum/modules/<str:module_catalogue_id>/week-teams-meetings/', curriculum_week_teams_meeting, name='curriculum-week-teams-meeting'),
+    path('curriculum/modules/<str:module_catalogue_id>/week-teams-meetings/<str:live_session_id>/', curriculum_week_teams_meeting_detail, name='curriculum-week-teams-meeting-detail'),
     path('curriculum/modules/<str:module_catalogue_id>/meeting-invitees/', views.curriculum_module_meeting_invitees, name='curriculum-module-meeting-invitees'),
     path('curriculum/modules/<str:module_catalogue_id>/ksb-coverage/', views.curriculum_module_ksb_coverage, name='curriculum-module-ksb-coverage'),
     # A module has no roster of its own: these report the learners in the group

@@ -257,7 +257,7 @@ def select_activity_evidence(request):
             cursor.execute(
                 '''
                 select title, activity_date, month, category
-                from "structured_manual_activities"."manual_learner_activities"
+                from "Learner"."learner_journal_rows"
                 where id = %s and aptem_id = %s and deleted_at is null
                 limit 1
                 ''',

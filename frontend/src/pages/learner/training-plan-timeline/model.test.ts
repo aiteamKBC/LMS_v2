@@ -10,6 +10,12 @@ const data: TrainingPlanDashboard = { months: { '2026-09': { label: '', topics: 
 const subject: Subject = { id: 'legacy:1', title: 'Marketing', source: 'legacy', activities: ['2026-09-01','2026-09-08','2026-09-15','2026-09-22'].map((date, i) => ({ id: `${i}`, title: `Activity ${i}`, completed: i < 2, category: 'reading', position: i, schedule: { date } })) };
 
 describe('Training Plan calculations', () => {
+  it('keeps consolidated monthly actual independent of historical display rows', () => {
+    const combined = { ...data, monthlyOtjh: { '2026-09': {
+      planned: 18, actual: 12, includesHistorical: true, missingPlannedActivities: 0,
+    } } };
+    expect(monthMetrics('2026-09', [], combined).actual).toBe(12);
+  });
   it('renders identical monthly totals from compact dashboard summaries', () => {
     const full = buildPlanModules([subject], data)[0];
     const compact = buildPlanModules([{

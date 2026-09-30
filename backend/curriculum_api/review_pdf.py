@@ -18,18 +18,24 @@ ROLE_LABELS = {'advisor': 'Advisor', 'employer': 'Employer', 'participant': 'Par
 IMAGE_PATTERN = re.compile(r'^data:image/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$', re.I)
 
 REVIEW_TYPE_MCM = 'mcm'
+REVIEW_TYPE_APTEM_MCM = 'aptem_mcm'
 REVIEW_TYPE_PROGRESS_REVIEW = 'progress_review'
 #: Review Types with a signed export, by the Review Type's stable code -- never
 #: by a template's name. Anything else has no PDF at all (404), exactly as
 #: before this Progress Review entry was added.
 EXPORTABLE_REVIEW_TYPES = {
     REVIEW_TYPE_MCM: 'Monthly-Coaching-Meeting',
+    REVIEW_TYPE_APTEM_MCM: 'Monthly-Coaching-Meeting',
     REVIEW_TYPE_PROGRESS_REVIEW: 'Progress-Review',
 }
 
 
 def review_type_code(definition):
     return definition.get('template', {}).get('reviewTypeCode')
+
+
+def is_mcm_review(definition):
+    return review_type_code(definition) in {REVIEW_TYPE_MCM, REVIEW_TYPE_APTEM_MCM}
 
 
 def pdf_availability(definition):
@@ -342,7 +348,7 @@ def build_mcm_pdf(definition, information):
 
     formal_meeting_summary = (
         meeting_summary_field(definition)
-        if review_type_code(definition) == REVIEW_TYPE_MCM
+        if is_mcm_review(definition)
         else None
     )
 
@@ -390,7 +396,7 @@ def build_mcm_pdf(definition, information):
             ] if history else [paragraph('No completed Progress Reviews recorded.')]),
             Spacer(1, 16),
         ])
-    elif review_type_code(definition) == REVIEW_TYPE_MCM:
+    elif is_mcm_review(definition):
         # The signed document reads only the answer attached to this frozen
         # semantic field. It never reaches the mutable Coach AI artifact.
         summary = formal_meeting_summary.get('answer') if formal_meeting_summary else None
