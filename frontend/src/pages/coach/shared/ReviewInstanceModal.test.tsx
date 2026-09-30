@@ -79,6 +79,29 @@ beforeEach(() => {
 });
 
 describe('review reopen flow', () => {
+  it('renders an imported Aptem table as accessible columns and rows', async () => {
+    const importedDefinition: ReviewInstanceFormDefinition = {
+      ...definition('in-progress'),
+      source: 'aptem',
+      instance: { ...definition('in-progress').instance, id: 'imported-review:TABLE', reviewTemplateId: '' },
+      sections: [{ id: 'actions', title: 'Actions', estimatedMinutes: 0, displayOrder: 1, enabled: true,
+        fields: [{ id: 'aptem-table:actions:0', title: 'Imported table', fieldType: 'title_description', required: false,
+          displayOrder: 0, configuration: { imported: true, importedTable: [
+            ['Action', 'Responsible', 'Deadline'],
+            ['Submit outstanding assignments', 'Laura Baxter', '9 October 2026'],
+          ] } }],
+      }],
+    };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(importedDefinition);
+
+    mount();
+
+    const table = await screen.findByRole('table');
+    expect(screen.getByRole('columnheader', { name: 'Action' })).toBeVisible();
+    expect(table).toHaveTextContent('Submit outstanding assignments');
+    expect(table).toHaveTextContent('Laura Baxter');
+  });
+
   it('edits and saves an imported Aptem definition in the same workspace', async () => {
     const importedDefinition = {
       ...definition('in-progress'),

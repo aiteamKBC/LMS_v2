@@ -445,15 +445,25 @@ def resolve_programme_review_occurrences(
     # once per template, and never per learner.
     type_index = review_types.review_type_index()
 
-    templates_by_id = {template_row.get('id'): template_row for template_row in template_cache[programme_id]}
+    applicable_templates = [
+        template_row for template_row in template_cache[programme_id]
+        if review_applies_to_placement(template_row, learner_scope)
+    ]
+    templates_by_id = {template_row.get('id'): template_row for template_row in applicable_templates}
+    # Overrides used to be fetched once per template. A programme with four
+    # Review templates therefore paid four network round-trips on every Coach
+    # and Learner calendar read. Fetch the same rows in one bounded query and
+    # hand each template only its own slice.
+    overrides_by_review = _fetch_learner_scoped_overrides_for_reviews(
+        templates_by_id, learner_id,
+    )
 
     occurrences = []
-    for template_row in template_cache[programme_id]:
-        if not review_applies_to_placement(template_row, learner_scope):
-            continue
+    for template_row in applicable_templates:
         type_row = type_index.get(curriculum_views.clean_str(template_row.get('review_type_id')))
         for occurrence in resolve_learner_occurrences(
             template_row, learner_id, learner_status, learner_start_date, window_start, window_end,
+            overrides_by_date=overrides_by_review.get(template_row.get('id'), {}),
         ):
             # The Review's classification travels with every occurrence, so
             # Coach and the learner calendar can bucket it without ever
@@ -790,6 +800,25 @@ def _fetch_learner_scoped_overrides(review_id, learner_id):
     return {curriculum_views.format_date(row.get('occurrence_date')): row for row in rows}
 
 
+def _fetch_learner_scoped_overrides_for_reviews(review_ids, learner_id):
+    """All active programme/learner overrides, grouped by Review template."""
+    wanted = sorted({str(review_id).strip() for review_id in review_ids if str(review_id or '').strip()})
+    if not wanted:
+        return {}
+    rows = curriculum_views.fetch_all(
+        f'select * from {curriculum_views.table_name(OVERRIDES_TABLE)} '
+        f"where review_id in ({', '.join(['%s'] * len(wanted))}) and deleted_at is null "
+        f'and (learner_id is null or learner_id = %s)',
+        [*wanted, learner_id],
+    )
+    grouped = {review_id: {} for review_id in wanted}
+    for row in rows:
+        review_id = str(row.get('review_id') or '').strip()
+        if review_id in grouped:
+            grouped[review_id][curriculum_views.format_date(row.get('occurrence_date'))] = row
+    return grouped
+
+
 def skip_occurrence_for_learner(review_id, occurrence_date_iso, programme_id, learner_id, *, actor='staff', reason=''):
     """Learner-specific skip -- unlike review_schedule.skip_occurrence, this
     never affects any other learner on the same programme/template."""
@@ -830,7 +859,10 @@ def template_recurrence_config(row):
     }
 
 
-def resolve_learner_occurrences(template_row, learner_id, learner_status, learner_start_date, window_start, window_end):
+def resolve_learner_occurrences(
+    template_row, learner_id, learner_status, learner_start_date, window_start, window_end,
+    *, overrides_by_date=None,
+):
     """RAW occurrences of one Review template for one learner, anchored to
     their own start date -- never the template's own schedule_anchor_date,
     which only drives the Curriculum-side programme schedule preview.
@@ -851,7 +883,8 @@ def resolve_learner_occurrences(template_row, learner_id, learner_status, learne
 
     recurrence = template_recurrence_config(template_row)
     review_id = template_row.get('id')
-    overrides_by_date = _fetch_learner_scoped_overrides(review_id, learner_id)
+    if overrides_by_date is None:
+        overrides_by_date = _fetch_learner_scoped_overrides(review_id, learner_id)
 
     # Occurrence #1 is one interval AFTER the learner's start date, never the
     # start date itself (see the brief's own MCM/PR worked examples: a 2 Aug

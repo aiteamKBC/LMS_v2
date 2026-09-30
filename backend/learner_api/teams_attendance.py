@@ -188,7 +188,9 @@ def fetch_verified_teams_attendance_rows(
             identity_filter |= Q(email_normalized__in=emails)
         identity_learners_by_email = {
             _email(learner.email): learner
-            for learner in LearnerProfile.objects.using(database).filter(identity_filter)
+            for learner in LearnerProfile.objects.using(database).filter(identity_filter).only(
+                'id', 'enrolment_id', 'full_name', 'email', 'coach_name',
+            )
             if _email(learner.email)
         }
         if not identity_learners_by_email:
@@ -204,8 +206,7 @@ def fetch_verified_teams_attendance_rows(
         return []
 
     assigned_by_module = _assigned_learner_emails_by_module(
-        database,
-        [session.module_catalogue_id for session in sessions],
+        database, [session.module_catalogue_id for session in sessions],
     )
     aliases_by_module: dict[str, dict[str, str]] = defaultdict(dict)
     for module_ref, alias_email, canonical_email in _attendance_alias_rows(
@@ -232,7 +233,15 @@ def fetch_verified_teams_attendance_rows(
     # not become module/group members and are never added to the recurring
     # Teams series attendee snapshot.
     from .alternative_recovery import approved_alternative_guests
-    approved_guests = approved_alternative_guests(database)
+    scoped_enrolment_emails = (
+        {
+            learner.enrolment_id: email
+            for email, learner in identity_learners_by_email.items()
+            if learner.enrolment_id is not None
+        }
+        if identity_learners_by_email is not None else None
+    )
+    approved_guests = approved_alternative_guests(database, scoped_enrolment_emails)
     if approved_guests:
         occurrence_series = dict(
             LiveSessionOccurrence.objects.using(database)
@@ -269,7 +278,7 @@ def fetch_verified_teams_attendance_rows(
             _email(learner.email): learner
             for learner in LearnerProfile.objects.using(database).filter(
                 email_normalized__in=all_expected_emails,
-            )
+            ).only('id', 'enrolment_id', 'full_name', 'email', 'coach_name')
         }
     if not learners_by_email:
         return []

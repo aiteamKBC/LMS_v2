@@ -5,7 +5,9 @@ import './index.css'
 import './learner-theme.css'
 import App from './App.tsx'
 import { installAuditRequestContext } from './lib/auditRequestContext'
+import { installPerformanceDiagnostics } from './lib/performanceDiagnostics'
 
+installPerformanceDiagnostics()
 installAuditRequestContext()
 
 createRoot(document.getElementById('root')!).render(
