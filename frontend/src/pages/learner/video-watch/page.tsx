@@ -15,6 +15,7 @@ import { submitVideoProgress } from '@/api/videos';
 import { submitComponentProgress } from '@/api/components';
 import { startTimeTracking, type TimeTrackingSession, type TrackingCountingMode } from '@/api/timeTracking';
 import { EvidenceFilesButton, EvidencePreviewModal, type EvidencePreview } from '@/components/feature/EvidenceFilesButton';
+import { AssignmentEvidence } from '@/components/feature/AssignmentEvidence';
 import {
   buildLearnerJourney, componentTypeMeta, componentContentKind, componentNoun, hasComponentContent, isOpenableComponent, gradePercent, formatHoursMinutes,
   componentCriteria, componentRequiresEvidence, completedComponentIds, isComponentComplete,
@@ -38,6 +39,8 @@ import {
 import { ReadOnlyLearnerNotice } from '@/components/feature/ReadOnlyLearnerNotice';
 import { ComponentAccessNotice } from '@/components/feature/ComponentAccessNotice';
 import { useComponentAccessWindow } from '@/hooks/useComponentAccessWindow';
+import { CompletionTimeDialog } from '@/components/feature/CompletionTimeDialog';
+import { CompletionValidationError, type WorkingRuleReason } from '@/lib/completionValidation';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { ActivitySidebar } from './ActivitySidebar';
 import { isNavigableComponent, placeActivity, weekDisplayLabel, type ActivityPlacement } from './weekPreview';
@@ -215,7 +218,9 @@ export default function ComponentViewPage() {
   // Reachable by URL even now the plan rows are inert for a staff viewer.
   // Completing the component here would be recorded as the learner's own work.
   const { canProgress } = useLearnerWorkspaceAccess(id);
-  const componentAccess = useComponentAccessWindow();
+  // Scoped to this component's cohort, so the dialog only ever refuses this
+  // learner's own college closures.
+  const componentAccess = useComponentAccessWindow(componentId);
   const canUseComponent = canProgress && componentAccess.open;
 
   const [detail, setDetail] = useState<LearnerDetail | null>(null);
@@ -232,7 +237,14 @@ export default function ComponentViewPage() {
   );
   const [manualTimeSeconds, setManualTimeSeconds] = useState<number | null>(null);
   const [timeSource, setTimeSource] = useState<TimeSource>('timer');
-  const [insideWorkingHoursConfirmed, setInsideWorkingHoursConfirmed] = useState(false);
+  // Opened only by a server refusal of the Finish click; null while learning.
+  const [correction, setCorrection] = useState<{ reason: WorkingRuleReason | ''; holidayName: string } | null>(null);
+  const [correctionError, setCorrectionError] = useState('');
+  // The reflection the learner already gave, replayed with their declared
+  // instant so Final Submit does not ask for it again.
+  const lastReflectionRef = useRef<{ ksbs: string[]; feedback: string; reportedTime: string }>({
+    ksbs: [], feedback: '', reportedTime: '',
+  });
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [record, setRecord] = useState<DoneRecord | null>(null);
@@ -265,17 +277,14 @@ export default function ComponentViewPage() {
     setWallElapsed(readActivityTimer(timerStorageKey)?.elapsedSeconds ?? 0);
     setManualTimeSeconds(null);
     setTimeSource('timer');
-    setInsideWorkingHoursConfirmed(false);
+    setCorrection(null);
+    setCorrectionError('');
     setPendingEvidenceFileName(null);
     setEvidenceFiles([]);
     setEvidencePreview(null);
     // A pending "Remove this file?" must not survive onto the next activity.
     setConfirmingEvidenceRemoval(false);
   }, [timerStorageKey]);
-
-  useEffect(() => {
-    if (!componentAccess.outsideWorkingHours) setInsideWorkingHoursConfirmed(false);
-  }, [componentAccess.outsideWorkingHours]);
 
   useEffect(() => {
     if ((kind !== 'commercial' && kind !== 'apprenticeship') || !id) {
@@ -482,7 +491,7 @@ export default function ComponentViewPage() {
   // made a 1h42m video look like 102 hours.
   const plannedTimeLabel = plannedHours != null ? formatHoursMinutes(plannedHours) : '';
 
-  const trackingMode: TrackingCountingMode = isVideo && parsed?.kind !== 'vimeo'
+  const trackingMode: TrackingCountingMode = isVideo
     ? 'active_playback'
     : 'visible_page';
 
@@ -526,22 +535,23 @@ export default function ComponentViewPage() {
     return () => { cancelled = true; };
   }, [phase, recordingAttempt, openable, componentId, kind, id, canUseComponent, isVideo, trackingMode, timerStorageKey]);
 
-  // Only visible time counts for ordinary page content. Audio is intentionally
-  // allowed to keep counting in a background tab because playback can continue
-  // while the learner works elsewhere. Hidden tabs throttle intervals, so audio
-  // uses the real wall-clock delta instead of assuming every callback is exactly
-  // one second apart.
+  // Ordinary page content counts only while visible. Media counts while it is
+  // genuinely playing, even when the learner switches tab or opens another
+  // application. Hidden tabs throttle intervals, so active audio/video uses
+  // wall-clock deltas rather than assuming each callback is exactly one second.
   useEffect(() => {
-    if (phase !== 'consume' || !recordingAttempt || !canUseComponent || (!unsupported && !playerPlaying)) return;
-    let lastAudioTickAt = Date.now();
+    const activeMedia = isVideo || isAudio;
+    if (phase !== 'consume' || !recordingAttempt || !canUseComponent) return;
+    if (activeMedia ? !playerPlaying : (!unsupported && !playerPlaying)) return;
+    let lastTickAt = Date.now();
     timerRef.current = setInterval(() => {
-      if (isAudio || document.visibilityState === 'visible') {
+      if (activeMedia || document.visibilityState === 'visible') {
         const now = Date.now();
-        const increment = isAudio
-          ? Math.floor((now - lastAudioTickAt) / 1000)
+        const increment = activeMedia
+          ? Math.floor((now - lastTickAt) / 1000)
           : 1;
         if (increment < 1) return;
-        if (isAudio) lastAudioTickAt += increment * 1000;
+        if (activeMedia) lastTickAt += increment * 1000;
         setWallElapsed((seconds) => {
           const next = seconds + increment;
           saveActivityTimerElapsed(timerStorageKey, next);
@@ -550,7 +560,7 @@ export default function ComponentViewPage() {
       }
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [phase, recordingAttempt, canUseComponent, unsupported, playerPlaying, isAudio, timerStorageKey]);
+  }, [phase, recordingAttempt, canUseComponent, unsupported, playerPlaying, isVideo, isAudio, timerStorageKey]);
 
   const finishConsuming = () => {
     if (!recordingAttempt) return;
@@ -573,21 +583,14 @@ export default function ComponentViewPage() {
 
   const finalizeSubmit = async (
     reflection: { ksbs: string[]; feedback: string; reportedTime: string },
-    options: { rethrow?: boolean; skipReflection?: boolean } = {},
+    options: { rethrow?: boolean; skipReflection?: boolean; declaredCompletedAt?: string } = {},
   ) => {
     if (!component || !componentId || !kind || !id || completionInFlightRef.current || !canUseComponent) return;
-    if (componentAccess.holidayCalendarReady === false) {
-      const message = componentAccess.holidayError || 'Please wait for the holiday calendar before submitting.';
-      setSubmitError(message);
-      if (options.rethrow) throw new Error(message);
-      return;
-    }
-    if (componentAccess.outsideWorkingHours && !insideWorkingHoursConfirmed) {
-      const message = 'Confirm that you completed this activity inside UK working hours before submitting.';
-      setSubmitError(message);
-      if (options.rethrow) throw new Error(message);
-      return;
-    }
+    // Nothing is checked here. The learner presses Finish whenever they like;
+    // the server judges the instant and refuses with a 409 that has written
+    // nothing, which opens the correction dialog below.
+    const declared = options.declaredCompletedAt ?? null;
+    lastReflectionRef.current = reflection;
     completionInFlightRef.current = true;
     setSubmitting(true);
     setSubmitError(null);
@@ -600,7 +603,7 @@ export default function ComponentViewPage() {
           week: weekTitle || null, module: moduleTitle || null,
           startedAt: tracking.startedAt, timeTakenSeconds: submittedTimeSeconds, trackingToken: tracking.trackingToken,
           timeEntrySource: timeSource,
-          insideWorkingHoursConfirmed,
+          declaredCompletedAt: declared,
           videoTitle: meta?.detail || meta?.label || 'Video',
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
           skipReflection: options.skipReflection === true,
@@ -611,7 +614,7 @@ export default function ComponentViewPage() {
           week: weekTitle || null, module: moduleTitle || null,
           startedAt: tracking.startedAt, timeTakenSeconds: submittedTimeSeconds, trackingToken: tracking.trackingToken,
           timeEntrySource: timeSource,
-          insideWorkingHoursConfirmed,
+          declaredCompletedAt: declared,
           componentTitle: pageTitle, componentType: component.type || undefined,
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
           skipReflection: options.skipReflection === true,
@@ -631,7 +634,27 @@ export default function ComponentViewPage() {
       });
       setDetail(refreshed);
       setPhase('consume');
+      // The completion is committed, so any correction dialog has served its
+      // purpose and must not linger over the finished activity.
+      setCorrection(null);
+      setCorrectionError('');
     } catch (e) {
+      if (e instanceof CompletionValidationError) {
+        // Nothing was written. Ask for a working instant instead of reporting
+        // a failure; a refusal of an instant the learner already chose is shown
+        // inside the dialog so it stays open.
+        if (declared) {
+          setCorrectionError(e.message);
+        } else {
+          setCorrection({ reason: e.reason, holidayName: e.holidayName });
+          setCorrectionError('');
+        }
+        setSubmitError(null);
+        // The assignment wizard awaits this call: it must not treat a refusal
+        // as a submission, so it still sees the throw while the dialog opens.
+        if (options.rethrow) throw e;
+        return;
+      }
       setSubmitError(e instanceof Error ? e.message : 'Could not save progress');
       if (options.rethrow) throw e;
     } finally {
@@ -640,39 +663,9 @@ export default function ComponentViewPage() {
     }
   };
 
-  const outsideWorkingHoursDeclaration = componentAccess.outsideWorkingHours ? (
-    <label className="flex min-w-0 cursor-pointer items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-semibold leading-5 text-amber-950">
-      <input
-        type="checkbox"
-        checked={insideWorkingHoursConfirmed}
-        onChange={event => setInsideWorkingHoursConfirmed(event.target.checked)}
-        className="m-0 h-4 !min-h-0 w-4 shrink-0 accent-amber-700"
-      />
-      <span>I confirm that I completed this activity inside UK working hours.</span>
-    </label>
-  ) : null;
-  const showDeclarationInBanner = !isAssignment && phase === 'reflect';
-  const workingHoursNotice = component && canProgress && recordingAttempt && componentAccess.outsideWorkingHours && (
-    <div role="note" className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-4 text-amber-950 shadow-sm sm:px-5">
-      <div className="flex items-start gap-3">
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-700">
-          <AppIcon className="ri-time-line text-lg" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-bold">You are accessing this component outside UK working hours</p>
-          <p className="mt-1 text-xs leading-5 text-amber-900/80">
-            Working hours are Monday to Friday, 07:00-19:00 UK time, excluding official bank holidays and college holidays. The current UK time is {componentAccess.currentTimeLabel}.
-            Your activity time will continue to be calculated automatically. {isAssignment
-              ? 'Confirm the declaration at the bottom of the assignment before submitting.'
-              : showDeclarationInBanner
-              ? 'Confirm the declaration below before completing this component.'
-              : 'Confirm the declaration next to Finish before completing this component.'}
-          </p>
-          {showDeclarationInBanner && <div className="mt-3">{outsideWorkingHoursDeclaration}</div>}
-        </div>
-      </div>
-    </div>
-  );
+  const submitDeclared = (declaredAt: string) => {
+    void finalizeSubmit(lastReflectionRef.current, { declaredCompletedAt: declaredAt });
+  };
 
   const activityHeading = component && (
     <div className={isVideo ? layoutStyles.videoHeading : 'min-w-0'}>
@@ -715,13 +708,6 @@ export default function ComponentViewPage() {
           Back to training plan
         </button>
 
-        {component && canProgress && recordingAttempt && componentAccess.holidayCalendarReady === false && (
-          <div role={componentAccess.holidayError ? 'alert' : 'status'} className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">
-            {componentAccess.holidayError || 'Checking the holiday calendar…'}
-            {componentAccess.holidayError && <button type="button" onClick={componentAccess.refreshHolidays} className="ml-2 underline">Retry</button>}
-          </div>
-        )}
-        {workingHoursNotice && phase !== 'reflect' && <div className="mb-5">{workingHoursNotice}</div>}
 
         {loading ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} avatar={false} /></div>
@@ -746,7 +732,6 @@ export default function ComponentViewPage() {
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="This video has no playable URL yet." /></div>
         ) : phase === 'reflect' ? (
           <div className="space-y-4">
-            {workingHoursNotice}
             <ReflectionWindow
               noun={noun}
               plannedTimeLabel={plannedTimeLabel}
@@ -819,6 +804,18 @@ export default function ComponentViewPage() {
                     }}
                   />
                   {activityEvidenceContext && canUseComponent && (
+                    <AssignmentEvidence
+                      kind={activityEvidenceContext.kind}
+                      learnerId={activityEvidenceContext.learnerId}
+                      componentId={activityEvidenceContext.componentId}
+                      trainingPlanDetails={activityEvidenceContext.trainingPlanDetails}
+                      onUploaded={activityEvidenceContext.onUploaded}
+                      onFileSelected={setPendingEvidenceFileName}
+                      inputId={evidenceInputId}
+                      showPanel={false}
+                    />
+                  )}
+                  {activityEvidenceContext && canUseComponent && (
                     evidenceFileLabel ? (
                       <span className="inline-flex items-center gap-1.5">
                         <button
@@ -889,30 +886,25 @@ export default function ComponentViewPage() {
                   )}
                   </div>
                   <div className={hasActivityPanel ? layoutStyles.videoFooter : 'flex min-w-0 max-w-full items-center gap-3'}>
-                    {outsideWorkingHoursDeclaration && (
-                      <div className={hasActivityPanel ? layoutStyles.declaration : 'min-w-0 max-w-xs'}>{outsideWorkingHoursDeclaration}</div>
-                    )}
                     <button
                       onClick={finishConsuming}
-                      disabled={(!!criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !insideWorkingHoursConfirmed)}
+                      disabled={(!!criteria && !criteria.met) || manualTimeMissing}
                       title={
                         criteria && !criteria.met
                           ? 'Complete the criteria below before finishing.'
                           : manualTimeMissing
                             ? 'Enter the time spent before finishing.'
-                            : componentAccess.outsideWorkingHours && !insideWorkingHoursConfirmed
-                              ? 'Confirm the out-of-hours declaration before finishing.'
                             : undefined
                       }
                       className={`inline-flex shrink-0 items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-xl transition-colors ${
-                        (criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !insideWorkingHoursConfirmed)
+                        (criteria && !criteria.met) || manualTimeMissing
                           ? 'bg-background-200 text-foreground-400 cursor-not-allowed'
                           : isVideo
                             ? 'bg-primary-600 text-white hover:bg-primary-700 cursor-pointer'
                             : 'bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer'
                       }`}
                     >
-                      <AppIcon className={(criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !insideWorkingHoursConfirmed) ? 'ri-lock-line' : 'ri-check-line'} />
+                      <AppIcon className={(criteria && !criteria.met) || manualTimeMissing ? 'ri-lock-line' : 'ri-check-line'} />
                       Finish
                     </button>
                   </div>
@@ -1013,9 +1005,6 @@ export default function ComponentViewPage() {
                         <p className="text-xs text-slate-500">The timer runs normally. Only enter a time above if you need to correct it.</p>
                       </div>
                     )}
-                    workingHoursDeclaration={workingHoursNotice ? outsideWorkingHoursDeclaration : null}
-                    outsideWorkingHours={componentAccess.outsideWorkingHours}
-                    insideWorkingHoursConfirmed={insideWorkingHoursConfirmed}
                     submittingProgress={submitting}
                     onEvidenceChanged={activityEvidenceContext.onUploaded}
                     onRestoreTime={(seconds, source) => {
@@ -1112,6 +1101,17 @@ export default function ComponentViewPage() {
         )}
         {evidencePreview && (
           <EvidencePreviewModal preview={evidencePreview} onClose={() => setEvidencePreview(null)} />
+        )}
+        {correction && (
+          <CompletionTimeDialog
+            reason={correction.reason}
+            holidayName={correction.holidayName}
+            holidays={componentAccess.holidays ?? []}
+            submitting={submitting}
+            serverError={correctionError}
+            onSubmit={submitDeclared}
+            onClose={() => { setCorrection(null); setCorrectionError(''); }}
+          />
         )}
       </div>
     </WorkspaceShell>
@@ -2233,7 +2233,15 @@ export function ComponentBody({ component, contentKind, parsed, title, onDuratio
           <div><p className="text-sm font-semibold text-foreground-900">{title}</p><p className="text-xs text-foreground-400">Listen, then finish and reflect below.</p></div>
         </div>
         {audioSource ? (
-          <audio controls preload="metadata" className="w-full" src={audioSource}>Your browser does not support audio playback.</audio>
+          <audio
+            controls
+            preload="metadata"
+            className="w-full"
+            src={audioSource}
+            onPlay={() => onPlayingChange(true)}
+            onPause={() => onPlayingChange(false)}
+            onEnded={() => { onPlayingChange(false); onEnded(); }}
+          >Your browser does not support audio playback.</audio>
         ) : component.audioUrl ? (
           <>
             {/* Not a direct media file (e.g. a podcast listening page) — fetch
