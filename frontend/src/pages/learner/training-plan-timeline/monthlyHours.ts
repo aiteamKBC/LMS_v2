@@ -59,7 +59,7 @@ export function monthlyHours(data: TrainingPlanDashboard, programmeStartMonth = 
     // Marking contributes to submitted. Retained Audit and accepted LMS hours
     // contribute to completed, exactly once, through Monthly Logs when present.
     const submitted = monthlyLog ? monthlyLog.submitted : useAudit ? null : recordedAvailable ? (current?.submitted ?? 0) : null;
-    const completed = monthlyLog ? monthlyLog.completed : useAudit ? null : recordedAvailable ? historical + (current?.actual ?? 0) : null;
+    const completed = monthlyLog ? monthlyLog.completed : useAudit ? null : recordedAvailable ? (current?.includesHistorical ? 0 : historical) + (current?.actual ?? 0) : null;
     return {
       key,
       label: new Date(`${key}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric', timeZone: 'UTC' }),

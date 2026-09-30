@@ -44,3 +44,30 @@ def hydrate_material(row):
     row['_material_blob_ready'] = bool(row.get('material_backup_status') == 'available'
         and row.get('material_blob_container') and row.get('material_blob_name'))
     return row
+
+
+def material_quiz_definition(payload):
+    """Authored questions only; never expose solutions as a learner attempt."""
+    payload = object_value(payload)
+    quiz = object_value(payload.get('quiz'))
+    questions = quiz.get('questions') or payload.get('quiz_questions') or []
+    if isinstance(questions, str):
+        questions = json.loads(questions)
+    if not isinstance(questions, list):
+        return None
+    result = []
+    for index, question in enumerate(questions, 1):
+        if not isinstance(question, dict):
+            continue
+        body = question.get('question_body') or question.get('question_text')
+        if not body:
+            continue
+        options = question.get('options') or question.get('answer_options') or []
+        if not isinstance(options, list):
+            options = []
+        result.append({'question_id': question.get('question_id') or index,
+                       'question_order': question.get('question_order') or index,
+                       'question_text': body,
+                       'answer_options': [{'option_text': option.get('option_body') or option.get('option_text') or ''}
+                                          for option in options if isinstance(option, dict)]})
+    return {'description': None, 'questions': result} if result else None

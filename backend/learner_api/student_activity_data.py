@@ -220,7 +220,8 @@ def read_student_material(cursor, aptem_id, group_id, activity_id, *, include_so
                material.reading_iframe_url AS material_reading_url,
                material.audio_iframe_url AS material_audio_url,
                material.blob_container AS material_blob_container,material.blob_name AS material_blob_name,
-               material.blob_content_type AS material_blob_content_type,material.backup_status AS material_backup_status
+               material.blob_content_type AS material_blob_content_type,material.backup_status AS material_backup_status,
+               material.source_metadata->>'azure_storage_account' AS material_blob_account
         FROM "Learner".learners l
         JOIN "Learner".learner_source_course_memberships membership
           ON membership.learner_id=l.id AND membership.deleted_at IS NULL
@@ -229,7 +230,7 @@ def read_student_material(cursor, aptem_id, group_id, activity_id, *, include_so
         JOIN curriculum.source_activities catalogue ON catalogue.source_course_id=course.id
           AND catalogue.source_system='old_lms' AND catalogue.source_activity_kind='material'
           AND catalogue.deleted_at IS NULL
-        JOIN curriculum.source_materials material ON material.id=catalogue.source_material_id
+        JOIN curriculum.source_materials material ON material.material_id=catalogue.source_material_id
           AND material.source_system=catalogue.source_system AND material.deleted_at IS NULL
         LEFT JOIN "Last_audit".activities a ON catalogue.source_activity_id='material:' || a.activity_id::text
         LEFT JOIN "Learner".learner_external_identities identity
