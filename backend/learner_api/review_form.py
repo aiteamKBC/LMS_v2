@@ -59,6 +59,12 @@ SECTIONS_BY_REVIEW = {
         # "Workplace Health & Safety Declaration"
         "healthSafetyVetting",
     ),
+    "uln-privacy": (
+        # "ULN Privacy Notice & Learner Acknowledgement": the learner reads the
+        # ULN privacy notice, then confirms the acknowledgement.
+        "ulnPrivacyNotice",
+        "learnerAcknowledgement",
+    ),
 }
 
 # Every section name the API accepts, across all reviews.
@@ -237,7 +243,7 @@ def _plr_context(review, learner):
 # Every onboarding review: the employer is a party to the whole onboarding record,
 # not only the parts that name them. Per-row `Employer_signature_required` still
 # overrides this, so a specific review can be opted out without changing code.
-EMPLOYER_SIGNED_REVIEWS = ("training-plan", "eligibility-review", "workspace")
+EMPLOYER_SIGNED_REVIEWS = ("training-plan", "eligibility-review", "workspace", "uln-privacy")
 
 
 def employer_signature_required(review):

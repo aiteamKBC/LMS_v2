@@ -67,6 +67,7 @@ EVENT_TITLES = {
     "eligibility-review": "Eligibility Review & FS Discussion",
     "workspace": "RPL And Experience",
     "training-plan": "Workplace Health & Safety Declaration",
+    "uln-privacy": "ULN Privacy Notice & Learner Acknowledgement",
 }
 
 # JSON `type` vocabulary shared with the coach timetable frontend.
@@ -83,6 +84,7 @@ EVENT_JSON_TYPES = {
     "eligibility-review": "review",
     "workspace": "review",
     "training-plan": "review",
+    "uln-privacy": "review",
 }
 
 
@@ -119,17 +121,17 @@ COACH_APPROVAL_TYPES = frozenset(("student-support", "gateway", "other"))
 # The Microsoft Graph invite subject uses the same wording as the page — see
 # coach_api.BOOKED_EVENT_TITLES, which mirrors EVENT_TITLES above.
 
-# The three onboarding reviews a learner books straight after submitting their
+# The four onboarding reviews a learner books straight after submitting their
 # enrolment. Unlike catch-up/student-support these are bookable *while still
 # Onboarding* — they are the meetings that get the learner enrolled, so requiring
 # an Active mirror + assigned coach first would be circular. They are booked with
 # the learner's case owner (the enrolment officer) instead.
-ONBOARDING_REVIEW_TYPES = ("eligibility-review", "workspace", "training-plan")
+ONBOARDING_REVIEW_TYPES = ("eligibility-review", "workspace", "training-plan", "uln-privacy")
 
 # Same wording the calendar shows for these events.
 ONBOARDING_REVIEW_LABELS = {type_: EVENT_TITLES[type_] for type_ in ONBOARDING_REVIEW_TYPES}
 
-# Reviews that have a form to fill in after booking -- all three now do; the
+# Reviews that have a form to fill in after booking -- all four do; the
 # panels each one renders live in review_form.SECTIONS_BY_REVIEW.
 REVIEW_FORM_TYPES = ONBOARDING_REVIEW_TYPES
 
@@ -498,6 +500,50 @@ def _mark_imported_review_scheduled(review_id, learner_profile_id, scheduled_dat
                 f"Imported review {review_pk} was not found for learner profile {learner_profile_id} "
                 "or is not a schedulable review."
             )
+
+
+def _assignment_imported_mcm_month(profile_id, review_id):
+    """Validate the Aptem MCM an assignment booking names; return its month.
+
+    An Aptem-linked learner with imported Aptem MCMs gets no Curriculum MCMs
+    on the coach timetable (coach_api.views.resolve_coach_review_events), so
+    the imported row is the only MCM identity the coach can see. Only this
+    learner's own, still-open Aptem MCM row may be booked.
+
+    Returns (month or None, None) on success, or (None, (message, status)).
+    """
+    from .review_history import REVIEW_TYPES, _serialize_review
+
+    try:
+        review_pk = int(review_id)
+    except (TypeError, ValueError):
+        return None, ("reviewId must identify an imported Monthly Coaching Meeting.", 400)
+    with connection.cursor() as cursor:
+        cursor.execute(
+            '''
+            SELECT id, aptem_review_id, review_name, review_type, reviewer_name,
+                   learner_name, planned_scheduled_date, completed_date, status,
+                   review_data, extraction_status, last_error
+              FROM "Learner".reviews
+             WHERE id = %s
+               AND learner_id = %s
+               AND NULLIF(BTRIM(aptem_review_id), '') IS NOT NULL
+               AND LOWER(BTRIM(review_type)) = ANY(%s)
+            ''',
+            [review_pk, profile_id, [value.casefold() for value in REVIEW_TYPES["monthly-coaching"]]],
+        )
+        columns = [column[0] for column in cursor.description]
+        row = cursor.fetchone()
+    if row is None:
+        return None, ("This Monthly Coaching Meeting is not available for your assignment.", 404)
+    review = _serialize_review(dict(zip(columns, row)), {})
+    if review["completedDate"] or review["status"] in {
+        CoachCalendarEvent.STATUS_COMPLETED,
+        CoachCalendarEvent.STATUS_AWAITING_SIGNATURE,
+        CoachCalendarEvent.STATUS_CANCELLED,
+    }:
+        return None, ("A submitted or completed review cannot be scheduled again.", 409)
+    return (review["plannedDate"] or "")[:7] or None, None
 
 
 def coaching_events_for_learner(learner, mirror):
@@ -1346,6 +1392,21 @@ def learner_calendar(request, kind, pk):
     )
 
 
+def onboarding_review_idempotency_parts(kind, pk, session_type, cancelled_count):
+    """Logical identity of one onboarding review booking, before hashing.
+
+    The slot is left out on purpose: each review type is booked once, so a
+    retried POST replays that booking. What does make a new booking is a
+    cancellation -- the cancelled row keeps its key, so without the count a
+    rebooking would match it and be refused as a different booking. A count of 0 gives the same parts as before, so a key
+    already stored for a first booking still matches its retries.
+    """
+    parts = [kind, str(pk), session_type]
+    if cancelled_count:
+        parts.append(f"after-cancelled:{cancelled_count}")
+    return parts
+
+
 @csrf_exempt
 # The one write a staff viewer keeps on a learner's page: arranging a coaching
 # session is administration, not a claim about the learner's own work.
@@ -1423,13 +1484,13 @@ def learner_calendar_book(request, kind, pk):
             return _error(
                 "No case owner has been assigned to you yet. Please contact your programme team.", 400
             )
-        if is_first_session and _still_enrolling(kind, learner):
+        if is_first_session and _still_enrolling(kind, learner) and not _may_book_first_session_early(kind, learner):
             # The gate stops offering it, but the calendar still lists the type:
             # the order is kept here, where a stale tab cannot get round it.
             return _error(
                 "Your first learning session is booked once your enrolment is complete: "
-                "your enrolment form, your three onboarding reviews and your compliance "
-                "documents.", 400
+                "your enrolment form, your onboarding reviews and your signature on "
+                "each of your compliance documents.", 400
             )
         if is_first_session:
             # There is only ever one first session. Without this a learner
@@ -1501,8 +1562,29 @@ def learner_calendar_book(request, kind, pk):
     # The assignment screen and imported reviews both send assignmentMonth.
     # An explicit context keeps their eligibility rules and identities separate.
     assignment_booking = _s(payload.get("bookingContext")) == "monthly-assignment"
-    if assignment_booking and (session_type != "mcr" or not assignment_month or _s(payload.get("reviewId"))):
-        return _error("Monthly assignment bookings require an MCM, an assignment month, and no imported review.", 400)
+    if assignment_booking and (
+        session_type != "mcr" or not assignment_month
+        or (imported_review_id and _s(payload.get("eventKey")))
+    ):
+        return _error(
+            "Monthly assignment bookings require an MCM, an assignment month, and either "
+            "an official slot or an imported Aptem MCM.", 400,
+        )
+    # The imported review's own month keys its booking, as on the Calendar page,
+    # so the same Aptem MCM keeps one meeting whichever screen booked it.
+    idempotency_month = assignment_month
+    if assignment_booking and imported_review_id:
+        if mirror is None:
+            return _error("Only Active learners can book programme-cycle sessions.", 400)
+        try:
+            review_month, review_error = _assignment_imported_mcm_month(mirror.id, imported_review_id)
+        except DatabaseError as exc:
+            logger.exception("learner_calendar_book: imported MCM lookup failed")
+            return _error(f"Database error: {exc}", 502)
+        if review_error:
+            message, status_code = review_error
+            return _error(message, status_code)
+        idempotency_month = review_month or assignment_month
     # Generic MCM/PR requests still resolve to an official Curriculum
     # occurrence before they use the direct scheduling flow below.
     direct_cycle_request = session_type in {"mcr", "progress-review"} and not _s(payload.get("eventKey")) and not assignment_month
@@ -1534,7 +1616,9 @@ def learner_calendar_book(request, kind, pk):
                 if assignment_booking:
                     return _error("Book a 60-minute MCM within either monthly assignment booking window.", 400)
                 return _error("Book a 60-minute MCM from the last ten days of the submission month through the 5th of the following month.", 400)
-            if not _s(payload.get("eventKey")):
+            # A validated imported Aptem MCM is already the Review's identity
+            # (see _assignment_imported_mcm_month) and books on the imported path below.
+            if not _s(payload.get("eventKey")) and not (assignment_booking and imported_review_id):
                 # assignment_month is an eligibility gate (the window check
                 # above), never the Review's identity -- resolve the actual
                 # canonical Curriculum occurrence instead of falling through
@@ -1712,15 +1796,37 @@ def learner_calendar_book(request, kind, pk):
         supplied_key = _s(request.headers.get("Idempotency-Key"))
         if assignment_month:
             booking_kind = "mcm" if session_type == "mcr" else session_type
-            idempotency_key = f"learner-book:{booking_kind}:{kind}:{pk}:{assignment_month}:{imported_review_id or 'legacy'}"
+            idempotency_key = f"learner-book:{booking_kind}:{kind}:{pk}:{idempotency_month}:{imported_review_id or 'legacy'}"
+            if assignment_booking and imported_review_id:
+                # Booking moves the imported row's planned date, so an earlier
+                # booking of this review can carry another month. Reuse it
+                # rather than inviting the coach to a second meeting.
+                earlier = (
+                    CoachCalendarEvent.objects.filter(
+                        owner_email=owner_email.strip().lower(),
+                        idempotency_key__startswith=f"learner-book:{booking_kind}:{kind}:{pk}:",
+                        idempotency_key__endswith=f":{imported_review_id}",
+                    )
+                    .order_by("-pk")
+                    .values_list("idempotency_key", flat=True)
+                    .first()
+                )
+                idempotency_key = earlier or idempotency_key
         elif supplied_key:
             idempotency_key = calendar_idempotency_key(request)
         else:
             # Backward-compatible deterministic identity for existing learner
             # clients. Onboarding review identity intentionally ignores the
             # slot because each review type is a one-time logical operation.
-            logical_parts = [kind, str(pk), session_type]
-            if not is_onboarding_review:
+            if is_onboarding_review:
+                cancelled_count = CoachCalendarEvent.objects.filter(
+                    learner_id=pk,
+                    event_type=session_type,
+                    status=CoachCalendarEvent.STATUS_CANCELLED,
+                ).count()
+                logical_parts = onboarding_review_idempotency_parts(kind, pk, session_type, cancelled_count)
+            else:
+                logical_parts = [kind, str(pk), session_type]
                 logical_parts.extend(
                     [
                         scheduled_date.isoformat(),
@@ -1744,7 +1850,7 @@ def learner_calendar_book(request, kind, pk):
             # Reuse bookings created by the previous month-only key format.
             replay = CoachCalendarEvent.objects.filter(
                 owner_email=owner_email.strip().lower(),
-                idempotency_key=f"learner-book:{booking_kind}:{kind}:{pk}:{assignment_month}",
+                idempotency_key=f"learner-book:{booking_kind}:{kind}:{pk}:{idempotency_month}",
             ).first()
         if replay is not None:
             if assignment_month:
@@ -2187,6 +2293,22 @@ def _still_enrolling(kind, learner):
     return programme_status(learner).strip().casefold() in APPRENTICE_ENROLMENT_STATUSES
 
 
+def _may_book_first_session_early(kind, learner):
+    """Whether an apprentice in Delivery may already book their first session.
+
+    Delivery is the last enrolment stage: the reviews are done and the four
+    compliance documents are being signed. Once the learner's own signatures are
+    on all four, the booking opens for them — the employer's and provider's may
+    still be outstanding.
+    """
+    from .learner_progression import learner_signed_compliance_documents
+
+    if programme_status(learner).strip().casefold() != DELIVERY_PROGRAMME_STATUS.casefold():
+        return False
+    learner_type = _s(getattr(learner, "learner_type", "")) or _s(kind)
+    return learner_signed_compliance_documents(learner_type, learner.pk)
+
+
 @learner_self_or_staff(kwarg="pk")
 def learner_first_session(request, kind, pk):
     """Whether this learner has booked their first session, and when.
@@ -2275,6 +2397,10 @@ def learner_first_session(request, kind, pk):
         "event": _serialize_event(record) if record is not None else None,
         "startsOn": starts_on.isoformat() if starts_on else None,
         "access": access,
+        # Whether the learner may book (or has booked) it from their First
+        # Learning Session tab. ``access`` stays "enrolling" for an apprentice
+        # in Delivery, so the full-page gate never takes over mid-enrolment.
+        "canBook": access != "enrolling" or _may_book_first_session_early(kind, learner),
     })
     # Never cached: ``access`` turns over at midnight UK time, so a stored copy
     # would hold a learner out on the morning of their own session, or let them

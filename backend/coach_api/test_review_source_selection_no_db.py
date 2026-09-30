@@ -99,7 +99,7 @@ class SharedReviewSourceResolverTests(SimpleTestCase):
     @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
     @patch("coach_api.views.fetch_aptem_review_events")
     @patch("coach_api.views.resolve_effective_aptem_ids", return_value=({1: 101}, set()))
-    def test_aptem_learner_without_aptem_mcm_gets_curriculum_mcm_only(
+    def test_aptem_learner_without_imported_mcm_does_not_get_curriculum_fallback(
         self, _identities, fetch_aptem, _source_rows, _templates, _anchor, _window,
         _programme, occurrences, build_event,
     ):
@@ -115,12 +115,11 @@ class SharedReviewSourceResolverTests(SimpleTestCase):
 
         result = views.resolve_coach_review_events("coach@example.invalid", "Coach", [learner(1)])
 
-        self.assertEqual(
-            [(event["source"], event["reviewSource"]) for event in result["events"]],
-            [("progress-review", "aptem"), ("mcr", "curriculum")],
-        )
+        self.assertEqual(result["events"], [aptem_event])
+        occurrences.assert_not_called()
+        build_event.assert_not_called()
         self.assertEqual(result["reviewGenerationIssues"], [])
-        self.assertEqual(result["sourceCounts"]["curriculumMcmFallbackLearners"], 1)
+        self.assertEqual(result["sourceCounts"]["curriculumMcmFallbackLearners"], 0)
         self.assertEqual(result["aptemProfileIds"], {1})
 
     @patch("coach_api.views.resolve_curriculum_review_occurrences", return_value=[])

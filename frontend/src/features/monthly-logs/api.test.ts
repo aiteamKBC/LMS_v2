@@ -10,7 +10,7 @@ beforeEach(() => {
   setCoachViewAs({ email: 'other-coach@example.test' }, 'admin@example.test');
   vi.mocked(readLearnerJson).mockResolvedValue({ parts: [] });
 });
-afterEach(() => { clearCoachViewAs(); vi.unstubAllGlobals(); });
+afterEach(() => { clearCoachViewAs(); vi.unstubAllGlobals(); window.history.pushState({}, '', '/'); });
 
 describe('monthly log workspace scope', () => {
   it('does not carry a previous coach selection into any learner record request', async () => {
@@ -29,6 +29,23 @@ describe('monthly log workspace scope', () => {
     await getLogSummary('7', undefined, 'coach');
     expect(readLearnerJson).toHaveBeenCalledWith(
       '/learner_api/monthly-logs/7/?perspective=coach&viewAsCoach=other-coach%40example.test', expect.anything());
+  });
+
+  it('requests the linked MCM month so an unsigned empty log can be displayed', async () => {
+    window.history.pushState({}, '', '/learner/monthly-logs/apprenticeship/7/2026-09?workflow=mcm&source=mcm');
+    await getLogSummary('7', undefined, 'learner', '2026-09');
+    expect(readLearnerJson).toHaveBeenCalledWith(
+      '/learner_api/monthly-logs/7/?perspective=learner&workflow=mcm&month=2026-09', expect.anything());
+  });
+
+  it('carries the MCM workflow when the report is embedded outside the logs route', async () => {
+    window.history.pushState({}, '', '/learner/monthly-coaching/mcr-7');
+    await getLogSummary('7', undefined, 'learner', '2026-09', 'mcm');
+    await getLogMonth('7', '2026-09', undefined, 'learner', false, 'mcm');
+    expect(readLearnerJson).toHaveBeenNthCalledWith(1,
+      '/learner_api/monthly-logs/7/?perspective=learner&workflow=mcm&month=2026-09', expect.anything());
+    expect(readLearnerJson).toHaveBeenNthCalledWith(2,
+      '/learner_api/monthly-logs/7/2026-09/?perspective=learner&workflow=mcm', expect.anything());
   });
 
   it('carries the perspective and CSRF token when saving a signature', async () => {

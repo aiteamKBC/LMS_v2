@@ -189,7 +189,7 @@ export function WorkspaceShell({
   userName,
   userRole,
   workspaceLabel,
-  showBackButton = false,
+  showBackButton,
   backFallbackHref,
   breadcrumbCurrentLabel,
   hidePageChrome = false,
@@ -250,6 +250,7 @@ export function WorkspaceShell({
     ? [...stableNavItems, { id: 'personal-courses', label: 'My Courses', icon: 'ri-graduation-cap-line', href: '/my-courses' }]
     : stableNavItems;
   const navigate = useNavigate();
+  const displayBackButton = showBackButton ?? ['coach', 'learner', 'curriculum'].includes(role);
   const [searchOpen, setSearchOpen] = useState(false);
   const [previousRoute, setPreviousRoute] = useState('');
 
@@ -470,9 +471,9 @@ export function WorkspaceShell({
         )}
 
         {/* Breadcrumbs */}
-        {!hidePageChrome && (showBackButton || (!hideBreadcrumbs && breadcrumbs.length > 0)) && (
-          <div className={`workspace-breadcrumbs mx-2 flex ${showBackButton ? 'min-h-12 gap-3 py-1.5' : 'h-8'} shrink-0 items-center overflow-hidden rounded-xl border-b border-background-300/40 bg-background-200 px-3 md:px-5 lg:ml-0 lg:mr-3`}>
-            {showBackButton && <button type="button" onClick={handleReturnToPreviousWindow} disabled={!canGoBack}
+        {!hidePageChrome && (displayBackButton || (!hideBreadcrumbs && breadcrumbs.length > 0)) && (
+          <div className={`workspace-breadcrumbs mx-2 flex ${displayBackButton ? 'min-h-12 gap-3 py-1.5' : 'h-8'} shrink-0 items-center overflow-hidden rounded-xl border-b border-background-300/40 bg-background-200 px-3 md:px-5 lg:ml-0 lg:mr-3`}>
+            {displayBackButton && <button type="button" onClick={handleReturnToPreviousWindow} disabled={!canGoBack}
               className="kbc-workspace-back" aria-label="Back to previous page"
               title={!canGoBack ? 'You are on the first page' : previousRoute ? 'Back to the previous page' : 'Back'}>
               <ArrowLeft size={16} aria-hidden="true" /><span>Back</span>

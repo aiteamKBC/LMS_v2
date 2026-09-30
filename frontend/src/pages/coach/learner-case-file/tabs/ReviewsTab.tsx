@@ -4,7 +4,8 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { cn } from '@/lib/cn';
-import type { CaseFileReviewMeeting, CoachLearnerCaseFileData } from '../types';
+import type { CaseFileReviewGroup, CaseFileReviewMeeting, CoachLearnerCaseFileData } from '../types';
+import { caseFileReviewCategory, type CaseFileReviewCategory } from '../data';
 import type { useCaseFileReviews } from '../useCaseFileReviews';
 import { ReferencePanel } from '../components/CaseFilePrimitives';
 import styles from '../learnerCaseFile.module.css';
@@ -20,18 +21,30 @@ export function ReviewsTab({
   onOpen: (item: CaseFileReviewMeeting) => void;
   requestedReviewId?: string;
 }) {
-  type ReviewFilter = 'all' | 'progress-review' | 'mcr' | 'completed' | 'upcoming';
+  type ReviewTypeFilter = 'all' | CaseFileReviewCategory;
+  type ReviewStatusFilter = 'all' | 'completed' | 'upcoming';
   const pageSize = 10;
-  const [filter, setFilter] = useState<ReviewFilter>('all');
+  const [typeFilter, setTypeFilter] = useState<ReviewTypeFilter>('all');
+  const [statusFilter, setStatusFilter] = useState<ReviewStatusFilter>('all');
   const [page, setPage] = useState(1);
   const reviewsLoading = reviewsState.loading;
-  const reviewItems = (reviewsState.data?.groups || []).flatMap(group => group.items);
+  const reviewGroups = reviewsState.data?.groups || [];
+  const reviewItems = reviewGroups.flatMap(group => group.items);
   const isUpcoming = (item: CaseFileReviewMeeting) => !['completed', 'cancelled'].includes(item.status);
-  const visibleItems = reviewItems.filter(item => {
-    if (filter === 'all') return true;
-    if (filter === 'completed') return item.status === 'completed';
-    if (filter === 'upcoming') return isUpcoming(item);
-    return item.source === filter;
+  const visibleItems = reviewGroups.flatMap(group => {
+    const groupCategory = reviewGroupCategory(group);
+    // Keep the group as a useful fallback for legacy/generic rows, but always
+    // validate the item's own classification for the system MCM/PR groups.
+    // This prevents a stale/mixed API group from leaking a Progress Review
+    // row into the Monthly Coaching Meeting filter.
+    const typeItems = group.items.filter(item => {
+      if (typeFilter === 'all') return true;
+      const itemCategory = caseFileReviewCategory(item);
+      if (groupCategory === null) return itemCategory === typeFilter;
+      return groupCategory === typeFilter && itemCategory === typeFilter;
+    });
+    return typeItems.filter(item => statusFilter === 'all'
+      || (statusFilter === 'completed' ? item.status === 'completed' : isUpcoming(item)));
   });
   const totalPages = Math.max(1, Math.ceil(visibleItems.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -50,15 +63,19 @@ export function ReviewsTab({
   }, [currentPage, page]);
   const summaries = [
     ['Total Reviews', reviewItems.length],
-    ['Progress Reviews', reviewItems.filter(item => item.source === 'progress-review').length],
-    ['Monthly Coaching Meetings', reviewItems.filter(item => item.source === 'mcr').length],
+    ['Progress Reviews', reviewItems.filter(item => caseFileReviewCategory(item) === 'progress-review').length],
+    ['Monthly Coaching Meetings', reviewItems.filter(item => caseFileReviewCategory(item) === 'mcr').length],
     ['Completed', reviewItems.filter(item => item.status === 'completed').length],
     ['Upcoming', reviewItems.filter(isUpcoming).length],
   ] as const;
-  const filters: Array<{ id: ReviewFilter; label: string }> = [
+  const typeFilters: Array<{ id: ReviewTypeFilter; label: string }> = [
     { id: 'all', label: 'All' },
     { id: 'progress-review', label: 'Progress Review' },
     { id: 'mcr', label: 'Monthly Coaching Meeting' },
+    { id: 'review', label: 'Review' },
+  ];
+  const statusFilters: Array<{ id: ReviewStatusFilter; label: string }> = [
+    { id: 'all', label: 'All statuses' },
     { id: 'completed', label: 'Completed' },
     { id: 'upcoming', label: 'Upcoming' },
   ];
@@ -87,26 +104,43 @@ export function ReviewsTab({
           <span className="mt-1 block text-xs font-semibold text-foreground-500">{label}</span>
         </div>)}
       </div>
-      <ReferencePanel title="Review History" subtitle="Progress reviews and monthly coaching meetings for this learner" icon="ri-file-list-3-line" tone="primary">
+      <ReferencePanel title="Review History" subtitle="Curriculum reviews and coaching meetings for this learner" icon="ri-file-list-3-line" tone="primary">
         {reviewsState.error ? <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
           <span>{reviewsState.error}</span> <button type="button" onClick={reviewsState.retry}>Retry reviews</button>
         </div> : null}
-        <div className="mb-4 flex flex-wrap gap-2" aria-label="Review filters">
-          {filters.map(option => <button key={option.id} type="button" aria-pressed={filter === option.id} onClick={() => { setFilter(option.id); setPage(1); }}
-            className={cn('rounded-full border px-3 py-1.5 text-xs font-semibold transition', filter === option.id ? 'border-primary-600 bg-primary-600 text-white' : 'border-foreground-200 bg-white text-foreground-700 hover:border-primary-300')}>
-            {option.label}
-          </button>)}
+        <div className="mb-4 flex flex-wrap items-center gap-x-4 gap-y-2" aria-label="Review filters">
+          <div className="flex flex-wrap gap-2" aria-label="Review type filters">
+            {typeFilters.map(option => <button key={option.id} type="button" aria-pressed={typeFilter === option.id} onClick={() => { setTypeFilter(option.id); setPage(1); }}
+              className={cn('rounded-full border px-3 py-1.5 text-xs font-semibold transition', typeFilter === option.id ? 'border-primary-600 bg-primary-600 text-white' : 'border-foreground-200 bg-white text-foreground-700 hover:border-primary-300')}>
+              {option.label}
+            </button>)}
+          </div>
+          <div className="flex flex-wrap gap-2" aria-label="Review status filters">
+            {statusFilters.map(option => <button key={option.id} type="button" aria-pressed={statusFilter === option.id} onClick={() => { setStatusFilter(option.id); setPage(1); }}
+              className={cn('rounded-full border px-3 py-1.5 text-xs font-semibold transition', statusFilter === option.id ? 'border-primary-600 bg-primary-600 text-white' : 'border-foreground-200 bg-white text-foreground-700 hover:border-primary-300')}>
+              {option.label}
+            </button>)}
+          </div>
         </div>
         {reviewsLoading ? <div aria-label="Loading reviews"><RowsSkeleton rows={5} avatar={false} /></div> : reviewsState.error ? null : reviewItems.length === 0
           ? <div className={styles.empty}><p>No reviews found for this learner.</p></div>
           : visibleItems.length === 0 ? <div className={styles.empty}><p>No reviews match this filter.</p></div>
-          : <><div className="overflow-x-auto"><table className="w-full min-w-[850px] text-left text-xs">
+          : <><div className="overflow-x-auto"><table className="w-full min-w-[1000px] text-left text-xs">
             <thead><tr className="border-b border-foreground-200 text-foreground-500">
-              {['Review Type', 'Planned Date', 'Completed Date', 'Status', 'Reviewer', 'Actions'].map(label => <th key={label} className="px-3 py-3 font-semibold">{label}</th>)}
+              {['Review Type', 'Planned Date', 'Scheduled Date & Time', 'Completed Date', 'Status', 'Reviewer', 'Actions'].map(label => <th key={label} className="px-3 py-3 font-semibold">{label}</th>)}
             </tr></thead>
             <tbody>{paginatedItems.map(item => <tr key={item.id} className="border-b border-foreground-100 last:border-0">
               <td className="px-3 py-3 font-semibold text-foreground-900">{item.reviewTypeName}</td>
               <td className="px-3 py-3 text-foreground-700">{item.plannedDate}</td>
+              <td
+                className="px-3 py-3 text-foreground-700"
+                aria-label={item.scheduledDate === '--' ? 'Not scheduled' : `${item.scheduledDate} at ${item.scheduledTime}`}
+              >
+                {item.scheduledDate === '--' ? '--' : <>
+                  <span className="block">{item.scheduledDate}</span>
+                  <span className="mt-0.5 block text-foreground-500">{item.scheduledTime}</span>
+                </>}
+              </td>
               <td className="px-3 py-3 text-foreground-700">{item.completedDate}</td>
               <td className="px-3 py-3"><StatusBadge status={item.status} label={item.statusLabel} size="sm" /></td>
               <td className="px-3 py-3 text-foreground-700">{item.reviewer}</td>
@@ -162,4 +196,16 @@ function reviewGenerationIssueMessage(code: string) {
     return 'No enabled Review templates are configured for this learner\'s Curriculum programme.';
   }
   return 'The review schedule could not be generated for this learner. Check their enrolment and Curriculum configuration.';
+}
+
+function reviewGroupCategory(group: CaseFileReviewGroup): CaseFileReviewCategory | null {
+  const label = group.title.trim().toLowerCase().replace(/\s+/g, ' ');
+  if (label === 'monthly coaching meeting') return 'mcr';
+  if (label === 'progress review') return 'progress-review';
+  if (label === 'reviews' || label === 'all reviews') return null;
+  return caseFileReviewCategory(group.items[0] || {
+    source: 'review',
+    reviewTypeName: group.title,
+    reviewTypeCode: null,
+  });
 }

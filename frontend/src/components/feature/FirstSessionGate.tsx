@@ -149,7 +149,8 @@ function Holding({ state, kind, learnerId, onBooked, onSignOut }: {
   );
 }
 
-function Waiting({ state }: { state: LearnerFirstSession }) {
+/** Booked; shown until the session day (also on the learner's First Learning Session page). */
+export function Waiting({ state }: { state: LearnerFirstSession }) {
   const time = (state.event?.scheduledTime || '').slice(0, 5);
 
   return (
@@ -249,7 +250,8 @@ function bookable(slots: SessionSlot[], time: string): boolean {
   return slots.some(slot => slot.time === time && slot.available);
 }
 
-function Booking({ state, kind, learnerId, onBooked }: {
+/** The booking form (also on the learner's First Learning Session page). */
+export function Booking({ state, kind, learnerId, onBooked }: {
   state: LearnerFirstSession;
   kind: LearnerKind;
   learnerId: string;

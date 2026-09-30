@@ -1567,6 +1567,22 @@ class HealthSafetyReviewDetail(_ReviewDetail):
         return f"Health & safety review {self.event_key}"
 
 
+class UlnPrivacyReviewDetail(_ReviewDetail):
+    """enrolment."Review_ULN_Privacy" — ULN Privacy Notice & Learner Acknowledgement."""
+
+    # "Yes" once the learner has read the ULN privacy notice / confirmed the
+    # acknowledgement; saving each panel records it.
+    privacy_notice_read = models.TextField(db_column="Privacy_notice_read", blank=True)
+    learner_acknowledged = models.TextField(db_column="Learner_acknowledged", blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'enrolment"."Review_ULN_Privacy'
+
+    def __str__(self):
+        return f"ULN privacy review {self.event_key}"
+
+
 class Organisation(models.Model):
     """Unmanaged mapping of enrolment."Organisations" — the employing companies.
 

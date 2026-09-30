@@ -3,7 +3,6 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, saveLearnerEventReviewAnswers, signLearnerProgressReview, type LearnerCalendarEvent } from '@/api/learnerCalendar';
-import { fetchEvidence } from '@/api/evidence';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { responsesForSection, type ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
@@ -11,10 +10,7 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { useReviewSessions } from '@/pages/learner/reviews/useReviewSessions';
 import { isoDate } from '@/pages/learner/reviews/bookingDates';
 import { CoachMeetingArtifactsPanel } from '@/pages/coach/shared/CoachMeetingArtifactsPanel';
-import ProgressReviewSlidesModal, { type ProgressReviewSlidesDeck } from '@/pages/coach/progress-reviews/components/ProgressReviewSlidesModal';
-import { buildProgressReviewSlidesDeck } from '@/pages/coach/progress-reviews/page';
-import type { CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
-import ProgressReviewSignModal from './components/ProgressReviewSignModal';
+import ProgressReviewPptxModal from '@/pages/coach/progress-reviews/components/ProgressReviewPptxModal';
 import styles from './progressReviews.module.css';
 import { useMeetingAttendance } from '../reviews/useMeetingAttendance';
 import type { MeetingAttendance } from '@/api/meetingAttendance';
@@ -333,11 +329,7 @@ export default function ProgressReviewsPage() {
   const error = loadError || actionError;
   const [selectedId, setSelectedId] = useState(reviewId || '');
   const [openSections, setOpenSections] = useState<string[]>(['progress-checks']);
-  const [slidesDeck, setSlidesDeck] = useState<ProgressReviewSlidesDeck | null>(null);
-  const [slidesBusy, setSlidesBusy] = useState(false);
-  const [signing, setSigning] = useState(false);
-  const [signatureBusy, setSignatureBusy] = useState(false);
-  const [signatureError, setSignatureError] = useState('');
+  const [showSlidesModal, setShowSlidesModal] = useState(false);
 
   const completed = useMemo(() => reviews.filter((review) => review.status === 'completed'), [reviews]);
   const planned = useMemo(() => reviews.filter((review) => !['completed', 'cancelled'].includes(review.status)), [reviews]);
@@ -392,45 +384,13 @@ export default function ProgressReviewsPage() {
     learnerMeetingArtifactContentUrl(myLearner.kind, myLearner.id, eventKey, artifactType, artifactId, options)
   ), [myLearner.id, myLearner.kind]);
 
-  const showSlides = async () => {
-    if (!selected || !learner) return;
-    setSlidesBusy(true);
-    setError('');
-    try {
-      const evidence = await fetchEvidence(myLearner.kind, myLearner.id).catch(() => []);
-      const review = {
-        ...selected,
-        learner: learner.name,
-        learnerId: myLearner.id,
-        learnerType: myLearner.kind,
-        programme: learner.programme,
-        ownerName: selected.coachName,
-      } as unknown as CoachCalendarEvent;
-      setSlidesDeck(buildProgressReviewSlidesDeck(review, selected.coachName || 'Coach', myLearner.kind, learner, evidence));
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Could not prepare the progress review slides.');
-    } finally {
-      setSlidesBusy(false);
-    }
-  };
+  const showSlides = () => setShowSlidesModal(true);
 
   const saveSignature = async (signature: string) => {
     if (!selected || !canProgress) return;
-    setSignatureBusy(true);
-    setSignatureError('');
-    try {
-      const result = await signLearnerProgressReview(myLearner.kind, myLearner.id, selected.eventKey || selected.id, { name: learner?.name || 'Learner', signature });
-      setEvents((current) => current.map((event) => event.id === selected.id ? { ...event, ...result.event } : event));
-      if (instanceBacked) reviewInstance.refresh();
-      setSigning(false);
-    } catch (reason) {
-      setSignatureError(reason instanceof Error ? reason.message : 'Could not save your signature.');
-      // The shared form owns its inline error/retry state. The legacy modal
-      // catches this rejection at its own call site and uses signatureError.
-      throw reason;
-    } finally {
-      setSignatureBusy(false);
-    }
+    const result = await signLearnerProgressReview(myLearner.kind, myLearner.id, selected.eventKey || selected.id, { name: learner?.name || 'Learner', signature });
+    setEvents((current) => current.map((event) => event.id === selected.id ? { ...event, ...result.event } : event));
+    if (instanceBacked) reviewInstance.refresh();
   };
 
   return (
@@ -499,7 +459,7 @@ export default function ProgressReviewsPage() {
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {selected?.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className={`${styles.primaryButton} meeting-join-action inline-flex items-center rounded-lg px-4 py-2.5 text-xs font-extrabold`}><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}
-                      {!selected.importedReview && <button type="button" onClick={() => void showSlides()} disabled={slidesBusy} className="inline-flex items-center rounded-lg border border-primary-200/60 bg-white px-3.5 py-2 text-xs font-bold text-primary-900 shadow-sm hover:bg-primary-50 disabled:opacity-60"><AppIcon className={slidesBusy ? 'ri-loader-4-line mr-1.5 animate-spin' : 'ri-slideshow-line mr-1.5'} />{slidesBusy ? 'Preparing slides…' : 'Show slides'}</button>}
+                      {!selected.importedReview && <button type="button" onClick={showSlides} className="inline-flex items-center rounded-lg border border-primary-200/60 bg-white px-3.5 py-2 text-xs font-bold text-primary-900 shadow-sm hover:bg-primary-50 disabled:opacity-60"><AppIcon className="ri-slideshow-line mr-1.5" />Show slides</button>}
                       {!selected.importedReview && <button type="button" onClick={addToCalendar} disabled={!selected?.scheduledDate || !selected.scheduledTime} className="rounded-lg border border-primary-200/60 bg-primary-100/60 px-3.5 py-2 text-xs font-bold text-primary-800 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-calendar-check-line mr-1.5" />Add to calendar</button>}
                     </div>
                   </div>
@@ -510,11 +470,10 @@ export default function ProgressReviewsPage() {
                     <CoachMeetingArtifactsPanel event={{ ...selected, eventKey: selected.eventKey || selected.id }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />
                   ) : null}
 
-                  {selected && !selected.importedReview && !instanceBacked && ['awaiting-signature', 'completed'].includes(selected.status) ? (
+                  {selected && !selected.importedReview && !instanceBacked && selected.learnerSigned && ['awaiting-signature', 'completed'].includes(selected.status) ? (
                     <div className="flex flex-col gap-3 rounded-xl border border-violet-200 bg-violet-50 p-4 sm:flex-row sm:items-center">
-                      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-100 text-violet-700"><AppIcon className={selected.learnerSigned ? 'ri-checkbox-circle-line' : 'ri-file-sign-line'} /></span>
-                      <div className="flex-1"><p className="text-sm font-bold text-violet-950">{selected.learnerSigned ? 'Slides signed by learner' : 'Your formal acknowledgement is required'}</p><p className="mt-1 text-xs text-violet-700">{selected.learnerSigned ? `Signed ${selected.learnerSignedAt ? formatDate(selected.learnerSignedAt.split('T')[0]) : ''}` : 'Review the slides, then sign to confirm the progress review record.'}</p></div>
-                      {!selected.learnerSigned && canProgress ? <button type="button" onClick={() => void showSlides()} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-violet-700 px-4 text-xs font-bold text-white shadow-sm hover:bg-violet-800"><AppIcon className="ri-slideshow-line" />Show slides & sign</button> : null}
+                      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-violet-100 text-violet-700"><AppIcon className="ri-checkbox-circle-line" /></span>
+                      <div className="flex-1"><p className="text-sm font-bold text-violet-950">Slides signed by learner</p><p className="mt-1 text-xs text-violet-700">{`Signed ${selected.learnerSignedAt ? formatDate(selected.learnerSignedAt.split('T')[0]) : ''}`}</p></div>
                     </div>
                   ) : null}
                   <div>
@@ -573,17 +532,17 @@ export default function ProgressReviewsPage() {
           </div>
         )}
       </div>
-      <ProgressReviewSlidesModal
-        open={Boolean(slidesDeck)}
-        deck={slidesDeck}
-        onClose={() => setSlidesDeck(null)}
-        primaryAction={canProgress && selected && !selected.importedReview && !instanceBacked && ['awaiting-signature', 'completed'].includes(selected.status) && !selected.learnerSigned ? (
-          <button type="button" onClick={() => setSigning(true)} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-violet-700 px-4 text-[12px] font-bold text-white shadow-sm transition hover:bg-violet-800">
-            <AppIcon className="ri-quill-pen-line" />Sign slides
-          </button>
-        ) : null}
-      />
-      {signing ? <ProgressReviewSignModal name={learner?.name || 'Learner'} saving={signatureBusy} error={signatureError} onClose={() => setSigning(false)} onSign={(signature) => { void saveSignature(signature).catch(() => undefined); }} /> : null}
+      {showSlidesModal && selected && (
+        <ProgressReviewPptxModal
+          open kind="progress_review" access="viewer"
+          target={{
+            learnerId: myLearner.id, meetingDate: reviewDate(selected) || '', learnerName: learner?.name,
+            programme: learner?.programme, completed: selected.status === 'completed',
+            periodLabel: selected.sequence ? `Review ${selected.sequence}` : undefined,
+          }}
+          onClose={() => setShowSlidesModal(false)}
+        />
+      )}
     </WorkspaceShell>
   );
 }

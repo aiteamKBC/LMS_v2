@@ -882,6 +882,21 @@ class SourceProfileIdentityTests(SimpleTestCase):
 
 
 class CoachKsbEvidenceTests(SimpleTestCase):
+    def test_video_evidence_uses_authored_component_name_instead_of_media_type(self):
+        target = [{"code": "B1", "type": "Behaviours", "description": "Behaviour 1"}]
+        progress = [{
+            "kind": "video", "componentId": "VIDEO-1", "title": "Video",
+            "passed": True, "ksbs": ["B1"],
+        }]
+        training_plan = [{"moduleTitle": "Module 1", "weeks": [{"components": [{
+            "componentId": "VIDEO-1", "componentTitle": "Agile working techniques",
+        }]}]}]
+
+        details = build_ksb_completed_details(target, {"B1"}, progress, [], training_plan)
+
+        self.assertEqual(details[0]["sources"][0]["title"], "Agile working techniques")
+        self.assertEqual(details[0]["sources"][0]["componentId"], "VIDEO-1")
+
     def test_failed_quiz_codes_do_not_count_as_completed_ksbs(self):
         completed = completed_ksb_codes(
             [

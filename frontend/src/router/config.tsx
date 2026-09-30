@@ -170,6 +170,7 @@ const LearnerLearningPlanModulesPage = lazyRoute(() => import("../pages/learner/
 const LearnerOnboardingPage = lazyRoute(() => import("../pages/learner/onboarding/page"));
 const LearnerWelcomePage = lazyRoute(() => import("../pages/learner/welcome/page"));
 const LearnerCompliancePage = lazyRoute(() => import("../pages/learner/compliance/page"));
+const LearnerFirstSessionPage = lazyRoute(() => import("../pages/learner/first-session/page"));
 const LearnerOnboardingReviewsPage = lazyRoute(() => import("../pages/learner/onboarding/reviews/page"));
 const LearnerReviewFormPage = lazyRoute(() => import("../pages/learner/onboarding/reviews/form"));
 const LearnerProfilePage = lazyRoute(() => import("../pages/learner/profile/page"));
@@ -365,6 +366,12 @@ const routes: RouteObject[] = [
     // signed by them and their employer.
     path: "/learner/compliance-documents",
     element: <LearnerCompliancePage />,
+  },
+  {
+    // A Delivery apprentice books their first learning session here, once
+    // they have signed all four compliance documents.
+    path: "/learner/first-session",
+    element: <LearnerFirstSessionPage />,
   },
   {
     // Declared before the :stepSlug pattern below, which would otherwise

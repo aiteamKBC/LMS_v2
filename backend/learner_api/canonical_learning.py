@@ -12,7 +12,7 @@ import re
 from old_otjh.repository import query
 from old_otjh.service import ServiceError
 from .monthly_log_sources import decoded, number, row
-from .current_learning import current_records, merge_attempts, merge_submissions, project_current
+from .current_learning import current_records, merge_attempts, merge_submissions, project_current, source_payload_metadata
 
 UK = ZoneInfo('Europe/London')
 
@@ -122,7 +122,7 @@ def activity_rows(learner_id):
 def rows_for(owner):
     result = []
     for entry in (part for record in entries_for(owner) for part in allocations(record)):
-        source = decoded(entry.get('source_payload'), {})
+        source = source_payload_metadata(entry.get('source_payload'))
         at = local_instant(entry.get('reporting_started_at') or entry.get('reporting_ended_at'))
         ref = f"canonical:{entry['id']}"
         if entry.get('segment_id') is not None:
@@ -239,7 +239,7 @@ def recorded_course_items(courses, catalogue, records):
             and s.get('source_course_ref') and s.get('source_activity_id')
             for s in record.get('sources') or [])
         if not has_source_route:
-            ref = str(decoded(record.get('source_payload'), {}).get('original_source_ref') or '')
+            ref = str(source_payload_metadata(record.get('source_payload')).get('original_source_ref') or '')
             match = re.fullmatch(r'la:(\d+):(\d+)', ref)
             key = (match[1], 'material:' + match[2]) if match else None
             if key in definitions:
@@ -468,7 +468,7 @@ def overlay_subjects(payload, records, summarize):
             candidates = component_placements.get(component, set())
             if len(candidates) == 1:
                 keys.update(candidates)
-        source = decoded(record.get('source_payload'), {})
+        source = source_payload_metadata(record.get('source_payload'))
         match = re.fullmatch(r'la:(\d+):(\d+)', str(source.get('original_source_ref') or ''))
         key = (int(match[1]), int(match[2])) if match else None
         if not keys and key:

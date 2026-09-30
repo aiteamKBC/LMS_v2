@@ -15,6 +15,7 @@ vi.mock('@/api/reflectionSubmission', () => ({
 vi.mock('@/components/feature/AssignmentEvidence', () => ({ AssignmentEvidence: () => <div>Evidence uploader</div> }));
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: vi.fn().mockResolvedValue({ ksbs: [], activityFeed: [] }) }));
 vi.mock('@/api/learnerCalendar', () => ({ fetchLearnerCalendarEvents: vi.fn().mockResolvedValue({ events: [], bookingCalendar: { coveredYears: [2026], bankHolidays: [] } }), bookLearnerCalendarSession: vi.fn() }));
+vi.mock('@/api/reviewHistory', () => ({ fetchReviewHistory: vi.fn().mockResolvedValue({ learnerId: null, category: 'monthly-coaching', reviews: [] }) }));
 vi.mock('@/api/monthlyAssignment', async importOriginal => ({ ...await importOriginal<typeof import('@/api/monthlyAssignment')>(), checkMonthlyAssignment: vi.fn() }));
 
 const props = {

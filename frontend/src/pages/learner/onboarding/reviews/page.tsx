@@ -32,6 +32,7 @@ const REVIEW_ICONS: Record<OnboardingReviewType, string> = {
   'eligibility-review': 'ri-shield-check-line',
   workspace: 'ri-file-list-3-line',
   'training-plan': 'ri-heart-pulse-line',
+  'uln-privacy': 'ri-shield-user-line',
 };
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
@@ -376,9 +377,9 @@ function ReviewCard({
 }
 
 /**
- * The learner's three enrolment reviews.
+ * The learner's four enrolment reviews.
  *
- * Shown once the enrolment form has been submitted: all three must be booked
+ * Shown once the enrolment form has been submitted: all four must be booked
  * before the enrolment team finishes the enrolment. They are booked with the
  * learner's case owner rather than a coach — an onboarding learner has no coach
  * assigned yet, which is exactly what these meetings lead to.
@@ -411,9 +412,9 @@ export default function OnboardingReviewsPage() {
   useEffect(load, [load]);
 
   const bookedCount = data?.reviews.filter((r) => r.booked).length ?? 0;
-  const total = data?.reviews.length ?? 3;
+  const total = data?.reviews.length ?? 4;
   // Bookings whose invite never sent aren't really done -- surface them so the
-  // learner isn't left thinking all three meetings are confirmed.
+  // learner isn't left thinking all four meetings are confirmed.
   const notInvitedCount = data?.reviews.filter((r) => r.booked && r.event?.invited === false).length ?? 0;
 
   if (isCommercial) {
@@ -459,7 +460,7 @@ export default function OnboardingReviewsPage() {
               <i className="ri-lock-line text-3xl text-primary-600" aria-hidden="true" />
               <h2 className="mt-3 text-lg font-heading font-semibold text-foreground-900">Reviews open once your enrolment is submitted</h2>
               <p className="mt-2 text-[13px] leading-relaxed text-foreground-600">
-                Please complete every step of your enrolment and press Submit enrolment. You can then book your three
+                Please complete every step of your enrolment and press Submit enrolment. You can then book your four
                 enrolment reviews here.
               </p>
               <button className={`${btnPrimary} mt-5`} onClick={() => navigate(ONBOARDING_ROUTE)}>
@@ -479,7 +480,7 @@ export default function OnboardingReviewsPage() {
       navItems={ONBOARDING_NAV_ITEMS}
       workspaceLabel={learnerNav.workspaceLabel}
       pageTitle="Reviews"
-      pageSubtitle="Book your three enrolment reviews"
+      pageSubtitle="Book your four enrolment reviews"
       userName="Learner"
       userRole="Learner"
     >
@@ -489,7 +490,7 @@ export default function OnboardingReviewsPage() {
             <div className="min-w-0">
               <h2 className="text-[15px] font-heading font-semibold text-foreground-900">Your enrolment reviews</h2>
               <p className="text-[12px] text-foreground-500 mt-1 max-w-2xl leading-relaxed">
-                Thank you for submitting your enrolment. To complete it, please book all three reviews below with your
+                Thank you for submitting your enrolment. To complete it, please book all four reviews below with your
                 enrolment officer. Each one appears in your calendar and theirs.
               </p>
             </div>
@@ -545,7 +546,7 @@ export default function OnboardingReviewsPage() {
               <i className="ri-check-double-line" />
             </span>
             <div>
-              <p className="text-[13px] font-semibold text-emerald-800">All three reviews are booked</p>
+              <p className="text-[13px] font-semibold text-emerald-800">All four reviews are booked</p>
               <p className="text-[12px] text-emerald-700/90 mt-0.5">
                 Your enrolment officer will confirm your place once the reviews have taken place.
               </p>

@@ -34,7 +34,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from enrolment_api.auth import enrolment_login_required
+from enrolment_api.auth import employer_signing_party_error, enrolment_login_required
 
 from .learning_plan import _group_module_ids, _programme_modules, _saved_modules
 from .learner_progression import advance_learner
@@ -406,6 +406,9 @@ def sign_agreement(request, pk):
     if party not in SIGNING_PARTIES:
         allowed = "', '".join(SIGNING_PARTIES)
         return _error(f"party must be one of '{allowed}'.", 400)
+    party_error = employer_signing_party_error(request, party)
+    if party_error is not None:
+        return party_error
 
     signature = _s(payload.get("signature"))
     name = _s(payload.get("name"))

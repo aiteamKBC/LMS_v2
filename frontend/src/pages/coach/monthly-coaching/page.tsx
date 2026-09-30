@@ -123,10 +123,6 @@ function addMonths(value: Date, offset: number) {
   return new Date(value.getFullYear(), value.getMonth() + offset, 1);
 }
 
-function endOfMonth(value: Date) {
-  return new Date(value.getFullYear(), value.getMonth() + 1, 0);
-}
-
 function monthLabel(value: Date) {
   return new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' }).format(value);
 }
@@ -139,8 +135,9 @@ export default function CoachMonthlyCoaching() {
   const [groupFilter, setGroupFilter] = useState(() => searchParams.get('group') || ALL_GROUPS_FILTER);
   const [searchTerm, setSearchTerm] = useState(() => searchParams.get('q') || '');
   const [selectedMonth, setSelectedMonth] = useState(() => monthFromQuery(searchParams.get('month')));
+  const [allMonths, setAllMonths] = useState(() => searchParams.get('months') === 'all');
   const [currentPage, setCurrentPage] = useState(() => pageFromQuery(searchParams.get('page')));
-  const [sortOrder, setSortOrder] = useState<'date-asc' | 'date-desc' | 'learner-asc'>('date-asc');
+  const [sortOrder, setSortOrder] = useState<'date-asc' | 'date-desc' | 'learner-asc'>('date-desc');
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
   const [scheduleEventKey, setScheduleEventKey] = useState('');
   const [scheduleDate, setScheduleDate] = useState('');
@@ -150,7 +147,7 @@ export default function CoachMonthlyCoaching() {
   const [scheduleError, setScheduleError] = useState<string | null>(null);
   const [slidesEvent, setSlidesEvent] = useState<CoachCalendarEvent | null>(null);
   const [slidesError, setSlidesError] = useState<string | null>(null);
-  const cacheKey = coachSessionKey('monthly-coaching', coach.email, monthKey(selectedMonth));
+  const cacheKey = coachSessionKey('monthly-coaching', coach.email, 'all-months');
   const initialCache = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string }>(cacheKey);
   const [events, setEvents] = useState<CoachCalendarEvent[]>(() => initialCache?.events || []);
   const [ownerName, setOwnerName] = useState(() => initialCache?.ownerName || 'Coach');
@@ -162,10 +159,11 @@ export default function CoachMonthlyCoaching() {
     if (filter !== 'all') params.set('filter', filter);
     if (groupFilter !== ALL_GROUPS_FILTER) params.set('group', groupFilter);
     if (searchTerm.trim()) params.set('q', searchTerm.trim());
-    if (monthKey(selectedMonth) !== monthKey(startOfMonth())) params.set('month', monthKey(selectedMonth));
+    if (allMonths) params.set('months', 'all');
+    else if (monthKey(selectedMonth) !== monthKey(startOfMonth())) params.set('month', monthKey(selectedMonth));
     if (currentPage > 1) params.set('page', String(currentPage));
     setSearchParams(params, { replace: true });
-  }, [currentPage, filter, groupFilter, searchTerm, selectedMonth, setSearchParams]);
+  }, [allMonths, currentPage, filter, groupFilter, searchTerm, selectedMonth, setSearchParams]);
 
   useEffect(() => {
     if (!coach.isInitialized) return;
@@ -187,8 +185,6 @@ export default function CoachMonthlyCoaching() {
     }
     setError(null);
     fetchCoachCalendarEvents(controller.signal, {
-        start: isoDate(startOfMonth(selectedMonth)),
-        end: isoDate(endOfMonth(selectedMonth)),
         includeLiveSessions: false,
         includeSchedulerQueues: false,
       })
@@ -209,12 +205,12 @@ export default function CoachMonthlyCoaching() {
         if (!controller.signal.aborted) setLoading(false);
       });
     return () => controller.abort();
-  }, [cacheKey, coach.email, coach.isInitialized, coach.name, selectedMonth]);
+  }, [cacheKey, coach.email, coach.isInitialized, coach.name]);
 
-  const selectedMonthLabel = monthLabel(selectedMonth);
-  const selectedMonthIsCurrent = monthKey(selectedMonth) === monthKey(startOfMonth());
+  const selectedMonthLabel = allMonths ? 'All months' : monthLabel(selectedMonth);
+  const selectedMonthIsCurrent = !allMonths && monthKey(selectedMonth) === monthKey(startOfMonth());
   const monthFilterDescription = `Monthly coaching meetings due or scheduled in ${selectedMonthLabel}.`;
-  const monthEvents = events.filter(event => isEventInMonth(event, selectedMonth));
+  const monthEvents = allMonths ? events : events.filter(event => isEventInMonth(event, selectedMonth));
   const needsScheduleEvents = monthEvents.filter(needsScheduling);
   const scheduledEvents = monthEvents.filter(event => isScheduledEvent(event));
   const inProgressEvents = monthEvents.filter(event => isInProgressEvent(event));
@@ -251,7 +247,7 @@ export default function CoachMonthlyCoaching() {
   }, [groupFilter, groupFilterOptions, loading]);
 
   const tabFiltered = events.filter(event => {
-    if (!isEventInMonth(event, selectedMonth)) return false;
+    if (!allMonths && !isEventInMonth(event, selectedMonth)) return false;
     if (filter === 'this-month') return isEventThisMonth(event, selectedMonth);
     if (filter === 'at-risk') return isAtRiskEvent(event);
     if (filter === 'due-soon') return isDueSoonEvent(event);
@@ -270,8 +266,11 @@ export default function CoachMonthlyCoaching() {
     : groupFiltered;
   const sortedFiltered = [...filtered].sort((a, b) => {
     if (sortOrder === 'learner-asc') return (a.learner || '').localeCompare(b.learner || '');
-    const dateDifference = (parseLocalDate(eventDisplayDate(a))?.getTime() || 0) - (parseLocalDate(eventDisplayDate(b))?.getTime() || 0);
-    return sortOrder === 'date-desc' ? -dateDifference : dateDifference;
+    const aDate = parseLocalDate(eventDisplayDate(a))?.getTime();
+    const bDate = parseLocalDate(eventDisplayDate(b))?.getTime();
+    if (aDate == null) return bDate == null ? 0 : 1;
+    if (bDate == null) return -1;
+    return sortOrder === 'date-desc' ? bDate - aDate : aDate - bDate;
   });
   const pageCount = Math.ceil(sortedFiltered.length / MEETINGS_PER_PAGE);
   const activePage = Math.min(currentPage, Math.max(pageCount, 1));
@@ -296,7 +295,14 @@ export default function CoachMonthlyCoaching() {
   };
 
   const changeMonth = (nextMonth: Date) => {
+    setAllMonths(false);
     setSelectedMonth(startOfMonth(nextMonth));
+    setFilter('all');
+    setCurrentPage(1);
+  };
+
+  const showAllMonths = () => {
+    setAllMonths(true);
     setFilter('all');
     setCurrentPage(1);
   };
@@ -306,7 +312,8 @@ export default function CoachMonthlyCoaching() {
     if (filter !== 'all') query.set('filter', filter);
     if (groupFilter !== ALL_GROUPS_FILTER) query.set('group', groupFilter);
     if (searchTerm.trim()) query.set('q', searchTerm.trim());
-    if (monthKey(selectedMonth) !== monthKey(startOfMonth())) query.set('month', monthKey(selectedMonth));
+    if (allMonths) query.set('months', 'all');
+    else if (monthKey(selectedMonth) !== monthKey(startOfMonth())) query.set('month', monthKey(selectedMonth));
     if (activePage > 1) query.set('page', String(activePage));
     const queryString = query.toString();
     return `/coach/monthly-coaching${queryString ? `?${queryString}` : ''}`;
@@ -396,6 +403,7 @@ export default function CoachMonthlyCoaching() {
                   <span className="min-w-36 text-center text-[14px] font-bold text-primary-900">{selectedMonthLabel}</span>
                   <button type="button" onClick={() => changeMonth(addMonths(selectedMonth, 1))} className="flex h-9 w-9 items-center justify-center rounded-lg border border-primary-100 bg-white text-primary-700 shadow-sm transition hover:bg-primary-50" aria-label="Next month"><AppIcon className="ri-arrow-right-s-line text-lg" /></button>
                 </div>
+                <button type="button" onClick={showAllMonths} aria-pressed={allMonths} className={cn('h-9 rounded-lg border px-3 text-[12px] font-semibold transition', allMonths ? 'border-primary-600 bg-primary-600 text-white' : 'border-primary-200 bg-primary-50 text-primary-700 hover:bg-primary-100')}>All months</button>
                 {!selectedMonthIsCurrent ? <button type="button" onClick={() => changeMonth(startOfMonth())} className="h-9 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-semibold text-primary-700 transition hover:bg-primary-100">Today</button> : null}
               </div>
               <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center xl:justify-end">
@@ -411,8 +419,8 @@ export default function CoachMonthlyCoaching() {
 
           <div className="bg-background-100/55 p-3 sm:p-5">
             <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-              <div><h3 className="text-[16px] font-bold text-primary-900">{sortedFiltered.length} coaching meeting{sortedFiltered.length === 1 ? '' : 's'}</h3><p className="text-[12px] text-foreground-500">{filter === 'this-month' || filter === 'all' ? `Meetings due or scheduled in ${selectedMonthLabel}.` : FILTER_COPY[filter].description}</p></div>
-              <label className="flex items-center gap-2 text-[12px] text-foreground-500">Sort by<select value={sortOrder} onChange={(event) => setSortOrder(event.target.value as typeof sortOrder)} className="h-9 rounded-lg border border-foreground-200 bg-white px-3 font-semibold text-foreground-700 outline-none focus:border-primary-400"><option value="date-asc">Date (soonest first)</option><option value="date-desc">Date (latest first)</option><option value="learner-asc">Learner (A-Z)</option></select></label>
+              <div><h3 className="text-[16px] font-bold text-primary-900">{sortedFiltered.length} coaching meeting{sortedFiltered.length === 1 ? '' : 's'}</h3><p className="text-[12px] text-foreground-500">{allMonths && filter === 'all' ? 'Past and upcoming coaching meetings across all months.' : filter === 'this-month' || filter === 'all' ? `Meetings due or scheduled in ${selectedMonthLabel}.` : FILTER_COPY[filter].description}</p></div>
+              <label className="flex items-center gap-2 text-[12px] text-foreground-500">Sort by<select value={sortOrder} onChange={(event) => { setSortOrder(event.target.value as typeof sortOrder); setCurrentPage(1); }} className="h-9 rounded-lg border border-foreground-200 bg-white px-3 font-semibold text-foreground-700 outline-none focus:border-primary-400"><option value="date-asc">Date (soonest first)</option><option value="date-desc">Date (latest first)</option><option value="learner-asc">Learner (A-Z)</option></select></label>
             </div>
             {loading ? <RowsSkeleton rows={6} /> : null}
             {!loading && !error && sortedFiltered.length === 0 ? <EmptyState variant={tabFiltered.length === 0 ? 'empty' : 'no-matches'} icon={tabFiltered.length === 0 ? 'ri-calendar-check-line' : 'ri-user-search-line'} title={tabFiltered.length === 0 ? 'No coaching meetings found.' : 'No learner matches this search.'} /> : null}

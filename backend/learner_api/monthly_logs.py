@@ -120,7 +120,14 @@ def scope(request, learner_id):
 
 
 def valid_month(month):
-    if not re.fullmatch(r'[0-9]{4}-(0[1-9]|1[0-2])', month or '') or month > timezone.localdate().strftime('%Y-%m'):
+    valid_month_key(month)
+    if month > timezone.localdate().strftime('%Y-%m'):
+        raise old.ServiceError('Choose a valid report month.')
+
+
+def valid_month_key(month):
+    """Validate a YYYY-MM key without applying the ordinary future-month gate."""
+    if not re.fullmatch(r'[0-9]{4}-(0[1-9]|1[0-2])', month or ''):
         raise old.ServiceError('Choose a valid report month.')
 
 
@@ -261,23 +268,28 @@ def month_state(month, rows, signs, training_plan_target=None, *, learner_id=Non
             'can_unlock': False}
 
 
-def current_months(learner, signs=(), *, include_open=False):
+def current_months(learner, signs=(), *, include_open=False, include_future=False, ensure_month=None):
     grouped = defaultdict(list)
     open_month = timezone.localdate().strftime('%Y-%m')
+    def allowed_month(month):
+        return month < open_month or (include_open and month == open_month) or (include_future and month > open_month)
+
     if canonical.enabled(learner['id']):
         for item in canonical.activity_rows(learner['id']):
             month = item.get('reporting_month')
-            if month and (month < open_month or (include_open and month == open_month)):
+            if month and allowed_month(month):
                 grouped[month].append(item)
         for month in {*canonical.targets(learner['id']), *(s['report_month'] for s in signs)}:
-            if month < open_month or (include_open and month == open_month):
+            if allowed_month(month):
                 grouped.setdefault(month, [])
+        if ensure_month and allowed_month(ensure_month):
+            grouped.setdefault(ensure_month, [])
         return grouped
     # A signed month remains in the journal even if its last source row is
     # subsequently removed, just as retained previous-record months do.
     for signature in signs:
         month = signature['report_month']
-        if (month < open_month or (include_open and month == open_month)) and (not learner.get('aptem_id') or month > old_repo.CUTOFF):
+        if allowed_month(month) and (not learner.get('aptem_id') or month > old_repo.CUTOFF):
             grouped[month] = []
     for row in sources.activity_rows(learner):
         month = row['activity_date'][:7]
@@ -296,16 +308,25 @@ def current_months(learner, signs=(), *, include_open=False):
             grouped[month] = history.merge_rows(grouped.get(month, []), audit_rows)
     for rows in grouped.values():
         rows.sort(key=lambda row: (str(row['activity_date'] or ''), row['source_ref'] or ''))
+    # An MCM can be signed before any learning activity has been recorded for
+    # its target month.  Keep that month visible in the read-only MCM-linked
+    # view without creating a database row; the real signature is mirrored only
+    # when the learner signs the MCM itself.
+    if ensure_month and (not learner.get('aptem_id') or ensure_month > old_repo.CUTOFF):
+        if allowed_month(ensure_month):
+            grouped.setdefault(ensure_month, [])
     return grouped
 
 
-def summary_data(learner, *, include_open=False):
+def summary_data(learner, *, include_open=False, include_future=False, ensure_month=None):
     retained = legacy_summary(learner)
     signs = signatures(learner)
     months = [{**m, 'source': 'legacy'} for m in retained['months']]
     targets = canonical.targets(learner['id']) if canonical.enabled(learner['id']) else None
     months.extend(month_state(month, rows, signs, targets.get(month) if targets is not None else sources.monthly_target(learner, month), learner_id=learner['id'])
-                  for month, rows in current_months(learner, signs, include_open=include_open).items())
+                  for month, rows in current_months(learner, signs, include_open=include_open,
+                                                     include_future=include_future,
+                                                     ensure_month=ensure_month).items())
     months.sort(key=lambda m: m['month'])
     profile = learner.get('_profile') or {}
     audit_profile = retained.get('profile') or {}
@@ -318,8 +339,8 @@ def summary_data(learner, *, include_open=False):
             'read_only': learner['_view_as']}
 
 
-def detail_data(learner, month, *, include_open=False, demo=False):
-    valid_month(month)
+def detail_data(learner, month, *, include_open=False, include_future=False, demo=False, ensure_month=None):
+    (valid_month_key if include_future else valid_month)(month)
     consolidated = canonical.enabled(learner['id'])
     if not consolidated and learner.get('aptem_id') and month <= old_repo.CUTOFF:
         if history.enabled(learner):
@@ -334,7 +355,8 @@ def detail_data(learner, month, *, include_open=False, demo=False):
     if not include_open:
         require_closed_month(month)
     signs = signatures(learner)
-    rows = current_months(learner, signs, include_open=include_open).get(month)
+    rows = current_months(learner, signs, include_open=include_open, include_future=include_future,
+                          ensure_month=ensure_month).get(month)
     if rows is None:
         raise old.ServiceError('No activities are recorded for this month.', 'not_found', 404)
     profile = learner.get('_profile') or {}
@@ -346,6 +368,20 @@ def detail_data(learner, month, *, include_open=False, demo=False):
             'profile': report_profile}
 
 
+def _canonical_signature_scope(learner, owner):
+    """Return the lineage keys required by canonical monthly signatures.
+
+    ``learner_id`` is the consolidated profile id, while the table's unique
+    scope is the source learner plus programme/enrolment key.  New LMS
+    records may not have an Aptem id, so the enrolment id is the stable
+    source identity fallback.
+    """
+    enrolment_id = owner.get('enrolment_id') or learner.get('id')
+    source_learner_id = str(owner.get('aptem_id') or enrolment_id or learner.get('id') or '')
+    programme_key = f'lms:{enrolment_id or learner.get("id")}'
+    return source_learner_id, programme_key
+
+
 def mirror_mcm_learner_signature(learner, month, signature, name):
     """Copy a learner's MCM signature into that MCM's monthly log.
 
@@ -355,7 +391,10 @@ def mirror_mcm_learner_signature(learner, month, signature, name):
     signed while its reporting month is still in progress, but the ordinary
     monthly-log signing endpoint remains closed until month end.
     """
-    valid_month(month)
+    # An MCM can be completed before the curriculum target month starts. The
+    # ordinary Monthly Logs view still blocks future months, but this mirror
+    # must accept the MCM's own target month so the two signatures stay linked.
+    valid_month_key(month)
     if not str(signature or '').startswith('data:image/'):
         raise old.ServiceError('A valid learner signature is required.')
 
@@ -363,7 +402,7 @@ def mirror_mcm_learner_signature(learner, month, signature, name):
         return {'status': 'skipped', 'reason': 'legacy_month', 'month': month}
 
     try:
-        report = detail_data(learner, month, include_open=True)
+        report = detail_data(learner, month, include_open=True, include_future=True, ensure_month=month)
     except old.ServiceError as error:
         # A month with no activity rows is still a valid MCM sign-off. Keep an
         # empty, immutable snapshot so the signed month appears in the log list.
@@ -393,6 +432,7 @@ def mirror_mcm_learner_signature(learner, month, signature, name):
         old_repo.query('SELECT id FROM enrolment."Created_users" WHERE id=%s FOR UPDATE', [learner['id']])
         if canonical.enabled(learner['id']):
             owner = canonical.profile(learner['id'])
+            source_learner_id, programme_key = _canonical_signature_scope(learner, owner)
             existing = old_repo.query('''SELECT id FROM "Learner".learner_monthly_signatures
                 WHERE learner_id=%s AND report_month=%s AND signer_role='learner'
                   AND review_confirmed IS TRUE LIMIT 1''', [owner['id'], month])
@@ -401,10 +441,11 @@ def mirror_mcm_learner_signature(learner, month, signature, name):
             old_repo.query('''INSERT INTO "Learner".learner_monthly_signatures
                 (learner_id,report_month,signer_role,signer_name,review_confirmed,
                  signature_url,signature_data,capture_method,signed_at,snapshot_digest,
-                 source_system,source_ref)
-                VALUES (%s,%s,'learner',%s,true,%s,%s,'mcm',now(),%s,'lms',%s)
-                ON CONFLICT (learner_id,report_month,signer_role) DO NOTHING''',
-                [owner['id'], month, signed_name, signature, capture, snapshot_digest, source_ref])
+                 source_system,source_ref,source_learner_id,programme_key)
+                VALUES (%s,%s,'learner',%s,true,%s,%s,'mcm',now(),%s,'lms',%s,%s,%s)
+                ON CONFLICT (source_learner_id,programme_key,report_month,signer_role) DO NOTHING''',
+                [owner['id'], month, signed_name, signature, capture, snapshot_digest, source_ref,
+                 source_learner_id, programme_key])
         else:
             learner_key = f'lms:{learner["id"]}'
             existing = old_repo.query(f'''SELECT id FROM {old_repo.SIGNOFFS}
@@ -428,13 +469,21 @@ def summary(request, learner_id):
     learner, _ = scope(request, learner_id)
     # The current month is useful as a live activity log even though its final
     # signatures remain unavailable until month-end.
-    return JsonResponse({**summary_data(learner, include_open=True), 'csrf_token': get_token(request)})
+    ensure_month = request.GET.get('month') if request.GET.get('workflow') == 'mcm' else None
+    if ensure_month and not re.fullmatch(r'[0-9]{4}-(0[1-9]|1[0-2])', ensure_month):
+        ensure_month = None
+    mcm_workflow = request.GET.get('workflow') == 'mcm'
+    return JsonResponse({**summary_data(learner, include_open=True, include_future=mcm_workflow,
+                                         ensure_month=ensure_month), 'csrf_token': get_token(request)})
 
 
 @endpoint('GET')
 def detail(request, learner_id, month):
     learner, _ = scope(request, learner_id)
-    return JsonResponse(detail_data(learner, month, include_open=True, demo=request.GET.get('demo') == '1'))
+    mcm_workflow = request.GET.get('workflow') == 'mcm'
+    return JsonResponse(detail_data(learner, month, include_open=True, include_future=mcm_workflow,
+                                   demo=request.GET.get('demo') == '1',
+                                   ensure_month=month if mcm_workflow else None))
 
 
 @endpoint('GET')
@@ -542,12 +591,15 @@ def sign(request, learner_id, month):
             'actor_account_id': request.login_account.id, 'capture_method': data['capture_method']}, default=str)
         if canonical.enabled(learner_id):
             owner = canonical.profile(learner_id)
+            source_learner_id, programme_key = _canonical_signature_scope(learner, owner)
             old_repo.query('''INSERT INTO "Learner".learner_monthly_signatures
                 (learner_id,report_month,signer_role,signer_name,review_confirmed,signature_url,
-                 signature_data,capture_method,signed_at,snapshot_digest,source_system,source_ref)
-                VALUES (%s,%s,%s,%s,true,%s,%s,%s,now(),%s,'lms',%s)''',
+                 signature_data,capture_method,signed_at,snapshot_digest,source_system,source_ref,
+                 source_learner_id,programme_key)
+                VALUES (%s,%s,%s,%s,true,%s,%s,%s,now(),%s,'lms',%s,%s,%s)
+                ON CONFLICT (source_learner_id,programme_key,report_month,signer_role) DO NOTHING''',
                 [owner['id'], month, signer_role, name, json.loads(capture)['url'], capture,
-                 data['capture_method'], report['snapshot_digest'], key])
+                 data['capture_method'], report['snapshot_digest'], key, source_learner_id, programme_key])
         else:
             old_repo.query(f'''INSERT INTO {old_repo.SIGNOFFS}
             (learner_id, programme_key, report_month, signer_role, signer_name,

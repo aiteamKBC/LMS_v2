@@ -141,6 +141,29 @@ class EditOwnershipTests(SimpleTestCase):
         self.assertEqual(self.status("progress_review", _account("coach")), 200)
         self.assertEqual(self.status("progress_review", _account("learner", 42)), 403)
 
+    def test_progress_review_draft_cannot_be_published_by_a_learner(self):
+        with patch("progress_reviews_api.views.runs") as mock_runs, \
+                patch("progress_reviews_api.views.authenticate_request", return_value=_account("learner", 42)), \
+                patch.dict(os.environ, {"LEARNER_API_REQUIRE_AUTH": "1"}):
+            mock_runs.get_run.return_value = {**RUN, "review_kind": "progress_review", "generation_status": "draft"}
+            response = self.client.post("/progress_reviews_api/run-1/publish/", data=b"{}", content_type="application/json")
+        self.assertEqual(response.status_code, 403)
+        mock_runs.publish_run.assert_not_called()
+
+    def test_mcm_draft_can_be_published_by_its_learner(self):
+        draft = {**RUN, "review_kind": "mcm", "generation_status": "draft", "source_warnings": []}
+        saved = {**draft, "generation_status": "completed"}
+        with patch("progress_reviews_api.views.runs") as mock_runs, \
+                patch("progress_reviews_api.views.authenticate_request", return_value=_account("learner", 42)), \
+                patch.dict(os.environ, {"LEARNER_API_REQUIRE_AUTH": "1"}):
+            mock_runs.get_run.side_effect = [draft, saved]
+            mock_runs.publish_run.return_value = True
+            mock_runs.get_snapshot.return_value = {"source_warnings": []}
+            response = self.client.post("/progress_reviews_api/run-1/publish/", data=b"{}", content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["generationStatus"], "completed")
+        mock_runs.publish_run.assert_called_once_with("run-1")
+
     @patch("progress_reviews_api.views._store_deck", return_value={"reviewId": "run-2"})
     def test_saving_an_edit_creates_a_new_version_of_the_deck(self, mock_store):
         with patch("progress_reviews_api.views.runs") as mock_runs, \

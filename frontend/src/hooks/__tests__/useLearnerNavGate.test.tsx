@@ -164,6 +164,8 @@ describe('useLearnerNavGate', () => {
       'learner-overview',
       'learner-onboarding',
       'learner-compliance-documents',
+      // Their first learning session booking, once their documents are signed.
+      'learner-first-session',
     ]));
   });
 
