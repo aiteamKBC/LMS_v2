@@ -13890,9 +13890,13 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
             if progress_snapshot is not None
             else []
         ),
+        "historicalReview": review,
     }
-    from curriculum_api.review_pdf import pdf_availability
-    definition["pdf"] = pdf_availability(definition)
+    definition["pdf"] = {
+        "available": True,
+        "reason": "",
+        "source": "aptem",
+    }
     return definition
 
 

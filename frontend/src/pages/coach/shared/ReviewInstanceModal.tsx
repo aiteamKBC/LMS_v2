@@ -319,6 +319,7 @@ export function ReviewInstanceModal({
   const isImportedReadOnly = Boolean(definition?.readOnly);
   const isSummaryOnly = Boolean(definition?.summaryOnly);
   const isSignatureStage = definition ? ['awaiting-signature', 'completed'].includes(definition.instance.status) : false;
+  const isHistoricalPdfAvailable = Boolean(definition?.source === 'aptem' && definition.pdf?.available);
   const advisorSignature = definition?.signatures.advisor;
   const advisorSignaturePending = Boolean(
     definition
@@ -917,9 +918,9 @@ export function ReviewInstanceModal({
                 same components/API the learner side already uses, reading the
                 same signatures/pdf-availability this same fetch already
                 returned. */}
-            {EXPORTABLE_REVIEW_TYPES.includes(definition.template.reviewTypeCode || '') && isSignatureStage ? (
+            {(isHistoricalPdfAvailable || (EXPORTABLE_REVIEW_TYPES.includes(definition.template.reviewTypeCode || '') && isSignatureStage)) ? (
               <>
-                <ReviewSignatures signatures={definition.signatures} />
+                {!isHistoricalPdfAvailable && <ReviewSignatures signatures={definition.signatures} />}
                 <ReviewPdfDownload
                   availability={definition.pdf}
                   onDownload={() => downloadReviewInstancePdf(definition.instance.id)}

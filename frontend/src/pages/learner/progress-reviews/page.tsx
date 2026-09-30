@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
-import { fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, saveLearnerEventReviewAnswers, signLearnerProgressReview, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { downloadLearnerMcmPdf, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, saveLearnerEventReviewAnswers, signLearnerProgressReview, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
 import { responsesForSection, type ProgressReviewResponses } from '@/pages/shared/progressReviewForm';
@@ -21,6 +21,7 @@ import ReviewsHome from './ReviewsHome';
 import { reviewsListHref } from './reviewPresentation';
 import { useCoachingReviewDefinitions } from '../monthly-coaching/useCoachingReviewDefinitions';
 import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/LearnerReviewInstanceForm';
+import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 
 const learnerNav = roleNavMap.learner;
 
@@ -459,6 +460,7 @@ export default function ProgressReviewsPage() {
                     </div>
                     <div className="flex flex-wrap gap-2">
                       {selected?.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className={`${styles.primaryButton} meeting-join-action inline-flex items-center rounded-lg px-4 py-2.5 text-xs font-extrabold`}><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}
+                      {selected.importedReview && <ReviewPdfDownload availability={{ available: true, reason: '' }} label="Download PDF" onDownload={() => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} />}
                       {!selected.importedReview && <button type="button" onClick={showSlides} className="inline-flex items-center rounded-lg border border-primary-200/60 bg-white px-3.5 py-2 text-xs font-bold text-primary-900 shadow-sm hover:bg-primary-50 disabled:opacity-60"><AppIcon className="ri-slideshow-line mr-1.5" />Show slides</button>}
                       {!selected.importedReview && <button type="button" onClick={addToCalendar} disabled={!selected?.scheduledDate || !selected.scheduledTime} className="rounded-lg border border-primary-200/60 bg-primary-100/60 px-3.5 py-2 text-xs font-bold text-primary-800 disabled:cursor-not-allowed disabled:opacity-40"><AppIcon className="ri-calendar-check-line mr-1.5" />Add to calendar</button>}
                     </div>

@@ -24,6 +24,7 @@ import AbsenceReportDialog from '../attendance/components/AbsenceReportDialog';
 import AbsenceReportForm from '../attendance/components/AbsenceReportForm';
 import { useMeetingBooking } from '../reviews/useMeetingBooking';
 import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/LearnerReviewInstanceForm';
+import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 
 import CoachingHome from './CoachingHome';
 import ProgressReviewPptxModal from '@/pages/coach/progress-reviews/components/ProgressReviewPptxModal';
@@ -173,7 +174,7 @@ function ImportedMcmAccordion({ id, title, open, onToggle, children }: { id: str
   </section>;
 }
 
-function ImportedMcmView({ selected, learner, openSections, toggle, onBack }: { selected: LearnerCalendarEvent; learner: ReturnType<typeof useReviewSessions>['learner']; openSections: string[]; toggle: (id: string) => void; onBack: () => void }) {
+function ImportedMcmView({ selected, learner, openSections, toggle, onBack, onDownload }: { selected: LearnerCalendarEvent; learner: ReturnType<typeof useReviewSessions>['learner']; openSections: string[]; toggle: (id: string) => void; onBack: () => void; onDownload: () => Promise<void> }) {
   const review = selected.importedReview;
   if (!review) return null;
   const programmeStart = learner?.programmeStartDate || importedFieldValue(review, ['programme start date']);
@@ -199,6 +200,7 @@ function ImportedMcmView({ selected, learner, openSections, toggle, onBack }: { 
       <button type="button" onClick={onBack} aria-label="Back to coaching meetings" className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200"><AppIcon className="ri-arrow-left-line" /></button>
       <h1 className="text-xl font-bold text-slate-800 sm:text-2xl">Monthly Coaching Meeting <span className="font-normal text-slate-600">- {importedDate(date)}</span></h1>
       <p className="ml-auto text-xs text-slate-500">Reviewed by: <span className="font-semibold text-slate-600">{review.reviewerName || selected.coachName || '-'}</span></p>
+      <ReviewPdfDownload availability={{ available: true, reason: '' }} label="Download PDF" onDownload={onDownload} />
     </header>
 
     <ImportedMcmAccordion id="learner-information" title="Learner Information" open={openSections.includes('learner-information')} onToggle={toggle}>
@@ -403,7 +405,7 @@ export default function MonthlyCoachingPage() {
             </button>
           )}
         </div>
-        {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}<button type="button" onClick={reviewInstance.refresh} className="ml-3 underline">Retry review</button></p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} mcmMonthlyLog={completedMcm && targetMonth ? { id: String(myLearner.id), month: targetMonth, contractKind: myLearner.kind } : undefined} onDownload={() => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} signatoryName={learner?.name || 'Learner'} onSign={canProgress ? signLearnerReview : undefined} onSaveAnswers={answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, selected.eventKey || selected.id, answers)} /> : selected.importedReview ? <ImportedMcmView selected={selected} learner={learner} openSections={openSections} toggle={toggle} onBack={() => navigate(backHref)} /> : (
+        {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}<button type="button" onClick={reviewInstance.refresh} className="ml-3 underline">Retry review</button></p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} mcmMonthlyLog={completedMcm && targetMonth ? { id: String(myLearner.id), month: targetMonth, contractKind: myLearner.kind } : undefined} onDownload={() => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} signatoryName={learner?.name || 'Learner'} onSign={canProgress ? signLearnerReview : undefined} onSaveAnswers={answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, selected.eventKey || selected.id, answers)} /> : selected.importedReview ? <ImportedMcmView selected={selected} learner={learner} openSections={openSections} toggle={toggle} onBack={() => navigate(backHref)} onDownload={() => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} /> : (
           <>
             <section className="overflow-hidden rounded-2xl border border-background-200 bg-white shadow-sm">
               <div className="learner-super-admin-hero p-5 text-primary-800 sm:p-6 workspace-page-hero"><span className="rounded-full border border-primary-200/60 bg-primary-100/60 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{statusLabel(selected.status)}</span><div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">30-day coaching meeting</p><h1 className="mt-1 text-xl font-bold text-primary-800">{monthlyCoachingTitle(selected)}</h1><p className="mt-1 text-sm text-foreground-500">{formatDate(dateOf(selected), true)} at {formatTime(selected.scheduledTime)}</p></div>{selected.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="meeting-join-action rounded-lg px-4 py-2 text-xs font-bold"><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}</div></div>

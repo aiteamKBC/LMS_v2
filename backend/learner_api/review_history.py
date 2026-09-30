@@ -230,6 +230,7 @@ def _serialize_review(row, sections):
     return {
         "id": str(row["id"]),
         "aptemReviewId": _s(row.get("aptem_review_id")),
+        "aptemLearnerId": _s(data.get("aptem_learner_id")),
         "name": _s(row.get("review_name")) or _s(row.get("review_type")) or "Review",
         "type": _s(row.get("review_type")),
         "reviewerName": _s(row.get("reviewer_name")) or _s(metadata.get("Reviewer")),

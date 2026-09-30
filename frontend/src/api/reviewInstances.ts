@@ -163,7 +163,7 @@ export interface ReviewInstanceFormDefinition {
   /** Imported records can contain summary metadata without any form fields. */
   formAvailable?: boolean;
   summaryOnly?: boolean;
-  pdf?: { available: boolean; reason: string } | null;
+  pdf?: { available: boolean; reason: string; source?: string; originalAvailable?: boolean } | null;
   /** Progress Review only, and null until a coach calculates it. */
   progressSnapshot?: ReviewProgressSnapshot | null;
   /** Progress Review only -- this learner's completed Progress Reviews,
