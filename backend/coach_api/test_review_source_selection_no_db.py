@@ -463,7 +463,10 @@ class AptemEventVerificationTests(SimpleTestCase):
         sections_by_review.return_value = {11: [{
             "id": 501, "name": "Progress", "order": 2,
             "fields": [{"label": "What went well?", "value": "Good progress"}],
-            "tables": [], "rawText": "",
+            "tables": [{"title": "Actions", "rows": [
+                ["Action", "Responsible", "Deadline"],
+                ["Submit assignments", "Learner 1", "9 October 2026"],
+            ]}], "rawText": "",
         }]}
 
         definition = views._imported_review_definition(
@@ -479,6 +482,11 @@ class AptemEventVerificationTests(SimpleTestCase):
         self.assertEqual(definition["instance"]["reviewTemplateId"], "")
         self.assertEqual(definition["sections"][0]["displayOrder"], 2)
         self.assertEqual(definition["sections"][0]["fields"][0]["answer"], "Good progress")
+        table_field = definition["sections"][0]["fields"][1]
+        self.assertEqual(table_field["title"], "Actions")
+        self.assertEqual(table_field["configuration"]["importedTable"][1], [
+            "Submit assignments", "Learner 1", "9 October 2026",
+        ])
 
     @patch("coach_api.views.ImportedReviewInstance.objects.filter")
     @patch("coach_api.views._sections_by_review", return_value={})

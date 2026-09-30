@@ -13915,6 +13915,7 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
         display_index = len(fields)
         for table_index, table in enumerate(section.get("tables") or []):
             table_payload = table if isinstance(table, dict) else {"rows": table}
+            table_rows = table_payload.get("rows") or table
             fields.append({
                 "id": f"aptem-table:{section_id}:{table_index}",
                 "title": clean_text(table_payload.get("title")) or "Imported table",
@@ -13923,7 +13924,8 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
                 "displayOrder": display_index + table_index,
                 "configuration": {
                     "imported": True,
-                    "description": json.dumps(table_payload.get("rows") or table, ensure_ascii=False, default=str),
+                    "importedTable": table_rows,
+                    "description": json.dumps(table_rows, ensure_ascii=False, default=str),
                 },
                 "parentFieldId": None,
                 "conditionValue": None,
