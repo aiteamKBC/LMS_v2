@@ -12,6 +12,7 @@ from django.db.utils import ConnectionDoesNotExist
 from django.test import RequestFactory, SimpleTestCase, TestCase, override_settings
 from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
+from old_otjh.service import ServiceError
 
 from coach_api.models import CoachAbsenceReport, CoachCalendarEvent, CoachDashboardSnapshot
 from coach_api.views import (
@@ -674,6 +675,29 @@ class CanonicalCoachMetricsTests(SimpleTestCase):
         self.assertEqual(set(captured), {10})
         mocks["load_direct_progress_records_bulk"].assert_called_once_with([10])
         mocks["canonical_learning"].metrics_bulk.assert_called_once_with({11: 42})
+
+    def test_identity_review_for_one_learner_does_not_hide_the_rest_of_the_caseload(self):
+        def read_metrics(source, kind, preloaded):
+            if source.pk == 10:
+                raise ServiceError('The consolidated learner identity needs review.',
+                                   'identity_review_required', 409)
+            return {"source": source.pk, "programme": {"completed": 1, "total": 1}}
+
+        rows = [
+            SimpleNamespace(id=100, learner_type="commercial",
+                            _caseload_source=SimpleNamespace(pk=10, aptem_id=None)),
+            SimpleNamespace(id=101, learner_type="commercial",
+                            _caseload_source=SimpleNamespace(pk=11, aptem_id=None)),
+        ]
+        patches, _ = self.canonical_loader_patches(
+            read_metrics=MagicMock(side_effect=read_metrics),
+        )
+
+        with patches:
+            result = caseload_canonical_metrics(rows)
+
+        self.assertNotIn(100, result)
+        self.assertEqual(result[101]["programme"], {"completed": 1, "total": 1})
 
     def test_zero_learner_caseload_runs_no_metric_loaders(self):
         read_metrics = MagicMock()
@@ -2140,6 +2164,37 @@ Learner progress looks strong.
         self.assertEqual(response.content.decode(), "WEBVTT\n\n00:00:01.000 --> 00:00:03.000\nStored transcript.")
         self.assertIn("inline", response["Content-Disposition"])
         stored.assert_called_once_with(record, "transcript-1")
+
+    def test_combined_transcript_content_returns_one_text_file(self):
+        record = CoachCalendarEvent(
+            event_key="mcr:42:1:2026-09-01",
+            owner_email="coach@example.com",
+            event_type="mcr",
+        )
+        request = self.factory.get(
+            "/coach_api/coach/timetable/events/mcr:42:1:2026-09-01/artifacts/transcript/combined/content?preview=1"
+        )
+
+        with patch("coach_api.views.stored_coach_meeting_transcript_for_summary", return_value={
+            "artifactId": "transcript-1,transcript-2",
+            "text": "First transcript segment.\n\nSecond transcript segment.",
+        }) as stored:
+            response = coach_meeting_artifact_content_response(
+                request,
+                record,
+                record.event_key,
+                "transcript",
+                "combined",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.content.decode(),
+            "First transcript segment.\n\nSecond transcript segment.",
+        )
+        self.assertIn("text/plain", response["Content-Type"])
+        self.assertIn("transcript.txt", response["Content-Disposition"])
+        stored.assert_called_once_with(record)
 
     def test_progress_review_expected_attendees_include_employer(self):
         record = CoachCalendarEvent(

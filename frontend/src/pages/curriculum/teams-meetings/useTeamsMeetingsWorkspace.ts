@@ -163,21 +163,39 @@ function liveSessionPlan(module: ModuleCatalogueItem | null, plan: ModuleWeekSes
   const selected: ModuleWeekSessionPlan['sessions'] = [];
   let fallbackIndex = 0;
   module.weekStructure.forEach(week => {
-    const liveCount = (week.components || []).filter(component => component.type === 'live-session').length;
+    const liveSessions = (week.components || []).filter(component => component.type === 'live-session');
+    const liveCount = liveSessions.length;
     if (!liveCount) return;
     const byWeek = (plan.sessions || []).filter(session => Number(session.weekNumber) === Number(week.weekNumber));
     const candidates = byWeek.length
       ? byWeek.slice(0, liveCount)
       : (plan.sessions || []).slice(fallbackIndex, fallbackIndex + liveCount);
-    selected.push(...candidates);
+    // A live session delivered by its own additional meeting is not part of
+    // this calendar: it is not shown among these dates, not counted among
+    // them, and not sent when they are. Its slot is still CONSUMED rather than
+    // skipped — the dates are taken in order, so dropping one from the middle
+    // without consuming it would pull every later session a slot early.
+    candidates.forEach((candidate, index) => {
+      if (cleanText(liveSessions[index]?.settings?.extraTeamsMeetingUrl)) return;
+      selected.push(candidate);
+    });
     fallbackIndex += candidates.length;
   });
   return selected;
 }
 
-/** The module's live-session components, in the order their weeks run. */
+/**
+ * The module's live-session components, in the order their weeks run.
+ *
+ * These name the dates in `liveSessionPlan`, and `namedSessions` pairs the two
+ * BY POSITION — so a live session that plan drops (one delivered by its own
+ * additional meeting) has to be dropped here too, or every session after it
+ * would be labelled with the previous one's title.
+ */
 function liveSessionComponents(module: ModuleCatalogueItem | null): ModuleComponent[] {
-  return (module?.weekStructure || []).flatMap(week => (week.components || []).filter(component => component.type === 'live-session'));
+  return (module?.weekStructure || []).flatMap(week => (week.components || []).filter(
+    component => component.type === 'live-session' && !cleanText(component.settings?.extraTeamsMeetingUrl),
+  ));
 }
 
 /**
@@ -410,6 +428,9 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   const invitationsFor = useRef('');
   const [drawerTarget, setDrawerTarget] = useState<MeetingRow | null>(null);
   const [invitedPrefilling, setInvitedPrefilling] = useState(false);
+  // What the last prefill did, said beside its own button: until now a
+  // request that failed and one that found nobody both looked like nothing.
+  const [prefillNotice, setPrefillNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   // Guards a fetchModuleMeetingInvitees() response against landing after the
   // caller has since opened a different module's drawer (or closed it).
   const inviteesRequestId = useRef(0);
@@ -1157,6 +1178,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   ) => {
     const requestId = ++inviteesRequestId.current;
     setInvitedPrefilling(true);
+    setPrefillNotice(null);
     try {
       const result = await fetchModuleMeetingInvitees(row.catalogueId);
       if (inviteesRequestId.current !== requestId) return;
@@ -1164,8 +1186,28 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
         attendees: result.attendees.join('\n'),
         presenters: result.presenters.join('\n'),
       });
-    } catch {
-      // Best-effort: the form stays usable with people typed in by hand.
+      // A prefill that found nobody used to look exactly like one that failed:
+      // the fields stayed as they were and the button said nothing either way.
+      setPrefillNotice(result.attendees.length || result.presenters.length
+        ? {
+          tone: 'ok',
+          text: `Filled in ${result.attendees.length} assigned learner${result.attendees.length === 1 ? '' : 's'}`
+            + (result.presenters.length
+              ? " and the module's tutor as presenter."
+              : '. This module has no tutor assigned, so Presenters was cleared.'),
+        }
+        : {
+          tone: 'error',
+          text: 'Nobody is assigned to this module yet and it has no tutor. Assign learners to the module first, then prefill again.',
+        });
+    } catch (err) {
+      // The form stays usable with addresses typed in by hand -- but the
+      // failure is said out loud rather than swallowed.
+      if (inviteesRequestId.current !== requestId) return;
+      setPrefillNotice({
+        tone: 'error',
+        text: err instanceof Error ? err.message : "The module's assigned learners could not be read.",
+      });
     } finally {
       if (inviteesRequestId.current === requestId) setInvitedPrefilling(false);
     }
@@ -1613,7 +1655,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     busy, notice, setNotice, detail, detailLoading, detailError, loadDetail, detailOccurrenceFor,
     artifactSyncing, autoSyncEnabled, setAutoSyncEnabled, calendarSyncing, resultsModule, setResultsModule,
     preview, setPreview, transcriptPreview, setTranscriptPreview, pendingComponents, now,
-    settingsDrawer, createDrawer, updateDrawer, drawerTarget, invitedPrefilling,
+    settingsDrawer, createDrawer, updateDrawer, drawerTarget, invitedPrefilling, prefillNotice,
     loadTeamsState, holidayLabelFor, rows, selected, selectedForDisplay, stats,
     openCalendarAction, checkCalendarAction, runArtifactSync, runCalendarSync,
     pushDates, resendSchedule, saveInvitations, reattach, prefillInvitees, openSettings, saveSettings,

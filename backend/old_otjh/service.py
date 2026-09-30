@@ -197,6 +197,9 @@ def summary(learner, transition=None):
     months = [{**_state(m, sources.get(m), signs, finals.get(m), pending.get(m, 0)),
                'is_required': m in required} for m in visible]
     targets = learner.get('planned_hours_monthly')
+    from learner_api import journal_sources
+    if journal_sources.enabled():
+        targets = {month: row['planned_hours'] for month, row in sources.items()}
     if isinstance(targets, str):
         try:
             targets = json.loads(targets)

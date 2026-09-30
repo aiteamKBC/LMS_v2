@@ -14,7 +14,7 @@ export function ActivityExpansion({ row, month, aptemId, initialDocumentId, onCl
 }) {
   const { auth } = useAuth();
   const query = useQuery({ queryKey: ['old-otjh', auth.account?.id, 'activity-content', contentScope ?? aptemId ?? 'me', month, row.id],
-    queryFn: () => loadContent ? loadContent(row.id) : getActivityContent(month, row.id, aptemId), refetchInterval: 7000 });
+    queryFn: () => loadContent ? loadContent(row.id) : getActivityContent(month, row.id, aptemId), staleTime: 60_000, refetchOnWindowFocus: false });
   const [selection, setSelection] = useState(initialDocumentId ? `doc-${initialDocumentId}` : '');
   const [quizSelection, setQuizSelection] = useState<number | null>(null);
   const [fileSelection, setFileSelection] = useState<number | null>(null);
