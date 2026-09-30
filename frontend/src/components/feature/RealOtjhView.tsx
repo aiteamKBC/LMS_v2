@@ -101,9 +101,34 @@ function decodeHtmlEntities(value: string): string {
 }
 
 function combinedSubjectRows(data: StudentActivityResponse): LogRow[] {
-  // Last_audit can place one source activity in more than one subject. Match
-  // its backend total exactly: keep every subject card, but count that source
-  // activity's recorded time once.
+  if (data.canonical_otjh_activities !== undefined) {
+    return data.canonical_otjh_activities
+      .map((item): LogRow => {
+        const type = activityTypeLabel(item.componentType || item.kind);
+        const look = TYPE_ICONS[String(item.componentType || item.kind || '').toLowerCase()];
+        return {
+          title: decodeHtmlEntities(item.componentTitle?.trim() || type),
+          type,
+          icon: item.kind === 'quiz' ? 'ri-questionnaire-line' : look?.icon || 'ri-check-double-line',
+          tint: item.kind === 'quiz'
+            ? item.passed ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'
+            : look?.tint || 'bg-primary-100 text-primary-600',
+          at: item.submittedAt || '',
+          ksbs: item.ksbs || [],
+          hours: Number(item.actualSeconds || 0) / 3600,
+          planned: Number(item.expectedOtjh ?? Number.NaN),
+          reported: '',
+          dedupeKey: `canonical:${item.id}`,
+          attemptCount: 1,
+          passed: item.passed ?? undefined,
+          isQuiz: item.kind === 'quiz',
+        };
+      })
+      .filter(row => row.hours > 0)
+      .sort((a, b) => (b.at || '').localeCompare(a.at || ''));
+  }
+  // Compatibility payloads can place one source activity in more than one
+  // subject. Keep every subject card, but count that source activity's time once.
   const historical = new Map<number, typeof data.activities[number]>();
   for (const item of data.activities) {
     const previous = historical.get(item.source_activity_id);

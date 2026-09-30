@@ -1,5 +1,5 @@
 ﻿import { createCachedResource } from './cachedRequest';
-import { readLearnerJson, invalidateLearnerReads, subscribeLearnerReadInvalidation } from './learnerRead';
+import { readLearnerJson, invalidateLearnerReads, subscribeLearnerReadInvalidation, withCallerSignal } from './learnerRead';
 import type { LearnerKind } from '@/api/learnerDetail';
 import type { CoachMeetingArtifactsResponse } from '@/pages/coach/shared/calendarEvents';
 import type { ImportedReview } from '@/api/reviewHistory';
@@ -100,6 +100,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
 export function invalidateLearnerCalendarCache(kind?: LearnerKind, id?: string): void {
   calendarResource.invalidate(kind && id ? `${kind}:${id}` : undefined);
+  firstSessionResource.invalidate(kind && id ? `${kind}:${id}` : undefined);
   invalidateLearnerReads();
 }
 
@@ -409,6 +410,15 @@ export interface SessionSlot {
  *  Pinned to Europe/London rather than the browser's zone: the session happens
  *  in Kent whatever the learner's own clock says, and a learner signing in
  *  from abroad must still be offered — and book — the college's hours. */
+/** UK times the learner's coach is free for a catch-up of this length on `date`. */
+export async function fetchCatchupSlots(kind: LearnerKind, id: string, date: string, durationMinutes: number, signal?: AbortSignal): Promise<string[]> {
+  const query = new URLSearchParams({ date, timezoneOffsetMinutes: String(ukOffsetForDate(date)), durationMinutes: String(durationMinutes), purpose: 'catch-up' });
+  const response = await fetch(`${BASE}/${kind}/${id}/coach-availability/?${query}`, { credentials: 'include', signal });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || 'Could not check your coach’s calendar.');
+  return Array.isArray(result.times) ? result.times as string[] : [];
+}
+
 export function ukOffsetForDate(date: string): number {
   return (
     (12 -
@@ -494,6 +504,26 @@ export interface LearnerFirstSession {
   canBook?: boolean;
 }
 
+// This permission check is live rather than TTL-cached, but its transport is
+// shared while it is in flight. React StrictMode tears down the first effect
+// immediately in development; cancelling only that caller keeps the server
+// request alive so the remount joins it instead of opening a duplicate read.
+const firstSessionResource = createCachedResource<LearnerFirstSession>(
+  'learner-first-session',
+  async key => {
+    const [kind, id] = key.split(':', 2);
+    const response = await fetch(`${BASE}/${kind}/${id}/first-session/`, {
+      credentials: 'include',
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(result.error || 'Could not check your first session.');
+    }
+    return result as LearnerFirstSession;
+  },
+  0,
+);
+
 /**
  * The learner's first-session state.
  *
@@ -505,13 +535,5 @@ export async function fetchLearnerFirstSession(
   id: string,
   signal?: AbortSignal,
 ): Promise<LearnerFirstSession> {
-  const response = await fetch(`${BASE}/${kind}/${id}/first-session/`, {
-    credentials: 'include',
-    signal,
-  });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(result.error || 'Could not check your first session.');
-  }
-  return result as LearnerFirstSession;
+  return withCallerSignal(firstSessionResource.read(`${kind}:${id}`), signal);
 }

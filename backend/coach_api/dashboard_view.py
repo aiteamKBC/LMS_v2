@@ -10,6 +10,7 @@ from config.observability import metric_event
 
 from .auth import authenticated_coach_email, coach_access_required
 from . import dashboard_cache
+from .dashboard_refresh import schedule_coach_dashboard_refresh, snapshot_needs_refresh
 from .errors import coach_error
 from .services.dashboard.service import CoachDashboardService
 
@@ -34,11 +35,15 @@ def coach_dashboard(request):
     owner_email = authenticated_coach_email(request)
     cached_dashboard = dashboard_cache.get_cached_coach_dashboard(owner_email)
     if cached_dashboard is not None:
+        if snapshot_needs_refresh(cached_dashboard):
+            schedule_coach_dashboard_refresh(owner_email, reason="stale-cache-hit")
         _dashboard_perf(
             "cache_hit", endpoint_started,
             learner_count=len(cached_dashboard.get("learners", [])),
         )
-        return JsonResponse(cached_dashboard)
+        response = JsonResponse(cached_dashboard)
+        response["X-LMS-Cache"] = "HIT"
+        return response
 
     try:
         response_payload = CoachDashboardService(
@@ -66,5 +71,9 @@ def coach_dashboard(request):
         "total", endpoint_started,
         learner_count=len(response_payload.get("learners", [])),
     )
+    if snapshot_needs_refresh(response_payload):
+        schedule_coach_dashboard_refresh(owner_email, reason="stale-snapshot-read")
     dashboard_cache.cache_coach_dashboard(owner_email, response_payload)
-    return JsonResponse(response_payload)
+    response = JsonResponse(response_payload)
+    response["X-LMS-Cache"] = "MISS"
+    return response

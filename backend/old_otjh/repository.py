@@ -156,6 +156,12 @@ def create_transition(learner, months):
 def atomic():
     with transaction.atomic(using=DB):
         yield
+        # The event is written before this transaction commits, so the worker
+        # can never observe a refresh request for a write that later rolls back.
+        # Raw source imports outside this workflow remain covered by the 30s
+        # stale-read refresh and bounded reconciliation.
+        from .read_model import enqueue_record_monitor_refresh
+        enqueue_record_monitor_refresh(reason='previous-record-write', using=DB)
 
 
 def programme_key(learner):

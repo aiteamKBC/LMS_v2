@@ -11,7 +11,7 @@ import { Panel } from '@/components/ui/Panel';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import { EmptyState } from '@/components/ui/EmptyState';
 import styles from '../attendance.module.css';
-import CatchupBooking from './CatchupBooking';
+import CatchupBooking, { type CatchupBookAction } from './CatchupBooking';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
 
 const REASONS = [
@@ -93,6 +93,9 @@ export default function AbsenceReportForm({
   const [recordingTime, setRecordingTime] = useState('');
   const [catchupBooking, setCatchupBooking] = useState<{ sessionId: string; event: LearnerCalendarEvent } | null>(null);
   const [bookingBusy, setBookingBusy] = useState(false);
+  // The catch-up time is booked by the submit button itself ("Book catch-up & submit").
+  const bookCatchup = useRef<CatchupBookAction | null>(null);
+  const [catchupDraftReady, setCatchupDraftReady] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const selectedBooking = catchupBooking?.sessionId === sessionId ? catchupBooking.event : null;
   const recoveryApproved = Boolean(submittedReport?.recoveryMethod)
@@ -118,8 +121,9 @@ export default function AbsenceReportForm({
   const canUploadEvidence = Boolean(sessionId && hasReason);
   const canSubmit = Boolean(sessionId && hasReason && confirmed && !bookingBusy
     && (scope === 'meetings' || (recoveryMethod === 'recorded' && recordingDate && recordingTime)
-      || (recoveryMethod === 'catch-up' && selectedBooking)
+      || (recoveryMethod === 'catch-up' && (selectedBooking || catchupDraftReady))
       || (recoveryMethod === 'alternative' && targetOccurrenceId)));
+  const booksOnSubmit = scope !== 'meetings' && recoveryMethod === 'catch-up' && !selectedBooking;
   const resolvedCount = reports.filter((report) => report.status !== 'Pending').length;
 
   const selectAlternativeRecovery = () => {
@@ -257,6 +261,11 @@ export default function AbsenceReportForm({
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!canSubmit) return;
+    if (booksOnSubmit) {
+      const booked = await bookCatchup.current?.();
+      if (booked) await submitReport(booked);
+      return;
+    }
     await submitReport();
   };
 
@@ -441,7 +450,7 @@ export default function AbsenceReportForm({
                 <label>Viewing time *<input aria-label="Recording viewing time" type="time" value={recordingTime} onChange={event => { setRecordingTime(event.target.value); setConfirmed(false); }} required /></label>
               </div>
             </div>}
-            {recoveryMethod === 'catch-up' && selectedSession && <CatchupBooking key={selectedSession.id} lecture={selectedSession} selectedKey={selectedBooking?.eventKey || ''} onSelect={selectBooking} onBooked={submitReport} onBusyChange={setBookingBusy} disabled={submitting} />}
+            {recoveryMethod === 'catch-up' && selectedSession && <CatchupBooking key={selectedSession.id} lecture={selectedSession} selectedKey={selectedBooking?.eventKey || ''} onSelect={selectBooking} onBusyChange={setBookingBusy} disabled={submitting} bookRef={bookCatchup} onDraftChange={setCatchupDraftReady} />}
 
             <OptionalDetails compact={compact}>
             <div>
@@ -497,7 +506,9 @@ export default function AbsenceReportForm({
               {onCancel && <button type="button" onClick={onCancel} className="rounded-lg border border-foreground-200 px-4 py-2 text-sm font-semibold">Cancel</button>}
               <p className="flex items-center gap-1.5 text-[11px] text-foreground-400"><AppIcon className="ri-shield-check-line text-emerald-500" />Your information is only shared with the relevant support team.</p>
               <button type="submit" disabled={!canSubmit || submitting} className="inline-flex items-center justify-center gap-2 rounded-xl bg-primary-600 px-5 py-3 text-[13px] font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-40">
-                {submitting ? <><AppIcon className="ri-loader-4-line animate-spin" /> Saving report...</> : <>Submit absence report <AppIcon className="ri-arrow-right-line" /></>}
+                {bookingBusy ? <><AppIcon className="ri-loader-4-line animate-spin" /> Booking catch-up...</>
+                  : submitting ? <><AppIcon className="ri-loader-4-line animate-spin" /> Saving report...</>
+                    : <>{booksOnSubmit ? 'Book catch-up & submit' : 'Submit absence report'} <AppIcon className="ri-arrow-right-line" /></>}
               </button>
             </div>
             {requestError && <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] text-red-700"><AppIcon className="ri-error-warning-line mr-1.5" />{requestError}</p>}

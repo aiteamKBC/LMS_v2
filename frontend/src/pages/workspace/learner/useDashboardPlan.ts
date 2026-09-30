@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { overviewSchedule, overviewWeek } from '@/api/learnerOverview';
-import { fetchTrainingPlanContract, type TrainingPlanContract } from '@/api/trainingPlanDashboard';
+import type { TrainingPlanContract } from '@/api/trainingPlanDashboard';
 import { getLogSummary, type LogSummary } from '@/features/monthly-logs/api';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
-
-const AUDIT_OTJH_CUTOFF_MONTH = '2026-08';
 
 function hours(value: number | string | null | undefined) {
   const parsed = Number(value);
@@ -13,10 +11,10 @@ function hours(value: number | string | null | undefined) {
 }
 
 export function monthlyLogOtjh(summary: LogSummary) {
-  const hasAuditRecord = summary.learner?.aptem_id != null || summary.months.some(month => month.source === 'legacy');
   return {
-    cutoffMonth: hasAuditRecord ? AUDIT_OTJH_CUTOFF_MONTH : undefined,
     plannedEndDate: summary.learner?.planned_end_date ?? null,
+    acceptedTotal: summary.training_plan_totals?.accepted_hours ?? null,
+    plannedTotal: summary.training_plan_totals?.planned_hours ?? null,
     months: Object.fromEntries(summary.months.map(month => [month.month, {
       target: month.training_plan_target == null ? null : hours(month.training_plan_target),
       submitted: hours(month.not_accepted_hours),
@@ -41,81 +39,65 @@ export function contractPlannedOtjh(contract: TrainingPlanContract | undefined) 
   if (!months.length || months.some(month => month.planned == null || !Number.isFinite(month.planned) || month.planned < 0)) return null;
   return Math.round(months.reduce((total, month) => total + month.planned!, 0) * 10_000) / 10_000;
 }
-
 export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, enabled = true) {
   const active = enabled && !!kind && !!id;
   const week = useLiveLearnerRead(kind, id, active, overviewWeek.read, overviewWeek.peek);
   const schedule = useLiveLearnerRead(kind, id, active, overviewSchedule.read, overviewSchedule.peek);
   const identity = `${kind}:${id}`;
   const [attempt, setAttempt] = useState(0);
-  const [contract, setContract] = useState<{ identity: string; data: TrainingPlanContract } | null>(null);
-  const [audit, setAudit] = useState<{ identity: string; data: ReturnType<typeof monthlyLogOtjh>; error: string } | null>(null);
+  const [ssot, setSsot] = useState<{ identity: string; data: ReturnType<typeof monthlyLogOtjh>; error: string } | null>(null);
   const retryContract = useCallback(() => setAttempt(value => value + 1), []);
   useEffect(() => {
-    if (!active || !kind || !id) {
-      setContract(null);
-      return;
-    }
-    const controller = new AbortController();
-    const timer = window.setTimeout(() => {
-      controller.abort();
-      setContract({ identity, data: { months: {}, contractStatus: 'unavailable' } });
-    }, 30_000);
-    void fetchTrainingPlanContract(kind, id, controller.signal).then(data => {
-      if (!controller.signal.aborted) setContract({ identity, data });
-    }).catch(() => {
-      if (!controller.signal.aborted) setContract({ identity, data: { months: {}, contractStatus: 'unavailable' } });
-    }).finally(() => window.clearTimeout(timer));
-    return () => { controller.abort(); window.clearTimeout(timer); };
-  }, [active, kind, id, identity, attempt]);
-  useEffect(() => {
     if (!active || !id) {
-      setAudit(null);
+      setSsot(null);
       return;
     }
     // Monthly Logs is keyed by the numeric enrolment id. Personal-learning
     // preview ids use a different route and have no retained Audit record.
     if (!/^[1-9]\d*$/.test(id)) {
-      setAudit({ identity, data: { months: {}, cutoffMonth: undefined, plannedEndDate: null }, error: '' });
+      setSsot({ identity, data: { months: {}, plannedEndDate: null,
+        acceptedTotal: null, plannedTotal: null }, error: '' });
       return;
     }
     // The shared reader owns the request deadline and retry. A shorter
     // dashboard timer would discard a successful response after a cold connection.
     const controller = new AbortController();
     void getLogSummary(id, controller.signal, 'learner').then(summary => {
-      if (!controller.signal.aborted) setAudit({ identity, data: monthlyLogOtjh(summary), error: '' });
+      if (!controller.signal.aborted) setSsot({ identity, data: monthlyLogOtjh(summary), error: '' });
     }).catch((error: unknown) => {
-      if (!controller.signal.aborted) setAudit({ identity, data: { months: {}, cutoffMonth: undefined, plannedEndDate: null },
-        error: error instanceof Error ? error.message : 'Historical Audit hours could not be loaded.' });
+      if (!controller.signal.aborted) setSsot({ identity, data: { months: {}, plannedEndDate: null,
+        acceptedTotal: null, plannedTotal: null },
+        error: error instanceof Error ? error.message : 'SSOT learning hours could not be loaded.' });
     });
     return () => { controller.abort(); };
   }, [active, id, identity, attempt]);
   const refresh = () => { week.refresh(); schedule.refresh(); retryContract(); };
-  const rawContract = contract?.identity === identity ? contract.data : { months: {}, contractStatus: 'loading' };
-  const contractData = rawContract.journalTargets === undefined ? rawContract : { ...rawContract,
-    months: Object.fromEntries([...new Set([...Object.keys(rawContract.months), ...Object.keys(rawContract.journalTargets)])]
-      .map(month => [month, { ...rawContract.months[month], planned: rawContract.journalTargets?.[month] ?? 0 }])),
+  const ssotData = ssot?.identity === identity ? ssot.data : { months: {}, plannedEndDate: null,
+    acceptedTotal: null, plannedTotal: null };
+  const ssotError = ssot?.identity === identity ? ssot.error : '';
+  const currentSsot = ssot?.identity === identity ? ssot : null;
+  const targetMonths = Object.fromEntries(Object.entries(ssotData.months)
+    .filter(([, month]) => month.target != null)
+    .map(([month, value]) => [month, { label: '', topics: [], planned: value.target, source: 'ssot' }]));
+  const contractData = {
+    months: targetMonths,
+    contractStatus: currentSsot ? currentSsot.error ? 'unavailable' : 'ready' : 'loading',
+    programmeEndDate: ssotData.plannedEndDate,
   };
-  const auditData = audit?.identity === identity ? audit.data : { months: {}, cutoffMonth: undefined, plannedEndDate: null };
-  const auditError = audit?.identity === identity ? audit.error : '';
-  const requiredOtjh = week.data?.metrics?.otjh.planned ?? null;
-  const currentAudit = audit?.identity === identity ? audit : null;
-  const currentContract = contract?.identity === identity ? contract.data : undefined;
   return {
     otjh: {
-      actual: currentAudit && !currentAudit.error ? monthlyLogActualOtjh(currentAudit.data.months) : null,
-      planned: contractPlannedOtjh(currentContract),
-      actualLoading: active && !currentAudit,
-      plannedLoading: active && !currentContract,
+      actual: currentSsot && !currentSsot.error ? currentSsot.data.acceptedTotal : null,
+      planned: currentSsot && !currentSsot.error ? currentSsot.data.plannedTotal : null,
+      actualLoading: active && !currentSsot,
+      plannedLoading: active && !currentSsot,
     },
-    data: schedule.data ? { ...schedule.data, ...contractData, monthlyOtjh: week.data?.monthlyOtjh, requiredOtjh,
-      monthlyLogOtjh: auditData.months, auditOtjhCutoffMonth: auditData.cutoffMonth,
-      auditPlannedEndDate: auditData.plannedEndDate } : null,
-    auditPlannedEndDate: auditData.plannedEndDate,
-    auditLoading: active && !currentAudit,
+    data: schedule.data ? { ...schedule.data, ...contractData, monthlyOtjh: week.data?.monthlyOtjh, requiredOtjh: ssotData.plannedTotal,
+      monthlyLogOtjh: ssotData.months } : null,
+    plannedEndDate: ssotData.plannedEndDate,
+    targetsLoading: active && !currentSsot,
     subjects: week.data?.planSubjects,
     loading: week.loading || schedule.loading,
-    error: week.error || schedule.error || auditError || (week.data && !week.data.planSubjects ? 'Module summaries could not be loaded.' : ''),
+    error: week.error || schedule.error || ssotError || (week.data && !week.data.planSubjects ? 'Module summaries could not be loaded.' : ''),
     refresh, retryContract, week, schedule,
   };
 }

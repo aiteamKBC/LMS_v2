@@ -35,8 +35,10 @@ whose tables are all ``managed = False`` and have no FKs between them, so there
 is no join for the ORM to express. One round trip of scalar subqueries also beats
 a dozen ``.count()`` calls over a Neon connection with real latency.
 
-Every statement runs inside ``transaction.atomic`` — see ``_optional_scalars``
-for why that is load-bearing rather than decorative.
+Statements use a savepoint when the caller is already inside a transaction —
+see ``_isolated_database_call``. In normal autocommit requests a failed
+statement is already isolated, so avoiding a redundant ``BEGIN``/``COMMIT``
+removes two Neon round trips per dashboard section.
 """
 from __future__ import annotations
 
@@ -239,15 +241,29 @@ def _rows(sql, params=None):
         return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
+def _isolated_database_call(callback):
+    """Run ``callback`` without letting one failed optional query poison others.
+
+    PostgreSQL only leaves the connection in an aborted state when the failed
+    statement belongs to an open transaction. Django's normal request path is
+    autocommit, where adding ``atomic`` would create a redundant BEGIN/COMMIT
+    pair (two remote round trips) for every small dashboard query. Tests and
+    any explicitly atomic caller still need a savepoint, so retain it there.
+    """
+    if connections["enrolment"].in_atomic_block:
+        with transaction.atomic(using="enrolment"):
+            return callback()
+    return callback()
+
+
 def _scalars_or_raise(sql, params=None):
-    """``_scalars`` in a savepoint, re-raising so the caller can report the error.
+    """Run ``_scalars`` in an existing transaction's savepoint when required.
 
     Used where a failure is worth surfacing (the login schema is this app's own —
     if it is missing, saying so beats showing zeros) but must still leave the
     connection usable for the rest of the request.
     """
-    with transaction.atomic(using="enrolment"):
-        return _scalars(sql, params)
+    return _isolated_database_call(lambda: _scalars(sql, params))
 
 
 def _optional_scalars(sql, params=None):
@@ -258,24 +274,18 @@ def _optional_scalars(sql, params=None):
     is worse than one that shows the counts it does have, so a failure here
     degrades to "unavailable" and the caller omits those cards.
 
-    The ``atomic`` block is load-bearing, not decoration. Postgres aborts the
-    surrounding transaction on a failed statement, and nothing else runs on that
-    connection until it is unwound — so without this, one missing table takes out
-    every later query on the request, including the session lookup, and the
-    caller gets a 401 instead of a partial answer. ``atomic`` opens a savepoint
-    and releases it on the way out, which unwinds only this statement and works
-    whether or not a transaction is already open (it always is under TestCase,
-    where a bare ``rollback()`` would itself raise).
+    If the caller already has a transaction (notably Django ``TestCase``),
+    ``_isolated_database_call`` opens a savepoint so one missing table cannot
+    abort every later query. Normal autocommit requests need no extra wrapper.
     """
     try:
-        with transaction.atomic(using="enrolment"):
-            return _scalars(sql, params)
+        return _isolated_database_call(lambda: _scalars(sql, params))
     except DatabaseError:
         return {}
 
 
 def _optional_rows(sql, params=None):
-    """``_rows`` inside a savepoint, degrading to ``(error, [])`` on failure.
+    """Run ``_rows`` safely, degrading to ``(error, [])`` on failure.
 
     Returns ``(error, rows)``. Same reasoning as ``_optional_scalars``: a table
     that has not been provisioned is a deployment fact, not a request failure,
@@ -283,8 +293,7 @@ def _optional_rows(sql, params=None):
     document store" instead of showing the operator a generic 502.
     """
     try:
-        with transaction.atomic(using="enrolment"):
-            return None, _rows(sql, params)
+        return None, _isolated_database_call(lambda: _rows(sql, params))
     except DatabaseError as exc:
         return str(exc), []
 
