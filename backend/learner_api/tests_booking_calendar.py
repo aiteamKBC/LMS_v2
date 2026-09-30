@@ -101,6 +101,7 @@ class BookingEndpointRestrictionTests(SimpleTestCase):
                 patch('learner_api.booking_calendar.timezone.localdate', return_value=date(2026, 9, 14)), \
                 patch.object(module.CoachCalendarEvent.objects, 'filter') as events, \
                 patch('learner_api.calendar_connections.booking_conflicts', return_value=False), \
+                patch('learner_api.coach_availability.catchup_slot_is_free', return_value=True) as coach_free, \
                 patch('coach_api.views.reserve_coach_calendar_booking', return_value=(record, True)) as reserve, \
                 patch('coach_api.views.build_booked_calendar_event', return_value={}), \
                 patch('coach_api.views.synchronize_reserved_calendar_event', return_value=(record, '', True)) as sync, \
@@ -113,6 +114,8 @@ class BookingEndpointRestrictionTests(SimpleTestCase):
             response = inspect.unwrap(module.learner_calendar_book)(request, 'commercial', 101)
 
         self.assertEqual(response.status_code, 201)
+        # The coach's availability is checked on the same mailbox the booking uses.
+        self.assertEqual(coach_free.call_args.args[0], 'curriculum@example.com')
         self.assertEqual(reserve.call_args.kwargs['owner_name'], 'Test curriculum')
         self.assertEqual(reserve.call_args.kwargs['owner_email'], 'curriculum@example.com')
         self.assertNotIn('approvalRequired', json.loads(response.content))

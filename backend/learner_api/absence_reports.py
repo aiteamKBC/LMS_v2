@@ -32,6 +32,7 @@ from .alternative_recovery import (
     alternative_event_key,
     alternative_target_details,
     eligible_alternative_occurrences,
+    eligible_alternatives_by_occurrence,
     validate_alternative_occurrence,
 )
 
@@ -91,6 +92,11 @@ def _fetch_missed_sessions(learner, learner_id, *, meetings=False, kind=None):
         if _can_report_absence(row)
     ]
 
+    # Alternatives for every Teams lecture in one batch, not several queries per lecture.
+    alternatives = eligible_alternatives_by_occurrence([
+        str(row.get("occurrence_id") or row.get("session_id") or "")
+        for row in rows if row.get("source") == "microsoft-teams"
+    ])
     result = []
     for row in rows:
         item = {
@@ -107,8 +113,8 @@ def _fetch_missed_sessions(learner, learner_id, *, meetings=False, kind=None):
             "module": row.get("module_title", "") or "",
         }
         if row.get("source") == "microsoft-teams":
-            item["alternativeSessions"] = eligible_alternative_occurrences(
-                str(row.get("occurrence_id") or row.get("session_id") or "")
+            item["alternativeSessions"] = alternatives.get(
+                str(row.get("occurrence_id") or row.get("session_id") or ""), []
             )
         result.append(item)
     return result
