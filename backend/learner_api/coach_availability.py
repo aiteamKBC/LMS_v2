@@ -21,7 +21,29 @@ def working_zone(name):
         raise AvailabilityUnavailable('The coach calendar timezone could not be read.') from exc
 
 
-def free_slots(owner_email, day, offset, *, exclude_event_key=''):
+# Catch-ups are held in the UK working day: start from 09:00 and finish by 17:00.
+CATCHUP_WORKING_HOURS = (time(9, 0), time(17, 0))
+
+
+def uk_offset_minutes(day):
+    """JavaScript-style offset (UTC minus UK wall clock) on ``day``: coach bookings store UK time."""
+    noon = datetime.combine(day, time(12), ZoneInfo('Europe/London'))
+    return -int(noon.utcoffset().total_seconds() // 60)
+
+
+def catchup_slot_is_free(owner_email, day, start, duration, *, exclude_event_key=''):
+    """Whether the coach is free for a catch-up at ``start`` (UK time) on ``day``.
+
+    The same rule the learner's time picker lists: the UK working day
+    (CATCHUP_WORKING_HOURS), the coach's Outlook calendar and their other LMS bookings. Raises
+    AvailabilityUnavailable when the calendar cannot be read.
+    """
+    free = free_slots(owner_email, day, uk_offset_minutes(day), exclude_event_key=exclude_event_key,
+                      duration=duration, uk_working_hours=True)
+    return start.strftime('%H:%M') in free
+
+
+def free_slots(owner_email, day, offset, *, exclude_event_key='', duration=60, uk_working_hours=False):
     from coach_api.views import microsoft_graph_request
     from coach_api.models import CoachCalendarEvent
     from .booking_calendar import booking_date_restriction
@@ -39,11 +61,16 @@ def free_slots(owner_email, day, offset, *, exclude_event_key=''):
         schedule = next((s for s in schedules if str(s.get('scheduleId', '')).lower() == owner_email.lower()), None)
         if not schedule or schedule.get('error'):
             raise ValueError('Missing schedule')
-        hours = schedule['workingHours']
-        zone = working_zone(hours['timeZone']['name'])
-        work_start = time.fromisoformat(hours['startTime'])
-        work_end = time.fromisoformat(hours['endTime'])
-        days = {d.lower() for d in hours['daysOfWeek']}
+        if uk_working_hours:
+            # The college's UK working day, whatever the coach's own Outlook hours say.
+            zone, (work_start, work_end) = ZoneInfo('Europe/London'), CATCHUP_WORKING_HOURS
+            days = {'monday', 'tuesday', 'wednesday', 'thursday', 'friday'}
+        else:
+            hours = schedule['workingHours']
+            zone = working_zone(hours['timeZone']['name'])
+            work_start = time.fromisoformat(hours['startTime'])
+            work_end = time.fromisoformat(hours['endTime'])
+            days = {d.lower() for d in hours['daysOfWeek']}
         view = schedule['availabilityView']
         if len(view) < 96:
             raise ValueError('Incomplete availability')
@@ -61,12 +88,14 @@ def free_slots(owner_email, day, offset, *, exclude_event_key=''):
         busy.append((at, at + timedelta(minutes=record.duration_minutes or 60)))
     now = datetime.now(timezone.utc)
     slots = []
-    for index in range(93):
+    # The meeting occupies whole 15-minute blocks of the free/busy view.
+    blocks = max(1, -(-int(duration) // 15))
+    for index in range(96 - blocks + 1):
         at = start + timedelta(minutes=15 * index)
-        until = at + timedelta(minutes=60)
+        until = at + timedelta(minutes=int(duration))
         local = at.astimezone(zone)
         finish = until.astimezone(zone)
-        if at <= now or any(v != '0' for v in view[index:index + 4]):
+        if at <= now or any(v != '0' for v in view[index:index + blocks]):
             continue
         if local.strftime('%A').lower() not in days or local.date() != finish.date():
             continue
@@ -120,11 +149,16 @@ def coach_available_slots(request, kind, pk):
         offset = int(request.GET.get('timezoneOffsetMinutes', '0'))
         if not -840 <= offset <= 840:
             raise ValueError()
+        # The catch-up picker asks for its own length; the MCM grid keeps one hour.
+        duration = int(request.GET.get('durationMinutes') or 60)
+        if duration not in (15, 30, 45, 60, 90, 120):
+            raise ValueError()
+        catchup = request.GET.get('purpose') == 'catch-up'
     except ValueError:
-        return JsonResponse({'error': 'Choose a valid date and timezone.'}, status=400)
+        return JsonResponse({'error': 'Choose a valid date, timezone and duration.'}, status=400)
     unconfirmed = ''
     try:
-        free = free_slots(owner_email, day, offset)
+        free = free_slots(owner_email, day, offset, duration=duration, uk_working_hours=catchup)
     except AvailabilityUnavailable as exc:
         # A first session must stay bookable when Microsoft cannot be reached.
         #

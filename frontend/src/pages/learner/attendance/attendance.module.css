@@ -301,7 +301,7 @@
 .lectureTable:focus-visible { outline: 2px solid var(--attendance-accent); outline-offset: 2px; }
 .lectureTable .tableHeading { position: sticky; top: 0; z-index: 1; }
 .flatList > li + li { border-top: 1px solid var(--attendance-border); }
-.absenceDialog { width: min(560px, calc(100% - 24px)); max-height: calc(100dvh - 48px); margin: auto auto 24px; padding: 14px; overflow-y: auto; border: 1px solid var(--attendance-border); border-radius: 12px; background: var(--attendance-surface); color: var(--kbc-text, #182d48); box-shadow: 0 16px 48px -16px rgb(24 45 72 / .3); }
+.absenceDialog { width: min(560px, calc(100% - 24px)); max-height: calc(100dvh - 48px); margin: auto; padding: 14px; overflow-y: auto; border: 1px solid var(--attendance-border); border-radius: 12px; background: var(--attendance-surface); color: var(--kbc-text, #182d48); box-shadow: 0 16px 48px -16px rgb(24 45 72 / .3); }
 .absenceDialog::backdrop { background: rgb(24 45 72 / .15); }
 .dialogHeading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .dialogHeading h2 { display: flex; align-items: center; gap: 7px; font-size: 15px; font-weight: 600; }

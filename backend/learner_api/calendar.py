@@ -1272,6 +1272,18 @@ def _serialize_live_session_event(event):
     }
 
 
+def _catchup_time_error(owner_email, scheduled_date, scheduled_time, duration_minutes, *, exclude_event_key=""):
+    """Refuse a catch-up outside the coach's free working time (the picker's own rule)."""
+    from .coach_availability import AvailabilityUnavailable, catchup_slot_is_free
+    try:
+        if catchup_slot_is_free(owner_email, scheduled_date, scheduled_time, duration_minutes,
+                                exclude_event_key=exclude_event_key):
+            return None
+    except AvailabilityUnavailable as exc:
+        return _error(str(exc), 503)
+    return _error("Your coach is not available at that time. Choose one of the available times.", 409)
+
+
 @learner_self_or_staff(kwarg="pk")
 def learner_calendar(request, kind, pk):
     if request.method != "GET":
@@ -1551,6 +1563,10 @@ def learner_calendar_book(request, kind, pk):
     date_restriction = booking_date_restriction(scheduled_date)
     if date_restriction is not None:
         return _error(date_restriction.message, 400)
+    if session_type == "catch-up":
+        busy_error = _catchup_time_error(owner_email, scheduled_date, scheduled_time, duration_minutes)
+        if busy_error:
+            return busy_error
 
     notes = _s(payload.get("notes"))[:500]
     # An onboarding learner has no mirror row yet, so fall back to the source.
@@ -2034,6 +2050,11 @@ def learner_calendar_reschedule(request, kind, pk):
         )
         if date_restriction is not None:
             return _error(date_restriction.message, 400)
+        if _s(record.event_type).lower() == "catch-up":
+            busy_error = _catchup_time_error(record.owner_email, scheduled_date, scheduled_time,
+                                             duration_minutes, exclude_event_key=record.event_key)
+            if busy_error:
+                return busy_error
         if (
             record.scheduled_date == scheduled_date
             and record.scheduled_time == scheduled_time
