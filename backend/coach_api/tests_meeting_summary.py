@@ -16,6 +16,7 @@ from coach_api.views import (
     coach_review_instance_meeting_summary,
     coach_review_instance_previous,
     coach_timetable_event_artifacts,
+    combine_coach_meeting_transcript_rows,
     ensure_coach_meeting_summary,
     meeting_summary_transcript_excerpt,
     openai_meeting_summary,
@@ -135,6 +136,28 @@ class CoachMeetingSummaryGenerationTests(SimpleTestCase):
                 retry_failed=True,
             )
         )
+
+    def test_summary_source_combines_transcript_segments_in_order(self):
+        combined = combine_coach_meeting_transcript_rows([
+            ("transcript-1", "Coach: The first part."),
+            ("transcript-2", "Learner: The second part."),
+        ])
+
+        self.assertEqual(combined, {
+            "artifactId": "transcript-1,transcript-2",
+            "text": "Coach: The first part.\n\nLearner: The second part.",
+        })
+
+    def test_summary_source_ignores_empty_transcript_segments(self):
+        combined = combine_coach_meeting_transcript_rows([
+            ("transcript-empty", ""),
+            ("transcript-1", "The usable transcript."),
+        ])
+
+        self.assertEqual(combined, {
+            "artifactId": "transcript-1",
+            "text": "The usable transcript.",
+        })
 
     def test_explicit_retry_replaces_failed_fallback_with_ready_summary(self):
         transcript_text = "The learner and coach reviewed progress and agreed next steps."

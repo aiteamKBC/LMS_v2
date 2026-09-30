@@ -6119,29 +6119,40 @@ def build_graph_event_payload(record: CoachCalendarEvent, base_event: dict) -> d
     if source == "progress-review" and employer_email:
         details.append(("Employer attendee", f"{employer_name} ({employer_email})"))
 
+    # Each row is one <p> carrying "Label: value" as a single text flow rather
+    # than a <table> with the label and value split across cells. Outlook shows
+    # this invitation body as real HTML, but most other mail/calendar clients
+    # (Gmail, Google Calendar, Apple Mail) render their own native invite card
+    # and only show a plain-text reduction of this body underneath it -- one
+    # that a <table> tends to collapse into "LabelValue" with no separator.
+    # A colon baked into the text itself keeps that reduction readable too.
     detail_rows = "".join(
-        "<tr>"
-        f"<td style=\"padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#6b7280;font-size:13px;\">{escape(label)}</td>"
-        f"<td style=\"padding:8px 12px;border-bottom:1px solid #e5e7eb;color:#111827;font-size:13px;font-weight:600;\">{escape(value)}</td>"
-        "</tr>"
+        f"<p style=\"margin:0 0 10px;font-size:14px;line-height:1.5;\">"
+        f"<span style=\"color:#64748b;\">{escape(label)}:</span> "
+        f"<span style=\"color:#0f172a;font-weight:600;\">{escape(value)}</span></p>"
         for label, value in details
         if clean_text(value)
     )
     body_content = (
-        "<div style=\"font-family:Arial,Helvetica,sans-serif;color:#111827;line-height:1.5;\">"
-        "<div style=\"border:1px solid #e5e7eb;border-radius:12px;padding:20px;max-width:640px;\">"
-        "<p style=\"margin:0 0 6px;color:#6d28d9;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;\">"
-        "KBC LearningOS</p>"
-        f"<h2 style=\"margin:0 0 10px;font-size:20px;line-height:1.25;color:#111827;\">{escape(title)}</h2>"
-        f"<p style=\"margin:0 0 18px;color:#374151;font-size:14px;\">{escape(intro)}</p>"
-        "<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" "
-        "style=\"width:100%;border-collapse:collapse;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;\">"
+        "<div style=\"font-family:Segoe UI,Arial,sans-serif;color:#0f172a;\">"
+        "<div style=\"max-width:640px;background:#ffffff;border:1px solid #e2e8f0;border-radius:14px;overflow:hidden;\">"
+        "<div style=\"padding:18px 24px;background:#123c69;color:#ffffff;\">"
+        "<div style=\"font-size:12px;letter-spacing:1.5px;text-transform:uppercase;opacity:.8;\">KBC LMS</div>"
+        f"<div style=\"margin-top:6px;font-size:20px;font-weight:700;\">{escape(title)}</div>"
+        "</div>"
+        "<div style=\"padding:22px 24px;\">"
+        f"<p style=\"margin:0 0 18px;color:#334155;font-size:14px;line-height:1.6;\">{escape(intro)}</p>"
+        "<div style=\"padding:12px 0;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;\">"
         f"{detail_rows}"
-        "</table>"
-        "<p style=\"margin:18px 0 0;color:#374151;font-size:14px;\">"
+        "</div>"
+        "<p style=\"margin:20px 0 0;color:#334155;font-size:13px;line-height:1.6;\">"
         "Please use the Microsoft Teams link included in this invitation to join the meeting.</p>"
-        "<p style=\"margin:10px 0 0;color:#6b7280;font-size:12px;\">"
+        "<p style=\"margin:8px 0 0;color:#64748b;font-size:12px;line-height:1.5;\">"
         "If this time no longer works, please contact your coach before the scheduled start time.</p>"
+        "</div>"
+        "<div style=\"padding:14px 24px;background:#f8fafc;border-top:1px solid #e2e8f0;color:#94a3b8;font-size:11.5px;\">"
+        "Sent via KBC LMS."
+        "</div>"
         "</div>"
         "</div>"
     )
@@ -7545,6 +7556,33 @@ def stored_coach_meeting_transcript(record: CoachCalendarEvent, artifact_id: str
     }
 
 
+def combine_coach_meeting_transcript_rows(rows: list[tuple[str, str]]) -> dict | None:
+    """Combine all stored Teams transcript segments into one text source.
+
+    Teams can split one meeting into multiple transcript artifacts when a
+    recording is stopped and restarted. Keep the artifact IDs for traceability,
+    but send the readable text to the summary as one chronological transcript.
+    """
+
+    artifact_ids: list[str] = []
+    transcript_parts: list[str] = []
+    for artifact_id, text in rows:
+        artifact_id = clean_text(artifact_id)
+        text = clean_text(text)
+        if not text:
+            continue
+        if artifact_id:
+            artifact_ids.append(artifact_id)
+        transcript_parts.append(text)
+
+    if not transcript_parts:
+        return None
+    return {
+        "artifactId": ",".join(artifact_ids),
+        "text": "\n\n".join(transcript_parts),
+    }
+
+
 def stored_coach_meeting_transcript_for_summary(record: CoachCalendarEvent) -> dict | None:
     database = router.db_for_read(CoachCalendarEvent) or "default"
     if (
@@ -7561,18 +7599,16 @@ def stored_coach_meeting_transcript_for_summary(record: CoachCalendarEvent) -> d
                 WHERE event_key = %s
                   AND artifact_type = 'transcript'
                   AND transcript_text <> ''
-                ORDER BY COALESCE(end_datetime, created_datetime) DESC NULLS LAST, updated_at DESC
-                LIMIT 1
+                ORDER BY COALESCE(created_datetime, end_datetime) ASC NULLS LAST,
+                         graph_artifact_id ASC
                 """,
                 [record.event_key],
             )
-            row = cursor.fetchone()
+            rows = cursor.fetchall()
     except Exception:
         logger.exception("Unable to read stored coach Teams transcript text for event_key=%s", record.event_key)
         return None
-    if not row or not clean_text(row[1]):
-        return None
-    return {"artifactId": clean_text(row[0]), "text": clean_text(row[1])}
+    return combine_coach_meeting_transcript_rows(rows)
 
 
 @dataclass(frozen=True)
@@ -8319,6 +8355,17 @@ def coach_meeting_artifact_content_response(request, record, event_key, artifact
     disposition = "attachment" if as_attachment else "inline"
 
     if artifact_type == "transcript":
+        if clean_text(artifact_id).lower() == "combined":
+            combined_transcript = stored_coach_meeting_transcript_for_summary(record)
+            if not combined_transcript:
+                return JsonResponse({"detail": "The combined meeting transcript is not available."}, status=404)
+            response = HttpResponse(
+                combined_transcript["text"],
+                content_type="text/plain; charset=utf-8",
+            )
+            combined_filename = f"{safe_event_key}-transcript.txt"
+            response["Content-Disposition"] = f'{disposition}; filename="{combined_filename}"'
+            return response
         stored_transcript = stored_coach_meeting_transcript(record, artifact_id)
         if stored_transcript:
             response = HttpResponse(

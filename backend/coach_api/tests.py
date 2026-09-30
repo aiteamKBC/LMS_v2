@@ -2141,6 +2141,37 @@ Learner progress looks strong.
         self.assertIn("inline", response["Content-Disposition"])
         stored.assert_called_once_with(record, "transcript-1")
 
+    def test_combined_transcript_content_returns_one_text_file(self):
+        record = CoachCalendarEvent(
+            event_key="mcr:42:1:2026-09-01",
+            owner_email="coach@example.com",
+            event_type="mcr",
+        )
+        request = self.factory.get(
+            "/coach_api/coach/timetable/events/mcr:42:1:2026-09-01/artifacts/transcript/combined/content?preview=1"
+        )
+
+        with patch("coach_api.views.stored_coach_meeting_transcript_for_summary", return_value={
+            "artifactId": "transcript-1,transcript-2",
+            "text": "First transcript segment.\n\nSecond transcript segment.",
+        }) as stored:
+            response = coach_meeting_artifact_content_response(
+                request,
+                record,
+                record.event_key,
+                "transcript",
+                "combined",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.content.decode(),
+            "First transcript segment.\n\nSecond transcript segment.",
+        )
+        self.assertIn("text/plain", response["Content-Type"])
+        self.assertIn("transcript.txt", response["Content-Disposition"])
+        stored.assert_called_once_with(record)
+
     def test_progress_review_expected_attendees_include_employer(self):
         record = CoachCalendarEvent(
             event_key="progress-review:42:1:2026-09-01",
