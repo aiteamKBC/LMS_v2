@@ -49,6 +49,17 @@ class PersonalLearningTests(unittest.TestCase):
         blocker = patch('socket.socket', side_effect=AssertionError('Network is forbidden'))
         blocker.start()
         self.addCleanup(blocker.stop)
+        # The working rules themselves stay real -- these activities are
+        # completed on a Friday morning, which is a working instant -- but the
+        # learner's holiday calendar is a curriculum read, and this file runs
+        # without a database. learner_api.tests covers the scoped resolver.
+        try:
+            calendar = patch('learner_api.working_rules.learner_holiday_details', return_value={})
+            calendar.start()
+        except (ImportError, ModuleNotFoundError):   # standalone `python -I` run
+            pass
+        else:
+            self.addCleanup(calendar.stop)
         self.account = types.SimpleNamespace(id=7, role='admin', display_name='Synthetic Admin', email='admin@example.invalid')
         self.context = policy.context_for('pl.7.study.MOD-A', self.account)
         self.state = {'progress': [], 'submissions': {}, 'evidence': {}}

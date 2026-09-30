@@ -6,6 +6,7 @@ import { readLearnerJson } from './learnerRead';
 // ============================================================================
 
 import { invalidateLearnerDetailCache } from '@/api/learnerDetail';
+import { CompletionValidationError, type WorkingRuleReason } from '@/lib/completionValidation';
 
 const BASE = '/learner_api/quizzes';
 
@@ -69,6 +70,10 @@ export interface QuizSubmission {
   feedback?: string;         // general feedback about the quiz
   reportedTime?: string;     // self-reported time-to-complete (planned time or free text)
   skipReflection?: boolean;  // explicit learner choice, audited separately from an empty answer
+  /** The working instant the learner declared after their Submit click was
+   *  refused. Omitted on a first, already-valid attempt. The rest of the
+   *  submission is re-sent unchanged, so the attempt grades identically. */
+  declaredCompletedAt?: string | null;
 }
 
 export interface QuizQuestionResult {
@@ -154,7 +159,18 @@ async function request<T>(url: string, init?: globalThis.RequestInit): Promise<T
   const text = await res.text();
   const data = text ? JSON.parse(text) : null;
   if (!res.ok) {
-    throw new Error((data && data.error) || `Request failed (${res.status})`);
+    const message = (data && data.error) || `Request failed (${res.status})`;
+    // 409 + validation is the working-rules refusal: the attempt was neither
+    // graded nor stored, so the caller opens the completion date/time dialog
+    // and re-posts. Any other 409 (a reused timing session) stays an error.
+    if (res.status === 409 && data && data.validation) {
+      throw new CompletionValidationError(
+        message,
+        (data.validation.reason || '') as WorkingRuleReason | '',
+        data.validation.holidayName || '',
+      );
+    }
+    throw new Error(message);
   }
   return data as T;
 }

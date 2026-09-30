@@ -150,6 +150,11 @@ vi.mock('@/api/curriculumLearnerAssignments', () => ({
     learners: [], totals: { learnerCount: 0, assignedCount: 0 },
   })),
   assignCurriculumLearners: vi.fn(),
+  unassignCurriculumLearners: vi.fn(),
+  applyCurriculumLearnerAssignments: vi.fn(async () => ({
+    added: [], removed: [], failed: [], failureMessage: null, abandoned: false,
+    changedCount: 0, moduleCount: 1,
+  })),
 }));
 
 vi.mock('@/lib/curriculumApi', async importOriginal => ({
@@ -205,14 +210,14 @@ describe('Programme workspace', { timeout: 15000 }, () => {
     await renderWorkspace();
     await openTab(/Cohorts/);
     await userEvent.click(screen.getByRole('button', { name: 'Assign learners' }));
-    await screen.findByText('Selected learners will join this cohort and receive all 1 modules in it.');
+    await screen.findByText(/Learners you add join this cohort and receive all 1 modules in it\./);
     expect(fetchLearnerAssignments).toHaveBeenCalledWith(
       { scope: 'cohort', id: 'COHORT-1', name: 'Sept 2026' }, expect.any(AbortSignal),
     );
     await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
     await openTab(/Modules/);
     await userEvent.click(screen.getAllByRole('button', { name: 'Assign learners' })[0]);
-    await screen.findByText(/Selected learners will receive this module only/);
+    await screen.findByText(/Learners you add receive this module only/);
     expect(fetchLearnerAssignments).toHaveBeenCalledWith(
       { scope: 'module', id: 'MOD-1', name: 'Data Foundations' }, expect.any(AbortSignal),
     );

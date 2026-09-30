@@ -177,40 +177,80 @@ RUN_APP_ON_TEST_BRANCH = (
     and os.environ.get("RUN_APP_ON_TEST_BRANCH", "").strip().lower()
     in {"1", "true", "yes", "on"}
 )
-if RUN_APP_ON_TEST_BRANCH:
-    _branch_url = os.environ.get("security_Database_url")  # case-sensitive key
-    if not _branch_url:
+# Aliases whose env vars must be blank in test-branch mode, so the alias is
+# never built and the production database behind it is simply unreachable.
+TEST_BRANCH_BLANK_KEYS = (
+    "AUDIT_DATABASE_URL", "AUDIT_CLONE_DATABASE_URL", "LASR-ADUTIOD-CLNE",
+    "KBC_ATTENDANCE_DATABASE_URL",
+)
+
+
+def assert_test_branch_databases(environ):
+    """Every database this process could reach must be the sanitised branch.
+
+    Returns the approved branch host, or raises ImproperlyConfigured naming the
+    offending variable. Takes the environment as an argument and reads no
+    module state, so the guard can be proven directly instead of by booting
+    Django against a real database.
+    """
+    branch_url = environ.get("security_Database_url")  # case-sensitive key
+    if not branch_url:
         raise ImproperlyConfigured(
             "RUN_APP_ON_TEST_BRANCH is set but 'security_Database_url' is absent."
         )
-    _branch_host = (urlparse(_branch_url).hostname or "").lower()
-    if not _branch_host:
+    branch_host = (urlparse(branch_url).hostname or "").lower()
+    if not branch_host:
         raise ImproperlyConfigured(
             "security_Database_url has no parseable host; refusing to start."
         )
-    # `default` and `enrolment` must BOTH resolve to the branch host. Fail closed
-    # on unset/unparseable, before any connection is opened.
-    for _key in ("DATABASE_URL", "Database_url"):
-        _u = os.environ.get(_key)
-        _h = (urlparse(_u).hostname or "").lower() if _u else ""
-        if not _h:
+    # `default` must resolve to the branch host. Fail closed on unset or
+    # unparseable, before any connection is opened.
+    for key in ("DATABASE_URL", "Database_url"):
+        url = environ.get(key)
+        host = (urlparse(url).hostname or "").lower() if url else ""
+        if not host:
             raise ImproperlyConfigured(
-                f"RUN_APP_ON_TEST_BRANCH: {_key} is unset or unparseable; refusing to start."
+                f"RUN_APP_ON_TEST_BRANCH: {key} is unset or unparseable; refusing to start."
             )
-        if _h != _branch_host:
+        if host != branch_host:
             raise ImproperlyConfigured(
-                f"RUN_APP_ON_TEST_BRANCH: {_key} host ({_h!r}) is not the test branch "
-                f"({_branch_host!r}); refusing to run the app against a non-branch database."
+                f"RUN_APP_ON_TEST_BRANCH: {key} host ({host!r}) is not the test branch "
+                f"({branch_host!r}); refusing to run the app against a non-branch database."
+            )
+    # `enrolment` is where learner progress, curriculum reads and every
+    # completion write actually land, and the alias resolves from its OWN
+    # variable FIRST (see the DATABASES['enrolment'] block below), so the loop
+    # above does not cover it: a branch-mode process could otherwise be writing
+    # learner completions straight into production. Unset is safe and stays
+    # allowed -- the alias then falls through to Database_url, already proven
+    # above -- but any value it does carry must be the branch.
+    enrolment_url = environ.get("ENROLMENT_DATABASE_URL")
+    if enrolment_url:
+        enrolment_host = (urlparse(enrolment_url).hostname or "").lower()
+        if not enrolment_host:
+            raise ImproperlyConfigured(
+                "RUN_APP_ON_TEST_BRANCH: ENROLMENT_DATABASE_URL is set but has no "
+                "parseable host; refusing to start."
+            )
+        if enrolment_host != branch_host:
+            raise ImproperlyConfigured(
+                f"RUN_APP_ON_TEST_BRANCH: ENROLMENT_DATABASE_URL host ({enrolment_host!r}) "
+                f"is not the test branch ({branch_host!r}); refusing to run the app "
+                f"against a non-branch database."
             )
     # The audit / audit_clone / attendance databases must be UNREACHABLE: their
     # env vars must be blank so those aliases are never built at all.
-    for _key in ("AUDIT_DATABASE_URL", "AUDIT_CLONE_DATABASE_URL", "LASR-ADUTIOD-CLNE",
-                 "KBC_ATTENDANCE_DATABASE_URL"):
-        if os.environ.get(_key):
+    for key in TEST_BRANCH_BLANK_KEYS:
+        if environ.get(key):
             raise ImproperlyConfigured(
-                f"RUN_APP_ON_TEST_BRANCH: {_key} must be empty so its production alias "
+                f"RUN_APP_ON_TEST_BRANCH: {key} must be empty so its production alias "
                 f"is never created; refusing to start."
             )
+    return branch_host
+
+
+if RUN_APP_ON_TEST_BRANCH:
+    assert_test_branch_databases(os.environ)
     # Hermetic: no outbound third-party calls from the baseline (WordPress / AI).
     os.environ["KBC_LMS_API_KEY"] = ""
     os.environ["OPENAI_API_KEY"] = ""

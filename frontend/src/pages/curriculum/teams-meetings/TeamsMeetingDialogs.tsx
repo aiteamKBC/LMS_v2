@@ -342,7 +342,7 @@ export function TeamsMeetingDialogs({ workspace }: { workspace: TeamsMeetingsWor
     openSettings, setResultsModule, resultsModule, detailError, loadDetail, holidayLabelFor,
     detailOccurrenceFor, now, setPreview, setTranscriptPreview, invitedPrefilling, prefillInvitees, preview,
     transcriptPreview, settingsDrawer, drawerTarget, saveSettings, blockedReason,
-    teamsLoaded, teamsError, createProgress, updateProgress, saveInvitations, updateDrawer, pushDates,
+    teamsLoaded, teamsError, createProgress, updateProgress, saveInvitations, updateDrawer, pushDates, resendSchedule,
     sendUpdateEmails, setSendUpdateEmails,
   } = workspace;
   return (
@@ -419,6 +419,19 @@ export function TeamsMeetingDialogs({ workspace }: { workspace: TeamsMeetingsWor
                         Add {pendingComponents} missing live session{pendingComponents === 1 ? '' : 's'}
                       </button>
                     )}
+                    {/* Its own action, deliberately outside the update: it
+                        sends nothing to Microsoft and opens no review. It
+                        re-sends the joining schedule -- the creation email,
+                        every date and every link -- to everyone this calendar
+                        invites, which is what an author reaches for when the
+                        first email was missed rather than when a date moved. */}
+                    <button type="button" onClick={() => void resendSchedule(selectedForDisplay || selected)}
+                      disabled={Boolean(busy) || Boolean(updateProgress) || Boolean(blockedReason) || detailLoading || updateDrawer.saving || !graphConfigured}
+                      title="Send the full schedule email -- the complete timetable and join links, the same message a new calendar sends -- to everyone this meeting invites. Everyone is emailed, including anyone who already received it. The Teams calendar is not changed."
+                      className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 transition-colors hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-40">
+                      <AppIcon className={busy === `${selected.catalogueId}:resend` ? 'ri-loader-4-line animate-spin text-sm' : 'ri-mail-send-line text-sm'}></AppIcon>
+                      Email schedule to everyone
+                    </button>
                     <label className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-semibold text-foreground-700">
                       <input
                         type="checkbox"
