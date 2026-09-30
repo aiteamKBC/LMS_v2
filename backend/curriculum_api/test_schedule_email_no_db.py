@@ -3,6 +3,7 @@ import ast
 import functools
 import importlib.util
 import logging
+import re
 import sys
 import types
 import unittest
@@ -46,7 +47,7 @@ def require_post(fn):
 
 
 service = {'__package__': 'curriculum_api', '__name__': 'curriculum_api.teams_schedule_delivery', '__file__': str(ROOT / 'teams_schedule_delivery.py'),
-           'Path': Path, 'base64': base64, 'quote': quote, 'utc_datetime': utc_datetime,
+           'Path': Path, 'base64': base64, 'quote': quote, 're': re, 'utc_datetime': utc_datetime,
            'render_schedule_email': render_schedule_email, 'render_change_email': render_change_email, 'meeting_settings': meeting_settings, 'logger': logging.getLogger('email-test'),
            'TABLE': 'curriculum.teams_schedule_emails', 'BATCH_SIZE': 4, 'JsonResponse': Response,
            'ThreadPoolExecutor': ThreadPoolExecutor,
@@ -337,6 +338,34 @@ class EmailTests(unittest.TestCase):
     def test_added_people_must_be_a_list_of_addresses_and_never_ride_with_a_change_notice(self):
         for body in ({'addedPeople': 'one@example.invalid'}, {'addedPeople': [1]}, {'addedPeople': ['a@example.invalid'] * 501},
                      {'addedPeople': ['one@example.invalid'], 'changeNotice': 'token'}):
+            view = types.SimpleNamespace(json_body=lambda _, body=body: body)
+            with patch.dict(sys.modules, {'curriculum_api.views': view}):
+                request = types.SimpleNamespace(account=types.SimpleNamespace(role='staff'), method='POST')
+                self.assertEqual(service['schedule_email'](request, 'LIVE-ONE').status_code, 400, body)
+
+    def test_a_resend_reaches_people_the_calendars_own_key_has_already_accepted(self):
+        # The point of the button: everyone is emailed again, including the
+        # person the creation email already reached.
+        self.ledger.rows[('LIVE-ONE', 'one@example.invalid')] = 'accepted'
+        status = service['dispatch_by_role']('LIVE-ONE@round-one-key', ['one@example.invalid', 'two@example.invalid'],
+                                             ['tutor@example.invalid'], 'learner', 'organiser', self.ledger, self.sender)
+        self.assertEqual(sorted(call.args for call in self.sender.call_args_list),
+                         [('one@example.invalid', 'learner'), ('tutor@example.invalid', 'organiser'),
+                          ('two@example.invalid', 'learner')])
+        self.assertEqual(status['status'], 'complete')
+
+    def test_a_resend_key_still_stops_a_duplicate_inside_its_own_press(self):
+        # Batches of one press share the key, so a retry reads back what was
+        # sent rather than sending it twice.
+        for _ in range(2):
+            service['dispatch_by_role']('LIVE-ONE@round-one-key', ['one@example.invalid'], [],
+                                        'learner', 'organiser', self.ledger, self.sender)
+        self.assertEqual(self.sender.call_count, 1)
+
+    def test_resend_key_must_be_a_plain_name_and_never_ride_with_another_mode(self):
+        for body in ({'resendKey': 'short'}, {'resendKey': 'has space here'}, {'resendKey': 'a' * 65}, {'resendKey': 1},
+                     {'resendKey': 'round-one-key', 'changeNotice': 'token'},
+                     {'resendKey': 'round-one-key', 'addedPeople': ['one@example.invalid']}):
             view = types.SimpleNamespace(json_body=lambda _, body=body: body)
             with patch.dict(sys.modules, {'curriculum_api.views': view}):
                 request = types.SimpleNamespace(account=types.SimpleNamespace(role='staff'), method='POST')

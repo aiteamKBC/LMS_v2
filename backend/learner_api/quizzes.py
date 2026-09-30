@@ -35,6 +35,11 @@ from .identity import learner_profile_for_source
 from .active_users import ComponentReferenceError, save_progress_record
 from .models import CommercialUser, EnrolmentUser
 from .time_tracking import TrackingSessionError, tracking_session_already_used, verify_tracking_session
+from .working_rules import (
+    DeclaredCompletionError,
+    resolve_completion_instants,
+    validation_response_payload,
+)
 from login.permissions import learner_self_or_admin
 
 logger = logging.getLogger(__name__)
@@ -432,6 +437,21 @@ def submit_quiz_attempt(request, quiz_id):
     except (ValueError, UnicodeDecodeError) as exc:
         return _error(f"Invalid JSON body: {exc}", 400)
 
+    # Working rules are decided here, before the quiz is fetched, graded or
+    # persisted: a refusal must leave no attempt, no progress record, no audit
+    # line and no OTJH credit behind. The learner's answers stay in the browser
+    # and are re-posted unchanged with a declared instant, so the correction
+    # never costs them a retake and grades to exactly the same score.
+    submitted_at_dt = timezone.now()
+    try:
+        declared_at, validation_reason = resolve_completion_instants(
+            payload, submitted_at_dt, quiz_id=quiz_id,
+        )
+    except DeclaredCompletionError as exc:
+        return JsonResponse(validation_response_payload(exc), status=409)
+    except DatabaseError:
+        return _error("Could not verify the working-hours holiday calendar. Please try again.", 503)
+
     submitted_answers = payload.get("answers") or {}
     time_taken_seconds = payload.get("timeTakenSeconds")
     week_title = payload.get("week")
@@ -517,7 +537,6 @@ def submit_quiz_attempt(request, quiz_id):
     )
     attempt_number = prior + 1
 
-    submitted_at_dt = timezone.now()
     try:
         tracking = verify_tracking_session(
             payload.get("trackingToken"),
@@ -561,6 +580,11 @@ def submit_quiz_attempt(request, quiz_id):
         "claimedSeconds": tracking["claimedSeconds"],
         "serverSessionSeconds": tracking["serverSessionSeconds"],
         "verifiedSeconds": tracking["verifiedSeconds"],
+        # submittedAt stays the real Submit click; declaredCompletedAt is the
+        # working instant OTJH and reporting count the attempt at when that
+        # click had to be corrected, and the reason says why it was corrected.
+        "declaredCompletedAt": declared_at.isoformat() if declared_at else None,
+        "submissionValidationReason": validation_reason,
     }
 
     if active is not None:
