@@ -72,7 +72,7 @@ export type TrainingPlanDashboard = {
   programmeStartDate?: string | null;
   programmeEndDate?: string | null;
   /** Monthly OTJH; assignment submissions use marking status, other activity types keep their existing semantics. */
-  monthlyOtjh?: Record<string, { planned: number | null; submitted?: number; actual: number; missingPlannedActivities: number }>;
+  monthlyOtjh?: Record<string, { planned: number | null; submitted?: number; actual: number; includesHistorical?: boolean; missingPlannedActivities: number }>;
   /** Authoritative Monthly Logs totals: retained Audit history, then LMS months. */
   monthlyLogOtjh?: Record<string, { target: number | null; submitted: number; completed: number }>;
   /** Last YYYY-MM month whose OTJH figures must come from Audit rather than live LMS calculations. */
@@ -86,6 +86,7 @@ export type TrainingPlanDashboard = {
   sessions: PlanSession[];
   reviews: PlanReview[];
   coach: { name: string; email?: string; phone?: string; bookingUrl: string | null };
+  journalTargets?: Record<string, number>;
   contractStatus: string;
   generatedAt: string;
 };
@@ -96,7 +97,7 @@ export function fetchTrainingPlanDashboard(kind: LearnerKind, id: string, signal
 }
 
 export type TrainingPlanContract = Pick<TrainingPlanDashboard,
-  'months' | 'contractStatus' | 'programmeStartDate' | 'programmeEndDate'>;
+  'months' | 'contractStatus' | 'programmeStartDate' | 'programmeEndDate' | 'journalTargets'>;
 export function fetchTrainingPlanContract(kind: LearnerKind, id: string, signal?: AbortSignal) {
   return subjectRequest<TrainingPlanContract>(`/learner_api/training-plan-dashboard/${kind}/${encodeURIComponent(id)}/?section=contract`, { signal });
 }
