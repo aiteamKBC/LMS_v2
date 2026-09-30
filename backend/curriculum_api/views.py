@@ -38,13 +38,15 @@ from login.permissions import require_role
 from .weekly_schedule import module_weekly_schedule, merged_weekly_schedule
 from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, stored_calendar_series, graph_event_utc
 from .session_overrides import apply_session_overrides, override_clock, session_overrides
-from .teams_calendar_checks import CalendarMismatch, calendar_targets, graph_calendar_time, local_calendar_recurrence, verify_calendar, publish_attendees, safe_teams_join_url, utc_datetime
+from .teams_calendar_checks import (CalendarMismatch, attendee_differences, attendees_already_match, calendar_targets, event_organizer_address,
+                                    graph_calendar_time, local_calendar_recurrence, publish_attendees, safe_teams_join_url,
+                                    unconfirmed_attendee_detail, utc_datetime, verify_calendar)
 
 from learner_api.progress_rules import (
     progress_achievement_status,
     progress_counts_as_achieved,
 )
-from learner_api.models import LearnerTrainingPlanModule
+from learner_api.models import LearnerProfile, LearnerTrainingPlanModule
 from learner_api.constants import PROGRAMME_STATUS_CHOICES
 
 from . import pptx_slides
@@ -2509,17 +2511,6 @@ def verify_teams_calendar_with_standalones(
     reported success -- while nobody but the organizer had that session. An
     occurrence is only really restored once the people it is for are on it.
     """
-    def addresses(items):
-        """The email addresses on an attendee list, however it is written."""
-        found = set()
-        for item in items or []:
-            address = clean_str(
-                (item.get('emailAddress') or {}).get('address') if isinstance(item, dict) else item
-            )
-            if address:
-                found.add(address.lower())
-        return found
-
     details_by_number = {
         int(detail.get('session_number') or 0): detail
         for detail in (occurrence_details or [])
@@ -2549,15 +2540,19 @@ def verify_teams_calendar_with_standalones(
         )
         if expected_attendees is None:
             continue
-        expected = addresses(expected_attendees)
-        actual = addresses(standalone.get('attendees'))
-        # The same set equality ``publish_attendees`` confirms a published list
+        # The same comparison ``publish_attendees`` confirms a published list
         # with: a session carrying someone the series does not invite is as wrong
-        # as one missing a learner, and neither is left standing as "verified".
-        if expected != actual:
+        # as one missing a learner, and neither is left standing as "verified" --
+        # while an alias Microsoft stored under its primary address, and the
+        # organizer of the session itself, are the same people either way.
+        missing, extra = attendee_differences(
+            expected_attendees, standalone.get('attendees'), event_organizer_address(standalone),
+        )
+        if missing or extra:
             raise CalendarMismatch(
                 f"Session {target['session_number']} was restored on its own Teams event "
-                'without its invited people. The calendar was not confirmed.'
+                f'without its invited people ({unconfirmed_attendee_detail(missing, extra)}). '
+                'The calendar was not confirmed.'
             )
     return event
 
@@ -2583,18 +2578,10 @@ def publish_teams_calendar_attendees(
     """
     headers = GRAPH_SILENT_INVITE_HEADERS if silent else None
     announce = not silent
-    def attendee_addresses(items):
-        return {
-            clean_str((item.get('emailAddress') or {}).get('address')).lower()
-            for item in (items or [])
-            if isinstance(item, dict) and clean_str((item.get('emailAddress') or {}).get('address'))
-        }
-
     def needs_force_patch(current):
         return (
             not dates_unchanged
-            or
-            attendee_addresses(current.get('attendees')) != attendee_addresses(attendees)
+            or not attendees_already_match(attendees, current.get('attendees'), event_organizer_address(current))
             or clean_str(title) and clean_str(title) != clean_str(current.get('subject'))
             or current.get('hideAttendees') is not True
         )
@@ -9649,6 +9636,12 @@ def authoring_session_links_by_catalogue(module_catalogue_ids):
                 'weekId': week_id,
                 'componentId': clean_str(component.get('id')),
                 'title': component.get('title') or week_row.get('title') or '',
+                # Delivered by its own additional meeting rather than by the
+                # module's calendar. Flagged, never dropped: the week still runs
+                # a live session and every screen that lists sessions must still
+                # show it. Only the Teams paths exclude it -- the module series
+                # neither books it nor should be judged against it.
+                'additionalMeeting': bool(clean_str(settings.get('extraTeamsMeetingUrl'))),
                 # The component's own schedule. Empty for one never dated, which
                 # the caller reads as "take this position's planned slot".
                 'date': format_date(settings.get('sessionDate')),
@@ -9967,6 +9960,17 @@ def module_delivery_row(module_row, group_row=None):
     where its group states none: an ungrouped module, or a group that has never
     been given a slot.
 
+    "The group states none" is about the group's *slot*, not about each field of
+    it. Once a group has been given a slot at all -- a day, a clock, or both --
+    the days on that slot are the module's days, including when the slot names
+    no day: a group that delivers on no weekday delivers on no weekday, and the
+    module's own stored day is then a copy left by whatever created it rather
+    than a second opinion to fall back on. A module duplicated into a group that
+    was never given a delivery day otherwise kept teaching on the day it was
+    copied from, on a timetable the group's own screens said was empty -- and
+    booked its tutor there, so assigning that tutor elsewhere was refused over a
+    session nobody could see.
+
     Returns a copy; nothing is written. Per-date exceptions
     (``session_overrides``) are untouched -- a session moved to its own date is
     a decision about that date, not a pattern the group can take back.
@@ -9980,22 +9984,17 @@ def module_delivery_row(module_row, group_row=None):
         return module_row
     resolved = {
         **module_row,
-        'session_week_day': day or clean_str(module_row.get('session_week_day')),
+        'session_week_day': day,
         'session_start_time': start or clean_str(module_row.get('session_start_time')),
         'session_end_time': end or clean_str(module_row.get('session_end_time')),
     }
-    slots = module_weekly_schedule(module_row)
-    if slots:
-        # A per-weekday table is the module's own refinement of its pattern. The
-        # group naming its days replaces it outright -- kept, it would quietly
-        # add back days the group no longer delivers on. The group naming only a
-        # clock keeps the module's days and re-times them.
-        retimed = [] if day else [
-            {**slot, 'startTime': start or slot['startTime'], 'endTime': end or slot['endTime']}
-            for slot in slots
-        ]
-        resolved['weekly_schedule'] = json_db_value(retimed) if retimed else None
-        resolved['weeklySchedule'] = retimed or None
+    if module_weekly_schedule(module_row):
+        # A per-weekday table is the module's own refinement of its pattern, and
+        # the group's days replace it outright -- kept, it would quietly add back
+        # days the group no longer delivers on, which is the same fallback the
+        # day above no longer takes.
+        resolved['weekly_schedule'] = None
+        resolved['weeklySchedule'] = None
     return resolved
 
 
@@ -10684,6 +10683,10 @@ def module_schedule_view(module, tutor_name=None):
         # clash is about the day a session actually runs on.
         'cohort_id': first('cohort_id', 'cohortId'),
         'cohort_name': first('cohort_name', 'cohortName', 'cohort'),
+        # The group owns the delivery pattern (``module_delivery_row``), so the
+        # conflict check has to be able to find it from a schedule alone -- it is
+        # handed payload-shaped candidates that never reach the modules table.
+        'group_id': first('group_id', 'groupId'),
         'group_name': first('group_name', 'groupName', 'group'),
         'holidays': holidays if isinstance(holidays, list) else [],
         # 'Unassigned' is a real stored value, not a name. Normalising it away
@@ -10741,25 +10744,81 @@ def module_slot_clash_dates(left, right, holiday_cache=None):
     return clashes
 
 
+def safe_group_delivery_rows():
+    """Every group row, keyed by id, for resolving delivery patterns.
+
+    Read once per conflict check rather than per module: a group states the
+    pattern for every module delivered to it, so the same handful of rows would
+    otherwise be fetched hundreds of times over.
+    """
+    try:
+        rows = authoring_fetch_all(GROUPS_TABLE)
+    except (Exception, AssertionError):
+        logger.debug('Unable to read group rows for the tutor conflict check.', exc_info=True)
+        return {}
+    return {
+        clean_str(row.get('group_id')): row
+        for row in rows or []
+        if clean_str(row.get('group_id'))
+    }
+
+
+def tutor_delivery_schedule(schedule, groups):
+    """One schedule with the days its group has taken away already gone.
+
+    A module inside a group may run to a slot of its own -- the module drawer
+    offers taking the group's pattern as an action precisely because it is not
+    automatic -- so this deliberately is NOT the full ``module_delivery_row``
+    resolution. It applies one part of it: a group that has been given a slot
+    naming no delivery day delivers on no delivery day, and the module's own
+    stored day cannot fill that in.
+
+    That day is the one nobody can see. A module created into such a group keeps
+    a copy of whatever day it was built from, every screen that reads the group
+    shows the delivery as empty, and the check was booking its tutor on the copy
+    -- so assigning that tutor elsewhere was refused over sessions the group's
+    own timetable does not contain.
+    """
+    group = (groups or {}).get(clean_str((schedule or {}).get('group_id')))
+    if not group:
+        return schedule
+    day = clean_str(group.get('session_week_day')) or schedule_day_part(group.get('schedule'))
+    stated_clock = (
+        clean_str(group.get('session_start_time'))
+        or clean_str(group.get('session_end_time'))
+        or any(schedule_time_parts(group.get('schedule')))
+    )
+    # No slot at all is a group that has never said when it meets, and there the
+    # module's own pattern still answers -- the same line ``module_delivery_row``
+    # draws.
+    if day or not stated_clock:
+        return schedule
+    # ``module_schedule_view`` has already folded any per-weekday table into
+    # ``session_week_day``, so both have to go for the schedule to date empty.
+    return {**schedule, 'session_week_day': '', 'weekly_schedule': [], 'weeklySchedule': []}
+
+
 def tutor_conflict_context(module_rows=None):
     """The stored side of a conflict check, prepared once.
 
     Everything here is the same for every tutor and every candidate a caller goes
     on to check, so it is built once rather than per question: the surviving
-    module rows as schedules, their session dates, and the cohort holiday reads
-    those dates depend on. A twenty-name roster over a few hundred stored modules
-    was otherwise thousands of session plans -- and thousands of holiday reads --
-    for one change of the slot.
+    module rows as schedules, the days their groups have taken away already gone
+    (``tutor_delivery_schedule``), their session dates, the group rows that reads
+    from, and the cohort holiday reads those dates depend on. A twenty-name
+    roster over a few hundred stored modules was otherwise thousands of session
+    plans -- and thousands of holiday reads -- for one change of the slot.
     """
     holiday_cache = {}
+    groups = safe_group_delivery_rows()
     stored = []
     for row in surviving_authoring_module_rows(module_rows):
-        view = module_schedule_view(row)
+        view = tutor_delivery_schedule(module_schedule_view(row), groups)
         # Dated here, while the holiday read for its cohort is shared with every
         # other module that sits in the same cohort.
         module_session_dates(view, holiday_cache)
         stored.append(view)
-    return {'stored': stored, 'holidays': holiday_cache}
+    return {'stored': stored, 'holidays': holiday_cache, 'groups': groups}
 
 
 def find_tutor_schedule_conflicts(
@@ -10793,9 +10852,16 @@ def find_tutor_schedule_conflicts(
 
     context = context if context is not None else tutor_conflict_context(module_rows)
     holiday_cache = context.get('holidays')
+    # The candidate is a payload, not a stored row, so it arrives carrying
+    # whatever day the form had -- including the copy a module created into a
+    # dayless group still holds. Read the same way the stored side was.
+    candidate = tutor_delivery_schedule(candidate, context.get('groups'))
     # Pending first: where a pending candidate and a stored row share an id, the
     # candidate is the newer intent and the stored row must not mask it.
     stored = context.get('stored') or []
+    # Pending candidates are payloads too, so they are delivered the same way the
+    # stored side already was.
+    pending = [tutor_delivery_schedule(item, context.get('groups')) for item in pending]
 
     conflicts = []
     seen = set()
@@ -10829,6 +10895,89 @@ def find_tutor_schedule_conflicts(
     return sorted(conflicts, key=lambda item: (item['dates'][0], item['moduleName']))
 
 
+def module_delivery_day_gap(schedule, groups=None):
+    """The group that gives this module no delivery day, or None.
+
+    The counterpart to ``tutor_delivery_schedule``: that one stops a module's
+    stale day standing in for a day its group does not have, and this one says
+    so out loud. A group holding a clock and no weekday has a slot nobody can
+    date -- the session plan falls back to counting weeks off the start date and
+    the delivery reads as empty on every screen -- so there is nothing to check a
+    tutor against.
+
+    Returns the group row, so a caller can name it.
+    """
+    group = (groups if groups is not None else safe_group_delivery_rows()).get(
+        clean_str((schedule or {}).get('group_id'))
+    )
+    if not group:
+        return None
+    if clean_str(group.get('session_week_day')) or schedule_day_part(group.get('schedule')):
+        return None
+    stated_clock = (
+        clean_str(group.get('session_start_time'))
+        or clean_str(group.get('session_end_time'))
+        or any(schedule_time_parts(group.get('schedule')))
+    )
+    # A group that has never been given a slot at all is a different situation --
+    # the module's own pattern still answers there, so it has a day to be checked
+    # on and nothing is missing.
+    return group if stated_clock else None
+
+
+def tutor_assignment_delivery_day_error(candidate, before=None, groups=None):
+    """Refuse to put a tutor against a module whose group states no day.
+
+    Only when the save actually assigns or changes the tutor. A module already
+    carrying one is not frozen -- it can still be renamed, re-dated or authored
+    -- for the same reason ``module_schedule_assignment_changed`` exists: the
+    rule is that a booking may not be *made* here, not that the module is stuck.
+
+    The day belongs to the group, not to this module, so the message says which
+    group to go and set it on. Saying "set a delivery day" without naming where
+    would send the author to the module drawer's own weekday control, which a
+    grouped module does not save through.
+    """
+    next_key = staff_assignment_key((candidate or {}).get('tutor_name'))
+    if not next_key or next_key == staff_assignment_key((before or {}).get('tutor_name')):
+        return None
+    schedule = candidate or {}
+    if not clean_str(schedule.get('group_id')) and clean_str((before or {}).get('group_id')):
+        schedule = {**schedule, 'group_id': clean_str(before.get('group_id'))}
+    group = module_delivery_day_gap(schedule, groups)
+    if not group:
+        return None
+    group_name = clean_str(group.get('group_name')) or 'this module’s group'
+    subject = clean_str(schedule.get('title')) or 'this module'
+    return json_error(
+        f'"{group_name}" has no delivery day, so {subject} has no sessions to place a tutor on and '
+        f'nobody can be checked for a clash. Choose the delivery day on "{group_name}", then assign the tutor.',
+        status=409,
+        code='missing_delivery_day',
+        fields=['tutor'],
+        groupId=clean_str(group.get('group_id')),
+        groupName=group_name,
+        moduleName=clean_str(schedule.get('title')),
+        tutor=clean_str(schedule.get('tutor_name')),
+    )
+
+
+class TutorAssignmentDeliveryDayError(ValueError):
+    """The refusal above, raised so a multi-module save rolls back first.
+
+    Same reasoning as ``TutorScheduleConflictError``: a tree or group save writes
+    several modules in a loop, and returning a response from inside
+    ``transaction.atomic()`` would commit the ones already written.
+    """
+
+    def __init__(self, response):
+        super().__init__('Set the group delivery day before assigning a tutor.')
+        self.response = response
+
+    def as_response(self):
+        return self.response
+
+
 def tutor_schedule_conflicts_created(before, candidate, **kwargs):
     """The clashes a save would CREATE, without the ones it inherited.
 
@@ -10851,6 +11000,13 @@ def tutor_schedule_conflicts_created(before, candidate, **kwargs):
     and every clash with another module in the same save, which is why the
     baseline is asked without ``pending``.
     """
+    # A candidate is assembled from whichever payload the caller was handed, and
+    # several of them carry only the fields the save writes. The group is not one
+    # of those fields -- a module does not change group through these doors -- so
+    # the stored one stands, and without it the candidate would be checked
+    # against its own day rather than the day its group delivers on.
+    if not clean_str((candidate or {}).get('group_id')) and clean_str((before or {}).get('group_id')):
+        candidate = {**candidate, 'group_id': clean_str(before.get('group_id'))}
     conflicts = find_tutor_schedule_conflicts(candidate, **kwargs)
     if not conflicts:
         return []
@@ -10990,6 +11146,39 @@ def group_tutor_assignment_conflict(group_id, tutor_name, module_rows=None):
         if clean_str(row.get('group_id')) == group_key
     ]
     return first_tutor_schedule_conflict(candidates, module_rows=module_rows)
+
+
+def group_tutor_assignment_delivery_day_error(group_id, tutor_name, module_rows=None, next_week_day=None):
+    """``tutor_assignment_delivery_day_error`` for a whole group at once.
+
+    The group PATCH and the staffing screen set one name against every module in
+    the group, so the group's own missing delivery day refuses the assignment
+    before any of them is written. Modules that already carry the name are not
+    being assigned and do not refuse -- only a name that is actually changing.
+
+    ``next_week_day`` is the day the same request is setting. One PATCH can give
+    the group its delivery day *and* its tutor, and refusing that would be
+    telling the author to do something the request is already doing.
+    """
+    group_key = clean_str(group_id)
+    next_key = staff_assignment_key(tutor_name)
+    if not group_key or not next_key or clean_str(next_week_day):
+        return None
+    groups = safe_group_delivery_rows()
+    if not module_delivery_day_gap({'group_id': group_key}, groups):
+        return None
+    module_rows = safe_authoring_module_rows() if module_rows is None else module_rows
+    for row in surviving_authoring_module_rows(module_rows):
+        if clean_str(row.get('group_id')) != group_key:
+            continue
+        error = tutor_assignment_delivery_day_error(
+            module_schedule_view(row, tutor_name=tutor_name),
+            before=module_schedule_view(row),
+            groups=groups,
+        )
+        if error:
+            return error
+    return None
 
 
 def prefer_authoring_module_sessions(training_sessions, authoring_sessions, authoring_catalogue_ids=None):
@@ -17191,7 +17380,12 @@ def module_expected_teams_occurrence_keys(module_row, holidays=None, group_row=N
     catalogue_id = clean_str((module_row or {}).get('module_catalogue_id'))
     if live_sessions is None and catalogue_id:
         live_sessions = authoring_session_links_by_catalogue([catalogue_id]).get(catalogue_id) or []
-    dated = [link for link in (live_sessions or []) if format_date(link.get('date'))]
+    # A session delivered by its own additional meeting is not part of this
+    # series: the module calendar never books it, so judging the calendar
+    # against it would report a difference that pressing Update could never
+    # resolve. See teams_week_meeting.py.
+    dated = [link for link in (live_sessions or [])
+             if format_date(link.get('date')) and not link.get('additionalMeeting')]
     plan = module_session_plan_for_count(
         module_row,
         len(dated),
@@ -21224,6 +21418,10 @@ def curriculum_preview_tutor_availability(request):
         if stored:
             stored_slot = module_schedule_view(stored)
             slot = {key: (slot.get(key) or stored_slot.get(key)) for key in stored_slot}
+    # Resolved here rather than left to the check: the dates and clock this
+    # preview *reports* have to be the ones it answered about, and doing it once
+    # keeps every candidate below a copy of an already dated schedule.
+    slot = tutor_delivery_schedule(slot, context.get('groups'))
 
     def answer_for(name):
         conflicts = find_tutor_schedule_conflicts(
@@ -22197,6 +22395,14 @@ def save_tree_group_modules(group, cohort, modules, preserve_missing=False):
         structure_payload['weekStructure'] = attachment_weeks
         structure_payload['moduleKsbMappings'] = module.get('moduleKsbMappings') or module.get('ksbMappings') or (current_structure or {}).get('moduleKsbMappings') or []
         candidate = module_schedule_view(structure_payload)
+        # This save can give the group its delivery day in the same request, so
+        # the day it is writing counts before the stored one does.
+        if not clean_str(group.get('weekDays') or group.get('deliveryDays') or schedule_day_part(group.get('schedule'))):
+            delivery_day_error = tutor_assignment_delivery_day_error(
+                candidate, before=module_schedule_view(current_structure or {}),
+            )
+            if delivery_day_error:
+                raise TutorAssignmentDeliveryDayError(delivery_day_error)
         if module_schedule_assignment_changed(module_schedule_view(current_structure or {}), candidate):
             conflicts = tutor_schedule_conflicts_created(
                 module_schedule_view(current_structure or {}),
@@ -22339,7 +22545,7 @@ def curriculum_programme_tree_save(request):
 
             repair_curriculum_parent_links(programme_id)
             invalidate_curriculum_cache()
-    except TutorScheduleConflictError as exc:
+    except (TutorScheduleConflictError, TutorAssignmentDeliveryDayError) as exc:
         return exc.as_response()
     except ModuleAuthoringValidationError as exc:
         return json_error(str(exc), status=400, validationErrors=exc.errors)
@@ -26550,21 +26756,26 @@ def curriculum_module_meeting_invitees(request, module_catalogue_id):
     alongside ``tutor_name`` by both write paths -- module save and the group
     staffing PATCH that fans a tutor out across its group's modules).
 
-    Attendees: everyone assigned to this module, which is the same roster the
-    module's own Learners tab shows -- ``assigned_learners_for_scope('module',
-    ...)``: the learners enrolment placed in the group that delivers it, plus
-    anyone whose saved plan names this module directly, minus anyone whose
-    explicit plan drops it.
+    Attendees: the learners whose own training plan carries this module, and
+    nobody else. Deliberately *not* the module's Learners tab roster: that one
+    starts from everyone enrolment placed in the group that delivers the module
+    and then adjusts, so prefilling from it put a whole group on a Teams
+    meeting the author had not invited them to. Being in the group is not an
+    invitation; having the module on your plan is.
 
-    The normalised mirror of the same assignment,
-    ``learner_api.LearnerTrainingPlanModule.module_ref``, is read as well and
-    merged in. It used to be the only source, and it lags: a learner assigned
-    through enrolment whose plan rows have not been rebuilt yet is in the
-    roster but not in the mirror, and prefill silently left them out.
+    Two stores hold the same answer and both are read, because either can lag:
 
-    Both lists are a starting point for the Presenters/Attendees fields on the
-    Teams-meeting form, not a binding assignment -- the caller can still edit
-    freely before saving.
+    * ``LearnerProfile.learning_plan`` -- the plan as the learner app saves it,
+      the authoritative copy.
+    * ``learner_api.LearnerTrainingPlanModule.module_ref`` -- its normalised
+      mirror, rebuilt by ``learning_plan.sync_learning_plan_mirror``.
+
+    A learner named by either one is assigned; a learner named by neither is
+    not, however their group was placed.
+
+    Still a starting point for the Attendees field, not a binding assignment --
+    the author can edit freely before saving, and only what the form finally
+    holds is ever sent to Microsoft.
     """
     module_catalogue_id = clean_str(module_catalogue_id)
     if not module_catalogue_id:
@@ -26574,22 +26785,30 @@ def curriculum_module_meeting_invitees(request, module_catalogue_id):
     module_row = module_rows[0] if module_rows else {}
     tutor_email = clean_str(module_row.get('tutor_email'))
 
-    roster_emails = [
-        clean_str(row.get('email'))
-        for row in assigned_learners_for_scope('module', module_catalogue_id)
-    ]
-    mirror_emails = (
+    mirror_emails = list(
         LearnerTrainingPlanModule.objects
         .filter(module_ref=module_catalogue_id)
         .exclude(learner__email='')
         .values_list('learner__email', flat=True)
         .distinct()
     )
+    # The plan itself is a JSON list of entries, so this containment filter is a
+    # Postgres jsonb operation. Elsewhere (sqlite in tests) the mirror above is
+    # the only readable copy, which is what the assignment writer keeps in step.
+    plan_emails = []
+    if connection.vendor == 'postgresql':
+        plan_emails = list(
+            LearnerProfile.objects
+            .filter(learning_plan__contains=[{'moduleId': module_catalogue_id}])
+            .exclude(email='')
+            .values_list('email', flat=True)
+            .distinct()
+        )
 
     # One entry per address, first spelling kept, case-insensitively deduped --
     # the two sources hold the same learner's email with its own capitalisation.
     attendees = {}
-    for email in (*roster_emails, *mirror_emails):
+    for email in (*plan_emails, *mirror_emails):
         email = clean_str(email)
         if email and email.lower() not in attendees:
             attendees[email.lower()] = email
@@ -27188,6 +27407,11 @@ def curriculum_module_detail(request, identifier):
         # tutor the module already carries, and one that only changes the tutor
         # against the schedule it already has.
         candidate = {**module_schedule_view(structure_payload), 'module_catalogue_id': module_catalogue_id}
+        delivery_day_error = tutor_assignment_delivery_day_error(
+            candidate, before=module_schedule_view(existing_authoring),
+        )
+        if delivery_day_error:
+            return delivery_day_error
         if (
             not tutor_conflict_override_requested(payload)
             and module_schedule_assignment_changed(module_schedule_view(existing_authoring), candidate)
@@ -28283,6 +28507,18 @@ def curriculum_group_detail(request, identifier):
     # Checked before the first write: a group tutor is pushed onto every module
     # in the group further down, and the group's own fields are updated before
     # that happens, so refusing later would leave a half-applied PATCH.
+    if 'tutor' in payload:
+        delivery_day_error = group_tutor_assignment_delivery_day_error(
+            group_id,
+            canonical_staff_assignment_name('tutor', payload.get('tutor')),
+            next_week_day=payload.get('weekDays') or payload.get('deliveryDays')
+            or payload.get('sessionWeekDay') or payload.get('session_week_day'),
+        )
+        if delivery_day_error:
+            log_curriculum_decision(
+                'group.patch', outcome='rejected', reason='missing-delivery-day', entity_id=group_id,
+            )
+            return delivery_day_error
     if 'tutor' in payload and not tutor_conflict_override_requested(payload):
         candidate, conflicts = group_tutor_assignment_conflict(
             group_id,
@@ -29518,6 +29754,15 @@ def curriculum_group_modules(request, identifier):
                 # existing booking. An attachment is appended either way -- a later
                 # one still has to be compared against it.
                 candidate = module_schedule_view(structure_payload)
+                # The group's own delivery day is what dates these modules -- a
+                # day sent for the module alone is the copy that has no effect --
+                # so a tutor cannot be put against one until the group has it.
+                if not clean_str(group.get('weekDays') or group.get('deliveryDays') or schedule_day_part(group.get('schedule'))):
+                    delivery_day_error = tutor_assignment_delivery_day_error(
+                        candidate, before=module_schedule_view(current_structure or {}),
+                    )
+                    if delivery_day_error:
+                        raise TutorAssignmentDeliveryDayError(delivery_day_error)
                 if not allow_tutor_conflict and module_schedule_assignment_changed(
                     module_schedule_view(current_structure or {}), candidate
                 ):
@@ -29570,7 +29815,7 @@ def curriculum_group_modules(request, identifier):
             fields=list(dict.fromkeys(error['path'] for error in exc.errors)),
             validationErrors=exc.errors,
         )
-    except TutorScheduleConflictError as exc:
+    except (TutorScheduleConflictError, TutorAssignmentDeliveryDayError) as exc:
         # Raised mid-loop, so the attachments already written in this
         # request roll back with it and the group is left as it was.
         return exc.as_response()
@@ -29690,6 +29935,11 @@ def curriculum_session_detail(request, identifier):
         # the module PATCH guards. Checked after the date is merged in, so a move
         # onto a taken day is caught as well as a change of tutor.
         candidate = module_schedule_view(updates)
+        delivery_day_error = tutor_assignment_delivery_day_error(
+            candidate, before=module_schedule_view(current),
+        )
+        if delivery_day_error:
+            return delivery_day_error
         if not tutor_conflict_override_requested(payload) and module_schedule_assignment_changed(
             module_schedule_view(current), candidate
         ):
@@ -29756,6 +30006,13 @@ def update_staffing_assignment(identifier, payload):
 
     # Same reasoning as the group PATCH: the coach write below lands before the
     # tutor is pushed onto the group's modules, so the refusal has to come first.
+    if 'tutor' in payload:
+        delivery_day_error = group_tutor_assignment_delivery_day_error(
+            group_id,
+            canonical_staff_assignment_name('tutor', payload.get('tutor')),
+        )
+        if delivery_day_error:
+            return delivery_day_error
     if 'tutor' in payload and not tutor_conflict_override_requested(payload):
         candidate, conflicts = group_tutor_assignment_conflict(
             group_id,
