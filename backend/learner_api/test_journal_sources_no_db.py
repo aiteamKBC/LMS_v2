@@ -113,6 +113,7 @@ class JournalSourceTests(unittest.TestCase):
             {'accepted': True, 'actual_seconds': 7200},
             {'accepted': False, 'activity_status': 'Submitted', 'actual_seconds': 1800}],
             targets=lambda _: {'2026-01': 3, '2026-02': 2},
+            programme_planned_hours=lambda _: 20,
             recorded_seconds=lambda row: row['actual_seconds'])
         args = (SimpleNamespace(pk=1, aptem_id=None), 'commercial', [], [], [], [], date(2026, 1, 31))
         self.assertEqual(scope['read_home_progress'](*args)['otjh']['actual'], 999)
@@ -127,8 +128,9 @@ class JournalSourceTests(unittest.TestCase):
                 import learner_api
                 with patch.object(learner_api, 'canonical_learning', canonical, create=True):
                     result = scope['read_home_progress'](*args, canonical_metrics=metrics)
-            self.assertEqual(result['otjh'], {'actual': 2, 'submitted': .5, 'planned': 5,
-                'percent': 40, 'missingPlannedActivities': 0})
+            # The overall programme target exceeds the currently scheduled months.
+            self.assertEqual(result['otjh'], {'actual': 2, 'submitted': .5, 'planned': 20,
+                'percent': 10, 'missingPlannedActivities': 0})
             self.assertEqual(result['activities'], {'completed': 3, 'total': 7})
         finally:
             sources._current.reset(token)

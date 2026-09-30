@@ -181,13 +181,12 @@ def read_home_progress(source, kind, activities, native, progress, assigned, end
         if not canonical_learning.enabled(source.pk):
             return result
         records = canonical_learning.entries(source.pk)
-        targets = canonical_learning.targets(source.pk)
         actual = round(sum(canonical_learning.recorded_seconds(r) for r in records
                            if r.get('accepted') is True) / 3600, 4)
         submitted = round(sum(canonical_learning.recorded_seconds(r) for r in records
                               if r.get('accepted') is not True
                               and str(r.get('activity_status') or '').lower() in SUBMITTED) / 3600, 4)
-        planned = round(sum(targets.values()), 4)
+        planned = canonical_learning.programme_planned_hours(source.pk)
         result['otjh'] = {'actual': actual, 'submitted': submitted, 'planned': planned,
             'percent': round(actual / planned * 100, 2) if planned else None,
             'missingPlannedActivities': 0}

@@ -38,6 +38,22 @@ function expandMonthAndWeek(month = 'February 2026') {
 describe('learner subject cards', () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it('keeps unstarted enrolled courses visible with an Upcoming badge', async () => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {},
+      current_subjects: [{ id: 'FUTURE-1', title: 'Future enrolled course' }],
+    });
+    const unstarted = { ...data, completed_count: 0,
+      activities: data.activities.map(activity => ({ ...activity, completed: false, status: null })) };
+    render(<StudentActivityPanel data={unstarted} real={{ components: [] } as unknown as LearnerDetail}
+      kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    const assigned = await screen.findByRole('button', { name: /Future enrolled course.*Open subject/ });
+    expect(within(assigned).getByText('Upcoming')).toBeVisible();
+    const imported = screen.getByRole('button', { name: /Leadership.*Open subject/ });
+    expect(within(imported).getByText('Upcoming')).toBeVisible();
+    expect(imported).toBeEnabled();
+    expect(assigned).toBeEnabled();
+  });
+
   it('shows scheduled learning and working help destinations in the catalogue sidebar', async () => {
     vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {} });
     render(<StudentActivityPanel data={data} real={{ components: [

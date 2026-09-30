@@ -24,7 +24,8 @@ def enabled(learner_id):
 def profile(learner_id):
     records = query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
         l.programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,
-        u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id
+        u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id,
+        u."Planned_hours" AS programme_planned_hours
         FROM "Learner".learners l
         LEFT JOIN enrolment."Created_users" u ON u.id=l.enrolment_id
         WHERE l.enrolment_id=%s''', [learner_id])
@@ -40,6 +41,19 @@ def profile(learner_id):
             or (aptem and aptem != str(owner.get('aptem_id') or '').lstrip('0'))):
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
     return owner
+
+
+def programme_planned_hours(learner_id):
+    """The enrolment's overall plan is independent of the scheduled month totals."""
+    from math import isfinite
+
+    owner = profile(learner_id)
+    value = owner.get('programme_planned_hours') if owner else None
+    try:
+        hours = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return round(hours, 4) if isfinite(hours) and hours >= 0 else None
 
 
 def profile_by_aptem(aptem_id):
@@ -68,6 +82,7 @@ def entries_for(owner):
           WHERE s.progress_id=p.id AND s.learner_id=p.learner_id),'[]'::jsonb) AS segments,
         coalesce((SELECT jsonb_agg(jsonb_build_object(
             'source_id',s.id,'source_system',s.source_system,'source_activity_id',s.source_activity_id,
+            'completed',s.completed,
             'source_course_ref',c.source_course_ref,'source_course_id',c.id,
             'course_title',c.source_course_title,'catalogue_id',a.id,
             'component_ref',coalesce(nullif(s.curriculum_component_ref,''),a.curriculum_component_ref),
@@ -101,6 +116,11 @@ def entries_for(owner):
     if journal_sources.enabled():
         planned = journal_sources.planned_by_progress(owner['id'], query)
         for record in result:
+            # Source completion is independent of hours eligibility. Excluded
+            # administration and represented recordings still retain completion.
+            record['completed'] = record.get('completed', record.get('accepted')) is True or any(
+                source.get('source_system') == 'old_lms' and source.get('completed') is True
+                for source in record.get('sources') or [])
             if record['id'] in planned:
                 record['expected_otjh'] = planned[record['id']]
                 record['journal_planned_hours'] = planned[record['id']]
@@ -460,9 +480,31 @@ def source_subjects(learner_id, summarize):
     result['activity_source_issues'] = {key: 'ambiguous_lineage' for key, values in links.items() if len(values) != 1}
     result['module_count'] = len(subjects)
     result['unresolved_source_routes'] = sum(len(values) != 1 for values in links.values())
-    monthly_targets = targets(learner_id)
-    result['audit_tp_planned'] = sum(monthly_targets.values()) if monthly_targets else None
+    from learner_api import journal_sources
+    if journal_sources.enabled():
+        result['audit_tp_planned'] = programme_planned_hours(learner_id)
+    else:
+        monthly_targets = targets(learner_id)
+        result['audit_tp_planned'] = sum(monthly_targets.values()) if monthly_targets else None
     return result
+
+
+def recorded_activity_schedule(record, course):
+    """Display owned course placement without rewriting reporting timestamps."""
+    from datetime import timedelta
+
+    at = local_instant(record.get('reporting_started_at') or record.get('reporting_ended_at'))
+    day = at.date() if at else None
+    monday = day - timedelta(days=day.weekday()) if day else None
+    placement = source_payload_metadata(record.get('source_payload')).get('course_display_placement')
+    introduction = (isinstance(placement, dict)
+        and str(placement.get('course_id')) == str(course)
+        and placement.get('section') == 'introduction')
+    return {'date': day.isoformat() if day else None,
+        'month': record.get('reporting_month'),
+        'week_start': monday.isoformat() if monday else None,
+        'week_end': (monday + timedelta(days=6)).isoformat() if monday else None,
+        'date_source': 'introduction' if introduction else 'consolidated_record'}
 
 
 def recorded_course_items(courses, catalogue, records):
@@ -517,7 +559,6 @@ def recorded_course_items(courses, catalogue, records):
         for course, definition in placements.items():
             kind, _, ident = definition['source_activity_id'].partition(':')
             numeric = ident.isdigit()
-            at = local_instant(record.get('reporting_started_at') or record.get('reporting_ended_at'))
             accepted = record.get('accepted') is True
             item = {'activity_id': f"record:{course}:{record['id']}",
                 'source_activity_id': int(ident) if numeric else 0, 'group_id': int(course),
@@ -527,8 +568,7 @@ def recorded_course_items(courses, catalogue, records):
                 'catalogue_kind': kind, 'can_open_material': numeric and kind == 'material',
                 'section_title': definition.get('source_section_title'),
                 'position': definition.get('position') or 0,
-                'date': at.date().isoformat() if at else None,
-                'month': record.get('reporting_month'), 'date_source': 'consolidated_record',
+                **recorded_activity_schedule(record, course),
                 'completed': record.get('completed', accepted) is True, 'historical_completed': accepted,
                 'actual': recorded_seconds(record) / 3600 if accepted else 0,
                 'hours_mapped': accepted and any(p.get('actual_seconds') is not None for p in allocations(record)),
@@ -593,7 +633,13 @@ def metrics_from_records(records, monthly_targets):
 
 def metrics(learner_id):
     """Return the canonical Learner Dashboard metric contract for one learner."""
-    return metrics_from_records(entries(learner_id), targets(learner_id))
+    result = metrics_from_records(entries(learner_id), targets(learner_id))
+    from learner_api import journal_sources
+    if journal_sources.enabled():
+        planned = programme_planned_hours(learner_id)
+        result['otjh']['planned'] = planned
+        result['aptem_planned_total'] = planned
+    return result
 
 
 def metrics_bulk(aptem_by_enrolment):
