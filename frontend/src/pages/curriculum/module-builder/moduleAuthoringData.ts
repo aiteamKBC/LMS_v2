@@ -2815,6 +2815,11 @@ export interface WeekTeamsMeetingResult {
   invitationsSent: boolean;
   /** Every address Microsoft confirmed on the meeting — organiser's guests, in all roles. */
   invited: string[];
+  /**
+   * Our own schedule email, sent beside Microsoft's invitation — the same pair
+   * the module calendar sends. Null when the caller may not send LMS mail.
+   */
+  scheduleEmail?: TeamsMeetingResult['scheduleEmail'] | null;
   meeting: {
     liveSessionId: string;
     weekId: string;
@@ -2926,6 +2931,25 @@ export async function createTeamsMeeting(
 }
 
 /**
+ * Who a save puts on the meeting that the saved calendar does not already have.
+ *
+ * Read against the stored roster rather than the form's starting values, and
+ * case-insensitively across every role, so moving somebody from attendee to
+ * presenter is not "someone new". The organizer counts as already invited:
+ * they own the event.
+ */
+function peopleAddedBySave(
+  invitations: { attendees?: string[]; presenters?: string[]; coOrganizers?: string[] },
+  series: { organizer_email?: string; attendees: string[]; presenters: string[]; co_organizers: string[] },
+) {
+  const keys = (...lists: Array<string[] | undefined>) => lists.flatMap(list => (list || [])
+    .map(value => String(value || '').trim().toLowerCase()).filter(Boolean));
+  const invited = new Set(keys([series.organizer_email || ''], series.attendees, series.presenters, series.co_organizers));
+  return [...new Set(keys(invitations.attendees, invitations.presenters, invitations.coOrganizers))]
+    .filter(email => !invited.has(email));
+}
+
+/**
  * Send a module's own session dates to its Teams series. `attendees`/`presenters`/
  * `coOrganizers` are optional: omit them to move dates only, pass them to correct
  * who is invited, who presents and who co-runs it without recreating the meeting.
@@ -2960,14 +2984,25 @@ export async function updateTeamsMeetingSchedule(liveSessionId: string, input: P
   // people/settings-only save is always quiet for everyone already invited;
   // newly added people are handled separately after the calendar is verified.
   const notifyAttendees = reviewed.peopleOnly ? false : reviewed.notifyAttendees !== false;
-  await reviewCalendar({ ...reviewed, settingsOnly, organizerEmail: series.organizer_email, joinUrl: series.join_url,
-    notifyOnUpdate: notifyAttendees,
+  const invitations = {
     attendees: reviewed.attendees ?? series.attendees, presenters: reviewed.presenters ?? series.presenters,
     coOrganizers: reviewed.coOrganizers ?? series.co_organizers,
-    recording: reviewed.recording ?? series.recording, lobbyBypass: reviewed.lobbyBypass ?? series.lobby_bypass, spokenLanguage: reviewed.spokenLanguage ?? series.spoken_language,
-    calendarSeries: series.calendar_series, previousOccurrences: occurrences,
-    seriesMode: series.calendar_series?.length ? 'per_day' : 'shared',
-  }, series.timeZoneIana || getCalendarTimeZone());
+  };
+  // The review exists to be the last look before something leaves: a calendar
+  // that moves tells everyone already invited, and a person added is forwarded
+  // the meeting and sent the schedule email. A people-only save that adds
+  // nobody -- taking someone off, moving them between roles, changing the
+  // recording or the lobby -- sends no mail at all, to anybody, so a full
+  // session-by-session review and a "Save and send" button confirm an act with
+  // no outward effect. That save applies on the press instead.
+  if (!reviewed.peopleOnly || peopleAddedBySave(invitations, series).length) {
+    await reviewCalendar({ ...reviewed, settingsOnly, organizerEmail: series.organizer_email, joinUrl: series.join_url,
+      notifyOnUpdate: notifyAttendees, ...invitations,
+      recording: reviewed.recording ?? series.recording, lobbyBypass: reviewed.lobbyBypass ?? series.lobby_bypass, spokenLanguage: reviewed.spokenLanguage ?? series.spoken_language,
+      calendarSeries: series.calendar_series, previousOccurrences: occurrences,
+      seriesMode: series.calendar_series?.length ? 'per_day' : 'shared',
+    }, series.timeZoneIana || getCalendarTimeZone());
+  }
   // The review is complete. The caller can now replace its form with a
   // progress panel without showing it behind the confirmation dialog.
   options.onSubmitted?.();
