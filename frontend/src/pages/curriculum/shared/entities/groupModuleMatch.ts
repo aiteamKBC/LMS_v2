@@ -18,6 +18,13 @@ export function moduleMatchesGroup<T extends GroupOwnedModule>(
     : normalise(module.group) === normalise(target.groupName);
   if (!matchesGroup) return false;
 
+  // A persisted group id is the authoritative delivery link. Some legacy
+  // module rows retain the programme id from before the module was moved or
+  // copied, but they still belong to this group and must remain selectable in
+  // the Assigned groups picker. Only name-based legacy matches need the
+  // programme guard below to avoid crossing same-named groups.
+  if (targetGroupId && moduleGroupId === targetGroupId) return true;
+
   const targetProgrammeId = normalise(target.programmeId);
   return !targetProgrammeId || !module.programmeId || normalise(module.programmeId) === targetProgrammeId;
 }

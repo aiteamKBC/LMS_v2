@@ -39,7 +39,7 @@ from coach_api.auth import (
     coach_access_required,
     is_coach_view_as,
 )
-from coach_api.errors import coach_error
+from coach_api.errors import coach_error, request_id_for
 from coach_api.cache.learners import (
     acquire_caseload_lock,
     cache_caseload,
@@ -807,6 +807,7 @@ BOOKED_EVENT_TITLES = {
     "eligibility-review": "Eligibility Review & FS Discussion",
     "workspace": "RPL And Experience",
     "training-plan": "Workplace Health & Safety Declaration",
+    "uln-privacy": "ULN Privacy Notice & Learner Acknowledgement",
 }
 
 # Types whose copy should still say the learner booked the slot. Graph ownership
@@ -820,6 +821,7 @@ LEARNER_BOOKED_EVENT_TYPES = {
     "eligibility-review",
     "workspace",
     "training-plan",
+    "uln-privacy",
 }
 
 # Session types the coach can book from their own timetable page.
@@ -833,6 +835,7 @@ BOOKED_EVENT_JSON_TYPES = {
     "eligibility-review": "review",
     "workspace": "review",
     "training-plan": "review",
+    "uln-privacy": "review",
 }
 
 
@@ -3388,7 +3391,11 @@ def date_only(value) -> date | None:
 
 
 def entry_activity_date(entry: dict) -> date | None:
-    for field in ("submittedAt", "at", "completedAt", "startedAt", "date", "createdAt"):
+    # ``declaredCompletedAt`` leads: when a learner's Finish click fell outside
+    # the working rules, the working instant they declared is the one the month
+    # buckets, the hours count and the reports read. The click itself stays on
+    # ``submittedAt`` as audit evidence and is never counted in its place.
+    for field in ("declaredCompletedAt", "submittedAt", "at", "completedAt", "startedAt", "date", "createdAt"):
         parsed = date_only(entry.get(field))
         if parsed:
             return parsed
@@ -3487,6 +3494,21 @@ def monthly_learning_title(entry: dict) -> str:
         or clean_text(entry.get("quizName"))
         or clean_text(entry.get("componentTitle"))
         or monthly_learning_type(entry)
+    )
+
+
+def ksb_evidence_title(entry: dict, activity: dict | None, component_meta: dict) -> str:
+    """Prefer an authored activity name over an imported media-type label."""
+    candidates = [
+        clean_text(entry.get("title")),
+        clean_text(entry.get("quizName")),
+        clean_text(entry.get("componentTitle")),
+        clean_text((activity or {}).get("title")),
+        clean_text(component_meta.get("title")),
+    ]
+    generic_labels = {"video", "audio", "quiz", "assignment", "activity", "component", "reading", "podcast", "live session"}
+    return next((title for title in candidates if title and title.casefold() not in generic_labels), None) or next(
+        (title for title in candidates if title), ""
     )
 
 
@@ -3710,6 +3732,9 @@ def progress_entry_history_record(entry: LearnerProgressEntry) -> dict:
         "expectedOtjh": entry.expected_otjh,
         "reportedTime": entry.reported_time,
         "submittedAt": submitted_at.isoformat() if submitted_at else "",
+        "declaredCompletedAt": (
+            entry.declared_completed_at.isoformat() if entry.declared_completed_at else ""
+        ),
         "startedAt": started_at.isoformat() if started_at else "",
         "claimedSeconds": entry.claimed_seconds,
         "verifiedSeconds": entry.verified_seconds,
@@ -3718,7 +3743,9 @@ def progress_entry_history_record(entry: LearnerProgressEntry) -> dict:
 
 
 def historical_progress_date(record: dict) -> date | None:
-    value = record.get("submittedAt") or record.get("startedAt")
+    # Same rule as entry_activity_date: reporting follows the declared working
+    # instant, audit keeps the real click.
+    value = record.get("declaredCompletedAt") or record.get("submittedAt") or record.get("startedAt")
     parsed = parse_date_value(value)
     return parsed.date() if isinstance(parsed, datetime) else parsed
 
@@ -3988,8 +4015,12 @@ def build_otjh_completed_entries(
                 or clean_text(component_meta.get("week"))
             ),
         }
+        # Declared first, exactly as entry_activity_date orders it: this month's
+        # list is filtered by the declared instant, so the date shown beside an
+        # entry has to be the same one, or a September list prints October dates.
         recorded_at = (
-            clean_text(entry.get("submittedAt"))
+            clean_text(entry.get("declaredCompletedAt"))
+            or clean_text(entry.get("submittedAt"))
             or clean_text((activity or {}).get("at"))
             or clean_text(entry.get("startedAt"))
         )
@@ -4087,13 +4118,7 @@ def build_ksb_completed_details(
         merged_entry = {
             **(activity or {}),
             **entry,
-            "title": (
-                clean_text(entry.get("title"))
-                or clean_text(entry.get("quizName"))
-                or clean_text(entry.get("componentTitle"))
-                or clean_text((activity or {}).get("title"))
-                or clean_text(component_meta.get("title"))
-            ),
+            "title": ksb_evidence_title(entry, activity, component_meta),
             "module": (
                 clean_text(entry.get("moduleTitle") or entry.get("module"))
                 or clean_text((activity or {}).get("module"))
@@ -4105,8 +4130,12 @@ def build_ksb_completed_details(
                 or clean_text(component_meta.get("week"))
             ),
         }
+        # Declared first, exactly as entry_activity_date orders it: this month's
+        # list is filtered by the declared instant, so the date shown beside an
+        # entry has to be the same one, or a September list prints October dates.
         recorded_at = (
-            clean_text(entry.get("submittedAt"))
+            clean_text(entry.get("declaredCompletedAt"))
+            or clean_text(entry.get("submittedAt"))
             or clean_text((activity or {}).get("at"))
             or clean_text(entry.get("startedAt"))
             or clean_text(entry.get("at"))
@@ -4118,6 +4147,7 @@ def build_ksb_completed_details(
             "title": monthly_learning_title(merged_entry),
             "typeLabel": monthly_learning_type(merged_entry),
             "kind": kind or "activity",
+            "componentId": component_id or None,
             "module": clean_text(merged_entry.get("module")) or "--",
             "week": clean_text(merged_entry.get("week")) or "--",
             "reportedTime": clean_text(entry.get("reportedTime")) or "--",
@@ -9435,8 +9465,8 @@ def resolve_coach_review_events(
 ) -> dict:
     """Resolve each learner to exactly one review source by effective Aptem id.
 
-    The one exception: an Aptem-linked learner with no imported Aptem MCM gets
-    Curriculum MCM occurrences (never Curriculum Progress Reviews).
+    Aptem-linked learners use Learner.reviews exclusively. Curriculum review
+    occurrences are generated only for learners without an effective Aptem id.
     """
     aptem_by_profile, identity_conflicts = resolve_effective_aptem_ids(learners)
     aptem_reviews_available = True
@@ -9461,25 +9491,6 @@ def resolve_coach_review_events(
         learner for learner in learners
         if int(learner.id) not in aptem_by_profile and int(learner.id) not in identity_conflicts
     ]
-    # An Aptem-linked learner with no imported Aptem MCM still has monthly
-    # coaching due, so their MCMs come from Curriculum like a native learner's.
-    # Progress Reviews stay Aptem-only. A lightweight all-history MCM identity
-    # lookup keeps a date-windowed timetable consistent without loading every
-    # historical review row and its form sections.
-    aptem_mcm_profiles = {
-        int(event["learnerId"]) for event in aptem_events if event.get("source") == "mcr"
-    }
-    if aptem_reviews_available and aptem_by_profile and (start_date or end_date):
-        try:
-            aptem_mcm_profiles = fetch_aptem_mcm_profile_ids(aptem_by_profile)
-        except DatabaseError as exc:
-            logger.warning("Could not load Aptem MCM history for coach timetable: %s", exc)
-            aptem_reviews_available = False
-            aptem_mcm_profiles = set()
-    mcm_fallback_learners = [
-        learner for learner in learners
-        if int(learner.id) in aptem_by_profile and int(learner.id) not in aptem_mcm_profiles
-    ]
     events: list[dict] = list(aptem_events)
     issues: list[dict[str, str]] = [
         {"learnerId": str(profile_id), "code": "aptem_identity_conflict"}
@@ -9501,12 +9512,13 @@ def resolve_coach_review_events(
         "curriculumReviewRows": 0,
         "aptemLearners": len(aptem_by_profile),
         "curriculumLearners": len(native_learners),
-        "curriculumMcmFallbackLearners": len(mcm_fallback_learners),
+        # Retained in the response contract for existing dashboard consumers.
+        "curriculumMcmFallbackLearners": 0,
     }
     review_template_cache: dict[str, list[dict]] = {}
 
-    for learner in [*native_learners, *mcm_fallback_learners]:
-        mcm_only = int(learner.id) in aptem_by_profile
+    for learner in native_learners:
+        mcm_only = False
         programme_id = resolve_curriculum_programme_id(getattr(learner, "programme_id", None) or getattr(learner, "programme", None))
         template_identifiers = curriculum_review_instances.programme_review_template_identifiers(
             programme_id, template_cache=review_template_cache,
@@ -13509,6 +13521,151 @@ def _imported_review_has_usable_form(review: dict, *, has_normalized_sections: b
     )
 
 
+def _imported_progress_metric(*, actual, expected, planned, actual_percent, expected_percent):
+    variance = (
+        round(actual_percent - expected_percent, 2)
+        if actual_percent is not None and expected_percent is not None
+        else None
+    )
+    return {
+        "actual": actual,
+        "expected": expected,
+        "planned": planned,
+        "actualPercent": actual_percent,
+        "expectedPercent": expected_percent,
+        "variancePercent": variance,
+        "varianceDirection": "above" if variance is not None and variance >= 0 else "below" if variance is not None else "",
+    }
+
+
+def _imported_progress_date(text: str, label: str) -> str | None:
+    match = re.search(rf"{re.escape(label)}\s*:?\s*(\d{{1,2}}\s+[A-Za-z]{{3,9}}\s+\d{{4}})", text, re.IGNORECASE)
+    if not match:
+        return None
+    for date_format in ("%d %b %Y", "%d %B %Y"):
+        try:
+            return datetime.strptime(match.group(1), date_format).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def _imported_progress_snapshot_from_review(review: dict) -> dict | None:
+    """Translate Aptem's historical Learning Progress sentence into the
+    canonical visual snapshot contract without replacing it with live data.
+    """
+    progress_sections = [
+        section for section in review.get("sections") or []
+        if isinstance(section, dict) and clean_text(section.get("name")).casefold() == "learning progress"
+    ]
+    text = " ".join(clean_text(section.get("rawText")) for section in progress_sections).strip()
+    # Aptem exports typographic dashes and non-breaking spaces in otherwise
+    # identical labels (for example ``Off–The–Job``).  Normalise presentation
+    # characters before matching; the original imported answer remains
+    # untouched in the review form.
+    text = re.sub(r"[\u2010-\u2015\u2212]", "-", text)
+    text = re.sub(r"\s+", " ", text.replace("\u00a0", " ")).strip()
+    activities = re.search(
+        r"Learning Plan Activities\s+(\d+)\s+of\s+(\d+)\s+Completed",
+        text,
+        re.IGNORECASE,
+    )
+    hours = re.search(
+        r"Off[-\s]*The[-\s]*Job Hours Overall Progress\s+(\d+(?:\.\d+)?)%\s*\((\d+(?:\.\d+)?)h\).*?Planned Hours \(ILR\)\s+(\d+(?:\.\d+)?)h",
+        text,
+        re.IGNORECASE,
+    )
+    if not activities or not hours:
+        return None
+
+    completed_activities = int(activities.group(1))
+    planned_activities = int(activities.group(2))
+    target_values = re.search(
+        r"Submitted Remaining Target\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)",
+        text,
+        re.IGNORECASE,
+    )
+    target_activities = int(target_values.group(4)) if target_values else None
+    programme_actual_percent = round(completed_activities / planned_activities * 100, 2) if planned_activities else None
+    programme_expected_percent = (
+        round(target_activities / planned_activities * 100, 2)
+        if planned_activities and target_activities is not None
+        else None
+    )
+    completed_hours = float(hours.group(2))
+    planned_hours = float(hours.group(3))
+    hours_actual_percent = float(hours.group(1))
+    calculated_from = _imported_progress_date(text, "Timeline Start")
+    calculated_at = review.get("completedDate") or review.get("plannedDate")
+    return {
+        "calculationMethod": "aptem_imported_text",
+        "schemaVersion": 1,
+        "formulaVersion": "aptem_imported_text_v1",
+        "calculatedFrom": calculated_from or calculated_at or "",
+        "calculatedAt": calculated_at or calculated_from or "",
+        "calculatedBy": "Aptem import",
+        "weeksElapsed": None,
+        "programmeProgress": _imported_progress_metric(
+            actual=completed_activities,
+            expected=target_activities,
+            planned=planned_activities,
+            actual_percent=programme_actual_percent,
+            expected_percent=programme_expected_percent,
+        ),
+        "offTheJobHours": _imported_progress_metric(
+            actual=completed_hours,
+            expected=None,
+            planned=planned_hours,
+            actual_percent=hours_actual_percent,
+            expected_percent=None,
+        ),
+        "ksbProgress": {
+            "available": False,
+            "title": "Apprenticeship Standard progress",
+            "reason": "KSB progress was not available in this Aptem import.",
+            "actualPercent": None,
+            "expectedPercent": None,
+        },
+    }
+
+
+def _imported_review_progress_snapshot(learner, review: dict, *, calculated_by: str):
+    """Build a display-only progress snapshot for a legacy Aptem learner.
+
+    Imported reviews do not own a Curriculum review-instance row where a
+    frozen snapshot can be stored.  The coach workspace can still reuse the
+    canonical Learning Progress renderer for the learner currently linked to
+    the Aptem record.  Failure to resolve a complete plan must not make the
+    historical review itself unavailable; in that case the imported text is
+    left in place as the honest fallback.
+    """
+    imported_snapshot = _imported_progress_snapshot_from_review(review)
+    if imported_snapshot is not None:
+        return imported_snapshot
+    try:
+        commercial_rows, enrolment_rows = fetch_source_schedule_rows([learner])
+        learner_start_date, _reason = resolve_review_anchor_date(
+            int(learner.id), commercial_rows, enrolment_rows,
+        )
+        if learner_start_date is None:
+            return None
+        source = commercial_rows.get(int(learner.id)) or enrolment_rows.get(int(learner.id))
+        return build_progress_snapshot(
+            source or learner,
+            learner,
+            learner_start_date=learner_start_date,
+            calculated_at=timezone.now(),
+            calculated_by=calculated_by,
+        )
+    except (DatabaseError, UnresolvedTrainingPlanTarget, ValueError):
+        logger.info(
+            "Legacy Aptem Learning Progress is unavailable for learner %s",
+            getattr(learner, "id", None),
+            exc_info=True,
+        )
+        return None
+
+
 def _imported_review_definition(owner_email: str, event_key: str) -> dict | None:
     """Adapt one owned Aptem review to the native form-definition contract.
 
@@ -13632,6 +13789,11 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
     review_type = clean_text(review.get("type"))
     monthly_types = {clean_text(value).casefold() for value in REVIEW_TYPES["monthly-coaching"]}
     review_type_code = "aptem_mcm" if review_type.casefold() in monthly_types else "aptem_progress_review"
+    progress_snapshot = (
+        _imported_review_progress_snapshot(learner, review, calculated_by=owner_email)
+        if review_type_code == "aptem_progress_review"
+        else None
+    )
     signatures = {
         role: {"required": False, "signed": False, "signedBy": None, "signedName": None, "signedAt": None, "signature": None}
         for role in curriculum_review_instances.SIGNATURE_ROLES
@@ -13646,7 +13808,7 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
         if summary_only
         else saved_instance.completed_at.isoformat() if saved_instance and saved_instance.completed_at else None
     )
-    return {
+    definition = {
         "readOnly": summary_only,
         "source": "aptem",
         "formAvailable": form_available,
@@ -13675,10 +13837,16 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
         "sections": adapted_sections,
         "signatures": signatures,
         "manualOverride": None,
-        "progressSnapshot": None,
-        "ragHistory": [],
-        "pdf": {"available": False, "reason": "Imported Aptem reviews do not have a Curriculum PDF."},
+        "progressSnapshot": progress_snapshot,
+        "ragHistory": (
+            curriculum_review_instances.progress_review_rag_history(profile_id)
+            if progress_snapshot is not None
+            else []
+        ),
     }
+    from curriculum_api.review_pdf import pdf_availability
+    definition["pdf"] = pdf_availability(definition)
+    return definition
 
 
 @coach_access_required
@@ -14009,6 +14177,15 @@ def coach_review_instance_meeting_summary(request, instance_id):
     """
     if request.method != "POST":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
+
+    def summary_error(*, code: str, detail: str, status: int):
+        """Return actionable public diagnostics without exposing provider errors."""
+        return JsonResponse({
+            "detail": detail,
+            "code": code,
+            "request_id": request_id_for(request),
+        }, status=status)
+
     instance_row, error = _authorized_review_instance(request, instance_id)
     if error:
         return error
@@ -14039,7 +14216,7 @@ def coach_review_instance_meeting_summary(request, instance_id):
         try:
             transcript_text = uploaded_coach_meeting_transcript_text(uploaded_transcript)
         except ValueError as exc:
-            return JsonResponse({"detail": str(exc)}, status=400)
+            return summary_error(code="invalid_transcript_upload", detail=str(exc), status=400)
         try:
             summary, _model = openai_meeting_summary(context, transcript_text)
         except Exception:  # noqa: BLE001 - never expose provider details
@@ -14047,9 +14224,15 @@ def coach_review_instance_meeting_summary(request, instance_id):
                 "Unable to generate coach meeting summary from uploaded transcript for review instance %s",
                 instance_row.get("id"),
             )
-            return JsonResponse({
-                "detail": "The Meeting Summary could not be generated from the uploaded transcript. Your current Review answer has not been changed.",
-            }, status=502)
+            return summary_error(
+                code="meeting_summary_ai_failed",
+                detail=(
+                    "The transcript was accepted, but the AI Meeting Summary could not be generated. "
+                    "Check the OpenAI API key, model access, quota, or server connection, then try again. "
+                    "Your current Review answer has not been changed."
+                ),
+                status=502,
+            )
         # Empty unless something qualifies THIS result, matching what
         # _review_instance_meeting_summary_source sends for a clean read. The
         # client supplies its own wording for the ordinary case and shows a
@@ -14074,9 +14257,11 @@ def coach_review_instance_meeting_summary(request, instance_id):
         })
 
     if not record:
-        return JsonResponse({
-            "detail": "This Review is not linked to a scheduled Teams meeting. Upload the meeting transcript as a .vtt file, or enter the summary manually.",
-        }, status=409)
+        return summary_error(
+            code="meeting_summary_meeting_not_linked",
+            detail="This Review is not linked to a scheduled Teams meeting. Upload the meeting transcript as a .vtt file, or enter the summary manually.",
+            status=409,
+        )
 
     # A valid stored artifact is idempotent. In particular, a coach-edited AI
     # artifact must never be replaced simply because this button was pressed.
@@ -14086,7 +14271,11 @@ def coach_review_instance_meeting_summary(request, instance_id):
 
     snapshot, error_payload, status_code = fetch_coach_meeting_graph_snapshot(record)
     if error_payload:
-        return JsonResponse(error_payload, status=status_code)
+        return JsonResponse({
+            **error_payload,
+            "code": error_payload.get("code") or "teams_source_unavailable",
+            "request_id": request_id_for(request),
+        }, status=status_code)
     persist_coach_meeting_snapshots(
         record,
         artifacts=snapshot["artifacts"],
@@ -14097,20 +14286,36 @@ def coach_review_instance_meeting_summary(request, instance_id):
         # This is the moment the .vtt upload exists for, so it says so: Teams
         # holds no transcript for a meeting that was moved, not recorded, or
         # still processing, and the coach usually has the file already.
-        return JsonResponse({
-            "detail": "The Teams transcript is not available yet. Upload the meeting transcript as a .vtt file, "
-                      "or enter the summary manually. Your current Review answer has not been changed.",
-        }, status=409)
+        return summary_error(
+            code="teams_transcript_unavailable",
+            detail=(
+                "The Teams meeting was reached, but no transcript is available yet. "
+                "Wait for Teams transcription to finish, upload the .vtt transcript, or enter the summary manually. "
+                "Your current Review answer has not been changed."
+            ),
+            status=409,
+        )
 
     generated = ensure_coach_meeting_summary(record, retry_failed=True)
     if not generated:
-        return JsonResponse({
-            "detail": "The Meeting Summary could not be generated. Your current Review answer has not been changed.",
-        }, status=502)
+        return summary_error(
+            code="meeting_summary_storage_unavailable",
+            detail=(
+                "The Teams transcript was found, but the generated summary could not be saved. "
+                "Check the server logs and try again. Your current Review answer has not been changed."
+            ),
+            status=502,
+        )
     if clean_text(generated.get("status")) == "failed":
-        return JsonResponse({
-            "detail": "Meeting Summary generation failed. Your current Review answer has not been changed.",
-        }, status=502)
+        return summary_error(
+            code="meeting_summary_ai_failed",
+            detail=(
+                "The Teams transcript was found, but the AI Meeting Summary could not be generated. "
+                "Check the OpenAI API key, model access, quota, or server connection, then try again. "
+                "Your current Review answer has not been changed."
+            ),
+            status=502,
+        )
     return JsonResponse({"meetingSummarySource": _review_instance_meeting_summary_source(instance_row, definition)})
 
 

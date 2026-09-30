@@ -14,6 +14,7 @@ urlpatterns = [
     path('<int:learner_id>/mcm/runs/latest/', views.mcm_latest_run, name='mcm-latest-run'),
     path('<int:learner_id>/mcm/generate/', views.mcm_generate, name='mcm-generate'),
     path('<int:learner_id>/mcm/upload/', views.mcm_upload_own, name='mcm-upload-own'),
+    path('<str:review_id>/publish/', views.publish, name='progress-review-publish'),
     path('<str:review_id>/preview/', views.preview, name='progress-review-preview'),
     path('<str:review_id>/edit/', views.edit, name='progress-review-edit'),
     path('<str:review_id>/edit/images/', views.edit_image, name='progress-review-edit-image'),

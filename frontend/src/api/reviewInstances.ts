@@ -215,7 +215,11 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
       : typeof data.error === 'string'
         ? data.error
         : `Request failed with ${response.status}`;
-    throw new Error(message);
+    const diagnostics = [
+      typeof data.code === 'string' ? `Code: ${data.code}` : '',
+      typeof data.request_id === 'string' ? `Reference: ${data.request_id}` : '',
+    ].filter(Boolean);
+    throw new Error(diagnostics.length ? `${message} (${diagnostics.join(' · ')})` : message);
   }
   return data as T;
 }

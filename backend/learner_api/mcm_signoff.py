@@ -55,11 +55,13 @@ def _save_reusable_signature(learner, signature, name):
         logger.warning("Reusable learner signature could not be saved.", exc_info=True)
 
 
-def _sync_monthly_log(request, learner_id, record, signature, signed_name):
-    """Mirror the exact signature to the MCM month, returning a UI status."""
+def _sync_monthly_log(request, learner_id, record, signature, signed_name, *, apply_monthly_log=True):
+    """Mirror the exact signature to the MCM month when the learner opted in."""
     month = _month_for(record)
     if not month:
         return {"status": "failed", "message": "The MCM has no scheduled month."}
+    if not apply_monthly_log:
+        return {"status": "skipped", "reason": "learner_choice", "month": month}
     if not _learner_context(request):
         return None
 
@@ -78,7 +80,7 @@ def _sync_monthly_log(request, learner_id, record, signature, signed_name):
         }
 
 
-def _legacy_sign(request, record, learner_id, signature, signed_name):
+def _legacy_sign(request, record, learner_id, signature, signed_name, *, apply_monthly_log=True):
     if record.status not in {record.STATUS_AWAITING_SIGNATURE, record.STATUS_COMPLETED}:
         return None, JsonResponse(
             {"error": "The coach must submit the review before the learner can sign it."},
@@ -92,7 +94,7 @@ def _legacy_sign(request, record, learner_id, signature, signed_name):
     })
     record.review_responses = responses
     record.save(update_fields=["review_responses", "updated_at"])
-    sync = _sync_monthly_log(request, learner_id, record, signature, signed_name)
+    sync = _sync_monthly_log(request, learner_id, record, signature, signed_name, apply_monthly_log=apply_monthly_log)
     if _learner_context(request):
         try:
             learner = old.resolve_record(learner_id)
@@ -117,6 +119,9 @@ def mcm_signoff_response(request, record, learner_id):
     if not signature.startswith("data:image/"):
         return _error("A valid learner signature is required.", 400)
     signed_name = str(payload.get("name") or getattr(record, "learner_name", "") or "Learner").strip()
+    # Older clients did not send this choice, so preserve the original
+    # mirroring behavior unless the new option is explicitly unchecked.
+    apply_monthly_log = payload.get("applyMonthlyLogSignature", True) is not False
     if record.status not in {record.STATUS_AWAITING_SIGNATURE, record.STATUS_COMPLETED}:
         return _error("The coach must submit the review before the learner can sign it.", 409)
 
@@ -138,7 +143,7 @@ def mcm_signoff_response(request, record, learner_id):
         except ValueError as exc:
             return _error(str(exc), 409)
         record.refresh_from_db()
-        sync = _sync_monthly_log(request, learner_id, record, signature, signed_name)
+        sync = _sync_monthly_log(request, learner_id, record, signature, signed_name, apply_monthly_log=apply_monthly_log)
         if _learner_context(request):
             try:
                 learner = old.resolve_record(learner_id)
@@ -150,7 +155,7 @@ def mcm_signoff_response(request, record, learner_id):
             response["monthlyLogSync"] = sync
         return JsonResponse(response)
 
-    sync, error = _legacy_sign(request, record, learner_id, signature, signed_name)
+    sync, error = _legacy_sign(request, record, learner_id, signature, signed_name, apply_monthly_log=apply_monthly_log)
     if error is not None:
         return error
     response = {"event": _serialize_event(record)}

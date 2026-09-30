@@ -18,6 +18,7 @@ from .models import (
     EligibilityReviewDetail,
     HealthSafetyReviewDetail,
     RplReviewDetail,
+    UlnPrivacyReviewDetail,
 )
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,13 @@ MAPPINGS = {
             "inform_changes": ("healthSafetyVetting", "informChanges"),
             "hs_policy": ("healthSafetyVetting", "hsPolicy"),
             "liability_insurance": ("healthSafetyVetting", "liabilityInsurance"),
+        },
+    ),
+    "uln-privacy": (
+        UlnPrivacyReviewDetail,
+        {
+            "privacy_notice_read": ("ulnPrivacyNotice", "noticeRead"),
+            "learner_acknowledged": ("learnerAcknowledgement", "acknowledged"),
         },
     ),
 }

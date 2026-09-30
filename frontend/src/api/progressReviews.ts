@@ -53,7 +53,7 @@ export interface ProgressReviewGenerateResult {
   reviewDate: string;
   reviewPeriodStart: string;
   reviewPeriodEnd: string;
-  generationStatus: 'completed' | 'failed';
+  generationStatus: 'draft' | 'completed' | 'failed';
   /** How this version was made. */
   revisionSource?: 'generated' | 'edited' | 'uploaded';
   sourceWarnings: string[];
@@ -63,7 +63,7 @@ export interface ProgressReviewGenerateResult {
 export interface ProgressReviewLatestRun {
   exists: boolean;
   reviewId?: string;
-  generationStatus?: 'pending' | 'running' | 'completed' | 'failed';
+  generationStatus?: 'draft' | 'pending' | 'running' | 'completed' | 'failed';
   generatedAt?: string | null;
   /** How the newest version was made. */
   revisionSource?: 'generated' | 'edited' | 'uploaded';
@@ -119,9 +119,14 @@ export async function fetchReviewPack(learnerId: number | string, reviewDate?: s
 /** Cheap existence check for one exact review — never a general "does this
  * learner have any deck", so a review card can never show another review's
  * generated state. Backs both the card button label and the modal's initial
- * state (skip straight to Download/Regenerate when one already exists). */
-export async function fetchLatestRun(learnerId: number | string, reviewDate: string): Promise<ProgressReviewLatestRun> {
-  return request<ProgressReviewLatestRun>(`/${learnerId}/runs/latest/?review_date=${encodeURIComponent(reviewDate)}`);
+ * state (the owner can opt into loading their unsaved draft). */
+export async function fetchLatestRun(
+  learnerId: number | string,
+  reviewDate: string,
+  options: { includeDraft?: boolean } = {},
+): Promise<ProgressReviewLatestRun> {
+  const draft = options.includeDraft ? '&include_draft=1' : '';
+  return request<ProgressReviewLatestRun>(`/${learnerId}/runs/latest/?review_date=${encodeURIComponent(reviewDate)}${draft}`);
 }
 
 export async function generateProgressReview(
@@ -159,8 +164,13 @@ export async function fetchMcmPack(learnerId: number | string, meetingDate: stri
   return request<ProgressReviewPack>(`/${learnerId}/mcm/pack/?meeting_date=${encodeURIComponent(meetingDate)}`);
 }
 
-export async function fetchMcmLatestRun(learnerId: number | string, meetingDate: string): Promise<ProgressReviewLatestRun> {
-  return request<ProgressReviewLatestRun>(`/${learnerId}/mcm/runs/latest/?meeting_date=${encodeURIComponent(meetingDate)}`);
+export async function fetchMcmLatestRun(
+  learnerId: number | string,
+  meetingDate: string,
+  options: { includeDraft?: boolean } = {},
+): Promise<ProgressReviewLatestRun> {
+  const draft = options.includeDraft ? '&include_draft=1' : '';
+  return request<ProgressReviewLatestRun>(`/${learnerId}/mcm/runs/latest/?meeting_date=${encodeURIComponent(meetingDate)}${draft}`);
 }
 
 export async function generateMcm(learnerId: number | string, meetingDate: string): Promise<ProgressReviewGenerateResult> {
@@ -169,6 +179,11 @@ export async function generateMcm(learnerId: number | string, meetingDate: strin
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ meeting_date: meetingDate }),
   });
+}
+
+/** Publishes the owner's generated draft without replacing its stored file. */
+export async function publishProgressReview(reviewId: string): Promise<ProgressReviewGenerateResult> {
+  return request<ProgressReviewGenerateResult>(`/${reviewId}/publish/`, { method: 'POST' });
 }
 
 /** The generated deck rendered as a PDF by the server, for the in-page viewer. */

@@ -68,6 +68,32 @@ describe('SignaturePad saved signature', () => {
     expect(screen.queryByText(/saved as your signature for next time/)).not.toBeInTheDocument();
   });
 
+  it('stays on "Signing..." until the document is signed, and signs only once however often it is pressed', async () => {
+    let finish!: () => void;
+    const onCommit = vi.fn(() => new Promise<void>((resolve) => { finish = resolve; }));
+    render(<SignaturePad onCommit={onCommit} onCancel={vi.fn()} signatoryName="Sam Staff" />);
+    const button = await screen.findByRole('button', { name: /Sign with this signature/ });
+
+    await userEvent.click(button);
+    expect(await screen.findByRole('button', { name: /Signing\.\.\./ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    await userEvent.click(screen.getByRole('button', { name: /Signing\.\.\./ }));
+    expect(onCommit).toHaveBeenCalledTimes(1);
+
+    finish();
+    expect(await screen.findByRole('button', { name: /Sign with this signature/ })).toBeEnabled();
+  });
+
+  it('shows the error when signing fails, and lets them try again', async () => {
+    const onCommit = vi.fn().mockRejectedValueOnce(new Error('Database error')).mockResolvedValueOnce(undefined);
+    render(<SignaturePad onCommit={onCommit} onCancel={vi.fn()} signatoryName="Sam Staff" />);
+
+    await userEvent.click(await screen.findByRole('button', { name: /Sign with this signature/ }));
+    expect(await screen.findByText('Database error')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /Sign with this signature/ }));
+    expect(onCommit).toHaveBeenCalledTimes(2);
+  });
+
   it('treats a learner as always signing for themselves, whatever name the box shows', async () => {
     auth.value = learner;
     render(<SignaturePad onCommit={vi.fn()} onCancel={vi.fn()} signatoryName="LEE  learner (enrolment)" />);

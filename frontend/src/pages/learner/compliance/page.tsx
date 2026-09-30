@@ -6,6 +6,8 @@ import { useMyLearner } from '@/hooks/useMyLearner';
 import { useToast } from '@/hooks/useToast';
 import { useAuth } from '@/hooks/useAuth';
 import { invalidateLearnerDetailCache } from '@/api/learnerDetail';
+import { markFirstSessionUnlocked } from '@/hooks/useLearnerNavGate';
+import { FIRST_SESSION_ROUTE } from '@/hooks/useOnboardingRedirect';
 import { formatHoursMinutes } from '@/lib/format';
 import {
   fetchAgreement,
@@ -212,7 +214,10 @@ export default function LearnerCompliancePage() {
         && documents.ilr.document?.signatures.learner.signed
         && documents.plan.document?.signatures.apprentice.signed
         && documents.written.document?.signatures.learner.signed) {
-        navigate('/workspace/learner', { replace: true });
+        // Every document now carries their signature, which is what opens the
+        // first learning session booking — so that is where they go next.
+        markFirstSessionUnlocked('apprenticeship', id);
+        navigate(FIRST_SESSION_ROUTE, { replace: true });
       }
     } catch (err) {
       toast.error('Could not sign', err instanceof Error ? err.message : 'Please try again.');

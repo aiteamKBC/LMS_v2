@@ -935,8 +935,8 @@ describe('Teams Meetings page', () => {
     expect(input.scheduledOccurrences.map(item => item.startDateTimeUtc)).toEqual([
       '2026-09-04T08:30:00.000Z',
     ]);
-    // The create attaches the links (topping weeks up) itself before answering,
-    // so no follow-up restore request holds the confirmation back.
+    // The create attaches links to the components already authored before
+    // answering, so no follow-up restore request holds the confirmation back.
     await waitFor(() => expect(finishTeamsCreation).toHaveBeenCalledTimes(1));
     expect(restoreModuleTeamsMeeting).not.toHaveBeenCalled();
   });

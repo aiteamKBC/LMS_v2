@@ -99,7 +99,7 @@ class SharedReviewSourceResolverTests(SimpleTestCase):
     @patch("coach_api.views.fetch_source_schedule_rows", return_value=({}, {}))
     @patch("coach_api.views.fetch_aptem_review_events")
     @patch("coach_api.views.resolve_effective_aptem_ids", return_value=({1: 101}, set()))
-    def test_aptem_learner_without_aptem_mcm_gets_curriculum_mcm_only(
+    def test_aptem_learner_without_imported_mcm_does_not_get_curriculum_fallback(
         self, _identities, fetch_aptem, _source_rows, _templates, _anchor, _window,
         _programme, occurrences, build_event,
     ):
@@ -115,12 +115,11 @@ class SharedReviewSourceResolverTests(SimpleTestCase):
 
         result = views.resolve_coach_review_events("coach@example.invalid", "Coach", [learner(1)])
 
-        self.assertEqual(
-            [(event["source"], event["reviewSource"]) for event in result["events"]],
-            [("progress-review", "aptem"), ("mcr", "curriculum")],
-        )
+        self.assertEqual(result["events"], [aptem_event])
+        occurrences.assert_not_called()
+        build_event.assert_not_called()
         self.assertEqual(result["reviewGenerationIssues"], [])
-        self.assertEqual(result["sourceCounts"]["curriculumMcmFallbackLearners"], 1)
+        self.assertEqual(result["sourceCounts"]["curriculumMcmFallbackLearners"], 0)
         self.assertEqual(result["aptemProfileIds"], {1})
 
     @patch("coach_api.views.resolve_curriculum_review_occurrences", return_value=[])
@@ -283,6 +282,31 @@ class DashboardCompletedReviewHistoryTests(SimpleTestCase):
 
 
 class AptemEventVerificationTests(SimpleTestCase):
+    def test_imported_aptem_learning_progress_text_becomes_visual_snapshot(self):
+        snapshot = views._imported_progress_snapshot_from_review({
+            "plannedDate": "2026-09-25",
+            "completedDate": None,
+            "sections": [{
+                "name": "Learning Progress",
+                "rawText": (
+                    "Learning Plan Activities 41 of 94 Completed Submitted Remaining Target 41 1 52 57 "
+                    "Off–The–Job Hours Overall Progress 46% (263h) Minimum Required 557h "
+                    "Planned Hours (ILR) 576h Completed 263h Forecast 637h "
+                    "Progress Marketing Manager Apprenticeship Standard [V1.0] (Level 6) Behind 17% "
+                    "Timeline Start: 7 Nov 2025 Planned End: 6 Aug 2027"
+                ),
+            }],
+        })
+
+        self.assertIsNotNone(snapshot)
+        self.assertEqual(snapshot["calculatedFrom"], "2025-11-07")
+        self.assertEqual(snapshot["calculatedAt"], "2026-09-25")
+        self.assertEqual(snapshot["programmeProgress"]["actual"], 41)
+        self.assertEqual(snapshot["programmeProgress"]["expected"], 57)
+        self.assertEqual(snapshot["programmeProgress"]["actualPercent"], 43.62)
+        self.assertEqual(snapshot["offTheJobHours"]["actual"], 263.0)
+        self.assertEqual(snapshot["offTheJobHours"]["actualPercent"], 46.0)
+
     def test_embedded_section_requires_usable_content_before_form_is_available(self):
         self.assertFalse(views._imported_review_has_usable_form({
             "sections": [{"id": "empty", "fields": [], "tables": [], "rawText": ""}],
@@ -412,12 +436,13 @@ class AptemEventVerificationTests(SimpleTestCase):
         self.assertEqual(events[0]["eventKey"], "imported-review:R-SUMMARY")
         self.assertFalse(events[0]["hasReviewForm"])
 
+    @patch("coach_api.views._imported_review_progress_snapshot", return_value=None)
     @patch("coach_api.views.ImportedReviewInstance.objects.filter")
     @patch("coach_api.views._sections_by_review")
     @patch("coach_api.views.connections")
     @patch("coach_api.views.fetch_caseload_dashboard_profiles")
     def test_imported_definition_reuses_native_form_contract_without_curriculum_identity(
-        self, fetch_profiles, connections, sections_by_review, imported_instances,
+        self, fetch_profiles, connections, sections_by_review, imported_instances, _progress_snapshot,
     ):
         imported_instances.return_value.first.return_value = None
         fetch_profiles.return_value = [learner(1, aptem_id=101, source_aptem_id=101)]

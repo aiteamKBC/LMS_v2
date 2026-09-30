@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 from zoneinfo import ZoneInfo
 
+from . import journal_sources
 from django.db import DatabaseError, connections
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
@@ -39,6 +40,19 @@ def progress_day(value):
         return value.replace(tzinfo=timezone.utc).astimezone(UK).date() if value.tzinfo is None else value.astimezone(UK).date()
     except (ValueError, TypeError):
         return None
+
+
+def completion_day(row):
+    """The day a progress row's hours count on.
+
+    The declared working instant when the learner's Finish click fell outside
+    the working rules and had to be corrected, otherwise the click itself. This
+    is the same order ``coach_api.entry_activity_date`` uses, so the learner's
+    own week and month totals bucket exactly where the coach's do; the real
+    click stays readable at ``submittedAt`` for audit.
+    """
+    row = row if isinstance(row, dict) else {}
+    return progress_day(row.get('declaredCompletedAt') or row.get('submittedAt'))
 
 
 def merged_activities(historical, native, progress, attempts, links):
@@ -122,7 +136,7 @@ def monthly_otjh_summary(activities, progress):
 
     progress_by_month = {}
     for row in progress:
-        day = progress_day(row.get('submittedAt'))
+        day = completion_day(row)
         if day:
             progress_by_month.setdefault(day.strftime('%Y-%m'), []).append(row)
 
@@ -295,11 +309,11 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None):
             identities = cur.fetchall()
             if len(identities) != 1 or not source.email or str(identities[0][0] or '').strip().casefold() != source.email.strip().casefold():
                 raise LookupError('Previous learning could not be linked to this learner.')
-            cur.execute('''SELECT gl.group_id,ga.activity_id,g.group_name AS module_title,a.title,
+            cur.execute(f'''SELECT gl.group_id,ga.activity_id,g.group_name AS module_title,a.title,
                 coalesce(a.activity_type,r.activity_type) AS type,
                 r.status,r.video_completed,r.reading_viewed,r.quiz_passed,a.quiz_id,a.reading_type,ph.planned_hours AS expected_hours,
                 CASE WHEN nullif(a.reading_iframe_url,'') IS NOT NULL THEN 'present' ELSE '' END AS reading_iframe_url,
-                CASE WHEN jsonb_typeof(a.quiz_questions)='array' AND a.quiz_questions<>'[]'::jsonb THEN '[{}]'::jsonb ELSE '[]'::jsonb END AS quiz_questions,
+                CASE WHEN jsonb_typeof(a.quiz_questions)='array' AND a.quiz_questions<>'[]'::jsonb THEN '[{{}}]'::jsonb ELSE '[]'::jsonb END AS quiz_questions,
                 jsonb_path_query_array(CASE WHEN lk.source_preference='learner' THEN lk.ksbs ELSE ak.ksbs END,'$[*].code') AS ksb_mappings
                 FROM "Last_audit".learners l
                 JOIN "Last_audit".group_learners gl ON gl.learner_id=l.learner_id
@@ -307,8 +321,8 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None):
                 JOIN "Last_audit".group_activities ga ON ga.group_id=gl.group_id
                 JOIN "Last_audit".activities a ON a.activity_id=ga.activity_id
                 LEFT JOIN "Last_audit".activity_results r ON r.learner_id=l.learner_id AND r.group_id=gl.group_id AND r.activity_id=ga.activity_id
-                LEFT JOIN structured_manual_activities.learner_activity_ksbs lk ON lk.aptem_id=l.aptem_id AND lk.activity_id=ga.activity_id
-                LEFT JOIN structured_manual_activities.activity_ksbs ak ON ak.activity_id=ga.activity_id
+                LEFT JOIN {journal_sources.table('learner_activity_ksbs')} lk ON lk.aptem_id=l.aptem_id AND lk.activity_id=ga.activity_id
+                LEFT JOIN {journal_sources.table('activity_ksbs')} ak ON ak.activity_id=ga.activity_id
                 LEFT JOIN "Last_audit".activity_planned_hours ph ON ph.learner_id=l.learner_id AND ph.aptem_id=l.aptem_id
                     AND ph.ref=ga.activity_id::text AND ph.kind=CASE lower(coalesce(a.activity_type,r.activity_type))
                         WHEN 'video' THEN 'video' WHEN 'audio' THEN 'audio' WHEN 'reading+quiz' THEN 'reading_quiz' END
@@ -337,14 +351,14 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None):
                 if component and activity:
                     candidates.setdefault(str(component), set()).add((str(group), str(activity)))
             links = {component: next(iter(keys)) for component, keys in candidates.items() if len(keys) == 1}
-            cur.execute('''SELECT coalesce(sum(actual_hours) FILTER (WHERE activity_date BETWEEN %s AND %s),0),
+            cur.execute(f'''SELECT coalesce(sum(actual_hours) FILTER (WHERE activity_date BETWEEN %s AND %s),0),
                 count(*) FILTER (WHERE activity_date IS NULL AND month=ANY(%s))
-                FROM structured_manual_activities.manual_learner_activities
+                FROM {journal_sources.table('manual_learner_activities')}
                 WHERE aptem_id=%s AND accepted IS TRUE AND deleted_at IS NULL''',
                         [start, end, sorted({start.strftime('%Y-%m'), end.strftime('%Y-%m')}), aptem_id])
             raw_hours, undated_hours = cur.fetchone()
             old_hours = number(raw_hours)
-    weekly_progress = [row for row in progress if (day := progress_day(row.get('submittedAt'))) and start <= day <= end]
+    weekly_progress = [row for row in progress if (day := completion_day(row)) and start <= day <= end]
     new_hours = _direct_progress_otjh(weekly_progress)
     plan_activities = list(merged_activities(historical, native, progress, attempts, links))
     result = {'weekStart': start.isoformat(), 'weekEnd': end.isoformat(), 'timezone': 'Europe/London',
@@ -379,11 +393,32 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None):
         result['homeProgress'] = read_home_progress(source, home_kind,
             merged_activities(historical, native, progress, attempts, links), native, progress, assigned, end,
             canonical_metrics=canonical_metrics)
+    if journal_sources.enabled():
+        from . import canonical_learning
+        if not canonical_learning.enabled(source.pk):
+            return result
+        records = canonical_learning.entries(source.pk)
+        targets = canonical_learning.targets(source.pk)
+        result['monthlyOtjh'] = journal_sources.monthly_hours(records, targets, canonical_learning.allocations)
+        weekly_seconds, undated = 0, 0
+        for record in records:
+            if record.get('accepted') is not True:
+                continue
+            for part in canonical_learning.allocations(record):
+                at = canonical_learning.local_instant(part.get('reporting_started_at') or part.get('reporting_ended_at'))
+                if at and start <= at.date() <= end:
+                    weekly_seconds += canonical_learning.number(part.get('actual_seconds'))
+                elif not at and part.get('reporting_month') in {start.strftime('%Y-%m'), end.strftime('%Y-%m')}:
+                    undated += 1
+        actual = round(weekly_seconds / 3600, 4)
+        result['otjh'] = {'actual': actual if not undated else None,
+            'historical': actual, 'new': 0, 'undatedHistoricalRows': undated}
     return result
 
 
 @require_GET
 @learner_self_or_staff(kwarg='pk')
+@journal_sources.learner_journal_view
 def overview_week(request, kind, pk):
     model = SOURCE_MODELS.get(kind)
     if model is None:

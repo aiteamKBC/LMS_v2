@@ -7,6 +7,7 @@ import {
 } from 'react';
 import { isTeamsReviewCancelled } from './calendarReview';
 import { finishTeamsCreation, finishTeamsUpdate } from './creationResult';
+import { newResendKey, submitResendEmails } from './scheduleEmail';
 import { UNCERTAIN_MESSAGE, waitForSavedCreate, type CreateProgress, type CreateRecovery } from './createRecovery';
 import { type UpdateProgress } from './updateProgress';
 import { syncTeamsCalendarState } from './calendarState';
@@ -956,6 +957,50 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     }
   };
 
+  /**
+   * Send the schedule email again, as a creation email, to everyone the saved
+   * calendar invites -- not the "was ... now ..." update notice.
+   *
+   * Its own action, before any review: it never touches the Teams calendar and
+   * never asks Microsoft to announce anything. It re-reads the calendar the
+   * server has already verified and posts that same full timetable, so a
+   * learner who lost the first email, or who was added and removed and added
+   * again, holds the dates and the join links as they now stand. Each press is
+   * its own ledger round, so it reaches the people the last one reached too.
+   */
+  const resendSchedule = async (row: MeetingRow) => {
+    const summary = row.summary;
+    if (blockedReason || !summary?.liveSessionId) return;
+    const people = new Set([...(summary.attendees || []), ...(summary.presenters || []),
+      ...(summary.coOrganizers || []), summary.organizerEmail || '']
+      .map(value => String(value || '').trim().toLowerCase()).filter(Boolean));
+    const count = people.size;
+    setNotice(null);
+    await showCurriculumConfirm({
+      title: 'Email the full schedule to everyone?',
+      text: `${count || 'Every'} invited ${count === 1 ? 'person' : 'people'} on ${row.name} will be sent the complete timetable and join links again, as a new schedule email rather than a change notice. Anyone who already received it will receive it a second time. The Teams calendar itself is not changed.`,
+      icon: 'warning',
+      confirmButtonText: 'Send schedule emails',
+      onConfirm: async () => {
+        setBusy(`${row.catalogueId}:resend`);
+        try {
+          const email = await submitResendEmails(summary.liveSessionId, newResendKey());
+          const unfinished = email.failed + email.uncertain;
+          setNotice({
+            tone: unfinished ? 'warning' : 'info',
+            text: unfinished
+              ? `${row.name}: Microsoft accepted ${email.accepted} of ${email.total} schedule emails. ${unfinished} could not be confirmed — press the button again to send a fresh round.`
+              : `${row.name}: the full schedule was submitted to all ${email.accepted} recipient${email.accepted === 1 ? '' : 's'}.`,
+          });
+        } finally {
+          setBusy('');
+        }
+      },
+      successTitle: 'Schedule emails submitted',
+      successText: 'Microsoft has accepted the messages for delivery.',
+    });
+  };
+
   const pushDates = async (row: MeetingRow) => {
     const summary = row.summary;
     if (blockedReason || !summary || !row.sessions.length) return;
@@ -1432,11 +1477,10 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       }
       if (!result) return;
       endCreateProgress();
-      // The create itself writes the join link into every live-session
-      // component (topping weeks up to their delivery days) before it answers,
-      // and a create that could not do so answers with an error instead. The
-      // restore request that used to follow repeated that walk plus a full
-      // module rebuild, and the confirmation waited on all of it.
+      // The create itself writes the join link into the live-session
+      // components the author already placed before it answers. It must not
+      // author new components in content-only weeks; Restore/Re-attach is the
+      // explicit action for that.
       createDrawer.close();
       // The dialog was the create form and the create has happened, so it has
       // nothing left to show: close it rather than re-selecting the module into
@@ -1572,7 +1616,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     settingsDrawer, createDrawer, updateDrawer, drawerTarget, invitedPrefilling,
     loadTeamsState, holidayLabelFor, rows, selected, selectedForDisplay, stats,
     openCalendarAction, checkCalendarAction, runArtifactSync, runCalendarSync,
-    pushDates, saveInvitations, reattach, prefillInvitees, openSettings, saveSettings,
+    pushDates, resendSchedule, saveInvitations, reattach, prefillInvitees, openSettings, saveSettings,
     sendUpdateEmails, setSendUpdateEmails,
     createCalendar, createRecovery, createProgress, updateProgress, requestCloseSelected, notifyChanged, blockedReason, drawerOpen,
   };

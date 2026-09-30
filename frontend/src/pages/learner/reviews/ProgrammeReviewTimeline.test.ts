@@ -20,6 +20,9 @@ describe('programme review timeline status', () => {
   it('keeps an elapsed booking scheduled until an attendance source identifies its outcome', () => {
     expect(reviewTimelineStatus(event())).toBe('scheduled');
     expect(reviewTimelineStatus(event(), attendance())).toBe('scheduled');
+    expect(reviewTimelineStatus(event({ status: 'in-progress' }))).toBe('in-progress');
+    expect(reviewTimelineStatus(event({ status: 'in-progress' }), attendance({ status: 'scheduled' }))).toBe('in-progress');
+    expect(reviewTimelineStatus(event({ status: 'in-progress', bookingStatus: 'scheduled' }))).toBe('in-progress');
     expect(reviewTimelineStatus(event({ meetingOutcome: 'ended' }))).toBe('missed');
     expect(reviewTimelineStatus(event({ meetingOutcome: 'completed' }))).toBe('attended');
   });
@@ -37,5 +40,6 @@ describe('programme review timeline status', () => {
     expect(completedReviewTimelineStatus(event(), attendance({ status: 'completed' }))).toBe('attended');
     expect(completedReviewTimelineStatus(event(), attendance({ missed: true }), 'completed')).toBe('attended');
     expect(completedReviewTimelineStatus(event(), attendance({ missed: true }), 'awaiting-signature')).toBe('missed');
+    expect(completedReviewTimelineStatus(event(), attendance({ status: 'scheduled' }), 'in-progress')).toBe('in-progress');
   });
 });

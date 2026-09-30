@@ -5,7 +5,8 @@ import type { ReactNode } from 'react';
 import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
 import { submitComponentProgress, type ComponentProgressResponse } from '@/api/components';
 import { startTimeTracking } from '@/api/timeTracking';
-import ComponentViewPage from './page';
+import { fetchEvidence } from '@/api/evidence';
+import ComponentViewPage, { ComponentBody } from './page';
 
 (globalThis as Record<string, unknown>).AppIcon = ({ className }: { className?: string }) => <i className={className} />;
 
@@ -14,14 +15,18 @@ const session = vi.hoisted(() => ({
   isInitialized: true,
   outsideWorkingHours: true,
   holidayCalendarReady: true,
+  holidays: [] as { start: string; end: string; label?: string }[],
 }));
 
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: vi.fn() }));
 vi.mock('@/api/components', () => ({ submitComponentProgress: vi.fn() }));
 vi.mock('@/api/timeTracking', () => ({ startTimeTracking: vi.fn() }));
+vi.mock('@/api/evidence', () => ({
+  fetchEvidence: vi.fn(), uploadEvidence: vi.fn(), getEvidenceDownloadUrl: vi.fn(), deleteEvidence: vi.fn(),
+}));
 vi.mock('@/hooks/useMyLearner', () => ({ rememberLearner: vi.fn() }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: session.account }, isInitialized: session.isInitialized }) }));
-vi.mock('@/hooks/useComponentAccessWindow', () => ({ useComponentAccessWindow: () => ({ open: true, outsideWorkingHours: session.outsideWorkingHours, holidayCalendarReady: session.holidayCalendarReady, currentTimeLabel: 'Sunday, 14:02 BST' }) }));
+vi.mock('@/hooks/useComponentAccessWindow', () => ({ useComponentAccessWindow: () => ({ open: true, outsideWorkingHours: session.outsideWorkingHours, holidays: session.holidays, holidayCalendarReady: session.holidayCalendarReady, currentTimeLabel: 'Sunday, 14:02 BST' }) }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children, pageSubtitle }: { children: ReactNode; pageSubtitle: string }) => <main><p>{pageSubtitle}</p>{children}</main> }));
 vi.mock('./AssignmentSubmissionWizard', () => ({ AssignmentSubmissionWizard: () => null }));
 
@@ -50,7 +55,6 @@ function mount(id = 'C1') {
 
 async function finish() {
   fireEvent.change(await screen.findByLabelText('Minutes spent'), { target: { value: '20' } });
-  fireEvent.click(screen.getByRole('checkbox', { name: /inside UK working hours/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
 }
@@ -61,31 +65,72 @@ beforeEach(() => {
   session.isInitialized = true;
   session.outsideWorkingHours = true;
   session.holidayCalendarReady = true;
+  session.holidays = [];
   localStorage.clear();
   vi.mocked(fetchLearnerDetail).mockResolvedValue(detail());
   vi.mocked(startTimeTracking).mockResolvedValue({
     sessionId: 'S1', trackingToken: 'token', startedAt: new Date().toISOString(), countingMode: 'visible_page',
   });
   vi.mocked(submitComponentProgress).mockResolvedValue({ record: progress } as unknown as ComponentProgressResponse);
+  vi.mocked(fetchEvidence).mockResolvedValue([]);
 });
 afterEach(cleanup);
 
-it('keeps content available but prevents submission until the holiday calendar is known', async () => {
-  session.holidayCalendarReady = false;
-  mount();
-  await finish();
-  expect(await screen.findByText('Please wait for the holiday calendar before submitting.')).toBeInTheDocument();
-  expect(submitComponentProgress).not.toHaveBeenCalled();
+it('keeps direct audio tied to real playback events', () => {
+  const onPlayingChange = vi.fn();
+  const onEnded = vi.fn();
+  render(<ComponentBody
+    component={{ ...first, type: 'audio', audioUrl: 'https://example.test/podcast.mp3' } as never}
+    contentKind="audio"
+    parsed={null}
+    title="Podcast"
+    onDuration={vi.fn()}
+    onProgress={vi.fn()}
+    onPlayingChange={onPlayingChange}
+    onEnded={onEnded}
+    onUnsupported={vi.fn()}
+  />);
+
+  const audio = document.querySelector('audio')!;
+  fireEvent.play(audio);
+  expect(onPlayingChange).toHaveBeenLastCalledWith(true);
+  fireEvent.pause(audio);
+  expect(onPlayingChange).toHaveBeenLastCalledWith(false);
+  fireEvent.ended(audio);
+  expect(onPlayingChange).toHaveBeenLastCalledWith(false);
+  expect(onEnded).toHaveBeenCalledOnce();
 });
 
-it('does not request a working-hours declaration when submitting during working hours', async () => {
-  session.outsideWorkingHours = false;
+it('connects the content Upload evidence control to a mounted file input', async () => {
+  const reading = { ...first, type: 'reading', component: 'Reading', content: '<p>Learning material</p>', description: 'Learning material' };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading] } as unknown as LearnerDetail);
+
+  mount();
+
+  const trigger = await screen.findByText('Upload evidence');
+  const inputId = trigger.closest('label')?.htmlFor;
+  expect(inputId).toBeTruthy();
+  expect(document.getElementById(inputId!)).toBeInstanceOf(HTMLInputElement);
+  expect(document.getElementById(inputId!)).not.toBeDisabled();
+});
+
+it('studies out of hours with no warning, no checkbox and no blocked Finish', async () => {
+  session.outsideWorkingHours = true;
+  session.holidayCalendarReady = false;   // the calendar no longer gates learning
   mount();
   fireEvent.change(await screen.findByLabelText('Minutes spent'), { target: { value: '20' } });
   expect(screen.queryByRole('checkbox', { name: /inside UK working hours/ })).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
-  fireEvent.click(await screen.findByRole('button', { name: 'Confirm' }));
-  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', 'apprenticeship', '1', expect.objectContaining({ insideWorkingHoursConfirmed: false })));
+  expect(screen.queryByText(/outside UK working hours/i)).not.toBeInTheDocument();
+  expect(screen.queryByText(/holiday calendar/i)).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Finish' })).toBeEnabled();
+});
+
+it('submits without any working-hours declaration', async () => {
+  session.outsideWorkingHours = false;
+  mount();
+  await finish();
+  await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', 'apprenticeship', '1', expect.objectContaining({ declaredCompletedAt: null })));
+  expect(vi.mocked(submitComponentProgress).mock.calls[0][3]).not.toHaveProperty('insideWorkingHoursConfirmed');
 });
 
 it('lets the learner open the existing reflection form when reflection is configured', async () => {
@@ -177,8 +222,7 @@ async function openReadingConfirmation() {
   const reading = { ...first, type: 'reading', component: 'Reading', content: '<p>Learning material</p>', description: 'Learning material' };
   vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading] } as unknown as LearnerDetail);
   mount();
-  fireEvent.click(await screen.findByRole('checkbox', { name: /inside UK working hours/ }));
-  fireEvent.click(screen.getByRole('button', { name: 'Finish' }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Finish' }));
   await screen.findByRole('button', { name: 'Confirm' });
 }
 
@@ -192,7 +236,7 @@ it('accepts hours and minutes entered in the completion popup and submits manual
   fireEvent.change(minutes, { target: { value: '30' } });
   fireEvent.click(screen.getByRole('button', { name: 'Confirm' }));
   await waitFor(() => expect(submitComponentProgress).toHaveBeenCalledWith('C1', 'apprenticeship', '1', expect.objectContaining({
-    timeTakenSeconds: 5400, timeEntrySource: 'input', insideWorkingHoursConfirmed: true,
+    timeTakenSeconds: 5400, timeEntrySource: 'input',
   })));
 });
 
@@ -238,7 +282,7 @@ it('keeps the saved completion visible and asks before moving to the next same-n
   expect(screen.queryByRole('button', { name: 'Finish' })).not.toBeInTheDocument();
   expect(screen.getByText(/Locked activities have no learning content/)).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /Recorded Session P1/ })).toBeDisabled();
-  expect(submitComponentProgress).toHaveBeenCalledWith('C1', 'apprenticeship', '1', expect.objectContaining({ timeTakenSeconds: 1200, insideWorkingHoursConfirmed: true }));
+  expect(submitComponentProgress).toHaveBeenCalledWith('C1', 'apprenticeship', '1', expect.objectContaining({ timeTakenSeconds: 1200 }));
   expect(startTimeTracking).toHaveBeenCalledTimes(1);
 
   fireEvent.click(screen.getByRole('button', { name: /Next activity:.*Week 2/ }));

@@ -43,8 +43,12 @@ def component_access_is_open(at=None):
 def outside_uk_working_hours(at=None):
     """Outside UK weekday 07:00-19:00, including official/manual holidays.
 
-    Europe/London applies GMT/BST automatically. Components remain available;
-    callers use this only to require an explicit out-of-hours declaration.
+    Europe/London applies GMT/BST automatically. Components remain available.
+
+    No longer the completion gate: a Finish click is judged by
+    ``working_rules.working_rule_failure``, which scopes holidays to the
+    learner's own cohort and names the reason. Kept as the unscoped predicate
+    for callers that only need the coarse question.
     """
     instant = at or timezone.now()
     if timezone.is_naive(instant):

@@ -69,6 +69,11 @@ LEARNER_ID_KWARGS = ("learner_id", "pk")
 # the same files for everyone, with nothing learner-specific in them.
 UNSCOPED_VIEWS = frozenset({"health", "document_types", "open_policy_document"})
 
+#: Views an employer may reach, and only for a learner they employ: signing the
+#: compliance documents that carry an employer signature. Each one also refuses
+#: an employer signing any party but "employer" (employer_signing_party_error).
+EMPLOYER_LEARNER_VIEWS = frozenset({"sign_written_agreement", "sign_training_plan", "sign_agreement"})
+
 
 def auth_required():
     """Whether the gate is active. Read per-request so tests can toggle it."""
@@ -163,8 +168,35 @@ def _may_access(request, view_name, kwargs):
         # learner whose session pins one spelling must still reach their record.
         return learner_id == account.subject_id
 
-    # Employers and any future role: not scoped here yet.
+    if account.role == "employer" and view_name in EMPLOYER_LEARNER_VIEWS:
+        return _employs(account, _requested_learner_id(kwargs))
+
+    # Employers (outside the views above) and any future role: not scoped yet.
     return view_name in UNSCOPED_VIEWS
+
+
+def _employs(account, learner_id):
+    """Whether the learner's employer record is this employer account's own."""
+    if learner_id is None:
+        return False
+    from learner_api.models import EnrolmentUser
+
+    employer_id = (
+        EnrolmentUser.all_learners.filter(pk=learner_id).values_list("employer_id", flat=True).first()
+    )
+    return employer_id is not None and employer_id == account.subject_id
+
+
+def employer_signing_party_error(request, party):
+    """403 when an employer tries to sign a compliance document as another party.
+
+    The document sign views take the party from the request body, so the gate in
+    enrolment_login_required cannot see it; each of them calls this instead.
+    """
+    account = getattr(request, "login_account", None)
+    if auth_required() and account is not None and account.role == "employer" and party != "employer":
+        return JsonResponse({"error": "An employer can only sign as the employer."}, status=403)
+    return None
 
 
 def enrolment_login_required(view):

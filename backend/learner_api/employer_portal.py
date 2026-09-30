@@ -69,9 +69,12 @@ def _review_signing_rows(kind, learner_id, *, employer_only=True):
     signature — the employer has no business being shown the RPL review.
     """
     try:
+        # A cancelled booking's review belongs to a meeting that is not
+        # happening -- the learner re-books, and that new review is the one to
+        # sign. Same rule as the board's and the coach's review documents.
         reviews = EnrolmentReview.objects.filter(
             learner_kind=kind, learner_id=learner_id
-        ).order_by("scheduled_date", "id")
+        ).exclude(status=EnrolmentReview.STATUS_CANCELLED).order_by("scheduled_date", "id")
     except DatabaseError:
         logger.exception("_review_signing_rows: lookup failed for %s/%s", kind, learner_id)
         return []
