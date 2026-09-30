@@ -935,6 +935,10 @@ AZURE_APPROVED_CONTAINER = os.environ.get("AZURE_APPROVED_CONTAINER", "evidence-
 AZURE_REJECTED_CONTAINER = os.environ.get("AZURE_REJECTED_CONTAINER", "evidence-rejected")
 AZURE_SAS_TTL_MINUTES = int(os.environ.get("AZURE_SAS_TTL_MINUTES", "15"))
 AZURE_LEARNER_PHOTOS_CONTAINER = os.environ.get("AZURE_LEARNER_PHOTOS_CONTAINER") or "learner-photos"
+AZURE_MATERIALS_STORAGE_ACCOUNT = os.environ.get("AZURE_MATERIALS_STORAGE_ACCOUNT", "")
+AZURE_MATERIALS_STORAGE_KEY = os.environ.get("AZURE_MATERIALS_STORAGE_KEY", "")
+AZURE_MATERIALS_CONTAINER = os.environ.get("AZURE_MATERIALS_CONTAINER") or "activity-media-backups"
+AZURE_MATERIALS_SAS_TTL_MINUTES = int(os.environ.get("AZURE_MATERIALS_SAS_TTL_MINUTES", "15"))
 
 # Generated/signed enrolment paperwork (ILR and the other compliance documents)
 # — see enrolment_api/documents.py. Separate from the evidence containers: these

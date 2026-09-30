@@ -9,12 +9,20 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 from login.permissions import learner_self_or_staff
 from audit_api.evidence_explorer_views import (
-    CLASSIFICATIONS, EVIDENCE_ITEMS, EVIDENCE_OVERRIDES, EVIDENCE_REPLACEMENTS,
+    EVIDENCE_ITEMS,
     evidence_payload, classify_by_hints,
 )
-from audit_api.manual_ledger_views import MANUAL_DOCS, MANUAL_ROWS, _report_display_name
+from audit_api.manual_ledger_views import _report_display_name
 from old_otjh.repository import ksb_codes
-from . import evidence_storage
+from . import evidence_storage, journal_sources
+
+# Retain the legacy identifiers exposed to existing callers. Request reads
+# resolve their tables through journal_sources, including coach isolation.
+MANUAL_ROWS = 'structured_manual_activities.manual_learner_activities'
+MANUAL_DOCS = 'structured_manual_activities.manual_activity_documents'
+CLASSIFICATIONS = 'structured_manual_activities.evidence_content_classification'
+EVIDENCE_OVERRIDES = 'structured_manual_activities.evidence_overrides'
+EVIDENCE_REPLACEMENTS = 'structured_manual_activities.evidence_replacements'
 
 logger = logging.getLogger(__name__)
 ARCHIVES = '"Audit".learner_evidence_overrides'
@@ -30,7 +38,7 @@ def response(view):
     @wraps(view)
     def wrapped(request, *args, **kwargs):
         try:
-            result = JsonResponse(view(request, *args, **kwargs))
+            result = JsonResponse(journal_sources.learner_journal_view(view)(request, *args, **kwargs))
         except EvidenceError as error:
             result = JsonResponse({'error': str(error)}, status=error.status)
         except DatabaseError:
@@ -70,7 +78,7 @@ def resolve_aptem(cursor, kind, pk):
 
 
 def available_tables(cursor):
-    tables = [EVIDENCE_ITEMS, CLASSIFICATIONS, EVIDENCE_OVERRIDES, EVIDENCE_REPLACEMENTS, MANUAL_ROWS, MANUAL_DOCS, ARCHIVES]
+    tables = [EVIDENCE_ITEMS, journal_sources.table('evidence_content_classification'), journal_sources.table('evidence_overrides'), journal_sources.table('evidence_replacements'), journal_sources.table('manual_learner_activities'), journal_sources.table('manual_activity_documents'), ARCHIVES]
     cursor.execute('SELECT ' + ', '.join('to_regclass(%s)' for _ in tables), tables)
     return {table for table, found in zip(tables, cursor.fetchone()) if found}
 
@@ -86,8 +94,8 @@ def source_rows(cursor, aptem_id, tables, source_id=None):
         fields += ['e.note_content', 'e.feedbacks']
     joins = []
     optional = [
-        (CLASSIFICATIONS, 'c', [('category', 'content_category'), ('confidence', 'content_confidence'), ('mismatch', 'content_mismatch'), ('reason', 'content_reason'), ('review_status', 'review_status')]),
-        (EVIDENCE_OVERRIDES, 'o', [('display_name', 'override_name'), ('category', 'override_category'), ('evidence_date', 'override_date')]),
+        (journal_sources.table('evidence_content_classification'), 'c', [('category', 'content_category'), ('confidence', 'content_confidence'), ('mismatch', 'content_mismatch'), ('reason', 'content_reason'), ('review_status', 'review_status')]),
+        (journal_sources.table('evidence_overrides'), 'o', [('display_name', 'override_name'), ('category', 'override_category'), ('evidence_date', 'override_date')]),
     ]
     for table, alias, columns in optional:
         if table in tables:
@@ -99,16 +107,16 @@ def source_rows(cursor, aptem_id, tables, source_id=None):
         joins.append(f'''LEFT JOIN {ARCHIVES} a ON a.learner_id=e.learner_id AND NOT a.is_uploaded
             AND a.source_evidence_id=e.evidence_id''')
         date_fields.insert(0, 'a.evidence_date')
-    if EVIDENCE_OVERRIDES in tables:
+    if journal_sources.table('evidence_overrides') in tables:
         date_fields.insert(0, 'o.evidence_date')
     date = f"coalesce({','.join(date_fields)})"
     fields.append(f'{date} AS evidence_date')
     replacement = [('display_name', 'replacement_name'), ('uploaded_at', 'replacement_uploaded_at'), ('container', 'replacement_container'), ('blob_name', 'replacement_blob')]
-    if EVIDENCE_REPLACEMENTS in tables:
-        joins.append(f'''LEFT JOIN LATERAL (SELECT rp.* FROM {EVIDENCE_REPLACEMENTS} rp
+    if journal_sources.table('evidence_replacements') in tables:
+        joins.append(f'''LEFT JOIN LATERAL (SELECT rp.* FROM {journal_sources.table('evidence_replacements')} rp
             WHERE rp.evidence_id=e.evidence_id AND rp.aptem_id=e.learner_id AND rp.archived_at IS NULL
             ORDER BY rp.uploaded_at DESC,rp.id DESC LIMIT 1) r ON true''')
-    fields += [f'r.{column} AS {name}' if EVIDENCE_REPLACEMENTS in tables else f'NULL AS {name}' for column, name in replacement]
+    fields += [f'r.{column} AS {name}' if journal_sources.table('evidence_replacements') in tables else f'NULL AS {name}' for column, name in replacement]
     where, params = ['e.learner_id=%s'], [aptem_id]
     if source_id is not None:
         where.append('e.evidence_id=%s')
@@ -124,7 +132,7 @@ def source_rows(cursor, aptem_id, tables, source_id=None):
 
 
 def manual_documents(cursor, aptem_id, tables, row_id=None, *, include_mirrored=False):
-    if not {MANUAL_ROWS, MANUAL_DOCS}.issubset(tables):
+    if not {journal_sources.table('manual_learner_activities'), journal_sources.table('manual_activity_documents')}.issubset(tables):
         return []
     params = [aptem_id]
     target = ''
@@ -137,7 +145,7 @@ def manual_documents(cursor, aptem_id, tables, row_id=None, *, include_mirrored=
         AND d.container='fetch-aptem-evidences' AND d.blob_name IN (e.file_blob,e.report_blob,e.note_blob))''' if EVIDENCE_ITEMS in tables and not include_mirrored else ''
     cursor.execute(f'''SELECT d.id,d.manual_activity_id,d.display_name,d.content_type,d.size_bytes,
         d.container,d.blob_name,d.uploaded_at,r.title,r.category,r.activity_date,r.month
-        FROM {MANUAL_DOCS} d JOIN {MANUAL_ROWS} r ON r.id=d.manual_activity_id AND r.aptem_id=d.aptem_id
+        FROM {journal_sources.table('manual_activity_documents')} d JOIN {journal_sources.table('manual_learner_activities')} r ON r.id=d.manual_activity_id AND r.aptem_id=d.aptem_id
         WHERE d.aptem_id=%s AND d.deleted_at IS NULL AND r.deleted_at IS NULL {target} {dedup}
         ORDER BY r.activity_date DESC NULLS LAST,r.id,d.id''', params)
     return dict_rows(cursor)
@@ -155,8 +163,8 @@ def uploaded_rows(cursor, aptem_id, tables, source_id=None):
               'o.evidence_date', 'o.azure_container', 'o.azure_blob_name', 'o.source_activity_id',
               'o.source_activity_month', 'o.source_activity_category']
     activity_fields = ['id', 'title', 'category', 'month', 'activity_date', 'completion_note', 'actual_hours', 'planned_hours', 'accepted']
-    fields += [f'r.{key} AS activity_{key}' if MANUAL_ROWS in tables else f'NULL AS activity_{key}' for key in activity_fields]
-    join = f'LEFT JOIN {MANUAL_ROWS} r ON r.id=o.source_activity_id AND r.aptem_id=o.learner_id AND r.deleted_at IS NULL' if MANUAL_ROWS in tables else ''
+    fields += [f'r.{key} AS activity_{key}' if journal_sources.table('manual_learner_activities') in tables else f'NULL AS activity_{key}' for key in activity_fields]
+    join = f'LEFT JOIN {journal_sources.table('manual_learner_activities')} r ON r.id=o.source_activity_id AND r.aptem_id=o.learner_id AND r.deleted_at IS NULL' if journal_sources.table('manual_learner_activities') in tables else ''
     cursor.execute(f'''SELECT {', '.join(fields)} FROM {ARCHIVES} o {join}
         WHERE o.learner_id=%s AND o.is_uploaded AND o.deleted_at IS NULL AND o.archived_at IS NULL {target}
         ORDER BY o.evidence_date DESC,o.evidence_id''', params)

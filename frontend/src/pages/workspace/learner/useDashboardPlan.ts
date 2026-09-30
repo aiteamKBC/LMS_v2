@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { overviewSchedule, overviewWeek } from '@/api/learnerOverview';
+import type { TrainingPlanContract } from '@/api/trainingPlanDashboard';
 import { getLogSummary, type LogSummary } from '@/features/monthly-logs/api';
 import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
 
@@ -27,6 +28,17 @@ export function monthlyLogActualOtjh(months: Record<string, { completed: number 
   return Math.round(Object.values(months).reduce((total, month) => total + month.completed, 0) * 10_000) / 10_000;
 }
 
+export function contractPlannedOtjh(contract: TrainingPlanContract | undefined) {
+  if (contract?.journalTargets !== undefined) {
+    const values = Object.values(contract.journalTargets);
+    return values.some(value => !Number.isFinite(value) || value < 0) ? null
+      : Math.round(values.reduce((total, value) => total + value, 0) * 10_000) / 10_000;
+  }
+  if (contract?.contractStatus !== 'ready') return null;
+  const months = Object.values(contract.months);
+  if (!months.length || months.some(month => month.planned == null || !Number.isFinite(month.planned) || month.planned < 0)) return null;
+  return Math.round(months.reduce((total, month) => total + month.planned!, 0) * 10_000) / 10_000;
+}
 export function useDashboardPlan(kind?: LearnerKind | null, id?: string | null, enabled = true) {
   const active = enabled && !!kind && !!id;
   const week = useLiveLearnerRead(kind, id, active, overviewWeek.read, overviewWeek.peek);

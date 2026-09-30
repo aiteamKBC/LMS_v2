@@ -118,6 +118,13 @@ def entries_for(owner):
           LEFT JOIN curriculum.source_courses c ON c.id=a.source_course_id AND c.deleted_at IS NULL
           WHERE s.canonical_progress_id=p.id AND s.learner_id=p.learner_id
             AND s.deleted_at IS NULL),'[]'::jsonb) AS sources,
+        coalesce((SELECT jsonb_agg(jsonb_build_object(
+            'group_id',j.group_id,'activity_id',j.activity_id,'source_ref',j.source_ref) ORDER BY j.id)
+          FROM "Learner".learner_journal_rows j
+          JOIN "Learner".learner_activity_sources js ON js.id=j.source_id
+            AND js.learner_id=p.learner_id AND js.canonical_progress_id=p.id AND js.deleted_at IS NULL
+          WHERE j.progress_id=p.id AND j.canonical_learner_id=p.learner_id
+            AND j.deleted_at IS NULL),'[]'::jsonb) AS journal_routes,
         coalesce((SELECT jsonb_agg(to_jsonb(h) ORDER BY h.id)
           FROM "Learner".learner_progress_historical_components link
           JOIN curriculum.historical_components h ON h.id=link.historical_component_ref
@@ -126,9 +133,17 @@ def entries_for(owner):
         FROM canonical p
         ORDER BY p.reporting_month,p.reporting_started_at NULLS LAST,p.id''',
         [owner['id']])
-    return current_records(owner, [{**decoded(record['payload'], {}), **{
+    result = current_records(owner, [{**decoded(record['payload'], {}), **{
         field: decoded(record.get(field), [])
-        for field in ('ksbs', 'segments', 'sources', 'historical_components')}} for record in records])
+        for field in ('ksbs', 'segments', 'sources', 'journal_routes', 'historical_components')}} for record in records])
+    from learner_api import journal_sources
+    if journal_sources.enabled():
+        planned = journal_sources.planned_by_progress(owner['id'], query)
+        for record in result:
+            if record['id'] in planned:
+                record['expected_otjh'] = planned[record['id']]
+                record['journal_planned_hours'] = planned[record['id']]
+    return result
 
 
 def allocations(entry):
@@ -272,11 +287,241 @@ def signatures_for(owner):
         WHERE learner_id=%s AND review_confirmed IS TRUE ORDER BY signed_at DESC,id DESC''', [owner['id']])
 
 
-def content(item):
+def content_row(owner, month, row_id):
+    """Resolve a preview without rebuilding signatures, targets or month totals."""
+    records = entries_for(owner)
+    item = next((r for r in rows_for(owner, records)
+                 if r['id'] == row_id and str(r.get('reporting_month')) == month), None)
+    if item is None:
+        raise ServiceError('Activity not found.', 'not_found', 404)
+    record = next(r for r in records if r['id'] == item['progress_id'])
+    return item, record
+
+
+def material_parts(item, owner, record=None):
+    """Resolve owned canonical activity routes to available private Azure files."""
+    from django.conf import settings
+    from .material_storage import read_url
+
+    if record is None:
+        record = next((r for r in entries_for(owner)
+                       if str(r['id']) == str(item.get('progress_id'))), None)
+    if record is None:
+        return []
+    catalogue = query('''SELECT a.source_activity_id,a.source_activity_title,a.source_activity_type,
+        a.source_section_title,a.source_position AS position,a.curriculum_component_ref,
+        c.source_course_ref,c.source_course_title,c.curriculum_module_ref,
+        m.id AS material_record_id,m.title AS material_title,m.backup_status,
+        m.blob_container AS material_blob_container,m.blob_name AS material_blob_name,
+        m.blob_content_type AS material_blob_content_type,
+        m.source_metadata->>'azure_storage_account' AS material_blob_account
+        FROM "Learner".learner_source_course_memberships membership
+        JOIN curriculum.source_courses c ON c.id=membership.source_course_id
+          AND c.deleted_at IS NULL AND c.source_system='old_lms'
+        JOIN curriculum.source_activities a ON a.source_course_id=c.id
+          AND a.deleted_at IS NULL AND a.source_system=c.source_system
+          AND a.source_activity_kind='material'
+        JOIN curriculum.source_materials m ON m.material_id=a.source_material_id
+          AND m.source_system=a.source_system AND m.deleted_at IS NULL
+        WHERE membership.learner_id=%s AND membership.deleted_at IS NULL
+          AND c.source_course_ref ~ '^[0-9]+$'
+        ORDER BY c.id,a.id''', [owner['id']])
+    courses = list({r['source_course_ref']: {
+        'source_course_ref': r['source_course_ref'], 'source_course_title': r['source_course_title']}
+        for r in catalogue}.values())
+    files = {(str(r['source_course_ref']), r['source_activity_id']): r for r in catalogue}
+    sources = [r for r in record.get('sources') or []
+               if r.get('source_system') == 'old_lms'
+               and r.get('source_course_ref') and r.get('source_activity_id')]
+    if sources:
+        # Preserve the activity namespace: quiz:10 must never open material:10.
+        keys = {(str(r['source_course_ref']), r['source_activity_id']) for r in sources}
+    else:
+        component_ids = {r.get('curriculum_component_ref') or r.get('component_ref')
+                         for r in [record, *(record.get('sources') or [])]}
+        component_ids.discard(None)
+        component_ids.discard('')
+        # journal:<id> is a source-row identity, not a curriculum component.
+        component_ids = {value for value in component_ids if not str(value).startswith('journal:')}
+        if component_ids:
+            keys = {key for key, material in files.items()
+                    if material.get('curriculum_component_ref') in component_ids}
+        else:
+            placements, _, _ = recorded_course_items(courses, catalogue, [record])
+            keys = {(str(p['group_id']), f"{p['catalogue_kind']}:{p['source_activity_id']}")
+                    for p in placements}
+    # A preview opens only the clicked record's uniquely identified material.
+    # Never substitute sibling resources, even when their titles match.
+    if len(keys) != 1 or not keys.issubset(files):
+        return []
+    parts, seen = [], set()
+    for key in keys:
+        material = files.get(key)
+        if material is None:
+            continue
+        ident = material['material_record_id']
+        if ident in seen:
+            continue
+        seen.add(ident)
+        part = {'id': ident, 'title': material['material_title'] or item['title'],
+                'category': item['category'], 'content_type': material['material_blob_content_type'],
+                'url': None, 'html': None, 'quiz': None}
+        if (material['backup_status'] == 'available' and material['material_blob_container']
+                and material['material_blob_name']):
+            try:
+                part['url'] = read_url(material, settings)
+            except ValueError as error:
+                raise ServiceError('Material storage is temporarily unavailable.', 'storage_unavailable', 503) from error
+        else:
+            part['html'] = '<p>This material is linked to the activity. Its Azure backup is not ready yet.</p>'
+        from .source_material_content import material_quiz_definition
+        payload_rows = query('SELECT payload FROM curriculum.source_materials WHERE id=%s AND deleted_at IS NULL', [ident])
+        payload = decoded(payload_rows[0].get('payload') if payload_rows else None, {})
+        reading = next((payload.get(key) for key in ('reading_text_body', 'text_body', 'html_body')
+                        if isinstance(payload.get(key), str) and payload[key].strip()), None)
+        if reading:
+            part['html'] = reading
+        definition = material_quiz_definition(payload)
+        if definition:
+            part['quiz'] = {'state': 'unavailable', 'attempt': None,
+                            'answers_available': False, 'definition': definition}
+        parts.append(part)
+    return parts
+
+
+def component_parts(item, owner, record):
+    """Read authored local content through the learner's exact progress identity."""
+    if record is None:
+        return []
+    quizzes = query('''SELECT DISTINCT q.id,q.title,q.short_description,q.show_correct_answer
+        FROM "Learner".learner_progress_entries p
+        JOIN curriculum.components c ON c.id=p.component_ref AND c.deleted_at IS NULL
+        JOIN curriculum.quiz_component_links link ON link.component_id=c.id
+        JOIN curriculum.quizzes q ON q.id=link.quiz_id
+        WHERE p.id=%s AND p.learner_id=%s AND p.deleted_at IS NULL
+          AND (nullif(p.quiz_ref,'') IS NULL OR q.id::text=p.quiz_ref)''',
+        [record['id'], owner['id']])
+    parts = []
+    if len(quizzes) == 1:
+        quiz = quizzes[0]
+        questions = query('''SELECT q.id AS question_id,q.sort_order AS question_order,q.question_text,q.question_type,
+            coalesce((SELECT jsonb_agg(jsonb_build_object('option_id',a.id,'option_text',a.answer_text)
+                ORDER BY a.sort_order,a.id) FROM curriculum.quiz_answers a WHERE a.question_id=q.id),'[]'::jsonb) AS answer_options
+            FROM curriculum.quiz_questions q WHERE q.quiz_id=%s AND coalesce(q.is_archived,false)=false
+            ORDER BY q.sort_order,q.id''', [quiz['id']])
+        for question in questions:
+            options = decoded(question.get('answer_options') or [], None)
+            if not isinstance(options, list) or any(not isinstance(option, dict) for option in options):
+                raise ServiceError('Quiz answer options could not be read.', 'invalid_quiz_options', 503)
+            question['answer_options'] = options
+        if questions:
+            answers = query('''SELECT a.question_ref,a.chosen_answer_ref,a.is_correct,
+                coalesce((SELECT jsonb_agg(s.answer_ref) FROM "Learner".learner_quiz_chosen_answers s
+                    WHERE s.quiz_answer_id=a.id),'[]'::jsonb) AS selected,
+                coalesce((SELECT jsonb_agg(s.answer_ref) FROM "Learner".learner_quiz_correct_answers s
+                    WHERE s.quiz_answer_id=a.id),'[]'::jsonb) AS correct
+                FROM "Learner".learner_quiz_answers a
+                JOIN "Learner".learner_progress_entries p ON p.id=a.progress_id
+                WHERE p.id=%s AND p.learner_id=%s AND p.deleted_at IS NULL ORDER BY a.position''',
+                [record['id'], owner['id']])
+            answered = {str(a['question_ref']): a for a in answers}
+            saved = []
+            for question in questions:
+                answer = answered.get(str(question['question_id']))
+                if answer is None:
+                    continue
+                selected = {str(value) for value in decoded(answer.get('selected'), [])}
+                if answer.get('chosen_answer_ref') is not None:
+                    selected.add(str(answer['chosen_answer_ref']))
+                correct = {str(value) for value in decoded(answer.get('correct'), [])} if quiz.get('show_correct_answer') else set()
+                options = question['answer_options']
+                saved.append({**question, 'is_correct': answer.get('is_correct'),
+                    'learner_selected_answers': [a['option_text'] for a in options if str(a['option_id']) in selected],
+                    'correct_answers': [a['option_text'] for a in options if str(a['option_id']) in correct],
+                    'answer_options': [{'option_text': a['option_text'], 'is_selected': str(a['option_id']) in selected} for a in options]})
+            attempt = None
+            if saved:
+                attempt = {'title': quiz['title'], 'status': 'passed' if record.get('passed') else 'submitted',
+                    'score': record.get('achieved_score'), 'maximum_score': record.get('total_score'),
+                    'attempt_number': record.get('attempt'),
+                    'quiz_body': {'description': quiz.get('short_description'), 'questions': saved}}
+            parts.append({'id': item['id'], 'title': quiz['title'], 'category': item['category'],
+                          'url': None, 'html': None, 'quiz': {'state': 'attempted' if attempt else 'unavailable',
+                          'attempt': attempt, 'answers_available': bool(attempt), 'definition': {
+                              'description': quiz.get('short_description'), 'questions': questions}}})
+    components = query('''SELECT c.description,c.settings_json FROM "Learner".learner_progress_entries p
+        JOIN curriculum.components c ON c.id=p.component_ref AND c.deleted_at IS NULL
+        WHERE p.id=%s AND p.learner_id=%s AND p.deleted_at IS NULL''', [record['id'], owner['id']])
+    if components:
+        component = components[0]
+        settings = decoded(component.get('settings_json'), {})
+        html = settings.get('readingContent') or settings.get('assignmentBrief')
+        if html:
+            parts.append({'id': -2, 'title': item['title'], 'category': item['category'],
+                          'url': None, 'html': html, 'quiz': None})
+    return parts
+
+
+def source_quiz_parts(item, owner, record):
+    """Resolve imported quiz definitions by stored quiz ID within an owned course."""
+    if record is None:
+        return []
+    rows = query('''WITH routes AS (
+        SELECT a.source_course_id,a.source_activity_id
+        FROM "Learner".learner_activity_sources s
+        JOIN curriculum.source_activities a ON a.id=s.source_catalog_activity_id
+          AND a.source_activity_kind='quiz' AND a.source_system='old_lms' AND a.deleted_at IS NULL
+        WHERE s.canonical_progress_id=%s AND s.learner_id=%s AND s.deleted_at IS NULL
+        UNION
+        SELECT c.id,a.source_activity_id
+        FROM "Learner".learner_journal_rows j
+        JOIN "Learner".learner_activity_sources s ON s.id=j.source_id
+          AND s.canonical_progress_id=j.progress_id AND s.learner_id=j.canonical_learner_id AND s.deleted_at IS NULL
+        JOIN curriculum.source_courses c ON c.source_course_ref=j.group_id::text
+          AND c.source_system='old_lms' AND c.deleted_at IS NULL
+        JOIN curriculum.source_activities a ON a.source_course_id=c.id
+          AND a.source_activity_id='quiz:'||j.activity_id::text AND a.source_activity_kind='quiz'
+          AND a.source_system=c.source_system AND a.deleted_at IS NULL
+        WHERE j.progress_id=%s AND j.canonical_learner_id=%s AND j.deleted_at IS NULL
+          AND j.source_ref='la:'||j.group_id::text||':'||j.activity_id::text)
+        SELECT DISTINCT m.id,m.payload
+        FROM routes r
+        JOIN "Learner".learner_source_course_memberships member ON member.source_course_id=r.source_course_id
+          AND member.learner_id=%s AND member.deleted_at IS NULL
+        JOIN curriculum.source_activities material ON material.source_course_id=r.source_course_id
+          AND material.source_activity_kind='material' AND material.source_system='old_lms' AND material.deleted_at IS NULL
+        JOIN curriculum.source_materials m ON m.material_id=material.source_material_id
+          AND m.source_system=material.source_system AND m.deleted_at IS NULL
+          AND 'quiz:'||(m.payload->>'quiz_id')=r.source_activity_id''',
+        [record['id'], owner['id'], record['id'], owner['id'], owner['id']])
+    if len(rows) != 1:
+        return []
+    from .source_material_content import material_quiz_definition
+    definition = material_quiz_definition(rows[0]['payload'])
+    if not definition:
+        return []
+    return [{'id': item['id'], 'title': item['title'], 'category': item['category'],
+             'url': None, 'html': None, 'quiz': {'state': 'unavailable', 'attempt': None,
+             'answers_available': False, 'definition': definition}}]
+
+
+def content(item, owner=None, record=None):
+    if owner is not None and record is None:
+        record = next((r for r in entries_for(owner) if str(r['id']) == str(item.get('progress_id'))), None)
+    parts = material_parts(item, owner, record) if owner is not None and record is not None else []
+    if not parts and owner is not None and record is not None:
+        parts = component_parts(item, owner, record)
+    if not parts and owner is not None and record is not None:
+        parts = source_quiz_parts(item, owner, record)
     note = item.get('completion_note')
+    if parts:
+        if note:
+            parts.append({'id': -1, 'title': 'Activity notes', 'category': item['category'],
+                          'url': None, 'quiz': None, 'html': f'<p>{escape(note)}</p>'})
+        return {'id': item['id'], 'parts': parts}
     return {'id': item['id'], 'parts': [{'id': item['id'], 'title': item['title'],
         'category': item['category'], 'url': None, 'quiz': None,
-        'html': f'<p>{escape(note)}</p>' if note else '<p>No additional activity text was recorded.</p>'}]}
+        'html': f'<p>{escape(note)}</p>' if note else '<p>No material is directly linked to this activity.</p>'}]}
 
 
 def source_subjects(learner_id, summarize):
@@ -344,9 +589,31 @@ def recorded_course_items(courses, catalogue, records):
             and s.get('source_course_ref') and s.get('source_activity_id')
             for s in record.get('sources') or [])
         if not has_source_route:
-            ref = str(source_payload_metadata(record.get('source_payload')).get('original_source_ref') or '')
-            match = re.fullmatch(r'la:(\d+):(\d+)', ref)
-            key = (match[1], 'material:' + match[2]) if match else None
+            journals = record.get('journal_routes') or []
+            routes = set()
+            if journals:
+                for journal in journals:
+                    group, activity = str(journal.get('group_id') or ''), str(journal.get('activity_id') or '')
+                    ref = str(journal.get('source_ref') or '')
+                    # The journal's la namespace identifies materials, not
+                    # standalone quizzes or attendance with a coincident ID.
+                    if group.isdigit() and activity.isdigit() and ref == f'la:{group}:{activity}':
+                        routes.add((group, 'material:' + activity))
+                    else:
+                        routes.add(None)
+                key = next(iter(routes)) if len(routes) == 1 else None
+                if key is None and None not in routes and len({route[0] for route in routes}) == 1:
+                    # A canonical record can merge multiple journal materials
+                    # within one course. Retain its documented primary material
+                    # and count the canonical hours once, not once per journal row.
+                    ref = str(source_payload_metadata(record.get('source_payload')).get('original_source_ref') or '')
+                    match = re.fullmatch(r'la:(\d+):(\d+)', ref)
+                    primary = (match[1], 'material:' + match[2]) if match else None
+                    key = primary if primary in routes else None
+            else:
+                ref = str(source_payload_metadata(record.get('source_payload')).get('original_source_ref') or '')
+                match = re.fullmatch(r'la:(\d+):(\d+)', ref)
+                key = (match[1], 'material:' + match[2]) if match else None
             if key in definitions:
                 placements.setdefault(key[0], definitions[key])
         for course, definition in placements.items():
@@ -368,7 +635,8 @@ def recorded_course_items(courses, catalogue, records):
                 'historical_completed': accepted,
                 'actual': recorded_seconds(record) / 3600 if accepted else 0,
                 'hours_mapped': accepted and any(p.get('actual_seconds') is not None for p in allocations(record)),
-                'planned': 0, 'planned_hours_mapped': False, 'has_result': True,
+                'planned': record.get('journal_planned_hours', 0),
+                'planned_hours_mapped': 'journal_planned_hours' in record, 'has_result': True,
                 'status': record.get('activity_status'),
                 'quiz_score': float(record['achieved_score']) if record.get('achieved_score') is not None else None,
                 'quiz_maximum_score': float(record['total_score']) if record.get('total_score') is not None else None}
@@ -413,7 +681,8 @@ def metrics_from_records(records, monthly_targets):
             counts[0] += item.get('accepted') is True
             counts[1] += 1
     actual = round(sum(recorded_seconds(item) for item in accepted) / 3600, 4)
-    planned = round(sum(monthly_targets.values()), 4) if monthly_targets else None
+    from learner_api import journal_sources
+    planned = round(sum(monthly_targets.values()), 4) if monthly_targets or journal_sources.enabled() else None
     return {
         'migrated': True, 'aptem_planned_total': planned,
         'programme': {**ratio(len(completed), len(counted)), 'historicalCompleted': len(accepted)},

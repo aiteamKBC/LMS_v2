@@ -27,8 +27,9 @@ _query_alias = ContextVar('old_otjh_query_alias', default=None)
 
 
 def query(sql, params=()):
+    from learner_api.journal_sources import retained_journal_sql
     with connections[_query_alias.get() or DB].cursor() as cursor:
-        cursor.execute(sql, params)
+        cursor.execute(retained_journal_sql(sql), params)
         if cursor.description is None:
             return []
         columns = [col[0] for col in cursor.description]

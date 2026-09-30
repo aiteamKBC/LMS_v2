@@ -7,6 +7,7 @@ import logging
 from math import isfinite
 
 import psycopg
+from . import journal_sources
 from django.db import DatabaseError, connections
 
 from .active_users import completed_hours_value_from_progress

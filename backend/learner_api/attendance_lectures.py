@@ -4,6 +4,7 @@ from html import unescape
 import logging
 import re
 
+from . import journal_sources
 from django.db import DatabaseError, connections
 from django.conf import settings
 from django.http import JsonResponse
@@ -331,14 +332,14 @@ def read_legacy_metadata(source, register):
     with connections['enrolment'].cursor() as cur:
         # The register remains authoritative for attendance/date/title. Last_audit
         # and the audit editor supply details only, joined by the exact source key.
-        cur.execute('''SELECT la.source_key,la.activity_hours,
+        cur.execute(f'''SELECT la.source_key,la.activity_hours,
             j.ksbs,r.activity_time,r.completion_note,r.group_id,r.month AS log_month,
             greatest(la.synced_at,r.updated_at,j.updated_at) AS updated_at
             FROM "Last_audit".learner_attendance la
-            LEFT JOIN structured_manual_activities.manual_learner_activities r
+            LEFT JOIN {journal_sources.table('manual_learner_activities')} r
               ON r.aptem_id=la.aptem_id AND r.source_ref='att:' || la.source_key
              AND r.category='attendance' AND r.deleted_at IS NULL
-            LEFT JOIN structured_manual_activities.learner_journal_row_ksbs j
+            LEFT JOIN {journal_sources.table('learner_journal_row_ksbs')} j
               ON j.aptem_id=r.aptem_id AND j.row_id=r.id
             WHERE la.aptem_id=%s AND la.source_key=ANY(%s)''', [aptem, keys])
         metadata_rows = dict_rows(cur)
@@ -362,15 +363,15 @@ def read_legacy_metadata(source, register):
                             for group in _legacy_module_activities(row, metadata.get(row['session_id']) or {}, groups)})
         if not group_ids:
             return metadata, []
-        cur.execute('''SELECT gl.group_id,g.group_name,a.activity_id,a.title,a.activity_date,
+        cur.execute(f'''SELECT gl.group_id,g.group_name,a.activity_id,a.title,a.activity_date,
             a.activity_type,a.configured_duration_min,a.quiz_id,a.reading_type,
             CASE WHEN nullif(a.reading_iframe_url,'') IS NOT NULL THEN 'present' ELSE '' END AS reading_iframe_url,
             CASE WHEN jsonb_typeof(a.quiz_questions)='array' AND a.quiz_questions<>'[]'::jsonb
-                 THEN '[{}]'::jsonb ELSE '[]'::jsonb END AS quiz_questions,
+                 THEN '[{{}}]'::jsonb ELSE '[]'::jsonb END AS quiz_questions,
             r.status,r.video_completed,
             r.reading_viewed,r.quiz_passed,r.updated_at,
             coalesce(CASE WHEN lk.source_preference='learner' THEN lk.ksbs ELSE ak.ksbs END,
-                     a.raw #> '{live_lms_component,ksbs}') AS ksbs,
+                     a.raw #> '{{live_lms_component,ksbs}}') AS ksbs,
             EXISTS (SELECT 1 FROM "Learner".subject_activity_attempts p
               WHERE p.enrolment_id=%s AND p.aptem_id=l.aptem_id AND p.group_id=gl.group_id
                 AND p.activity_id=a.activity_id AND p.completed=true) AS new_completed
@@ -381,9 +382,9 @@ def read_legacy_metadata(source, register):
             JOIN "Last_audit".activities a ON a.activity_id=ga.activity_id
             LEFT JOIN "Last_audit".activity_results r ON r.learner_id=l.learner_id
               AND r.group_id=gl.group_id AND r.activity_id=a.activity_id
-            LEFT JOIN structured_manual_activities.learner_activity_ksbs lk
+            LEFT JOIN {journal_sources.table('learner_activity_ksbs')} lk
               ON lk.aptem_id=l.aptem_id AND lk.activity_id=a.activity_id
-            LEFT JOIN structured_manual_activities.activity_ksbs ak ON ak.activity_id=a.activity_id
+            LEFT JOIN {journal_sources.table('activity_ksbs')} ak ON ak.activity_id=a.activity_id
             WHERE l.aptem_id=%s AND gl.group_id=ANY(%s)''', [source.id, aptem, group_ids])
         activities = dict_rows(cur)
     return metadata, activities
@@ -789,6 +790,7 @@ def read_workspace(source, kind):
 
 @require_GET
 @learner_self_or_staff(kwarg='learner_id')
+@journal_sources.learner_journal_view
 def attendance_lectures(request, kind, learner_id):
     model = SOURCE_MODELS.get(kind)
     if model is None:

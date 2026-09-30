@@ -22,7 +22,7 @@ export type OverviewWeek = {
   metrics?: LearnerMetrics;
   planSubjects?: PlanSubjectSummary[];
   /** Monthly OTJH; assignment submissions use marking status, other activity types keep their existing semantics. */
-  monthlyOtjh?: Record<string, { planned: number | null; submitted?: number; actual: number; missingPlannedActivities: number }>;
+  monthlyOtjh?: Record<string, { planned: number | null; submitted?: number; actual: number; includesHistorical?: boolean; missingPlannedActivities: number }>;
   weekStart: string; weekEnd: string; timezone: string;
   modules: { id: string; title: string; weekLabels: string[]; moduleIds?: string[]; completed: number; total: number;
     percent: number | null; ksbCodes: string[]; ksbMappingMissing: boolean }[];
@@ -34,7 +34,7 @@ export type OverviewWeek = {
 export type HomeProgressCount = { completed: number; total: number };
 export type HomeProgress = {
   period: { start: string | null; end: string; timezone: string };
-  otjh: { actual: number | null; submitted: number | null; planned: number | null; percent: number | null; missingPlannedActivities: number };
+  otjh: { actual: number | null; submitted: number | null; planned: number | null; percent: number | null; includesHistorical?: boolean; missingPlannedActivities: number };
   activities: HomeProgressCount | null; assignments: HomeProgressCount | null;
   lectures: HomeProgressCount | null; modules: HomeProgressCount;
   undatedActivities: number;

@@ -1,8 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import type { LogSummary } from '@/features/monthly-logs/api';
-import { monthlyLogActualOtjh, monthlyLogOtjh } from '../useDashboardPlan';
+import { contractPlannedOtjh, monthlyLogActualOtjh, monthlyLogOtjh } from '../useDashboardPlan';
 
-describe('dashboard OTJH SSOT projection', () => {
+it('uses journal targets even when the older contract is unavailable or different', () => {
+  expect(contractPlannedOtjh({ contractStatus: 'unavailable', months: {},
+    journalTargets: { '2026-01': 0, '2026-02': 33, '2026-03': 25 } })).toBe(58);
+  expect(contractPlannedOtjh({ contractStatus: 'ready', months: {
+    '2026-01': { label: '', topics: [], source: 'contract', planned: 99 },
+  }, journalTargets: { '2026-01': 0 } })).toBe(0);
+});
+
+describe('dashboard OTJH source transition', () => {
   it('maps SSOT monthly values and programme totals into the chart payload', () => {
     const summary = {
       learner: { id: 125, aptem_id: 7001, name: 'Learner', programme: 'Programme', coach_name: '', planned_end_date: '2027-10-17' },

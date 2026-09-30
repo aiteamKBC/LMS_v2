@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import logging
 import math
 
+from . import journal_sources
 from django.db import DatabaseError, connections
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
@@ -240,7 +241,12 @@ def contract_plan(source, contract):
         except Exception:
             log.warning('Training-plan contract could not be read for enrolment %s', source.pk)
             status = 'unavailable'
-    return {'months': months, 'contractStatus': status,
+    journal = {}
+    if journal_sources.enabled():
+        from . import canonical_learning
+        if canonical_learning.enabled(source.pk):
+            journal['journalTargets'] = canonical_learning.targets(source.pk)
+    return {**journal, 'months': months, 'contractStatus': status,
             'programmeStartDate': date_only(contract.get('program_start_date')) if contract else None,
             'programmeEndDate': date_only(contract.get('planned_end_date')) if contract else None}
 
@@ -397,13 +403,14 @@ def read_dashboard(source, section=None):
     phone = coach_phone(coach_email)
     if phone:
         coach['phone'] = phone
-    return {**contract_data, 'actual': actual, 'actualAvailable': True, 'modules': modules, 'moduleLinks': links,
+    return {**contract_data, 'actual': actual, 'actualAvailable': owner is not None, 'modules': modules, 'moduleLinks': links,
             'sessions': sessions, 'reviews': reviews, 'coach': coach,
             'generatedAt': datetime.now(timezone.utc).isoformat()}
 
 
 @require_GET
 @learner_self_or_staff(kwarg='pk')
+@journal_sources.learner_journal_view
 def training_plan_dashboard(request, kind, pk):
     model = SOURCE_MODELS.get(kind)
     if model is None:

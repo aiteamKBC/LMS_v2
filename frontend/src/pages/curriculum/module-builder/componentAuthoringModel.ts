@@ -445,12 +445,29 @@ const LIVE_SESSION_TRACKING_SETTING_KEYS = [
   'teamsDurationMinutes', 'sessionDay', 'sessionRescheduled',
 ] as const;
 
+/**
+ * The one-off meeting booked onto a single week, under its own keys.
+ *
+ * Deliberately not `liveSessionUrl`/`teamsMeetingUrl`: those two name the
+ * MODULE's calendar, and the backend rewrites them on every live-session
+ * component each time a module with a calendar is saved. An extra meeting
+ * stored there would be replaced by the module's link without a word. Here it
+ * survives, and the module's own calendar behaves exactly as it always did.
+ */
+export const ADDITIONAL_TEAMS_MEETING_SETTING_KEYS = [
+  'extraTeamsMeetingUrl', 'extraTeamsLiveSessionId', 'extraTeamsEventId',
+  'extraTeamsOnlineMeetingId', 'extraTeamsWebLink', 'extraTeamsMeetingOptionsUrl',
+  'extraTeamsOrganizerEmail', 'extraTeamsAttendees', 'extraTeamsPresenters',
+  'extraTeamsCoOrganizers', 'extraTeamsStartDateTimeUtc', 'extraTeamsDurationMinutes',
+  'extraTeamsSubject',
+] as const;
+
 export function allowedSettingKeysForType(type: ModuleComponentType) {
   const definition = getComponentDefinition(type);
   return new Set([
     ...Object.keys(definition.defaultSettings),
     ...WEEK_BUILDER_SHARED_KEYS,
-    ...(type === 'live-session' ? LIVE_SESSION_TRACKING_SETTING_KEYS : []),
+    ...(type === 'live-session' ? [...LIVE_SESSION_TRACKING_SETTING_KEYS, ...ADDITIONAL_TEAMS_MEETING_SETTING_KEYS] : []),
     'legacySettings',
     'legacySourceType',
     'legacyUnsupportedSource',

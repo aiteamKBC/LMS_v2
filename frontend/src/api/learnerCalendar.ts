@@ -410,6 +410,15 @@ export interface SessionSlot {
  *  Pinned to Europe/London rather than the browser's zone: the session happens
  *  in Kent whatever the learner's own clock says, and a learner signing in
  *  from abroad must still be offered — and book — the college's hours. */
+/** UK times the learner's coach is free for a catch-up of this length on `date`. */
+export async function fetchCatchupSlots(kind: LearnerKind, id: string, date: string, durationMinutes: number, signal?: AbortSignal): Promise<string[]> {
+  const query = new URLSearchParams({ date, timezoneOffsetMinutes: String(ukOffsetForDate(date)), durationMinutes: String(durationMinutes), purpose: 'catch-up' });
+  const response = await fetch(`${BASE}/${kind}/${id}/coach-availability/?${query}`, { credentials: 'include', signal });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || 'Could not check your coach’s calendar.');
+  return Array.isArray(result.times) ? result.times as string[] : [];
+}
+
 export function ukOffsetForDate(date: string): number {
   return (
     (12 -

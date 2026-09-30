@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { monthlyHours, monthlyTargetHours, totalCompletedHours } from './monthlyHours';
 
+it('does not add historical rows to a consolidated monthly total again', () => {
+  const data = dashboard();
+  data.monthlyOtjh = { '2026-09': { planned: 12, actual: 9, includesHistorical: true, missingPlannedActivities: 0 } };
+  data.actual = [{ month: '2026-09', groupId: null, hours: 7, count: 1 }];
+  expect(monthlyHours(data).find(row => row.key === '2026-09')?.completed).toBe(9);
+});
+
 function dashboard(): TrainingPlanDashboard {
   return {
     months: {

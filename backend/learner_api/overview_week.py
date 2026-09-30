@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 from zoneinfo import ZoneInfo
 
+from . import journal_sources
 from django.db import DatabaseError, connections
 from django.conf import settings
 from django.http import JsonResponse
@@ -378,6 +379,7 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None):
 
 @require_GET
 @learner_self_or_staff(kwarg='pk')
+@journal_sources.learner_journal_view
 def overview_week(request, kind, pk):
     model = SOURCE_MODELS.get(kind)
     if model is None:

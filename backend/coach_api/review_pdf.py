@@ -7,20 +7,28 @@ from curriculum_api.review_pdf import learner_information, mcm_pdf_response, pdf
 @coach_access_required
 @require_GET
 def coach_mcm_pdf(request, instance_id):
-    from .views import _authorized_review_instance
+    from django.http import JsonResponse
+    from .views import _authorized_review_instance, _imported_review_definition
+    from .auth import authenticated_coach_email
     from .models import CoachCalendarEvent
     from learner_api.models import LearnerProfile, EnrolmentUser
     from curriculum_api.review_instances import review_instance_form_definition
 
-    instance, error = _authorized_review_instance(request, instance_id)
-    if error:
-        return error
-    definition = review_instance_form_definition(instance)
+    if instance_id.startswith('imported-review:'):
+        definition = _imported_review_definition(authenticated_coach_email(request), instance_id)
+        if not definition:
+            return JsonResponse({'detail': 'Imported review not found for this coach.'}, status=404)
+        instance = definition['instance']
+    else:
+        instance, error = _authorized_review_instance(request, instance_id)
+        if error:
+            return error
+        definition = review_instance_form_definition(instance)
     if not (pdf_availability(definition) or {}).get('available'):
         return mcm_pdf_response(definition, {})
     profile = LearnerProfile.objects.filter(pk=instance['learner_id']).first()
     source = EnrolmentUser.all_learners.filter(pk=profile.enrolment_id).first() if profile and profile.enrolment_id else None
-    record = CoachCalendarEvent.objects.filter(pk=instance.get('calendar_event_id')).first()
+    record = CoachCalendarEvent.objects.filter(pk=instance.get('calendar_event_id')).first() if instance.get('calendar_event_id') else None
     information = learner_information(
         source,
         name=getattr(profile, 'username', '') or getattr(record, 'learner_name', ''),

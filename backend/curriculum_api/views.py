@@ -3637,6 +3637,17 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     series_rows = authoring_fetch_all(LIVE_SESSIONS_TABLE, 'id = %s', [live_session_id])
     if not series_rows:
         return json_error('Live session series not found.', status=404)
+    # An additional week meeting is not a module series and must never come
+    # through here: this endpoint finishes by re-attaching its series across
+    # every live-session component of the module, which would put one week's
+    # private meeting link on all of them. It has its own endpoint --
+    # teams_week_meeting.curriculum_week_teams_meeting_detail.
+    if clean_str(series_rows[0].get('status')) == 'week-meeting':
+        return json_error(
+            'That is an additional week meeting, not this module’s Teams calendar. Edit it on the '
+            'Additional week meeting tab.',
+            status=404, code='not_a_module_calendar',
+        )
     if request.method != 'PATCH':
         return json_error('Method not allowed.', status=405)
     if not has_graph_credentials():
@@ -16707,6 +16718,37 @@ def live_session_component_points(default=10):
     return parse_int(getattr(rule, 'points', None), default) if rule else default
 
 
+#: Everything an additional week meeting stores on its live-session component.
+#: Written only by `teams_week_meeting.py`; never by a module save, and never by
+#: the module's own calendar. `liveSessionUrl`/`teamsMeetingUrl` are the mirror
+#: that makes the component's link point at this meeting and are restored with
+#: them, because the module series skips this session and writes neither.
+ADDITIONAL_MEETING_SETTING_KEYS = (
+    'extraTeamsMeetingUrl', 'extraTeamsLiveSessionId', 'extraTeamsEventId',
+    'extraTeamsOnlineMeetingId', 'extraTeamsWebLink', 'extraTeamsMeetingOptionsUrl',
+    'extraTeamsOrganizerEmail', 'extraTeamsAttendees', 'extraTeamsPresenters',
+    'extraTeamsCoOrganizers', 'extraTeamsStartDateTimeUtc', 'extraTeamsDurationMinutes',
+    'extraTeamsSubject',
+)
+
+
+def preserve_additional_meeting_settings(payload_settings, stored_row):
+    """Keep a component's booked additional meeting across a full structure save.
+
+    Returns the settings to store: the payload's, with the stored additional
+    meeting put back on top when there is one. A component that has never had
+    one is returned untouched, so this costs nothing for every other component.
+    """
+    if not stored_row:
+        return payload_settings
+    stored = component_builder_settings(stored_row)
+    if not isinstance(stored, dict) or not clean_str(stored.get('extraTeamsMeetingUrl')):
+        return payload_settings
+    kept = {key: stored[key] for key in ADDITIONAL_MEETING_SETTING_KEYS if key in stored}
+    join_url = clean_str(stored.get('extraTeamsMeetingUrl'))
+    return {**payload_settings, **kept, 'liveSessionUrl': join_url, 'teamsMeetingUrl': join_url}
+
+
 def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series_settings, occurrence_rows, *, create_missing=False, dry_run=False):
     """Write a tracked Teams meeting onto the weeks of a module.
 
@@ -16884,6 +16926,29 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
         live_rows = [row for row in components_by_week.get(week_id, []) if frontend_component_type(row.get('type')) == 'live-session']
         for row in live_rows:
             existing_settings = component_builder_settings(row)
+            # A live session delivered by its own additional meeting is not part
+            # of this series. It is never sent to the module's calendar, so it
+            # owns no occurrence here and must keep ITS meeting's link rather
+            # than be handed the series'. The slot index still advances: the
+            # week occupies its place in the dated plan either way, and the
+            # sessions after it would otherwise all shift a week early.
+            # See teams_week_meeting.py.
+            additional_link = clean_str(existing_settings.get('extraTeamsMeetingUrl'))
+            if additional_link:
+                session_index += 1
+                handled_component_ids.add(clean_str(row.get('id')))
+                if not dry_run:
+                    update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [row.get('id')], {
+                        'settings_json': json_db_value({
+                            **existing_settings,
+                            'liveSessionUrl': additional_link,
+                            'teamsMeetingUrl': additional_link,
+                        }),
+                        'live_sessions_link': additional_link,
+                        'updated_at': now,
+                    })
+                updated += 1
+                continue
             occurrence = occurrence_for_component(existing_settings, session_index)
             if occurrence:
                 claimed_occurrence_ids.add(clean_str(occurrence.get('id')))
@@ -16958,9 +17023,14 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
             continue
         if clean_str(row.get('id')) in handled_component_ids:
             continue
+        orphan_settings = component_builder_settings(row)
+        # Its own additional meeting, for the same reason as above: losing its
+        # week must not hand it the series' link.
+        if clean_str(orphan_settings.get('extraTeamsMeetingUrl')):
+            continue
         if not dry_run:
             update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [row.get('id')], {
-                'settings_json': json_db_value({**component_builder_settings(row), **series_settings}),
+                'settings_json': json_db_value({**orphan_settings, **series_settings}),
                 'live_sessions_link': clean_str(series_settings.get('liveSessionUrl')),
                 'updated_at': now,
             })
@@ -20137,6 +20207,16 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
                 # payload_reflection_question().
                 component_reflection = payload_reflection_question(component, component_settings)
                 component_settings = {**component_settings, LEGACY_REFLECTION_QUESTION_SETTING: component_reflection}
+                # An additional week meeting is booked in Microsoft and belongs
+                # to the STORED component, not to whatever this tab last read.
+                # This save replaces settings_json outright, so a builder opened
+                # before the meeting was booked -- or any client that simply does
+                # not know these keys -- would otherwise wipe the only record of
+                # a real meeting, taking its join link off the live session with
+                # it. The stored values win; nothing in a payload can clear them.
+                component_settings = preserve_additional_meeting_settings(
+                    component_settings, stored_components_by_id.get(component_id),
+                )
                 component_ksb_items, component_mapping_payloads = normalise_component_ksb_mappings(
                     module_catalogue_id,
                     component.get('ksbMappings') or [],
@@ -26610,11 +26690,17 @@ def curriculum_module_meeting_invitees(request, module_catalogue_id):
     alongside ``tutor_name`` by both write paths -- module save and the group
     staffing PATCH that fans a tutor out across its group's modules).
 
-    Attendees: every learner whose training plan carries this module, read off
-    ``learner_api.LearnerTrainingPlanModule.module_ref`` -- populated with the
-    same module catalogue id this endpoint is addressed by. This is a
-    per-learner plan, not the group roster: a learner whose plan has not
-    reached this module yet is correctly left out.
+    Attendees: everyone assigned to this module, which is the same roster the
+    module's own Learners tab shows -- ``assigned_learners_for_scope('module',
+    ...)``: the learners enrolment placed in the group that delivers it, plus
+    anyone whose saved plan names this module directly, minus anyone whose
+    explicit plan drops it.
+
+    The normalised mirror of the same assignment,
+    ``learner_api.LearnerTrainingPlanModule.module_ref``, is read as well and
+    merged in. It used to be the only source, and it lags: a learner assigned
+    through enrolment whose plan rows have not been rebuilt yet is in the
+    roster but not in the mirror, and prefill silently left them out.
 
     Both lists are a starting point for the Presenters/Attendees fields on the
     Teams-meeting form, not a binding assignment -- the caller can still edit
@@ -26628,19 +26714,30 @@ def curriculum_module_meeting_invitees(request, module_catalogue_id):
     module_row = module_rows[0] if module_rows else {}
     tutor_email = clean_str(module_row.get('tutor_email'))
 
-    attendee_emails = (
+    roster_emails = [
+        clean_str(row.get('email'))
+        for row in assigned_learners_for_scope('module', module_catalogue_id)
+    ]
+    mirror_emails = (
         LearnerTrainingPlanModule.objects
         .filter(module_ref=module_catalogue_id)
         .exclude(learner__email='')
-        .order_by('learner__email')
         .values_list('learner__email', flat=True)
         .distinct()
     )
 
+    # One entry per address, first spelling kept, case-insensitively deduped --
+    # the two sources hold the same learner's email with its own capitalisation.
+    attendees = {}
+    for email in (*roster_emails, *mirror_emails):
+        email = clean_str(email)
+        if email and email.lower() not in attendees:
+            attendees[email.lower()] = email
+
     return JsonResponse({
         'moduleCatalogueId': module_catalogue_id,
         'presenters': [tutor_email] if tutor_email else [],
-        'attendees': [email for email in attendee_emails if email],
+        'attendees': sorted(attendees.values(), key=str.casefold),
     })
 
 

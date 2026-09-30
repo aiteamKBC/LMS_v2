@@ -210,7 +210,8 @@ export function monthMetrics(month: string, modules: TimelineModule[], data: Tra
   const canonicalActual = canonicalRows.reduce((sum, row) => sum + row.hours, 0);
   const actual = monthlyLog ? monthlyLog.completed
     : data.actualAvailable === false && !data.monthlyOtjh ? null
-      : canonicalRows.length ? canonicalActual : (current?.actual ?? 0);
+      : current?.includesHistorical ? current.actual
+        : canonicalActual + (current?.actual ?? 0);
   const explicit = data.months[month]?.weeklyTarget;
   return { planned, actual, remaining: planned === null || actual === null ? null : Math.max(0, planned - actual), weeks,
     weekly: explicit ?? (planned !== null && weeks > 0 ? planned / weeks : null), progress: planned === null || actual === null ? null : percent(actual, planned) };

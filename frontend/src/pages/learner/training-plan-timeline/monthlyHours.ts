@@ -61,7 +61,8 @@ export function monthlyHours(data: TrainingPlanDashboard, programmeStartMonth = 
     // projection. Never add the weekly projection to the same canonical row.
     const submitted = monthlyLog ? monthlyLog.submitted : recordedAvailable ? (current?.submitted ?? 0) : null;
     const completed = monthlyLog ? monthlyLog.completed : recordedAvailable
-      ? canonicalRows.length ? canonicalActual : (current?.actual ?? 0)
+      ? current?.includesHistorical ? current.actual
+        : canonicalRows.length ? canonicalActual : (current?.actual ?? 0)
       : null;
     return {
       key,
