@@ -188,12 +188,25 @@ def _access_token(force_refresh=False):
         return token
 
 
-def send_mail(*, to, subject, html_body, text_body=None, sender_name=None, save_to_sent=False):
+def _file_attachment(item):
+    import base64
+    return {
+        "@odata.type": "#microsoft.graph.fileAttachment",
+        "name": item["name"],
+        "contentType": item.get("content_type") or "application/octet-stream",
+        "contentBytes": base64.b64encode(item["content"]).decode("ascii"),
+    }
+
+
+def send_mail(*, to, subject, html_body, text_body=None, sender_name=None, save_to_sent=False, attachments=None):
     """Send one message. Returns ``(sent, detail)``.
 
     ``save_to_sent`` keeps a copy in the sender mailbox's Sent Items. Off by
     default so routine notifications do not pile up in the shared mailbox;
     invitations and password resets opt in so staff can see what was sent.
+
+    ``attachments`` is an optional list of ``{"name", "content_type", "content"}``
+    (content as bytes), sent as Graph file attachments -- e.g. a calendar invite.
 
     ``sent`` is True only when Graph accepted it. When Azure is not configured
     this returns ``(False, "not-configured: …")`` after logging the message —
@@ -239,6 +252,7 @@ def send_mail(*, to, subject, html_body, text_body=None, sender_name=None, save_
                     "subject": subject,
                     "body": {"contentType": "HTML", "content": html_body},
                     "toRecipients": [{"emailAddress": {"address": to}}],
+                    **({"attachments": [_file_attachment(item) for item in attachments]} if attachments else {}),
                     # Keep the configured mailbox as the authenticated sender,
                     # while showing the staff member who initiated the message
                     # in clients that honour the Graph display name.
