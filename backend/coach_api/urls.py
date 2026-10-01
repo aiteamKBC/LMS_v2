@@ -15,6 +15,8 @@ from .dashboard_view import coach_dashboard
 from .views import (
     coach_attendance,
     coach_attendance_details,
+    coach_manual_attendance,
+    coach_source_attendance,
     coach_learner_case_file,
     coach_learner_case_file_next_session,
     coach_learner_case_file_reviews,
@@ -69,6 +71,9 @@ urlpatterns = [
     path('coach/caseload/<int:learner_id>/coach-rag', coach_caseload_coach_rag, name='coach-caseload-coach-rag'),
     path('coach/attendance', coach_attendance, name='coach-attendance'),
     path('coach/attendance/details', coach_attendance_details, name='coach-attendance-details'),
+    path('coach/attendance/manual', coach_manual_attendance, name='coach-manual-attendance-create'),
+    path('coach/attendance/manual/<int:record_id>', coach_manual_attendance, name='coach-manual-attendance-detail'),
+    path('coach/attendance/source', coach_source_attendance, name='coach-source-attendance'),
     path('coach/absence-reports', coach_absence_reports, name='coach-absence-reports'),
     path('coach/evidence-awaiting-review', coach_evidence_awaiting_review, name='coach-evidence-awaiting-review'),
     # The learners' end-of-month reports. The detail route is declared first;
