@@ -2023,6 +2023,14 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
   const s = (key: string) => String(component.settings[key] ?? '');
   const sourceMode = ['File', 'LMS resource'].includes(s('readingSource')) ? 'File' : 'Text';
   const [writtenPreviewOpen, setWrittenPreviewOpen] = useState(false);
+  // Stable innerHTML object: React 19 re-applies innerHTML on every new identity,
+  // so an inline literal would restart preview videos on each keystroke anywhere
+  // in the form. Only sanitised while the preview is open.
+  const readingContent = s('readingContent');
+  const writtenPreviewHtml = useMemo(
+    () => (writtenPreviewOpen ? { __html: DOMPurify.sanitize(normalizeAuthoredPreviewHtml(readingContent)) } : undefined),
+    [writtenPreviewOpen, readingContent],
+  );
 
   return (
     <>
@@ -2053,7 +2061,7 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
             {writtenPreviewOpen && s('readingContent').trim() && (
               <div className="mt-3 overflow-hidden rounded-xl border border-background-200 bg-white">
                 <div className="flex items-center gap-2 border-b border-background-200 bg-background-100/60 px-3 py-2 text-[11px] font-bold text-foreground-700"><AppIcon className="ri-eye-line text-primary-600" />Learner preview</div>
-                <div className="rich-text-surface max-h-[520px] overflow-auto p-5 text-sm leading-relaxed text-foreground-800" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(normalizeAuthoredPreviewHtml(s('readingContent'))) }} />
+                <div className="rich-text-surface max-h-[520px] overflow-auto p-5 text-sm leading-relaxed text-foreground-800" dangerouslySetInnerHTML={writtenPreviewHtml} />
               </div>
             )}
           </div>
@@ -2138,6 +2146,10 @@ const PODCAST_SOURCE_TYPES_WEEK = ['Audio File', 'External Link', 'Embed'] as co
 function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResource }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
   const rawSourceType = s('podcastSource');
+  // Stable identity so typing in other fields does not re-apply innerHTML and
+  // reload the embedded player iframe (React 19 compares by reference).
+  const podcastEmbedCode = s('podcastEmbedCode');
+  const podcastEmbedHtml = useMemo(() => ({ __html: podcastEmbedCode }), [podcastEmbedCode]);
   const sourceType = rawSourceType === 'Device upload'
     ? 'Audio File'
     : rawSourceType === 'External URL'
@@ -2204,7 +2216,7 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
             {s('podcastEmbedCode') && (
               <div className="mt-3">
                 <span className="block text-[11px] font-semibold text-foreground-500 mb-1.5">Preview</span>
-                <div className="rich-text-surface rounded-lg border border-background-200 bg-background-50 p-3" dangerouslySetInnerHTML={{ __html: s('podcastEmbedCode') }} />
+                <div className="rich-text-surface rounded-lg border border-background-200 bg-background-50 p-3" dangerouslySetInnerHTML={podcastEmbedHtml} />
               </div>
             )}
           </div>
