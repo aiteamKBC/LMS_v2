@@ -393,7 +393,8 @@ def read_dashboard(source, section=None):
     active_profile = profile if profile and profile.lifecycle_status == 'active' else None
     events = coaching_events_for_learner(source, active_profile)
     event_fields = ('id', 'eventKey', 'title', 'source', 'sequence', 'status', 'date', 'targetDate',
-                    'scheduledDate', 'scheduledTime', 'durationMinutes', 'coachName', 'invited')
+                    'scheduledDate', 'scheduledTime', 'durationMinutes', 'coachName', 'invited',
+                    'reviewTemplateId', 'reviewInstanceId')
     reviews = [{**{key: event.get(key) for key in event_fields},
                 'meetingLink': safe_url(event.get('meetingLink')) or None} for event in events
                if event.get('source') in ('mcr', 'progress-review', 'student-support')]

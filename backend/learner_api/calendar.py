@@ -1309,6 +1309,22 @@ def _serialize_live_session_event(event):
     }
 
 
+def _annotate_linked_catchups(events):
+    """``linkedReportId``: the absence report a catch-up already makes up (one lecture per catch-up)."""
+    from coach_api.models import CoachAbsenceReport
+    keys = [event.get("eventKey") for event in events if event.get("source") == "catch-up" and event.get("eventKey")]
+    if not keys:
+        return
+    linked = dict(
+        CoachAbsenceReport.objects.filter(catchup_event_key__in=keys)
+        .exclude(status=CoachAbsenceReport.STATUS_DECLINED)
+        .values_list("catchup_event_key", "id")
+    )
+    for event in events:
+        if event.get("source") == "catch-up":
+            event["linkedReportId"] = linked.get(event.get("eventKey"))
+
+
 def _catchup_time_error(owner_email, scheduled_date, scheduled_time, duration_minutes, *, exclude_event_key=""):
     """Refuse a catch-up outside the coach's free working time (the picker's own rule)."""
     from .coach_availability import AvailabilityUnavailable, catchup_slot_is_free
@@ -1422,6 +1438,7 @@ def learner_calendar(request, kind, pk):
         # Elapsed meetings show Ended, or Completed when the learner attended.
         from coach_api.meeting_outcomes import annotate_meeting_outcomes
         annotate_meeting_outcomes(events)
+        _annotate_linked_catchups(events)
         # Live sessions keep their own rule: Completed when this learner attended.
         from coach_api.live_session_outcomes import annotate_live_session_outcomes
         annotate_live_session_outcomes(

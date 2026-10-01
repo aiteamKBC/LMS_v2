@@ -3,7 +3,7 @@ import type { LearnerDetail } from '@/api/learnerDetail';
 import type { CurriculumRow } from '@/pages/learner/training-plan-timeline/model';
 import {
   activityActionLabel, activityExpectedTimeLabel, activityHref, activityKsbCodes, activityStatus,
-  resolveInitialWeek, weekComponents, weekKey, weekProgress, weekWindow,
+  activityExpectedMinutes, resolveInitialWeek, weekComponents, weekExpectedHours, weekKey, weekKsbProgress, weekProgress, weekWindow,
 } from '../weeklyPlanHelpers';
 
 function session(slotNumber: number, date: string, extra: Partial<Extract<CurriculumRow, { kind: 'session' }>> = {}): CurriculumRow {
@@ -159,5 +159,24 @@ describe('activityKsbCodes', () => {
   });
   it('is empty, never invented, when nothing is mapped', () => {
     expect(activityKsbCodes({} as any)).toEqual([]);
+  });
+});
+
+describe('week KSB and OTJH summaries', () => {
+  const done = { componentId: 'done', title: 'Reading', type: 'reading', durationMinutes: 90, ksbCodes: ['K1', 'S2'] };
+  const open = { componentId: 'open', title: 'Assignment', type: 'assignment', expectedOtjh: 2, ksbCodes: ['S2', 'B1'] };
+  const untimed = { componentId: 'untimed', title: 'Forum', type: 'forum' };
+  const components = [done, open, untimed] as unknown as Parameters<typeof weekKsbProgress>[0];
+  const completed = new Set(['done']);
+
+  it('counts each mapped KSB once and marks those backed by a completed activity', () => {
+    expect(weekKsbProgress(components, completed)).toEqual({ achieved: 2, total: 3, codes: ['B1', 'K1', 'S2'], percent: 66.67 });
+    expect(weekKsbProgress([], completed)).toEqual({ achieved: 0, total: 0, codes: [], percent: 0 });
+  });
+
+  it('sums the same expected time the activities table shows and reports untimed activities', () => {
+    expect(weekExpectedHours(components, completed)).toEqual({ plannedHours: 3.5, completedHours: 1.5, untimed: 1, percent: 42.86 });
+    expect(activityExpectedMinutes({ title: 'Quiz', isQuiz: true, quizMeta: { duration: 2, timeUnit: 'hours' } } as never)).toBe(120);
+    expect(activityExpectedMinutes(untimed as never)).toBeNull();
   });
 });

@@ -1,10 +1,17 @@
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
-import { percent, reviewDate, type TimelineModule } from './model';
+import { percent, type TimelineModule } from './model';
 
 export type ModuleMeasure = { label: string; value: number | null; detail: string };
 const count = (value: number) => new Intl.NumberFormat('en-GB', { maximumFractionDigits: 2 }).format(value);
 const ratio = (done: number | null | undefined, total: number | null | undefined) =>
   done != null && total != null && total > 0 ? percent(done, total) : null;
+
+export function programmeReviewProgress(reviews: TrainingPlanDashboard['reviews']) {
+  const unique = [...new Map(reviews.filter(review => review.source !== 'student-support' && review.status !== 'cancelled')
+    .map(review => [review.eventKey, review])).values()];
+  const completed = unique.filter(review => review.status === 'completed').length;
+  return { completed, total: unique.length, percent: ratio(completed, unique.length) };
+}
 
 export function moduleMeasures(module: TimelineModule, data: TrainingPlanDashboard, now = Date.now()): ModuleMeasure[] {
   const ended = [...new Map(module.sessions.filter(session => {
@@ -17,10 +24,6 @@ export function moduleMeasures(module: TimelineModule, data: TrainingPlanDashboa
   }).map(session => [session.id, session])).values()];
   const attended = ended.filter(session => session.attended === true).length;
   const pendingAttendance = ended.filter(session => typeof session.attended !== 'boolean').length;
-  const reviews = [...new Map(data.reviews.filter(review => review.source !== 'student-support' && review.status !== 'cancelled'
-    && module.start && module.end && reviewDate(review) >= module.start && reviewDate(review) <= module.end)
-    .map(review => [review.eventKey, review])).values()];
-  const completedReviews = reviews.filter(review => review.status === 'completed').length;
   const planned = module.detail?.total_otjh;
   const ksb = module.ksbProgress;
   return [
@@ -32,8 +35,6 @@ export function moduleMeasures(module: TimelineModule, data: TrainingPlanDashboa
       : planned == null || planned <= 0 ? `${count(module.actual)} hours recorded · target unavailable` : `${count(module.actual)} / ${count(planned)} hours` },
     { label: 'KSBs', value: ratio(ksb?.completed, ksb?.total), detail: ksb == null ? 'KSB progress unavailable'
       : ksb.total ? `${ksb.completed} / ${ksb.total} activity KSB points achieved` : 'No KSB points mapped' },
-    { label: 'Reviews', value: module.start && module.end ? ratio(completedReviews, reviews.length) : null,
-      detail: !module.start || !module.end ? 'Module dates needed' : reviews.length ? `${completedReviews} / ${reviews.length} completed within module dates` : 'No reviews within module dates' },
   ];
 }
 
