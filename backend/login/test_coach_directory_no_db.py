@@ -117,5 +117,25 @@ class DirectoryTests(unittest.TestCase):
         self.assertIsNone(views.one_to_one_page('  '))
         self.cursor.execute.assert_not_called()
 
+    def test_one_to_one_page_falls_back_to_a_unique_first_name_page(self):
+        page = (1, 'Example', 'example', {'one_to_one': 'https://example.org/1'}, 1)
+        other = (2, 'Example', 'example-2', {'one_to_one': 'https://example.org/2'}, 1)
+        self.cursor.fetchall.side_effect = [[], [page]]
+        self.assertEqual(views.one_to_one_page('Example  Coach'), {'name': 'Example', 'slug': 'example'})
+        self.assertEqual([c.args[1] for c in self.cursor.execute.call_args_list],
+                         [['Example  Coach', 'example-coach'], ['Example', 'example']])
+        # Two first-name pages are ambiguous; a full-name page, even one without a
+        # one-to-one link, is the owner's page and the first name is never tried.
+        for results in ([[], [page, other]], [[(3, 'Example Coach', 'example-coach', {}, 1)], [page]]):
+            self.cursor.reset_mock()
+            self.cursor.fetchall.side_effect = results
+            self.assertIsNone(views.one_to_one_page('Example Coach'))
+        self.assertEqual(self.cursor.execute.call_count, 1)
+        # A single-word owner with no page is not looked up twice.
+        self.cursor.reset_mock()
+        self.cursor.fetchall.side_effect = [[]]
+        self.assertIsNone(views.one_to_one_page('Example'))
+        self.assertEqual(self.cursor.execute.call_count, 1)
+
 if __name__ == '__main__':
     unittest.main()

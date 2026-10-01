@@ -51,6 +51,15 @@ def rows(cursor):
     return result
 
 
+def _pages_named(name):
+    with connections['enrolment'].cursor() as cursor:
+        cursor.execute(
+            f'SELECT id,name,slug,links,version FROM {TABLE} WHERE lower(btrim(name))=lower(%s) OR slug=%s',
+            [name, slugify(name)],
+        )
+        return rows(cursor)
+
+
 def one_to_one_page(owner_name):
     """The directory page offering a one-to-one with this case owner, or None.
 
@@ -58,16 +67,18 @@ def one_to_one_page(owner_name):
     name too, so the match is on the name (or the slug it produced). Ambiguous
     matches return None rather than risk sending a learner to another coach, and
     a page without a one-to-one link is not offered at all.
+
+    ``Case_owner`` is a full name ("Med Maher") while most pages carry only the
+    first name ("Med"), so when no page has the full name the first name is
+    tried instead -- still only accepted when exactly one page has it.
     """
     owner_name = str(owner_name or '').strip()
     if not owner_name:
         return None
-    with connections['enrolment'].cursor() as cursor:
-        cursor.execute(
-            f'SELECT id,name,slug,links,version FROM {TABLE} WHERE lower(btrim(name))=lower(%s) OR slug=%s',
-            [owner_name, slugify(owner_name)],
-        )
-        found = rows(cursor)
+    found = _pages_named(owner_name)
+    first_name = owner_name.split()[0]
+    if not found and first_name != owner_name:
+        found = _pages_named(first_name)
     if len(found) != 1 or not found[0]['links'].get(ONE_TO_ONE):
         return None
     return {'name': found[0]['name'], 'slug': found[0]['slug']}
