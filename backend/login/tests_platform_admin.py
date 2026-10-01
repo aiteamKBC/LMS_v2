@@ -26,7 +26,7 @@ from django.utils import timezone
 from learner_api.models import StaffUser
 
 from . import email_azure, identity
-from .models import Invitation, LoginAudit, LoginSession
+from .models import Invitation, LoginAccount, LoginAudit, LoginSession
 from .security import hash_password
 from .tests import XHR, LoginTestBase
 
@@ -326,8 +326,45 @@ class PlatformAdminWriteTests(LoginTestBase):
 
     def test_unknown_action_is_rejected(self):
         other = self.make_other_account()
+        response = self.post(f"/login_api/admin/accounts/{other.id}/", {"action": "promote"})
+        self.assertEqual(response.status_code, 400)
+
+    def test_delete_removes_the_account_and_the_staff_row(self):
+        other = self.make_other_account()
+        staff_id = other.subject_id
+        LoginSession.objects.create(
+            account_id=other.id,
+            token_hash=uuid.uuid4().hex + uuid.uuid4().hex,
+            expires_at=timezone.now() + timezone.timedelta(days=1),
+        )
+
+        response = self.post(f"/login_api/admin/accounts/{other.id}/", {"action": "delete"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"deleted": True, "id": other.id})
+
+        self.assertFalse(LoginAccount.objects.filter(pk=other.id).exists())
+        self.assertFalse(StaffUser.objects.filter(pk=staff_id).exists())
+        self.assertFalse(LoginSession.objects.filter(account_id=other.id).exists())
+        entry = LoginAudit.objects.filter(account_id=other.id, event="admin_delete").first()
+        self.assertIsNotNone(entry)
+        self.assertIn(self.email, entry.reason or "")
+
+    def test_admin_cannot_delete_their_own_account(self):
+        response = self.post(
+            f"/login_api/admin/accounts/{self.account.id}/", {"action": "delete"}
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["code"], "self_delete")
+        self.assertTrue(LoginAccount.objects.filter(pk=self.account.id).exists())
+
+    def test_only_staff_accounts_can_be_deleted(self):
+        other = self.make_other_account()
+        LoginAccount.objects.filter(pk=other.id).update(subject_type="employer")
+
         response = self.post(f"/login_api/admin/accounts/{other.id}/", {"action": "delete"})
         self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["code"], "not_staff")
+        self.assertTrue(LoginAccount.objects.filter(pk=other.id).exists())
 
     def test_write_requires_the_csrf_header(self):
         other = self.make_other_account()

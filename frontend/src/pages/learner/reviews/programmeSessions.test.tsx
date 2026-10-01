@@ -142,8 +142,11 @@ function viewAction(item: typeof cases[number]) { return item.source === 'mcr' ?
 function reviewFilter(name: 'All' | 'Upcoming' | 'Past', count: number) {
   return screen.getByRole('button', { name: `${name} (${count})` });
 }
-function openMoreOptions() {
-  const summary = screen.getByText('More options', { selector: 'summary' });
+function openMoreOptions(item: typeof cases[number]) {
+  // CoachingHome labels this control "Details" (always shown, expanded inline)
+  // for the current-meeting card; every other context keeps "More options".
+  const label = item.source === 'mcr' ? 'Details' : 'More options';
+  const summary = screen.getByText(label, { selector: 'summary' });
   fireEvent.click(summary);
 }
 
@@ -239,7 +242,7 @@ describe.each(cases)('$path programme sessions', item => {
     expect(await screen.findByText(item.source === 'mcr' ? 'Calendar sync pending' : warning)).toBeVisible();
     page.unmount(); mount(item, undefined, 'current');
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(warning));
-    openMoreOptions();
+    openMoreOptions(item);
     fireEvent.click(screen.getAllByRole('button', { name: item.source === 'mcr' ? 'Reschedule' : 'Reschedule meeting' })[0]);
     const dialog = await screen.findByRole('dialog', { name: /Reschedule (monthly coaching|progress review)/ });
     const submit = within(dialog).getByRole('button', { name: 'Save new time' });
@@ -298,9 +301,9 @@ describe.each(cases)('$path programme sessions', item => {
       expect(screen.getByRole('region', { name: item.region })).toHaveTextContent(/0?2 Nov 2026/);
     } else {
       await waitFor(() => expect(screen.queryByRole('button', { name: 'Book a time' })).not.toBeInTheDocument());
-      const region = within(screen.getByRole('region', { name: item.region }));
-      expect(region.getByText('Scheduled', { exact: true })).toBeVisible();
-      expect(region.getByRole('list')).toHaveTextContent('2 November 2026');
+      const archive = within(screen.getByRole('region', { name: 'All reviews' }));
+      expect(archive.getByText('Scheduled', { exact: true })).toBeVisible();
+      expect(archive.getByRole('list')).toHaveTextContent('2 November 2026');
     }
   });
 
@@ -387,12 +390,13 @@ it('opens monthly coaching on the current meeting and reveals grouped history on
   fireEvent.click(all);
 
   const region = await screen.findByRole('region', { name: 'Monthly Coaching Meetings' });
+  const archive = within(region).getByRole('region', { name: 'All coaching meetings' });
   expect(within(region).getByRole('tab', { name: /Upcoming/ })).toHaveAttribute('aria-selected', 'true');
-  expect(within(region).getAllByRole('listitem')).toHaveLength(2);
+  expect(within(archive).getAllByRole('listitem')).toHaveLength(2);
   expect(within(region).getByText(/November 2026 coaching/)).toBeVisible();
   fireEvent.click(within(region).getByRole('tab', { name: /Needs your action/ }));
   expect(within(region).getByText(/September 2026 coaching/)).toBeVisible();
-  expect(within(region).getAllByRole('listitem')).toHaveLength(1);
+  expect(within(archive).getAllByRole('listitem')).toHaveLength(1);
   fireEvent.click(within(region).getByRole('tab', { name: /Past/ }));
   const past = within(region).getAllByRole('link', { name: 'View meeting' })[0];
   expect(past.getAttribute('href')).toContain(encodeURIComponent(events[3].id));
@@ -450,12 +454,13 @@ it('opens Reviews on the next booking, keeps an earlier signature visible, and b
   });
   fireEvent.click(all);
   expect(reviewFilter('All', 5)).toHaveAttribute('aria-pressed', 'true');
-  expect(screen.getAllByRole('listitem')).toHaveLength(5);
+  const archive = within(screen.getByRole('region', { name: 'All reviews' }));
+  expect(archive.getAllByRole('listitem')).toHaveLength(5);
   fireEvent.click(reviewFilter('Upcoming', 2));
-  expect(screen.getAllByRole('listitem')).toHaveLength(2);
+  expect(archive.getAllByRole('listitem')).toHaveLength(2);
   expect(screen.getByRole('button', { name: 'Book a time' })).toBeVisible();
   fireEvent.click(reviewFilter('Past', 3));
-  expect(screen.getAllByRole('listitem')).toHaveLength(3);
+  expect(archive.getAllByRole('listitem')).toHaveLength(3);
   expect(screen.getByText('Cancelled', { exact: true })).toBeVisible();
   const completed = screen.getByRole('link', { name: /Progress Review.*#4$/ });
   const completedUrl = new URL(completed.getAttribute('href')!, 'http://localhost');

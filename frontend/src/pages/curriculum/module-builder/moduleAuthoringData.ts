@@ -14,6 +14,7 @@ import { hoursToRoundedMinutes, roundedMinutesToHours } from '@/lib/format';
 import { reviewCalendar } from '../teams-meetings/calendarReview';
 import { normalizedClock } from '../teams-meetings/calendarTime';
 import {
+  ADDITIONAL_TEAMS_MEETING_SETTING_KEYS,
   componentTypeGroups,
   componentTypes,
   getDefaultComponentSettings,
@@ -1413,7 +1414,7 @@ function withoutGroupAssignmentSettings(settings: ComponentSettings): ComponentS
 // that shares a meeting across cohorts — that is "Assigned groups"
 // (`placedCopy*` above), which places a copy deliberately and is stripped here
 // for the same reason.
-const SESSION_DATE_SETTING_KEYS = [
+export const SESSION_DATE_SETTING_KEYS = [
   'sessionDate',
   'sessionDay',
   'sessionDateTimeUtc',
@@ -1424,7 +1425,7 @@ const SESSION_DATE_SETTING_KEYS = [
   'teamsStartDateTimeUtc',
 ] as const;
 
-const TEAMS_MEETING_SETTING_KEYS = [
+export const TEAMS_MEETING_SETTING_KEYS = [
   'teamsLiveSessionId',
   'teamsSessionNumber',
   'teamsEventId',
@@ -1445,15 +1446,11 @@ const TEAMS_MEETING_SETTING_KEYS = [
   'teamsWebLink',
   'teamsDurationMinutes',
   'sessionRescheduled',
+  // The one-off week meeting is the original's too: its organiser invited its
+  // own guests to one date, and a copy placed in another week must arrive with
+  // no link at all rather than pointing people at somebody else's meeting.
+  ...ADDITIONAL_TEAMS_MEETING_SETTING_KEYS,
 ] as const;
-
-function independentCopyDeliveryMetadata(
-  metadata: ModuleCatalogueItem['deliveryMetadata'],
-): NonNullable<ModuleCatalogueItem['deliveryMetadata']> {
-  return Object.fromEntries(Object.entries(metadata || {}).filter(([key]) => (
-    key !== 'liveSessionUrl' && !key.startsWith('teams')
-  )));
-}
 
 /**
  * A copied component's settings, with everything that belonged to the original's
@@ -1555,13 +1552,35 @@ export function copyComponentToWeek(
   targetWeekId: string,
   targetModuleId: string,
 ): ModuleComponent {
+  // A Teams booking belongs to the source module. Carrying its
+  // `teamsLiveSessionId` into another module either moves the source calendar
+  // or collides with the target module's one-active-calendar constraint. Keep
+  // the join URL, however: Assigned Groups intentionally lets another group
+  // open the same meeting. Only the local calendar identity/date are removed.
+  const sourceSettings = structuredClone(source.settings || {});
+  const copiedSettings = source.type === 'live-session'
+    ? independentCopySettings(sourceSettings)
+    : structuredClone(withoutGroupAssignmentSettings(sourceSettings));
+  if (source.type === 'live-session') {
+    const teamsLink = String(sourceSettings.liveSessionUrl || sourceSettings.teamsMeetingUrl || '').trim();
+    if (teamsLink) {
+      // Populate both supported spellings so the Week Builder and legacy
+      // learner/calendar readers resolve the same link after the copy.
+      copiedSettings.liveSessionUrl = teamsLink;
+      copiedSettings.teamsMeetingUrl = teamsLink;
+    }
+  }
   return {
     ...source,
     id: makeAuthoringId('component'),
     copiedFromId: source.id,
     moduleId: targetModuleId,
     weekId: targetWeekId,
-    settings: withoutGroupAssignmentSettings(source.settings),
+    // The meeting URL belongs to the Teams meeting-link settings, not the
+    // learner-facing session title. Keeping the source title unchanged also
+    // avoids turning every placement into a different session name.
+    title: source.title,
+    settings: copiedSettings,
     ksbMappings: source.ksbMappings.map(mapping => ({ ...mapping, id: makeAuthoringId('ksb') })),
   };
 }
@@ -1783,16 +1802,23 @@ export async function loadModuleStructure(
  * cause. Asking for them keeps the rail showing the dates the save will store
  * rather than a second schedule worked out in the browser.
  *
+ * Always asked for by `weeks`, never `sessions`: a week is a calendar week
+ * whether or not a live session has been authored into it yet, so a module with
+ * fewer authored live sessions than weeks (a reading-only tail, a copied week
+ * whose session is not booked yet) still gets every week dated. Asking by
+ * `sessions` instead stops the plan dead at the last authored session and
+ * leaves every week after it undated, which is exactly the bug this avoids.
+ *
  * Returns null for a module the backend has never stored (a local draft), where
  * there is no schedule to plan from yet.
  */
-export async function loadModuleWeekSessionPlan(moduleCatalogueId: string, weeks: number, sessions?: number): Promise<ModuleWeekSessionPlan | null> {
+export async function loadModuleWeekSessionPlan(moduleCatalogueId: string, weeks: number): Promise<ModuleWeekSessionPlan | null> {
   const catalogueId = String(moduleCatalogueId || '').trim();
   const count = Math.max(0, Math.round(Number(weeks) || 0));
   if (!catalogueId || !count) return null;
   try {
     return await apiJson<ModuleWeekSessionPlan>(
-      `/curriculum/modules/${encodeURIComponent(catalogueId)}/session-plan/?${sessions ? `sessions=${Math.max(1, Math.round(sessions))}` : `weeks=${count}`}`,
+      `/curriculum/modules/${encodeURIComponent(catalogueId)}/session-plan/?weeks=${count}`,
     );
   } catch (err) {
     // A module with no stored schedule simply has no dates to show. Failing the
@@ -1817,11 +1843,15 @@ export function fetchModuleSessionPlan(
   options: { timeoutMs?: number } = {},
 ): Promise<ModuleWeekSessionPlan> {
   const count = Math.max(0, Math.round(Number(weeks) || 0));
-  return apiJson<ModuleWeekSessionPlan>(
+  // Teams reconciliation must never be satisfied by a browser or shared
+  // curriculum cache: a Group day edit can land while this module builder is
+  // still open. `skipCache` also sends no-store/no-cache headers through the
+  // shared transport, so the plan is the server's current delivery pattern.
+  return fetchCurriculumJson<ModuleWeekSessionPlan>(
     `/curriculum/modules/${encodeURIComponent(String(moduleCatalogueId || '').trim())}/session-plan/${count ? `?weeks=${count}` : ''}`,
     // A caller rendering a spinner needs a budget: without one a slow backend
     // leaves it spinning on the browser's own default, which is minutes.
-    options.timeoutMs ? { timeoutMs: options.timeoutMs } : undefined,
+    { ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}), skipCache: true },
   );
 }
 
@@ -2448,6 +2478,21 @@ export interface TeamsMeetingResult {
     settingsApplied: boolean;
   };
   warnings: string[];
+  /**
+   * The schedule emails the server sent as part of this create, once Microsoft
+   * had verified the calendar and accepted its invitations. Absent when the
+   * server did not send them (an older backend, or a recovered create).
+   */
+  scheduleEmail?: {
+    total?: number;
+    accepted?: number;
+    queued?: number;
+    failed?: number;
+    uncertain?: number;
+    status?: 'complete' | 'pending';
+    error?: string;
+    code?: string;
+  };
 }
 
 export interface TeamsMeetingConfiguration {
@@ -2708,11 +2753,187 @@ export function fetchModuleMeetingInvitees(moduleCatalogueId: string) {
   return apiJson<ModuleMeetingInvitees>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/meeting-invitees/`);
 }
 
-export async function createTeamsMeeting(input: TeamsMeetingInput) {
+/**
+ * Where a module's last Create stands on the server, and the calendar it saved.
+ *
+ * Read after a Create that timed out or was refused as in progress: the server
+ * may well have finished, and asking is the only safe way to find out. Sending
+ * Create again is not -- see `teams_create_guard.py`.
+ */
+export interface TeamsCreateStatus {
+  state: 'none' | 'creating' | 'uncertain' | 'done';
+  claim: { outcomeStatus: number | null; outcomeCode: string; liveSessionId: string; claimedAt: string; leaseUntil: string } | null;
+  calendar: { liveSessionId: string; joinUrl: string; organizerEmail: string; warnings: string[]; settingsApplied: boolean } | null;
+  /** The saved calendar's schedule-email counts; null when unknown or not started. */
+  emails?: { total: number; accepted: number; queued: number; failed: number; uncertain: number } | null;
+}
+
+export function fetchTeamsCreateStatus(moduleCatalogueId: string) {
+  return apiJson<TeamsCreateStatus>(
+    `/curriculum/teams-meetings/create-status/?moduleCatalogueId=${encodeURIComponent(moduleCatalogueId)}`,
+    { timeoutMs: 15000 },
+  );
+}
+
+/**
+ * One extra Teams meeting on a single week, with its own host and guests.
+ *
+ * A different record from the module's calendar, not a variation of it: its own
+ * organiser, its own invitation list, one date, and a join link kept under the
+ * component's `extraTeams*` settings. It never creates, updates, supersedes or
+ * redirects the module's own meeting — see `backend/curriculum_api/teams_week_meeting.py`
+ * for how the two are held apart on both sides.
+ *
+ * The backend refuses a week with no live-session component, and refuses a live
+ * session that already holds a Teams link, so nothing here can replace a link
+ * that exists.
+ */
+export interface WeekTeamsMeetingInput {
+  weekId: string;
+  componentId: string;
+  title: string;
+  organizerEmail: string;
+  attendees: string[];
+  presenters: string[];
+  coOrganizers: string[];
+  localStartDateTime: string;
+  startDateTimeUtc: string;
+  durationMinutes: number;
+  lobbyBypass: string;
+  recording: string;
+  spokenLanguage: string;
+  details: string;
+  requestResponses: boolean;
+  allowNewTimeProposals: boolean;
+  transactionId: string;
+  scheduleTimeZone?: 'Africa/Cairo' | 'Europe/London';
+}
+
+export interface WeekTeamsMeetingResult {
+  created: boolean;
+  /** Whether Microsoft confirmed the invitation write that mails everyone named. */
+  invitationsSent: boolean;
+  /** Every address Microsoft confirmed on the meeting — organiser's guests, in all roles. */
+  invited: string[];
+  /**
+   * Our own schedule email, sent beside Microsoft's invitation — the same pair
+   * the module calendar sends. Null when the caller may not send LMS mail.
+   */
+  scheduleEmail?: TeamsMeetingResult['scheduleEmail'] | null;
+  meeting: {
+    liveSessionId: string;
+    weekId: string;
+    componentId: string;
+    eventId: string;
+    onlineMeetingId: string;
+    joinUrl: string;
+    webLink: string;
+    meetingOptionsUrl: string;
+    organizerEmail: string;
+    attendees: string[];
+    presenters: string[];
+    coOrganizers: string[];
+    startDateTimeUtc: string;
+    durationMinutes: number;
+    subject: string;
+    settingsApplied: boolean;
+  };
+  componentSettings: ComponentSettings;
+  warnings: string[];
+}
+
+export async function createWeekTeamsMeeting(moduleCatalogueId: string, input: WeekTeamsMeetingInput) {
+  return apiJson<WeekTeamsMeetingResult>(
+    `/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/week-teams-meetings/`,
+    { method: 'POST', body: JSON.stringify(input), timeoutMs: 45000 },
+  ).then(result => {
+    // Same reason as the module create below: this POST goes through this
+    // module's own client, so nothing else invalidates the curriculum GET cache.
+    clearCurriculumGetCache();
+    return result;
+  });
+}
+
+/**
+ * Change an additional week meeting, or cancel it.
+ *
+ * Its own endpoint, never `updateTeamsMeetingSchedule`: that one ends by
+ * re-attaching its series across every live-session component of the module,
+ * which would put one week's private link on all of them. The server refuses a
+ * week meeting sent to it for the same reason.
+ *
+ * `notifyAttendees` decides only whether people ALREADY invited are told.
+ * Anyone this save adds is always reached, because Microsoft puts a meeting on
+ * someone's calendar only when something is sent to them.
+ */
+export type WeekTeamsMeetingEdit =
+  Omit<WeekTeamsMeetingInput, 'weekId' | 'componentId' | 'organizerEmail' | 'transactionId'>
+  & { notifyAttendees: boolean };
+
+export interface WeekTeamsMeetingUpdateResult {
+  updated: boolean;
+  notifiedExisting: boolean;
+  /** Everyone this save added, who were sent the meeting individually. */
+  forwardedTo: string[];
+  meeting: WeekTeamsMeetingResult['meeting'];
+  componentSettings: ComponentSettings;
+  warnings: string[];
+}
+
+export async function updateWeekTeamsMeeting(
+  moduleCatalogueId: string,
+  liveSessionId: string,
+  input: WeekTeamsMeetingEdit,
+) {
+  return apiJson<WeekTeamsMeetingUpdateResult>(
+    `/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/week-teams-meetings/${encodeURIComponent(liveSessionId)}/`,
+    { method: 'PATCH', body: JSON.stringify(input), timeoutMs: 45000 },
+  ).then(result => {
+    clearCurriculumGetCache();
+    return result;
+  });
+}
+
+export async function cancelWeekTeamsMeeting(moduleCatalogueId: string, liveSessionId: string) {
+  return apiJson<{ cancelled: boolean; componentId: string; warnings: string[] }>(
+    `/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/week-teams-meetings/${encodeURIComponent(liveSessionId)}/`,
+    { method: 'DELETE', timeoutMs: 45000 },
+  ).then(result => {
+    clearCurriculumGetCache();
+    return result;
+  });
+}
+
+/**
+ * Choose which calendar delivers one live session: the module's own series or an
+ * additional meeting. Records the choice only -- nothing is sent to Microsoft.
+ * The server refuses a live session either calendar has already booked.
+ */
+export async function setLiveSessionMeetingScope(
+  moduleCatalogueId: string, componentId: string, scope: 'main' | 'additional',
+) {
+  return apiJson<{ componentId: string; scope: 'main' | 'additional' }>(
+    `/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/live-session-meeting-scope/`,
+    { method: 'POST', body: JSON.stringify({ componentId, scope }) },
+  ).then(result => {
+    clearCurriculumGetCache();
+    return result;
+  });
+}
+
+export async function createTeamsMeeting(
+  input: TeamsMeetingInput,
+  options: { confirmUncertain?: boolean; onSubmitted?: () => void } = {},
+) {
   // Review and send the same snapshot, even if a background refresh changes the form.
   const reviewed: TeamsMeetingInput = JSON.parse(JSON.stringify({ ...input, hideAttendees: true }));
   await reviewCalendar({ ...reviewed, summaryEmail: true }, reviewed.scheduleTimeZone || getCalendarTimeZone());
-  return apiJson<TeamsMeetingResult>('/curriculum/teams-meetings/', {
+  // The author has confirmed the review: from here the create is under way,
+  // and the caller can start showing its progress.
+  options.onSubmitted?.();
+  // `confirmUncertain` only ever comes from a person who was told an earlier
+  // Create did not report back and chose to create again; never from a retry.
+  return apiJson<TeamsMeetingResult>(`/curriculum/teams-meetings/${options.confirmUncertain ? '?confirmUncertain=1' : ''}`, {
     method: 'POST',
     body: JSON.stringify(reviewed),
     timeoutMs: 45000,
@@ -2727,12 +2948,34 @@ export async function createTeamsMeeting(input: TeamsMeetingInput) {
 }
 
 /**
+ * Who a save puts on the meeting that the saved calendar does not already have.
+ *
+ * Read against the stored roster rather than the form's starting values, and
+ * case-insensitively across every role, so moving somebody from attendee to
+ * presenter is not "someone new". The organizer counts as already invited:
+ * they own the event.
+ */
+function peopleAddedBySave(
+  invitations: { attendees?: string[]; presenters?: string[]; coOrganizers?: string[] },
+  series: { organizer_email?: string; attendees: string[]; presenters: string[]; co_organizers: string[] },
+) {
+  const keys = (...lists: Array<string[] | undefined>) => lists.flatMap(list => (list || [])
+    .map(value => String(value || '').trim().toLowerCase()).filter(Boolean));
+  const invited = new Set(keys([series.organizer_email || ''], series.attendees, series.presenters, series.co_organizers));
+  return [...new Set(keys(invitations.attendees, invitations.presenters, invitations.coOrganizers))]
+    .filter(email => !invited.has(email));
+}
+
+/**
  * Send a module's own session dates to its Teams series. `attendees`/`presenters`/
  * `coOrganizers` are optional: omit them to move dates only, pass them to correct
  * who is invited, who presents and who co-runs it without recreating the meeting.
  */
-export async function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & Partial<Pick<TeamsMeetingInput, 'lobbyBypass' | 'recording' | 'spokenLanguage' | 'seriesMode'>> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[]; peopleOnly?: boolean; notifyAttendees?: boolean }) {
-  const reviewed = JSON.parse(JSON.stringify(input)) as typeof input;
+export async function updateTeamsMeetingSchedule(liveSessionId: string, input: Pick<TeamsMeetingInput, 'title' | 'organizerEmail' | 'localStartDateTime' | 'startDateTimeUtc' | 'durationMinutes' | 'repeat' | 'repeatOccurrences' | 'scheduledOccurrences'> & Partial<Pick<TeamsMeetingInput, 'lobbyBypass' | 'recording' | 'spokenLanguage' | 'seriesMode'>> & { eventId?: string; attendees?: string[]; presenters?: string[]; coOrganizers?: string[]; peopleOnly?: boolean; settingsOnly?: boolean; notifyAttendees?: boolean }, options: { onSubmitted?: () => void } = {}) {
+  // `settingsOnly` only labels the review ("meeting settings" rather than
+  // "invitations"); the transport is the same people-only update either way.
+  const { settingsOnly, ...sent } = input;
+  const reviewed = JSON.parse(JSON.stringify(sent)) as typeof sent;
   const { series: rawSeries, occurrences } = await loadTeamsMeetingArtifacts(liveSessionId);
   const series = calendarSeriesForReview(rawSeries);
   if (reviewed.peopleOnly) {
@@ -2746,21 +2989,54 @@ export async function updateTeamsMeetingSchedule(liveSessionId: string, input: P
     reviewed.startDateTimeUtc = reviewed.scheduledOccurrences[0].startDateTimeUtc;
     reviewed.durationMinutes = reviewed.scheduledOccurrences[0].durationMinutes;
   }
-  const notificationDecision = await reviewCalendar({ ...reviewed, organizerEmail: series.organizer_email, joinUrl: series.join_url,
+  // What this save announces, decided once here and read by the review, by the
+  // write and by the result. A save that moves the calendar is announced to
+  // everyone already invited and carries the LMS change email. A save that only
+  // changes who is invited or how the meeting runs announces nothing: the
+  // people it adds are invited and emailed on their own, and nobody already on
+  // the meeting hears about it. The explicit choice travels with the PATCH so the
+  // review, calendar write and result dialog cannot disagree.
+  // A date update defaults to the historic behaviour (announce it), while the
+  // Teams Meetings workspace can explicitly turn that announcement off. A
+  // people/settings-only save is always quiet for everyone already invited;
+  // newly added people are handled separately after the calendar is verified.
+  const notifyAttendees = reviewed.peopleOnly ? false : reviewed.notifyAttendees !== false;
+  const invitations = {
     attendees: reviewed.attendees ?? series.attendees, presenters: reviewed.presenters ?? series.presenters,
     coOrganizers: reviewed.coOrganizers ?? series.co_organizers,
-    recording: reviewed.recording ?? series.recording, lobbyBypass: reviewed.lobbyBypass ?? series.lobby_bypass, spokenLanguage: reviewed.spokenLanguage ?? series.spoken_language,
-    calendarSeries: series.calendar_series, previousOccurrences: occurrences,
-    seriesMode: series.calendar_series?.length ? 'per_day' : 'shared',
-  }, series.timeZoneIana || getCalendarTimeZone());
-  reviewed.notifyAttendees = notificationDecision === 'notify';
-  return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting']; warnings?: Array<{ code?: string; message: string; detail?: string }> }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
+  };
+  // The review exists to be the last look before something leaves: a calendar
+  // that moves tells everyone already invited, and a person added is forwarded
+  // the meeting and sent the schedule email. A people-only save that adds
+  // nobody -- taking someone off, moving them between roles, changing the
+  // recording or the lobby -- sends no mail at all, to anybody, so a full
+  // session-by-session review and a "Save and send" button confirm an act with
+  // no outward effect. That save applies on the press instead.
+  if (!reviewed.peopleOnly || peopleAddedBySave(invitations, series).length) {
+    await reviewCalendar({ ...reviewed, settingsOnly, organizerEmail: series.organizer_email, joinUrl: series.join_url,
+      notifyOnUpdate: notifyAttendees, ...invitations,
+      recording: reviewed.recording ?? series.recording, lobbyBypass: reviewed.lobbyBypass ?? series.lobby_bypass, spokenLanguage: reviewed.spokenLanguage ?? series.spoken_language,
+      calendarSeries: series.calendar_series, previousOccurrences: occurrences,
+      seriesMode: series.calendar_series?.length ? 'per_day' : 'shared',
+    }, series.timeZoneIana || getCalendarTimeZone());
+  }
+  // The review is complete. The caller can now replace its form with a
+  // progress panel without showing it behind the confirmation dialog.
+  options.onSubmitted?.();
+  return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting']; warnings?: Array<{ code?: string; message: string; detail?: string }>; changeNotice?: string }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
     method: 'PATCH',
-    body: JSON.stringify(reviewed),
-    timeoutMs: 45000,
+    body: JSON.stringify({ ...reviewed, notifyAttendees }),
+    // One update is around ten SERIAL Microsoft Graph round trips -- read the
+    // event, patch it, re-read it, list its instances, verify them, publish the
+    // attendee list, confirm it, verify again -- and every one of them is a call
+    // to Microsoft over the network. A series of eight sessions routinely runs
+    // past 45s on that path, and the browser abandoning it there did not stop
+    // the server: it left the author staring at a timeout for an update that
+    // was still being applied. The budget is the transport's, not Microsoft's.
+    timeoutMs: 120000,
   }).then(result => {
     clearCurriculumGetCache();
-    return result;
+    return { ...result, notifyAttendees };
   });
 }
 
@@ -2787,18 +3063,17 @@ export async function rescheduleTeamsOccurrence(
   sessionNumber: number,
   input: { startDateTimeUtc: string; durationMinutes?: number },
 ) {
-  const reviewed: typeof input & { notifyAttendees?: boolean } = { ...input };
+  const reviewed = { ...input };
   const detail = await loadTeamsMeetingArtifacts(liveSessionId);
   const series = calendarSeriesForReview(detail.series);
   const occurrence = detail.occurrences.find(item => item.session_number === sessionNumber);
   if (!occurrence) throw new Error('Load this session before reviewing a time change.');
   const duration = reviewed.durationMinutes ?? (parseUtcInstant(occurrence.scheduled_end).getTime() - parseUtcInstant(occurrence.scheduled_start).getTime()) / 60000;
-  const notificationDecision = await reviewCalendar({ title: series.module_title, organizerEmail: series.organizer_email,
+  await reviewCalendar({ title: series.module_title, organizerEmail: series.organizer_email,
     joinUrl: occurrence.join_url || series.join_url, attendees: series.attendees,
     presenters: series.presenters, coOrganizers: series.co_organizers, previousOccurrences: [occurrence], seriesMode: 'shared',
     scheduledOccurrences: [{ sessionNumber, startDateTimeUtc: reviewed.startDateTimeUtc, durationMinutes: duration }],
   }, getCalendarTimeZone());
-  reviewed.notifyAttendees = notificationDecision === 'notify';
   return apiJson<TeamsOccurrenceRescheduleResult>(
     `/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/occurrences/${sessionNumber}/schedule/`,
     {

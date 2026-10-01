@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
-import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { downloadLearnerMcmPdf, fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, saveLearnerEventReviewAnswers, signLearnerProgressReview, type LearnerCalendarEvent } from '@/api/learnerCalendar';
@@ -26,11 +26,13 @@ import { useMeetingBooking } from '../reviews/useMeetingBooking';
 import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/LearnerReviewInstanceForm';
 
 import CoachingHome from './CoachingHome';
-import CurrentMonthLogLink from './CurrentMonthLogLink';
 import ProgressReviewPptxModal from '@/pages/coach/progress-reviews/components/ProgressReviewPptxModal';
 import { useCoachingReviewDefinitions } from './useCoachingReviewDefinitions';
 
 const learnerNav = roleNavMap.learner;
+const learnerMcmNavItems = learnerNav.items.map(item => item.children
+  ? { ...item, children: item.children.filter(child => child.id !== 'learner-monthly-logs') }
+  : item);
 
 function dateOf(session?: LearnerCalendarEvent | null): string | null {
   return session?.scheduledDate || session?.targetDate || session?.date || null;
@@ -52,9 +54,10 @@ function monthlyCoachingTitle(session?: LearnerCalendarEvent | null): string {
   if (session?.importedReview) {
     return session.importedReview.name || session.title || 'Monthly Coaching Meeting';
   }
-  if (session?.reviewTemplateId) return `${session.title} #${session.occurrenceNumber || session.sequence}`;
+  const occurrence = session?.occurrenceNumber ?? session?.sequence;
+  if (session?.reviewTemplateId) return `${session.title}${occurrence != null ? ` #${occurrence}` : ' — Manual Review'}`;
   const month = monthLabel(dateOf(session));
-  return `Monthly Coaching Meeting${month ? ` — ${month}` : ''}${session?.sequence ? ` #${session.sequence}` : ''}`;
+  return `Monthly Coaching Meeting${month ? ` — ${month}` : ''}${occurrence != null ? ` #${occurrence}` : ''}`;
 }
 
 function shouldShowLearnerMeetingRecording(session?: LearnerCalendarEvent | null): boolean {
@@ -323,9 +326,11 @@ export default function MonthlyCoachingPage() {
     myLearner.id,
     selected?.reviewTemplateId || selected?.reviewInstanceId ? (selected.eventKey || selected.id) : '',
   );
-  const meetingMonth = dateOf(selected)?.slice(0, 7) || '';
+  // Monthly Logs belong to the curriculum target month. The scheduled date
+  // is only the actual appointment date and may fall in another month.
+  const targetMonth = (selected?.targetDate || selected?.scheduledDate || selected?.date || '').slice(0, 7);
   const completedMcm = Boolean(
-    selected && meetingMonth && (selected.source === 'mcr' || selected.reviewTypeCode === 'mcm') &&
+    selected && targetMonth && (selected.source === 'mcr' || selected.reviewTypeCode === 'mcm') &&
     ['completed', 'awaiting-signature'].includes(reviewInstance.definition?.instance?.status || selected.status),
   );
   const backParams = new URLSearchParams({ kind: myLearner.kind, learner: myLearner.id });
@@ -338,11 +343,11 @@ export default function MonthlyCoachingPage() {
   }
   const backHref = `/learner/monthly-coaching?${backParams}`;
   const refreshReview = reviewInstance.refresh;
-  const signLearnerReview = useCallback((signature: string) => signLearnerProgressReview(
+  const signLearnerReview = useCallback((signature: string, options?: { applyMonthlyLogSignature?: boolean }) => signLearnerProgressReview(
     myLearner.kind,
     myLearner.id,
     selected?.eventKey || selected?.id || '',
-    { name: learner?.name || 'Learner', signature },
+    { name: learner?.name || 'Learner', signature, ...options },
   ).then(() => { refresh(); refreshReview(); }), [learner?.name, myLearner.id, myLearner.kind, refresh, refreshReview, selected?.eventKey, selected?.id]);
   const index = selected ? sessions.findIndex((session) => session.id === selected.id) : -1;
   const previous = index > 0 ? sessions[index - 1] : null;
@@ -385,16 +390,11 @@ export default function MonthlyCoachingPage() {
   const artifactContentUrl = useCallback((eventKey: string, artifactType: string, artifactId: string, options: { preview?: boolean } = {}) => learnerMeetingArtifactContentUrl(myLearner.kind, myLearner.id, eventKey, artifactType, artifactId, options), [myLearner.id, myLearner.kind]);
 
   return (
-    <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerNav.items} workspaceLabel={learnerNav.workspaceLabel} pageTitle="Monthly Coaching Meeting" pageSubtitle="Coaching meeting" userName={learner?.name || 'Learner'} userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}>
+    <WorkspaceShell role="learner" roleLabel={learnerNav.label} navItems={learnerMcmNavItems} workspaceLabel={learnerNav.workspaceLabel} pageTitle="Monthly Coaching Meeting" pageSubtitle="Coaching meeting" userName={learner?.name || 'Learner'} userRole={learner?.programme ? `${learner.programme} Learner` : 'Learner'}>
       <div className=" page-container min-w-0 w-full space-y-3 p-3 md:space-y-4 md:p-6">
-        {completedMcm && meetingMonth && <aside className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-background-200 bg-background-50 p-4" aria-label="Monthly learning log">
-          <div><p className="text-sm font-semibold text-foreground-900">Your monthly learning log</p><p className="mt-1 text-sm text-foreground-600">You can also review your learning activities for {monthLabel(`${meetingMonth}-01`)}.</p></div>
-          <Link className="rounded-lg border border-background-300 bg-white px-4 py-3 text-sm font-semibold text-primary-700" to={`/learner/monthly-logs/${myLearner.kind}/${myLearner.id}/${meetingMonth}?workflow=mcm&source=mcm`}>Open monthly log</Link>
-        </aside>}
         {error && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700"><AppIcon className="ri-error-warning-line mr-2" />{error}<button type="button" onClick={refresh} className="ml-3 font-bold underline">Try again</button></div>}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <button type="button" onClick={() => navigate(backHref)} className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-600 hover:text-primary-800"><AppIcon className="ri-arrow-left-line" />Back to coaching meetings</button>
-          <CurrentMonthLogLink learner={myLearner} className="inline-flex min-h-11 items-center gap-2 rounded-lg border border-background-300 bg-white px-4 py-3 text-sm font-semibold text-primary-700 hover:bg-primary-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-600" />
           {/* The learner prepares and presents their MCM slides; a read-only
               workspace viewer can open them but not create or edit them. */}
           {selected && !selected.importedReview && selectedDate && (
@@ -403,7 +403,7 @@ export default function MonthlyCoachingPage() {
             </button>
           )}
         </div>
-        {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}<button type="button" onClick={reviewInstance.refresh} className="ml-3 underline">Retry review</button></p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} onDownload={() => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} signatoryName={learner?.name || 'Learner'} onSign={canProgress ? signLearnerReview : undefined} onSaveAnswers={answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, selected.eventKey || selected.id, answers)} /> : selected.importedReview ? <ImportedMcmView selected={selected} learner={learner} openSections={openSections} toggle={toggle} onBack={() => navigate(backHref)} /> : (
+        {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}<button type="button" onClick={reviewInstance.refresh} className="ml-3 underline">Retry review</button></p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} mcmMonthlyLog={completedMcm && targetMonth ? { id: String(myLearner.id), month: targetMonth, contractKind: myLearner.kind } : undefined} onDownload={() => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} signatoryName={learner?.name || 'Learner'} onSign={canProgress ? signLearnerReview : undefined} onSaveAnswers={answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, selected.eventKey || selected.id, answers)} /> : selected.importedReview ? <ImportedMcmView selected={selected} learner={learner} openSections={openSections} toggle={toggle} onBack={() => navigate(backHref)} /> : (
           <>
             <section className="overflow-hidden rounded-2xl border border-background-200 bg-white shadow-sm">
               <div className="learner-super-admin-hero p-5 text-primary-800 sm:p-6 workspace-page-hero"><span className="rounded-full border border-primary-200/60 bg-primary-100/60 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{statusLabel(selected.status)}</span><div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">30-day coaching meeting</p><h1 className="mt-1 text-xl font-bold text-primary-800">{monthlyCoachingTitle(selected)}</h1><p className="mt-1 text-sm text-foreground-500">{formatDate(dateOf(selected), true)} at {formatTime(selected.scheduledTime)}</p></div>{selected.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="meeting-join-action rounded-lg px-4 py-2 text-xs font-bold"><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}</div></div>

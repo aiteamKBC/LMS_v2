@@ -1,9 +1,10 @@
 """Live lecture workspace. Reads source records; never imports or provisions them."""
-from datetime import datetime, timezone as datetime_timezone
+from datetime import datetime, timedelta, timezone as datetime_timezone
 from html import unescape
 import logging
 import re
 
+from . import journal_sources
 from django.db import DatabaseError, connections
 from django.conf import settings
 from django.http import JsonResponse
@@ -122,7 +123,7 @@ def report_id(row):
     return _kbc_attendance_report_id(key)
 
 
-def read_native_occurrences(source):
+def read_native_occurrences(source, *, module_ids=None):
     """Current assigned-module occurrences expected for, or attended by, the learner.
 
     Current module assignment is authoritative for the learner's schedule.  A
@@ -132,11 +133,15 @@ def read_native_occurrences(source):
     if not source.email:
         return []
     with connections['enrolment'].cursor() as cur:
-        # An old Teams invitation is not a current curriculum assignment.
-        # Use the same saved plan as My Learning and Training Plan, then exclude
-        # deleted delivery modules and replaced meeting series below.
-        cur.execute(ATTENDANCE_SUBJECTS_SQL, [source.id])
-        module_ids = [row[0] for row in cur.fetchall()]
+        if module_ids is None:
+            # An old Teams invitation is not a current curriculum assignment.
+            # Use the same saved plan as My Learning and Training Plan, then exclude
+            # deleted delivery modules and replaced meeting series below.
+            cur.execute(ATTENDANCE_SUBJECTS_SQL, [source.id])
+            module_ids = [row[0] for row in cur.fetchall()]
+        else:
+            module_ids = list(dict.fromkeys(str(value or '').strip() for value in module_ids))
+            module_ids = [value for value in module_ids if value]
         if not module_ids:
             return []
         cur.execute('''SELECT o.id AS session_id,o.id AS occurrence_id,
@@ -177,9 +182,9 @@ def read_native_occurrences(source):
     return result
 
 
-def lecture_register(source):
+def lecture_register(source, *, module_ids=None):
     records = combined_attendance_rows(source)
-    scheduled = read_native_occurrences(source)
+    scheduled = read_native_occurrences(source, module_ids=module_ids)
     by_occurrence = {str(row['session_id']): row for row in scheduled}
     now = timezone.now()
     result = []
@@ -221,7 +226,48 @@ def lecture_register(source):
         result = _apply_attended_alternatives(result, source.id, attended_alternatives)
     result = _apply_completed_catchups(result, source.id)
     from .attendance_confirmation import apply_confirmations, read_confirmations
-    return _merge_register_duplicates(apply_confirmations(result, read_confirmations(source.id)))
+    merged = _merge_register_duplicates(apply_confirmations(result, read_confirmations(source.id)))
+    return _apply_coach_source_adjustments(merged, source.id)
+
+
+def _apply_coach_source_adjustments(rows, learner_id):
+    """Apply persisted per-learner coach edits without changing the meeting."""
+    from coach_api.models import CoachAttendanceSourceAdjustment
+
+    try:
+        adjustments = {
+            (item.source, item.source_id): item
+            for item in CoachAttendanceSourceAdjustment.objects.filter(learner_id=learner_id)
+        }
+    except DatabaseError:
+        log.warning('Could not read coach attendance adjustments for learner %s.', learner_id, exc_info=True)
+        return rows
+
+    result = []
+    for row in rows:
+        key = (str(row.get('source') or ''), str(row.get('session_id') or ''))
+        adjustment = adjustments.get(key)
+        if adjustment is None:
+            result.append(row)
+            continue
+        if adjustment.is_deleted:
+            continue
+        updated = dict(row)
+        if adjustment.session_date:
+            updated['session_date'] = adjustment.session_date
+        if adjustment.module_name:
+            updated['module_title'] = adjustment.module_name
+            updated['session_type'] = adjustment.module_name
+        if adjustment.session_title:
+            updated['session_title'] = adjustment.session_title
+        if adjustment.status:
+            updated['attendance_status'] = adjustment.status
+            updated['effective_attendance'] = 1 if adjustment.status == 'present' else 0
+            updated['effective_attendance_status'] = adjustment.status
+            updated['final_outcome'] = adjustment.status
+        updated['updated_at'] = adjustment.updated_at
+        result.append(updated)
+    return result
 
 
 def _approved_alternative_targets(learner_id):
@@ -327,14 +373,14 @@ def read_legacy_metadata(source, register):
     with connections['enrolment'].cursor() as cur:
         # The register remains authoritative for attendance/date/title. Last_audit
         # and the audit editor supply details only, joined by the exact source key.
-        cur.execute('''SELECT la.source_key,la.activity_hours,
+        cur.execute(f'''SELECT la.source_key,la.activity_hours,
             j.ksbs,r.activity_time,r.completion_note,r.group_id,r.month AS log_month,
             greatest(la.synced_at,r.updated_at,j.updated_at) AS updated_at
             FROM "Last_audit".learner_attendance la
-            LEFT JOIN structured_manual_activities.manual_learner_activities r
+            LEFT JOIN {journal_sources.table('manual_learner_activities')} r
               ON r.aptem_id=la.aptem_id AND r.source_ref='att:' || la.source_key
              AND r.category='attendance' AND r.deleted_at IS NULL
-            LEFT JOIN structured_manual_activities.learner_journal_row_ksbs j
+            LEFT JOIN {journal_sources.table('learner_journal_row_ksbs')} j
               ON j.aptem_id=r.aptem_id AND j.row_id=r.id
             WHERE la.aptem_id=%s AND la.source_key=ANY(%s)''', [aptem, keys])
         metadata_rows = dict_rows(cur)
@@ -358,15 +404,15 @@ def read_legacy_metadata(source, register):
                             for group in _legacy_module_activities(row, metadata.get(row['session_id']) or {}, groups)})
         if not group_ids:
             return metadata, []
-        cur.execute('''SELECT gl.group_id,g.group_name,a.activity_id,a.title,a.activity_date,
+        cur.execute(f'''SELECT gl.group_id,g.group_name,a.activity_id,a.title,a.activity_date,
             a.activity_type,a.configured_duration_min,a.quiz_id,a.reading_type,
             CASE WHEN nullif(a.reading_iframe_url,'') IS NOT NULL THEN 'present' ELSE '' END AS reading_iframe_url,
             CASE WHEN jsonb_typeof(a.quiz_questions)='array' AND a.quiz_questions<>'[]'::jsonb
-                 THEN '[{}]'::jsonb ELSE '[]'::jsonb END AS quiz_questions,
+                 THEN '[{{}}]'::jsonb ELSE '[]'::jsonb END AS quiz_questions,
             r.status,r.video_completed,
             r.reading_viewed,r.quiz_passed,r.updated_at,
             coalesce(CASE WHEN lk.source_preference='learner' THEN lk.ksbs ELSE ak.ksbs END,
-                     a.raw #> '{live_lms_component,ksbs}') AS ksbs,
+                     a.raw #> '{{live_lms_component,ksbs}}') AS ksbs,
             EXISTS (SELECT 1 FROM "Learner".subject_activity_attempts p
               WHERE p.enrolment_id=%s AND p.aptem_id=l.aptem_id AND p.group_id=gl.group_id
                 AND p.activity_id=a.activity_id AND p.completed=true) AS new_completed
@@ -377,9 +423,9 @@ def read_legacy_metadata(source, register):
             JOIN "Last_audit".activities a ON a.activity_id=ga.activity_id
             LEFT JOIN "Last_audit".activity_results r ON r.learner_id=l.learner_id
               AND r.group_id=gl.group_id AND r.activity_id=a.activity_id
-            LEFT JOIN structured_manual_activities.learner_activity_ksbs lk
+            LEFT JOIN {journal_sources.table('learner_activity_ksbs')} lk
               ON lk.aptem_id=l.aptem_id AND lk.activity_id=a.activity_id
-            LEFT JOIN structured_manual_activities.activity_ksbs ak ON ak.activity_id=a.activity_id
+            LEFT JOIN {journal_sources.table('activity_ksbs')} ak ON ak.activity_id=a.activity_id
             WHERE l.aptem_id=%s AND gl.group_id=ANY(%s)''', [source.id, aptem, group_ids])
         activities = dict_rows(cur)
     return metadata, activities
@@ -577,25 +623,106 @@ def lecture_totals(lectures):
             'attendanceRate': round(100 * attended / (attended + absent)) if attended + absent else None}
 
 
-def _attach_recovery(lectures, reported):
-    """Tell the learner how each reported absence is being made up, and when."""
-    catchup_keys = {
-        report['catchup_event_key'] for report in reported.values()
-        if report.get('recovery_method') == 'catch-up' and report.get('catchup_event_key')
-    }
-    dates = {}
-    if catchup_keys:
+def _attach_recovery(lectures, reported, now=None):
+    """Tell the learner how each reported absence is being made up, when, and where to go."""
+    keys = {_plan_event_key(report) for report in reported.values()} - {None}
+    events = {}
+    if keys:
         from coach_api.models import CoachCalendarEvent
-        dates = dict(CoachCalendarEvent.objects.filter(event_key__in=list(catchup_keys))
-                     .values_list('event_key', 'scheduled_date'))
+        events = {row['event_key']: row for row in CoachCalendarEvent.objects.filter(event_key__in=list(keys)).values(
+            'event_key', 'scheduled_date', 'scheduled_time', 'duration_minutes', 'meeting_link', 'status')}
     for lecture in lectures:
         report = reported.get(lecture['reportId'])
         method = (report or {}).get('recovery_method') or ''
         if not method:
             lecture['recovery'] = None
-            continue
-        day = dates.get(report.get('catchup_event_key')) if method == 'catch-up' else None
-        lecture['recovery'] = {'method': method, 'date': day.isoformat() if day else None}
+        elif method == 'alternative':
+            lecture['recovery'] = _alternative_recovery(report, now)
+        else:
+            key = _plan_event_key(report)
+            lecture['recovery'] = _booked_recovery(method, key, events.get(key), now)
+
+
+RECOVERY_JOIN_EARLY_MINUTES = 10
+
+
+def _occurrence_id(lecture):
+    """A Teams lecture's occurrence id (session_key namespaces it as 'teams:<id>')."""
+    return str(lecture['sessionId']).removeprefix('teams:')
+
+
+def _attach_recording_views(lectures, kind, learner_id):
+    """Show how much of the lecture recording the learner watched, for a recording plan."""
+    planned = [lecture for lecture in lectures if (lecture.get('recovery') or {}).get('method') == 'recorded'
+               and lecture.get('source') == 'microsoft-teams']
+    if not planned:
+        return
+    from curriculum_api.recording_views import watched_by_occurrence
+    try:
+        watched = watched_by_occurrence(kind, learner_id, [_occurrence_id(lecture) for lecture in planned])
+    except DatabaseError:
+        log.warning('Could not read recording views for learner %s.', learner_id, exc_info=True)
+        return
+    for lecture in planned:
+        seconds, duration = watched.get(_occurrence_id(lecture), (0, 0))
+        lecture['recovery'].update({'watchedSeconds': seconds, 'recordingSeconds': duration})
+
+
+def _plan_event_key(report):
+    """Calendar event holding a catch-up booking or a planned recording watch."""
+    method = report.get('recovery_method')
+    if method == 'catch-up':
+        return report.get('catchup_event_key') or None
+    if method == 'recorded':
+        # Created with the report (absence_reports._recording_recovery_event).
+        return f"absence-recording:{report['id']}"
+    return None
+
+
+def _timing(recovery, day, start_time, end_time, join_url, now):
+    """Add ended/joinUrl: joinable from shortly before the start until the end, in business (London) time."""
+    try:
+        start = datetime.fromisoformat(f"{day}T{start_time}")
+        end = datetime.fromisoformat(f"{day}T{end_time}") if end_time else start
+    except (TypeError, ValueError):
+        return recovery
+    now_local = timezone.localtime(now).replace(tzinfo=None)
+    recovery['ended'] = now_local > end
+    if join_url and start - timedelta(minutes=RECOVERY_JOIN_EARLY_MINUTES) <= now_local <= end:
+        recovery['joinUrl'] = join_url
+    return recovery
+
+
+def _booked_recovery(method, key, event, now=None):
+    """A catch-up booking or planned recording watch, and the calendar entry to open."""
+    recovery = {'method': method, 'date': None}
+    if not event or not event.get('scheduled_date'):
+        return recovery
+    day = event['scheduled_date'].isoformat()
+    recovery.update({'date': day, 'calendarKey': key})
+    if not event.get('scheduled_time'):
+        return recovery
+    start = datetime.combine(event['scheduled_date'], event['scheduled_time'])
+    end = start + timedelta(minutes=event.get('duration_minutes') or 30)
+    recovery.update({'startTime': start.strftime('%H:%M'), 'endTime': end.strftime('%H:%M')})
+    # Only a live catch-up meeting has a Teams link to join.
+    join_url = event.get('meeting_link') if method == 'catch-up' and event.get('status') != 'cancelled' else ''
+    return _timing(recovery, day, recovery['startTime'], recovery['endTime'], join_url, now)
+
+
+def _alternative_recovery(report, now=None):
+    """Where and when the learner makes up this lecture in another group's session."""
+    from .alternative_recovery import alternative_target_details
+    recovery = {'method': 'alternative', 'date': None,
+                # The learner calendar lists the alternative under this key (alternative_recovery_events_for_learner).
+                'calendarKey': f"absence-alternative:{report['id']}"}
+    target = alternative_target_details(report.get('catchup_event_key'), include_join_url=True)
+    if not target:
+        return recovery
+    recovery.update({'date': target['dateIso'], 'startTime': target['startTime'],
+                     'endTime': target.get('endTime') or '', 'group': target.get('group') or '',
+                     'title': target.get('title') or ''})
+    return _timing(recovery, target['dateIso'], target['startTime'], target.get('endTime'), target.get('joinUrl'), now)
 
 
 def _mark_missed_catchups(lectures, reported):
@@ -664,6 +791,7 @@ def read_workspace(source, kind):
         if lecture['status'] in {'completed', 'late'} and lecture['updatedAt']:
             recent.append({'id': lecture['id'], 'title': f"{lecture['title']} attended", 'at': lecture['updatedAt'], 'type': 'attendance'})
     _attach_recovery(lectures, reported)
+    _attach_recording_views(lectures, kind, source.id)
     _mark_missed_catchups(lectures, reported)
     for report in reports:
         recent.append({'id': f"report:{report['id']}", 'title': f"Absence report: {report['session_title']} ({report['status']})",
@@ -703,6 +831,7 @@ def read_workspace(source, kind):
 
 @require_GET
 @learner_self_or_staff(kwarg='learner_id')
+@journal_sources.learner_journal_view
 def attendance_lectures(request, kind, learner_id):
     model = SOURCE_MODELS.get(kind)
     if model is None:

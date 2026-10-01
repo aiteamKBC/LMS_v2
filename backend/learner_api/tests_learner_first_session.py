@@ -42,11 +42,14 @@ def booking(scheduled_date, *, status="scheduled"):
 
 class FirstSessionAccessTests(SimpleTestCase):
     def call(self, *, record=None, aptem_id=None, owner=("ann@kbc.test", "Ann Coach"),
-             programme_status="Fresh user", learner_start_date=None):
+             programme_status="Fresh user", learner_start_date=None, kind="commercial",
+             learner_type=None):
         learner = SimpleNamespace(
             pk=7, aptem_id=aptem_id,
             programme_status=programme_status, learner_start_date=learner_start_date,
         )
+        if learner_type is not None:
+            learner.learner_type = learner_type
         model = SimpleNamespace(
             all_learners=SimpleNamespace(
                 filter=lambda **kw: SimpleNamespace(first=lambda: learner)
@@ -57,14 +60,14 @@ class FirstSessionAccessTests(SimpleTestCase):
                 order_by=lambda *a: SimpleNamespace(first=lambda: record)
             )
         )
-        request = RequestFactory().get("/learner_api/calendar/commercial/7/first-session/")
-        with patch.dict(learner_calendar.SOURCE_MODELS, {"commercial": model}, clear=True), \
+        request = RequestFactory().get(f"/learner_api/calendar/{kind}/7/first-session/")
+        with patch.dict(learner_calendar.SOURCE_MODELS, {kind: model}, clear=True), \
              patch.object(learner_calendar.CoachCalendarEvent, "objects",
                           SimpleNamespace(filter=lambda **kw: chain)), \
              patch.object(learner_calendar, "_case_owner_contact", lambda l: owner), \
              patch.object(learner_calendar, "_serialize_event", lambda r: {"eventKey": r.event_key}), \
              patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "0"}):
-            return learner_calendar.learner_first_session(request, "commercial", 7)
+            return learner_calendar.learner_first_session(request, kind, 7)
 
     def test_nothing_booked_asks_the_learner_to_book(self):
         payload = body(self.call(record=None))
@@ -142,6 +145,74 @@ class FirstSessionAccessTests(SimpleTestCase):
 
         self.assertEqual(payload["access"], "book")
 
+    # Documents not yet signed by the learner (tests_first_session_after_documents
+    # covers the Delivery apprentice who has signed them).
+    @patch("learner_api.learner_progression.learner_signed_compliance_documents", return_value=False)
+    def test_an_apprentice_still_enrolling_is_not_asked_to_book(self, _signed):
+        """The first session comes after every enrolment step -- the wizard and
+        onboarding reviews (Onboarding), then the compliance documents
+        (Delivery). Until then the booking screen must not stand in front of
+        the enrolment itself."""
+        for status in ("", "Fresh user", "Onboarding", "Delivery"):
+            with self.subTest(status=status):
+                payload = body(self.call(
+                    record=None, kind="apprenticeship", programme_status=status,
+                ))
+
+                self.assertEqual(payload["access"], "enrolling")
+
+    @patch("learner_api.learner_progression.learner_signed_compliance_documents", return_value=True)
+    def test_a_delivery_apprentice_who_signed_their_documents_may_book_from_their_tab(self, _signed):
+        """Their own signatures on all four documents open the booking — without
+        the full-page gate taking over while the other parties still sign."""
+        payload = body(self.call(record=None, kind="apprenticeship", programme_status="Delivery"))
+
+        self.assertEqual(payload["access"], "enrolling")
+        self.assertTrue(payload["canBook"])
+
+    def test_an_apprentice_ready_to_enrol_books_their_first_session(self):
+        """Signing the last compliance document moves them to Ready to enrol,
+        and that is the point the first session becomes theirs to book."""
+        payload = body(self.call(
+            record=None, kind="apprenticeship", programme_status="Ready to enrol",
+        ))
+
+        self.assertEqual(payload["access"], "book")
+
+    def test_an_apprentice_ready_to_enrol_waits_for_a_booked_session(self):
+        ahead = learner_calendar.first_session_uk_today() + timedelta(days=3)
+
+        payload = body(self.call(
+            record=booking(ahead), kind="apprenticeship", programme_status="Ready to enrol",
+        ))
+
+        self.assertEqual(payload["access"], "waiting")
+
+    def test_an_earlier_booking_does_not_hold_an_apprentice_mid_enrolment(self):
+        """A session booked under the old order is kept and reported, but the
+        waiting screen must not keep them from the steps they have left."""
+        ahead = learner_calendar.first_session_uk_today() + timedelta(days=3)
+
+        payload = body(self.call(
+            record=booking(ahead), kind="apprenticeship", programme_status="Onboarding",
+        ))
+
+        self.assertEqual(payload["access"], "enrolling")
+        self.assertTrue(payload["booked"])
+        self.assertEqual(payload["startsOn"], ahead.isoformat())
+
+    def test_a_commercial_learner_still_books_from_the_start(self):
+        """Commercial learners have no enrolment steps, so nothing changes for
+        them -- even when the URL says otherwise, the row's type decides."""
+        for kind in ("commercial", "apprenticeship"):
+            with self.subTest(kind=kind):
+                payload = body(self.call(
+                    record=None, kind=kind, learner_type="commercial",
+                    programme_status="Onboarding",
+                ))
+
+                self.assertEqual(payload["access"], "book")
+
     def test_a_learner_with_no_case_owner_is_reported_rather_than_guessed(self):
         payload = body(self.call(record=None, owner=("", "")))
 
@@ -213,8 +284,11 @@ class BookingBeforeActiveTests(SimpleTestCase):
     Everything else stays shut until the programme is actually running.
     """
 
-    def book(self, session_type, *, mirror=None, existing=False, owner=("ann@kbc.test", "Ann", 3)):
+    def book(self, session_type, *, mirror=None, existing=False, owner=("ann@kbc.test", "Ann", 3),
+             kind="commercial", programme_status=None):
         learner = SimpleNamespace(pk=7, aptem_id=None, email="l@kbc.test", username="L")
+        if programme_status is not None:
+            learner.programme_status = programme_status
         model = SimpleNamespace(
             all_learners=SimpleNamespace(filter=lambda **kw: SimpleNamespace(first=lambda: learner))
         )
@@ -222,17 +296,17 @@ class BookingBeforeActiveTests(SimpleTestCase):
             exclude=lambda **kw: SimpleNamespace(exists=lambda: existing)
         )
         request = RequestFactory().post(
-            "/learner_api/calendar/commercial/7/book/",
+            f"/learner_api/calendar/{kind}/7/book/",
             data=json.dumps({"sessionType": session_type}),
             content_type="application/json",
         )
-        with patch.dict(learner_calendar.SOURCE_MODELS, {"commercial": model}, clear=True), \
+        with patch.dict(learner_calendar.SOURCE_MODELS, {kind: model}, clear=True), \
              patch.object(learner_calendar, "learner_profile_for_source", lambda *a, **k: mirror), \
              patch.object(learner_calendar, "_case_owner_record", lambda l: owner), \
              patch.object(learner_calendar.CoachCalendarEvent, "objects",
                           SimpleNamespace(filter=lambda **kw: chain)), \
              patch.dict("os.environ", {"LEARNER_API_REQUIRE_AUTH": "0"}):
-            return learner_calendar.learner_calendar_book(request, "commercial", 7)
+            return learner_calendar.learner_calendar_book(request, kind, 7)
 
     def test_a_pre_active_learner_may_book_their_first_session(self):
         """No coach mirror, so this used to be refused outright -- which made
@@ -294,6 +368,38 @@ class BookingBeforeActiveTests(SimpleTestCase):
 
         self.assertEqual(response.status_code, 409)
         self.assertIn("already booked", body(response)["error"])
+
+    @patch("learner_api.learner_progression.learner_signed_compliance_documents", return_value=False)
+    def test_an_apprentice_still_enrolling_cannot_book_their_first_session(self, _signed):
+        """The gate stops offering it, but the calendar still lists the type,
+        so the order is held here too."""
+        for status in ("Fresh user", "Onboarding", "Delivery"):
+            with self.subTest(status=status):
+                response = self.book(
+                    "first-session", kind="apprenticeship", programme_status=status,
+                )
+
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("once your enrolment is complete", body(response)["error"])
+
+    @patch("learner_api.learner_progression.learner_signed_compliance_documents", return_value=True)
+    def test_a_delivery_apprentice_who_signed_their_documents_may_book(self, _signed):
+        response = self.book("first-session", kind="apprenticeship", programme_status="Delivery")
+
+        # Past the enrolment check; fails later on the missing date.
+        self.assertEqual(response.status_code, 400)
+        self.assertNotIn("once your enrolment is complete", body(response)["error"])
+
+    def test_an_apprentice_ready_to_enrol_may_book_their_first_session(self):
+        response = self.book(
+            "first-session", kind="apprenticeship", programme_status="Ready to enrol",
+        )
+
+        # Past the enrolment check; fails later on the missing date, as for
+        # any other learner who reaches that point.
+        self.assertEqual(response.status_code, 400)
+        self.assertNotIn("once your enrolment is complete", body(response)["error"])
+        self.assertNotIn("Only Active learners", body(response)["error"])
 
 
 class BookingStampsTheStartDateTests(SimpleTestCase):

@@ -15,7 +15,7 @@ import { ArrowLeft } from 'lucide-react';
 import design from './WorkspaceDesign.module.css';
 import { activePersonalLearning } from '@/lib/personalLearning';
 import { PersonalLearningBanner } from './PersonalLearningBanner';
-import { learnerHref, learnerIdentityFromPath, type LearnerRoutePage } from '@/lib/learnerRoutes';
+import { bareLearnerPath, learnerHref, learnerIdentityFromPath, type LearnerRoutePage } from '@/lib/learnerRoutes';
 
 interface WorkspaceShellProps {
   children: ReactNode;
@@ -53,7 +53,7 @@ const SIDEBAR_PINNED_KEY = 'kbc_sidebar_pinned';
 const COACH_SIDEBAR_COLLAPSED_KEY = 'kbc_coach_sidebar_collapsed';
 const LEARNER_SIDEBAR_COLLAPSED_KEY = 'kbc_learner_sidebar_collapsed';
 const COACH_SIDEBAR_WIDTH = 240;
-const COACH_SIDEBAR_COLLAPSED_WIDTH = 76;
+const COACH_SIDEBAR_COLLAPSED_WIDTH = LEARNER_SIDEBAR_COLLAPSED_WIDTH;
 
 /**
  * Whether the sidebar's secondary navigation is open.
@@ -189,7 +189,7 @@ export function WorkspaceShell({
   userName,
   userRole,
   workspaceLabel,
-  showBackButton = false,
+  showBackButton,
   backFallbackHref,
   breadcrumbCurrentLabel,
   hidePageChrome = false,
@@ -232,6 +232,9 @@ export function WorkspaceShell({
     'learner-monthly-coaching': 'monthly-coaching', 'learner-progress-reviews': 'progress-reviews', 'learner-reviews': 'reviews',
     'learner-attendance': 'attendance', 'learner-evidence': 'evidence', 'learner-calendar': 'calendar',
   };
+  const homeDashboardPath = routeLearner
+    ? `/workspace/learner/${routeLearner.kind}/${routeLearner.id}/dashboard`
+    : null;
   const stableNavItems = routeLearner
     ? navItems.map(item => {
       const page = learnerPageById[item.id];
@@ -239,13 +242,15 @@ export function WorkspaceShell({
         const childPage = learnerPageById[child.id];
         return childPage ? { ...child, href: learnerHref(childPage, routeLearner.kind, routeLearner.id) } : child;
       });
-      return page ? { ...item, href: learnerHref(page, routeLearner.kind, routeLearner.id), children } : children ? { ...item, children } : item;
+      return page ? { ...item, href: page === 'dashboard' && location.pathname === homeDashboardPath
+        ? homeDashboardPath : learnerHref(page, routeLearner.kind, routeLearner.id), children } : children ? { ...item, children } : item;
     })
     : navItems;
   const workspaceNavItems = auth.account?.role === 'admin' && !navItems.some(item => item.id === 'personal-courses')
     ? [...stableNavItems, { id: 'personal-courses', label: 'My Courses', icon: 'ri-graduation-cap-line', href: '/my-courses' }]
     : stableNavItems;
   const navigate = useNavigate();
+  const displayBackButton = showBackButton ?? ['coach', 'learner', 'curriculum'].includes(role);
   const [searchOpen, setSearchOpen] = useState(false);
   const [previousRoute, setPreviousRoute] = useState('');
 
@@ -290,6 +295,20 @@ export function WorkspaceShell({
   useEffect(() => {
     setMobileSidebarOpen(false);
   }, [location.pathname]);
+
+  // A learner on their own sign-in never sees their type or id in the address
+  // bar: the page already resolves them from the session (useMyLearner), so a
+  // link naming them is swapped for its bare route. Staff and admin previews
+  // keep the ids -- for them the URL is what says which learner is shown.
+  const ownAccount = auth.account?.role === 'learner' ? auth.account : null;
+  const ownBarePath = ownAccount && routeLearner
+    && routeLearner.id === String(ownAccount.subjectId)
+    && routeLearner.kind === (ownAccount.learnerType === 'commercial' ? 'commercial' : 'apprenticeship')
+    ? bareLearnerPath(location.pathname, routeLearner.kind, routeLearner.id)
+    : null;
+  useEffect(() => {
+    if (ownBarePath) navigate(`${ownBarePath}${location.search}${location.hash}`, { replace: true, state: location.state });
+  }, [ownBarePath, location.search, location.hash, location.state, navigate]);
 
   useEffect(() => {
     if (role !== 'learner') return;
@@ -466,14 +485,14 @@ export function WorkspaceShell({
         )}
 
         {/* Breadcrumbs */}
-        {!hidePageChrome && (showBackButton || (!hideBreadcrumbs && breadcrumbs.length > 0)) && (
-          <div className={`workspace-breadcrumbs mx-2 flex ${showBackButton ? 'min-h-12 gap-3 py-1.5' : 'h-8'} shrink-0 items-center overflow-hidden rounded-xl border-b border-background-300/40 bg-background-200 px-3 md:px-5 lg:ml-0 lg:mr-3`}>
-            {showBackButton && <button type="button" onClick={handleReturnToPreviousWindow} disabled={!canGoBack}
+        {!hidePageChrome && (displayBackButton || (!hideBreadcrumbs && breadcrumbs.length > 0)) && (
+          <div className={`workspace-breadcrumbs mx-2 flex ${displayBackButton ? 'min-h-12 gap-3 py-1.5' : 'h-8'} shrink-0 items-center overflow-hidden rounded-xl border-b border-background-300/40 bg-background-200 px-3 md:px-5 lg:ml-0 lg:mr-3`}>
+            {displayBackButton && <button type="button" onClick={handleReturnToPreviousWindow} disabled={!canGoBack}
               className="kbc-workspace-back" aria-label="Back to previous page"
               title={!canGoBack ? 'You are on the first page' : previousRoute ? 'Back to the previous page' : 'Back'}>
               <ArrowLeft size={16} aria-hidden="true" /><span>Back</span>
             </button>}
-            {!hideBreadcrumbs && <nav className={`flex min-w-0 items-center gap-1.5 overflow-x-auto text-xs [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${role === 'learner' ? 'learner-step-breadcrumb' : ''}`} aria-label="Breadcrumb">
+            {!hideBreadcrumbs && <nav className={`flex min-w-0 items-center gap-1.5 overflow-x-auto text-xs [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${role === 'learner' || role === 'coach' ? 'learner-step-breadcrumb' : ''}`} aria-label="Breadcrumb">
               {roleLabel !== 'Super Admin' && (
                 <>
                   <Link to="/" className="workspace-breadcrumb-home text-foreground-300 hover:text-foreground-500 transition-smooth">

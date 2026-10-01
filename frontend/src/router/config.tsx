@@ -27,6 +27,7 @@ const AdminRolesPage = lazyRoute(() => import("../pages/admin/roles/page"));
 const AdminSystemSettingsPage = lazyRoute(() => import("../pages/admin/system/page"));
 const CoachDirectoryPage = lazyRoute(() => import("../pages/admin/coach-directory/page"));
 const CoachBookingPage = lazyRoute(() => import("../pages/coach-booking/page"));
+const LmsIntroductionPage = lazyRoute(() => import("../pages/lms-introduction/page"));
 const AdminUsersPage = lazyRoute(() => import("../pages/admin/users/page"));
 const PlatformReportPage = lazyRoute(() => import("../pages/admin/platform-report/page"));
 const AttendancePage = lazyRoute(() => import("../pages/learner/attendance/page"));
@@ -77,6 +78,8 @@ const CurriculumDeliveryHub = lazyRoute(() => import("../pages/curriculum/hubs/p
 const CurriculumQualityHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumQualityHub })));
 const CurriculumFreeCourses = lazyRoute(() => import("../pages/curriculum/free-courses/page"));
 const CurriculumKsbFrameworksPage = lazyRoute(() => import("../pages/curriculum/ksb-frameworks/page"));
+const CoachAuditTrailPage = lazyRoute(() => import("../pages/coach/audit-trail/page"));
+const CoachAuditTrailPersonPage = lazyRoute(() => import("../pages/coach/audit-trail/person/page"));
 const CurriculumAuditTrailPage = lazyRoute(() => import("../pages/curriculum/audit-trail/page"));
 const CurriculumAuditTrailPersonPage = lazyRoute(() => import("../pages/curriculum/audit-trail/person/page"));
 const CurriculumArchive = lazyRoute(() => import("../pages/curriculum/archive/page"));
@@ -166,7 +169,9 @@ const LearnerKnowledgeBase = lazyRoute(() => import("../pages/learner/knowledge-
 const LearnerLearningPlanPage = lazyRoute(() => import("../pages/learner/learning-plan/page"));
 const LearnerLearningPlanModulesPage = lazyRoute(() => import("../pages/learner/learning-plan/modules/page"));
 const LearnerOnboardingPage = lazyRoute(() => import("../pages/learner/onboarding/page"));
+const LearnerWelcomePage = lazyRoute(() => import("../pages/learner/welcome/page"));
 const LearnerCompliancePage = lazyRoute(() => import("../pages/learner/compliance/page"));
+const LearnerFirstSessionPage = lazyRoute(() => import("../pages/learner/first-session/page"));
 const LearnerOnboardingReviewsPage = lazyRoute(() => import("../pages/learner/onboarding/reviews/page"));
 const LearnerReviewFormPage = lazyRoute(() => import("../pages/learner/onboarding/reviews/form"));
 const LearnerProfilePage = lazyRoute(() => import("../pages/learner/profile/page"));
@@ -179,7 +184,6 @@ const ProgressReviewsListPage = lazyRoute(() => import("../pages/learner/progres
 const CurriculumReviewsPage = lazyRoute(() => import("../pages/learner/reviews/curriculumReviews").then(m => ({ default: m.CurriculumReviewPage })));
 const CurriculumReviewsListPage = lazyRoute(() => import("../pages/learner/reviews/curriculumReviews").then(m => ({ default: m.CurriculumReviewsListPage })));
 const ManualQuizPage = lazyRoute(() => import("../pages/curriculum/quiz-xml/manual/page"));
-const MessagesPage = lazyRoute(() => import("../pages/learner/messages/page"));
 const MisAttendanceModesPage = lazyRoute(() => import("../pages/mis/attendance-modes/page"));
 const MisCalendarPage = lazyRoute(() => import("../pages/mis/calendar/page"));
 const MisCoachAssignmentPage = lazyRoute(() => import("../pages/mis/coach-assignment/page"));
@@ -345,6 +349,13 @@ const routes: RouteObject[] = [
     element: <SetPasswordPage mode="reset" />,
   },
   {
+    // A new apprentice's first sign-in: address and personal details, then an
+    // electronic signature. Sent here by useFirstLoginDetailsRedirect; finishing
+    // moves them to Onboarding and on to the wizard below.
+    path: "/learner/welcome",
+    element: <LearnerWelcomePage />,
+  },
+  {
     // The learner's own enrolment wizard. Onboarding learners are redirected
     // here by useOnboardingRedirect, so the bare path must resolve; the wizard
     // then navigates between steps by slug.
@@ -356,6 +367,12 @@ const routes: RouteObject[] = [
     // signed by them and their employer.
     path: "/learner/compliance-documents",
     element: <LearnerCompliancePage />,
+  },
+  {
+    // A Delivery apprentice books their first learning session here, once
+    // they have signed all four compliance documents.
+    path: "/learner/first-session",
+    element: <LearnerFirstSessionPage />,
   },
   {
     // Declared before the :stepSlug pattern below, which would otherwise
@@ -877,6 +894,20 @@ const routes: RouteObject[] = [
     element: <CoachEvidenceValidation />,
   },
   {
+    // The Coach workspace's own scoped door onto the Audit Trail. Same
+    // component as /admin/audit-trail and /curriculum/audit-trail, fixed to the
+    // coach workspace.
+    path: "/coach/audit-trail",
+    element: <CoachAuditTrailPage />,
+  },
+  {
+    // One person's own page rather than a panel over the list: an audit finding
+    // is something people send each other, and a link to it has to survive
+    // being pasted into a message.
+    path: "/coach/audit-trail/people/:email",
+    element: <CoachAuditTrailPersonPage />,
+  },
+  {
     path: "/admin/access-logs",
     element: <AdminAccessLogsPage />,
   },
@@ -913,6 +944,11 @@ const routes: RouteObject[] = [
   {
     path: "/coach-booking/:slug",
     element: <CoachBookingPage />,
+  },
+  {
+    // Opened from the account invitation, before the learner has a password.
+    path: "/lms-introduction",
+    element: <LmsIntroductionPage />,
   },
   {
     path: "/admin/system",
@@ -1652,6 +1688,7 @@ const routes: RouteObject[] = [
  */
 const PUBLIC_PATHS = new Set([
   "/coach-booking/:slug",
+  "/lms-introduction",
   "/",
   "/login",
   "/access-required",

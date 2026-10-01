@@ -1,79 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
-import { coachFetch } from '@/lib/coachFetch';
 import { roleNavMap } from '@/mocks/navigation';
 import { Pagination } from '@/components/ui/Pagination';
 import type { MarkingKind } from '@/lib/markingKind';
 import styles from './markingQueue.module.css';
+import { useMarkingQueue } from '@/features/coach/marking/hooks/useMarkingQueue';
+import { markingActivityLabel, markingStatusLabel, markingSubmissionPreview } from '@/features/coach/marking/selectors/markingSelectors';
+import type { MarkingQueueFilter } from '@/features/coach/marking/types/marking.types';
 
 const coachNav = roleNavMap.coach;
-type QueueFilter = 'all' | 'pending' | 'overdue' | 'accepted' | 'referred';
-
-interface MarkingSubmission {
-  version?: number;
-  id: string;
-  learner: string;
-  programme: string;
-  activityType: string;
-  activityTitle: string;
-  module: string;
-  week: string;
-  status: string;
-  learningReflection: string;
-  ksbCodes: string[];
-  applicationText: string;
-  benefitExplanation: string;
-  qualityScore: number;
-  coachFeedback: string | null;
-  reviewedBy: string | null;
-  submittedDisplay: string;
-  elapsedDays: number;
-  isOverdue: boolean;
-}
-
-interface QueueSummary {
-  totalItems: number;
-  activeLearners: number;
-  pendingItems: number;
-  acceptedItems: number;
-  referredItems: number;
-  overdueItems: number;
-  assignmentItems: number;
-  reflectionItems: number;
-}
-
-interface QueuePagination {
-  page: number;
-  pageSize: number;
-  totalItems: number;
-  totalPages: number;
-  hasNext: boolean;
-  hasPrevious: boolean;
-}
-
-const EMPTY_SUMMARY: QueueSummary = {
-  totalItems: 0,
-  activeLearners: 0,
-  pendingItems: 0,
-  acceptedItems: 0,
-  referredItems: 0,
-  overdueItems: 0,
-  assignmentItems: 0,
-  reflectionItems: 0,
-};
-
-const EMPTY_PAGINATION: QueuePagination = {
-  page: 1,
-  pageSize: 25,
-  totalItems: 0,
-  totalPages: 0,
-  hasNext: false,
-  hasPrevious: false,
-};
-
-const FILTERS: Array<{ value: QueueFilter; label: string }> = [
+const FILTERS: Array<{ value: MarkingQueueFilter; label: string }> = [
   { value: 'all', label: 'All' },
   { value: 'pending', label: 'Pending' },
   { value: 'overdue', label: 'Overdue' },
@@ -81,82 +19,21 @@ const FILTERS: Array<{ value: QueueFilter; label: string }> = [
   { value: 'referred', label: 'Referred' },
 ];
 
-function statusLabel(status: string, isOverdue: boolean) {
-  if (isOverdue) return 'Overdue';
-  if (status === 'accepted') return 'Accepted';
-  if (status === 'partial') return 'Partially awarded';
-  if (status === 'referred' || status === 'rejected') return 'Referred back';
-  if (status === 'escalated') return 'Escalated';
-  return 'Pending';
-}
-
-function submissionPreview(item: MarkingSubmission) {
-  return item.learningReflection
-    || item.applicationText
-    || item.benefitExplanation
-    || 'Open the submission to review the learner evidence and recorded KSBs.';
-}
-
-function activityLabel(item: MarkingSubmission, kind: MarkingKind) {
-  if (item.activityType) return item.activityType.replaceAll('_', ' ');
-  return kind === 'assignment' ? 'Assignment' : 'Learning reflection';
-}
-
 export default function CoachMarkingQueue() {
   const [searchParams] = useSearchParams();
   const personal = searchParams.get('scope') === 'personal';
-  const apiEndpoint = personal ? '/coach_api/coach/personal-marking' : '/coach_api/coach/marking-queue';
   const scopeQuery = personal ? '?scope=personal' : '';
   const navigate = useNavigate();
   const coach = useCoachIdentity();
-  const [items, setItems] = useState<MarkingSubmission[]>([]);
-  const [summary, setSummary] = useState<QueueSummary>(EMPTY_SUMMARY);
-  const [pagination, setPagination] = useState<QueuePagination>(EMPTY_PAGINATION);
-  const [filter, setFilter] = useState<QueueFilter>('pending');
+  const [filter, setFilter] = useState<MarkingQueueFilter>('pending');
   const [kind, setKind] = useState<MarkingKind>('assignment');
   const [page, setPage] = useState(1);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const queue = useMarkingQueue({ scope: personal ? 'personal' : 'official', status: filter, kind, page }, coach.isInitialized && Boolean(coach.email));
+  const { items, summary, pagination, refresh: loadQueue } = queue;
+  const loading = coach.isInitialized && !coach.email ? false : (!coach.isInitialized || queue.loading);
+  const error = coach.isInitialized && !coach.email ? 'Coach access is required to load the marking queue.' : queue.error;
 
-  const loadSequence = useRef(0);
-  const loadQueue = useCallback(async () => {
-    const sequence = ++loadSequence.current;
-    if (!coach.isInitialized) return;
-    setLoading(true);
-    setError('');
-    if (!coach.email) {
-      setItems([]);
-      setSummary(EMPTY_SUMMARY);
-      setError('Coach access is required to load the marking queue.');
-      setLoading(false);
-      return;
-    }
-
-    try {
-      const query = new URLSearchParams({ status: filter, kind, page: String(page), page_size: '25' });
-      const response = await coachFetch(`${apiEndpoint}?${query}`);
-      const text = await response.text();
-      const data = text ? JSON.parse(text) : {};
-      if (sequence !== loadSequence.current) return;
-      if (!response.ok) throw new Error(data.detail || 'Unable to load the marking queue.');
-      setItems(data.items || []);
-      setSummary(data.summary || EMPTY_SUMMARY);
-      setPagination(data.pagination || EMPTY_PAGINATION);
-    } catch (loadError) {
-      if (sequence !== loadSequence.current) return;
-      setItems([]);
-      setError(loadError instanceof Error ? loadError.message : 'Unable to load the marking queue.');
-    } finally {
-      if (sequence === loadSequence.current) setLoading(false);
-    }
-  }, [apiEndpoint, coach.email, coach.isInitialized, filter, kind, page]);
-
-  useEffect(() => {
-    void loadQueue();
-    return () => { ++loadSequence.current; };
-  }, [loadQueue]);
-
-  const filterCounts: Record<QueueFilter, number> = {
+  const filterCounts: Record<MarkingQueueFilter, number> = {
     all: summary.totalItems,
     pending: summary.pendingItems,
     overdue: summary.overdueItems,
@@ -231,10 +108,10 @@ export default function CoachMarkingQueue() {
                 <div className={styles.cardTop}>
                   <div className={styles.cardContent}>
                     <div className={styles.tags}>
-                      <span className={styles.typeTag}>{activityLabel(item, kind)}</span>
+                      <span className={styles.typeTag}>{markingActivityLabel(item, kind)}</span>
                       {item.ksbCodes.slice(0, 4).map(code => <span className={styles.ksbTag} key={code}>{code}</span>)}
                       <span className={styles.statusTag} data-status={item.isOverdue ? 'overdue' : item.status}>
-                        {statusLabel(item.status, item.isOverdue)}
+                        {markingStatusLabel(item.status, item.isOverdue)}
                       </span>
                     </div>
                     <h2>{item.activityTitle || item.activityType}</h2>
@@ -253,7 +130,7 @@ export default function CoachMarkingQueue() {
                   </div>
                 </div>
                 <div className={styles.preview}>
-                  <strong>Submission preview:</strong> {submissionPreview(item)}
+                  <strong>Submission preview:</strong> {markingSubmissionPreview(item)}
                 </div>
               </article>
             ))}

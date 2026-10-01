@@ -3,10 +3,17 @@ from django.urls import path
 from system_audit import activity as system_activity
 
 from . import activity, learner_assignments, programme_audit, quality, review_schedule, review_types, reviews, views
+from .teams_attendee_compare import teams_meeting_attendee_comparison
+from .teams_create_guard import teams_create_status, teams_meeting_collection
 from .teams_schedule_delivery import schedule_email
 from .teams_calendar_state import sync_calendar_state
 from .teams_directory import search_teams_directory
 from .teams_calendar_actions import calendar_action
+from .teams_week_meeting import (
+    curriculum_live_session_meeting_scope,
+    curriculum_week_teams_meeting,
+    curriculum_week_teams_meeting_detail,
+)
 from . import session_results
 
 
@@ -35,6 +42,7 @@ urlpatterns = [
     # Polled by every open tab to notice a write made somewhere else. Kept next
     # to nothing in cost: one Redis read, no database.
     path('curriculum/cache-epoch/', views.curriculum_cache_epoch, name='curriculum-cache-epoch'),
+    path('curriculum/revisions/', views.curriculum_record_revisions, name='curriculum-record-revisions'),
     path('curriculum/preview/cohort-end-date/', views.curriculum_preview_cohort_end_date, name='curriculum-preview-cohort-end-date'),
     path('curriculum/preview/module-session-plan/', views.curriculum_preview_module_session_plan, name='curriculum-preview-module-session-plan'),
     path('curriculum/preview/tutor-availability/', views.curriculum_preview_tutor_availability, name='curriculum-preview-tutor-availability'),
@@ -57,6 +65,9 @@ urlpatterns = [
     path('curriculum/programme-audit/materials/', programme_audit.programme_audit_materials, name='curriculum-programme-audit-materials'),
     path('curriculum/programme-audit/materials/<slug:material_key>/', programme_audit.programme_audit_material, name='curriculum-programme-audit-material'),
     path('curriculum/programmes/<str:programme_id>/ksb-coverage/', views.curriculum_programme_ksb_coverage, name='curriculum-programme-ksb-coverage'),
+    # The card's KSB numbers on their own. Kept off /curriculum/programmes/ so a
+    # list of thirty programmes does not wait on thirty authoring-tree reads.
+    path('curriculum/programmes/<str:programme_id>/ksb-stats/', views.curriculum_programme_ksb_stats, name='curriculum-programme-ksb-stats'),
     path('curriculum/programmes/<str:programme_id>/learner-ksb-impact/', views.curriculum_programme_learner_ksb_impact, name='curriculum-programme-learner-ksb-impact'),
     path('curriculum/programmes/<str:programme_id>/learner-roster/', views.curriculum_programme_learner_roster, name='curriculum-programme-learner-roster'),
     path('curriculum/programmes/<str:programme_id>/cohorts/', views.curriculum_programme_cohort_collection, name='curriculum-programme-cohorts'),
@@ -98,6 +109,12 @@ urlpatterns = [
     path('curriculum/modules/<str:module_catalogue_id>/session-plan/', views.curriculum_module_session_plan, name='curriculum-module-session-plan'),
     path('curriculum/modules/<str:module_catalogue_id>/ai-material/', views.curriculum_module_ai_material, name='curriculum-module-ai-material'),
     path('curriculum/modules/<str:module_catalogue_id>/teams-meetings/restore/', views.curriculum_module_teams_meeting_restore, name='curriculum-module-teams-meeting-restore'),
+    # A one-off meeting on a single week, with its own organiser and guests.
+    # Separate from the module's calendar above in both directions -- see
+    # teams_week_meeting.py.
+    path('curriculum/modules/<str:module_catalogue_id>/week-teams-meetings/', curriculum_week_teams_meeting, name='curriculum-week-teams-meeting'),
+    path('curriculum/modules/<str:module_catalogue_id>/week-teams-meetings/<str:live_session_id>/', curriculum_week_teams_meeting_detail, name='curriculum-week-teams-meeting-detail'),
+    path('curriculum/modules/<str:module_catalogue_id>/live-session-meeting-scope/', curriculum_live_session_meeting_scope, name='curriculum-live-session-meeting-scope'),
     path('curriculum/modules/<str:module_catalogue_id>/meeting-invitees/', views.curriculum_module_meeting_invitees, name='curriculum-module-meeting-invitees'),
     path('curriculum/modules/<str:module_catalogue_id>/ksb-coverage/', views.curriculum_module_ksb_coverage, name='curriculum-module-ksb-coverage'),
     # A module has no roster of its own: these report the learners in the group
@@ -119,13 +136,15 @@ urlpatterns = [
     path('curriculum/components/<str:component_id>/upload/', views.curriculum_component_upload, name='curriculum-component-upload'),
     path('curriculum/components/<str:component_id>/ksb-mappings/', views.curriculum_component_ksb_mappings, name='curriculum-component-ksb-mappings'),
     path('curriculum/components/<str:component_id>/', views.curriculum_component_detail, name='curriculum-component-detail'),
-    path('curriculum/teams-meetings/', views.curriculum_teams_meeting, name='curriculum-teams-meeting'),
+    path('curriculum/teams-meetings/', teams_meeting_collection, name='curriculum-teams-meeting'),
+    path('curriculum/teams-meetings/create-status/', teams_create_status, name='curriculum-teams-create-status'),
     path('curriculum/teams-meetings/summary/', views.curriculum_teams_meeting_summary, name='curriculum-teams-meeting-summary'),
     path('curriculum/live-sessions/occurrences/', views.curriculum_live_session_occurrences, name='curriculum-live-session-occurrences'),
     path('curriculum/teams-meetings/<str:live_session_id>/schedule/', views.curriculum_teams_meeting_schedule, name='curriculum-teams-meeting-schedule'),
     path('curriculum/teams-meetings/<str:live_session_id>/schedule-email/', schedule_email, name='curriculum-teams-schedule-email'),
     path('curriculum/teams-meetings/<str:live_session_id>/calendar-state/', sync_calendar_state, name='curriculum-teams-calendar-state'),
     path('curriculum/teams-meetings/<str:live_session_id>/actions/', calendar_action, name='curriculum-teams-calendar-action'),
+    path('curriculum/teams-meetings/<str:live_session_id>/compare-attendees/', teams_meeting_attendee_comparison, name='curriculum-teams-compare-attendees'),
     path('curriculum/teams-meetings/<str:live_session_id>/occurrences/<int:session_number>/schedule/', views.curriculum_teams_meeting_occurrence_schedule, name='curriculum-teams-meeting-occurrence-schedule'),
     path('curriculum/teams-meetings/<str:live_session_id>/occurrences/<str:occurrence_id>/join/', views.curriculum_teams_meeting_join, name='curriculum-teams-meeting-join'),
     path('curriculum/teams-meetings/<str:live_session_id>/artifacts/', views.curriculum_teams_meeting_artifacts, name='curriculum-teams-meeting-artifacts'),

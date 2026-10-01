@@ -149,6 +149,105 @@ export function isTutorConflictError(error: unknown): error is CurriculumApiErro
 }
 
 /**
+ * Optimistic concurrency for the records a drawer holds open.
+ *
+ * The Module Builder's structure save has always sent back the revision it read
+ * and been refused if the module moved underneath it. The drawers and the Week
+ * Builder had nothing: each sends every field it renders, so whichever save
+ * landed second put the other editor's work back to what it was, and the only
+ * thing standing in the way was a poll happening to arrive first.
+ *
+ * These are the client half of the same guard, now on all of them. A surface
+ * reads a token, sends it back with its save, and on a refusal rebases its
+ * outstanding changes onto the stored record the refusal carries.
+ */
+
+/** The record kinds the server will fingerprint. */
+export type CurriculumRecordKind = 'programme' | 'cohort' | 'group' | 'module' | 'weekTemplate';
+
+export interface CurriculumRecordRevisions {
+  programme?: Record<string, string>;
+  cohort?: Record<string, string>;
+  group?: Record<string, string>;
+  module?: Record<string, string>;
+  weekTemplate?: Record<string, string>;
+}
+
+/**
+ * Current tokens for the records named.
+ *
+ * Off the cached curriculum overview deliberately: a token minted there would
+ * be one more thing to keep fresh, and would go stale exactly when a colleague
+ * saved. One indexed read per record instead, when a drawer opens.
+ *
+ * A record the server cannot fingerprint comes back as '', which a caller
+ * should treat as "save unguarded" rather than as a token -- that is the
+ * behaviour these screens had before any of this existed, so a fingerprint
+ * that cannot be read degrades to it rather than blocking the save.
+ */
+export function fetchCurriculumRevisions(
+  wanted: Partial<Record<CurriculumRecordKind, string[]>>,
+  signal?: AbortSignal,
+): Promise<CurriculumRecordRevisions> {
+  const query = new URLSearchParams();
+  (Object.keys(wanted) as CurriculumRecordKind[]).forEach(kind => {
+    (wanted[kind] || []).filter(Boolean).forEach(id => query.append(kind, id));
+  });
+  if (!query.toString()) return Promise.resolve({});
+  return fetchJson<{ revisions: CurriculumRecordRevisions }>(
+    `/curriculum/revisions/?${query.toString()}`,
+    { signal, skipCache: true },
+  ).then(payload => payload.revisions || {});
+}
+
+/** What a save was refused with, and what it needs to rebase onto. */
+export interface CurriculumRecordConflict<TRecord> {
+  /** The token the save carried. */
+  expectedRevision: string;
+  /** The token the record actually holds now; what the retry must send. */
+  currentRevision: string;
+  /**
+   * The stored record, so the editor can fold their outstanding changes into
+   * it without a second call. Null when the server could not read the record
+   * at all -- nothing was compared, so there is no other version to show.
+   */
+  record: TRecord | null;
+}
+
+/**
+ * A save refused because somebody else saved first.
+ *
+ * Distinguished from the tutor-schedule 409 by the `conflict` flag rather than
+ * by the status, since both endpoints raise 409 and a drawer has to be able to
+ * tell "you would double-book a tutor" from "rebase and try again".
+ */
+/**
+ * The token a guarded save carries, folded into its body.
+ *
+ * In the body rather than a separate argument so that adding the guard did not
+ * change the shape of a single existing call. Omitted when empty: an absent
+ * token means "do not check me", which is what every unguarded caller has
+ * always sent and what a surface whose token could not be read falls back to.
+ */
+export function guardedInput<TInput extends object>(input: TInput, expectedRevision?: string): TInput {
+  return expectedRevision ? { ...input, expectedRevision } : input;
+}
+
+export function recordConflict<TRecord>(
+  error: unknown,
+  kind: CurriculumRecordKind,
+): CurriculumRecordConflict<TRecord> | null {
+  if (!(error instanceof CurriculumApiError) || error.status !== 409) return null;
+  const data = error.data as Record<string, unknown> | undefined;
+  if (!data || typeof data !== 'object' || data.conflict !== true) return null;
+  return {
+    expectedRevision: String(data.expectedRevision || ''),
+    currentRevision: String(data.currentRevision || ''),
+    record: (data[kind] as TRecord | undefined) ?? null,
+  };
+}
+
+/**
  * The backend's sentence for a clash, or null when the error is something else.
  *
  * `CurriculumApiError.message` wraps it in "Curriculum API returned 409 for
@@ -199,6 +298,12 @@ export interface CurriculumProgramme {
   modules: number;
   freeComponents?: number;
   weeks: number;
+  // ksbMapped and every learnerKsb* field below arrive as 0 from the list
+  // endpoints and are filled in afterwards by fetchProgrammeKsbStats(). Each one
+  // costs a read of the programme's whole authoring tree, so computing them for
+  // a list of thirty programmes held up /overview/, /modules/ and /programmes/
+  // alike. A card renders without them and gains them a moment later; nothing
+  // reads them as "the programme has none".
   ksbMapped: number;
   ksbTotal: number;
   // Learner-consumed KSB progress across the whole programme, from the Component
@@ -1244,6 +1349,8 @@ export interface CurriculumSession {
   legacyModuleId?: string;
   invalidModuleCatalogueId?: string;
   componentId?: string;
+  /** The live-session component's own title, when the caller matched one. Display only. */
+  componentTitle?: string;
   title: string;
   type: string;
   date: string;
@@ -1656,6 +1763,14 @@ export interface CurriculumAuditEvent {
    * person is `actorName`.
    */
   reason: string;
+  /**
+   * `reason` as a phrase that completes "... as part of" ("a cleanup sweep").
+   * Empty when the handler code has no mapped meaning - the row then says only
+   * what it knows, rather than dressing the code up as an explanation.
+   */
+  causeLabel?: string;
+  /** The recorded page's name. Empty when the write had no page. */
+  pageLabel?: string;
   /** Only the fields that actually moved. Empty for a create. */
   changes: CurriculumAuditChange[];
   /**
@@ -1681,12 +1796,21 @@ export interface CurriculumAuditActor {
 }
 
 export interface CurriculumAuditTrail {
+  workspaces?: { value: string; label: string }[];
+  changeWorkspaces?: string[];
   generatedAt: string;
   windowDays: number;
   since: string;
   limit: number;
+  /** Everything that matched the filters, across every page. */
   total: number;
+  /** Which page this is, 1-based. Clamped to the last page when asked for more. */
+  page: number;
+  pageSize: number;
+  /** How many pages the filtered window holds. Never below 1. */
+  pages: number;
   truncated: boolean;
+  /** Counted over the whole window, not the page, so paging does not move them. */
   actionCounts: Record<CurriculumAuditAction, number>;
   entityCounts: Record<string, number>;
   /** Entities whose table could not be read, so the page can name the gap. */
@@ -1795,6 +1919,21 @@ export interface CurriculumActivityPeople {
   shown: number;
   /** The server-side cap that `truncated` reports against. */
   limit: number;
+  /** Which page this is, 1-based. Clamped to the last page when asked for more. */
+  page: number;
+  pageSize: number;
+  /** How many pages the filtered window holds. Never below 1. */
+  pages: number;
+  /** Everyone who matched the filters, across every page. */
+  total: number;
+  /**
+   * The roles held by the people in this window, for the Role filter. Read
+   * from the whole window rather than from the page on screen, which can only
+   * name the roles of the fifty people it carries.
+   */
+  roles: string[];
+  /** Whether anyone in this window has no role recorded. */
+  rolesIncludeBlank: boolean;
   totals: {
     people: number;
     visits: number;
@@ -1859,6 +1998,9 @@ export interface CurriculumActivitySignIn {
 }
 
 export interface CurriculumPersonActivity {
+  accountEventsRecorded?: boolean;
+  accountEventsTruncated?: boolean;
+  accountEvents?: { id: number; at: string; event: 'login' | 'logout'; succeeded: boolean }[];
   generatedAt: string;
   windowDays: number;
   since: string;
@@ -2032,10 +2174,12 @@ export interface FreeProgrammeModule {
   components: FreeProgrammeComponent[];
 }
 
+type ExpandedCurriculumGroup = Omit<CurriculumGroup, 'modules'> & { modules: CurriculumModule[] };
+
 export interface CurriculumProgrammeDetail {
   schema: string;
   programme: CurriculumProgramme;
-  cohorts: Array<CurriculumCohort & { groups: Array<CurriculumGroup & { modules: CurriculumModule[] }> }>;
+  cohorts: Array<Omit<CurriculumCohort, 'groups'> & { groups: ExpandedCurriculumGroup[] }>;
   flat: {
     cohorts: CurriculumCohort[];
     groups: CurriculumGroup[];
@@ -2512,23 +2656,31 @@ function notifyRemoteWrite(path: string): void {
 // ---------------------------------------------------------------------------
 
 const EPOCH_PATH = '/curriculum/cache-epoch/';
-// 4s rather than the 10s before it (and the 25s this shipped with). A reader
-// watching a record somebody else is editing waits half the interval on
-// average, so this is ~2s instead of ~5s -- close enough to instant that a
-// second screen no longer reads as stale, which is the whole point of the
-// counter. Tabs of the same browser hear each other through BroadcastChannel
-// and do not wait for this at all.
+// 2s. This interval used to be a freshness setting; now that the curriculum
+// editors merge a write into an open screen rather than announcing it, it is
+// how long a colleague's typing takes to appear in front of somebody else. A
+// reader waits half the interval on average, so this is ~1s -- the point at
+// which two people on one module stop feeling like two people on two copies.
+// Tabs of the same browser hear each other through BroadcastChannel and do not
+// wait for this at all.
 // What it costs is one authenticated request per open tab: the shared epoch
 // read (Redis where it is configured, otherwise the one-row counter table),
 // plus the single indexed LoginSession lookup every request pays. The
 // last_seen_at write is throttled to 5 minutes (login/sessions.py), so polling
-// faster adds reads, never writes. Below ~3s the request rate stops buying
-// perceptible freshness and starts being felt by the database, so this is the
-// floor rather than a number to keep lowering.
+// faster adds reads, never writes.
+//
+// This is the floor. Below it the request rate buys nothing a person can
+// perceive and starts being felt by the database -- and note what it does NOT
+// buy at any speed: the epoch says only that curriculum changed, so a screen
+// still has to read the record to find out what. That read has its own, longer
+// floor per workspace (LIVE_SYNC_MIN_INTERVAL_MS in the module builder), which
+// is what keeps a busy hour elsewhere in the LMS from becoming a rebuild every
+// two seconds. Making co-editing feel faster than this means pushing the
+// change itself, not asking for it more often.
 // Exported so the tests can advance their fake clock by one tick of whatever
 // this is set to, rather than encoding the number and quietly meaning
 // something else the next time it moves.
-export const EPOCH_POLL_INTERVAL_MS = 4_000;
+export const EPOCH_POLL_INTERVAL_MS = 2_000;
 // The endpoint ships with the backend, and the frontend can be deployed ahead of
 // it. Rather than call a missing URL every few seconds for the life of the tab,
 // give up after a few failures and leave the return-to-tab refresh to cover it.
@@ -3091,6 +3243,15 @@ export function fetchComponentLibrary(options: {
   origins?: LibraryComponentOrigin[];
   page?: number;
   pageSize?: number;
+  /**
+   * Force a server-side rebuild. Only a caller that has just written a
+   * component needs it; the modal opening is not that caller, and paying for a
+   * rebuild there cost seconds on a list nobody had just changed. Left off,
+   * the read still revalidates -- this tab's cache is ignored and the server
+   * answers from its own, which is current for anything written through it.
+   */
+  skipCache?: boolean;
+  revalidate?: boolean;
 } = {}, signal?: AbortSignal): Promise<LibraryComponent[]> {
   const query = new URLSearchParams();
   const search = (options.search || '').trim();
@@ -3104,18 +3265,28 @@ export function fetchComponentLibrary(options: {
   if (options.page) query.set('page', String(options.page));
   if (options.pageSize) query.set('page_size', String(options.pageSize));
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchCollection<LibraryComponent>(`/curriculum/components/library/${suffix}`, { signal, skipCache: true });
+  return fetchCollection<LibraryComponent>(
+    `/curriculum/components/library/${suffix}`,
+    { signal, skipCache: options.skipCache, revalidate: options.revalidate ?? !options.skipCache },
+  );
 }
 
 /**
  * Full authoring detail for specific components — `settings` and `ksbMappings`
  * included. Call this with the ids being copied, never with a whole page.
  */
-export function fetchComponentLibraryDetail(ids: string[], signal?: AbortSignal): Promise<LibraryComponent[]> {
+export function fetchComponentLibraryDetail(
+  ids: string[],
+  signal?: AbortSignal,
+  options: { skipCache?: boolean; revalidate?: boolean } = {},
+): Promise<LibraryComponent[]> {
   const wanted = ids.filter(Boolean);
   if (!wanted.length) return Promise.resolve([]);
   const query = new URLSearchParams({ ids: wanted.join(',') });
-  return fetchCollection<LibraryComponent>(`/curriculum/components/library/?${query.toString()}`, { signal, skipCache: true });
+  return fetchCollection<LibraryComponent>(
+    `/curriculum/components/library/?${query.toString()}`,
+    { signal, skipCache: options.skipCache, revalidate: options.revalidate ?? !options.skipCache },
+  );
 }
 
 export function fetchCurriculumStats(signal?: AbortSignal): Promise<CurriculumOverview['stats']> {
@@ -3127,6 +3298,30 @@ export function fetchCurriculumProgrammes(signal?: AbortSignal, options: { skipC
   if (options.visibility === 'all') query.set('visibility', 'all');
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return fetchCollection<CurriculumProgramme>(`/curriculum/programmes/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate });
+}
+
+/** The KSB numbers a programme card shows, for one programme. See CurriculumProgramme.ksbMapped. */
+export interface ProgrammeKsbStats {
+  programmeId: string;
+  ksbMapped: number;
+  ksbTotal: number;
+  learnerKsbProgressPercentage: number;
+  learnerKsbConsumedWeight: number;
+  learnerKsbExpectedWeight: number;
+  learnerKsbLearnerCount: number;
+  learnerKsbCodesStarted: number;
+  learnerKsbCodesComplete: number;
+  learnerKsbCodesTotal: number;
+}
+
+export function fetchProgrammeKsbStats(id: string, signal?: AbortSignal, options: { visibility?: 'all' | 'operational'; revalidate?: boolean } = {}): Promise<ProgrammeKsbStats> {
+  const query = new URLSearchParams();
+  if (options.visibility === 'all') query.set('visibility', 'all');
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  // 30s like the other curriculum reads: the first caller after a write pays the
+  // programme's authoring-tree read, and a shorter budget aborts a request the
+  // server is still answering.
+  return fetchJson<ProgrammeKsbStats>(`/curriculum/programmes/${encodeURIComponent(id)}/ksb-stats/${suffix}`, { signal, revalidate: options.revalidate, timeoutMs: 30000 });
 }
 
 export function fetchCurriculumGroups(signal?: AbortSignal): Promise<CurriculumGroup[]> {
@@ -3411,7 +3606,7 @@ export function liveSessionArtifactPreviewUrl(liveSessionId: string, artifactId:
 
 export function fetchCurriculumSessions(
   signal?: AbortSignal,
-  options: { skipCache?: boolean; revalidate?: boolean } = {},
+  options: { skipCache?: boolean; revalidate?: boolean; moduleCatalogueId?: string } = {},
 ): Promise<CurriculumSession[]> {
   // Sessions live in the 45s "dynamic" cache tier, so a caller that has just
   // scheduled a module (or opens straight after) can otherwise read a stale
@@ -3419,7 +3614,12 @@ export function fetchCurriculumSessions(
   // the current plan instead of waiting out the TTL. `revalidate` is for the
   // background re-read after somebody else's write: past this tab's cache, but
   // answered from the server's.
-  return fetchCollection<CurriculumSession>('/curriculum/sessions/', { signal, skipCache: options.skipCache, revalidate: options.revalidate });
+  //
+  // `moduleCatalogueId` asks for that one module's sessions, which the server
+  // derives fresh from its own rows every time. Without it, current dates for
+  // one module meant skipCache forcing a rebuild of every session there is.
+  const query = options.moduleCatalogueId ? `?module_catalogue_id=${encodeURIComponent(options.moduleCatalogueId)}` : '';
+  return fetchCollection<CurriculumSession>(`/curriculum/sessions/${query}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate });
 }
 
 // 30s, not 15s: a forced rebuild of the curriculum payload takes ~13s, so a 15s
@@ -3513,6 +3713,8 @@ export function fetchCurriculumAuditTrail(
   options: {
     days?: number;
     limit?: number;
+    /** 1-based. Past the last page is answered with the last page. */
+    page?: number;
     entity?: string;
     action?: string;
     search?: string;
@@ -3548,6 +3750,7 @@ export function fetchCurriculumAuditTrail(
   if (options.source && options.source !== 'all') query.set('source', options.source);
   if (options.actorType && options.actorType !== 'all') query.set('actorType', options.actorType);
   if (options.workspace) query.set('workspace', options.workspace);
+  if (options.page && options.page > 1) query.set('page', String(options.page));
   if (options.scope && options.scopeId) {
     query.set('scope', options.scope);
     query.set('scopeId', options.scopeId);
@@ -3569,12 +3772,27 @@ export function fetchCurriculumAuditTrail(
  * response for the next visit.
  */
 export function fetchActivityPeople(
-  options: { days?: number; search?: string; workspace?: string; signal?: AbortSignal; skipCache?: boolean; revalidate?: boolean } = {},
+  options: {
+    days?: number;
+    search?: string;
+    workspace?: string;
+    /** One role, or `__none__` for the people with no role recorded. */
+    role?: string;
+    /** 1-based. Past the last page is answered with the last page. */
+    page?: number;
+    pageSize?: number;
+    signal?: AbortSignal;
+    skipCache?: boolean;
+    revalidate?: boolean;
+  } = {},
 ): Promise<CurriculumActivityPeople> {
   const query = new URLSearchParams();
   if (options.days) query.set('days', String(options.days));
   if (options.search) query.set('search', options.search);
   if (options.workspace) query.set('workspace', options.workspace);
+  if (options.role) query.set('role', options.role);
+  if (options.page && options.page > 1) query.set('page', String(options.page));
+  if (options.pageSize) query.set('pageSize', String(options.pageSize));
   const suffix = query.toString() ? `?${query.toString()}` : '';
   return fetchJson<CurriculumActivityPeople>(`/activity/people/${suffix}`, {
     signal: options.signal,
@@ -3718,7 +3936,7 @@ export function saveCurriculumProgrammeOrder(order: string[]) {
 }
 
 export function updateCurriculumProgramme(id: string, input: CurriculumProgrammeInput) {
-  return patchJson<{ updated: boolean; programme: CurriculumProgramme }>(`/curriculum/programmes/${encodeURIComponent(id)}/`, input);
+  return patchJson<{ updated: boolean; programme: CurriculumProgramme; revision?: string }>(`/curriculum/programmes/${encodeURIComponent(id)}/`, input);
 }
 
 /**
@@ -3812,7 +4030,7 @@ export function createProgrammeCohort(programmeId: string, input: Omit<Curriculu
 }
 
 export function updateCurriculumCohort(id: string, input: CurriculumCohortInput) {
-  return patchJson<{ updated: boolean; id: string }>(`/curriculum/cohorts/${encodeURIComponent(id)}/`, input);
+  return patchJson<{ updated: boolean; id: string; revision?: string }>(`/curriculum/cohorts/${encodeURIComponent(id)}/`, input);
 }
 
 export function archiveCurriculumCohort(id: string) {
@@ -3828,7 +4046,7 @@ export function createCohortGroup(cohortId: string, input: Omit<CurriculumGroupI
 }
 
 export function updateCurriculumGroup(id: string, input: CurriculumGroupInput) {
-  return patchJson<{ updated: boolean; id: string; teamsCalendarsToUpdate?: StaleTeamsCalendar[] }>(`/curriculum/groups/${encodeURIComponent(id)}/`, input);
+  return patchJson<{ updated: boolean; id: string; revision?: string; teamsCalendarsToUpdate?: StaleTeamsCalendar[] }>(`/curriculum/groups/${encodeURIComponent(id)}/`, input);
 }
 
 export function archiveCurriculumGroup(id: string) {
@@ -4010,16 +4228,20 @@ export interface CurriculumArchivedModuleStructure {
  * every week and component under it. This one returns the set a restore would
  * bring back. Read-only -- there is no PATCH beside it.
  *
- * `skipCache`: the archive is opened in order to act on it, and a module read
- * here is one the reader is about to restore or delete.
+ * `revalidate` by default, matching the three archived-list reads above: the
+ * archive is opened in order to act on it, so this tab's cache must not answer
+ * -- but this endpoint reads its tables directly rather than through the cached
+ * overview payload, so there is no server-side build for `skipCache` to force.
+ * A caller that has just written may still ask for one.
  */
 export function fetchArchivedModuleStructure(
   id: string,
   signal?: AbortSignal,
+  options: { skipCache?: boolean } = {},
 ): Promise<CurriculumArchivedModuleStructure> {
   return fetchJson<CurriculumArchivedModuleStructure>(
     `/curriculum/modules/${encodeURIComponent(id)}/archived-structure/`,
-    { signal, skipCache: true, timeoutMs: 30000 },
+    { signal, skipCache: options.skipCache, revalidate: !options.skipCache, timeoutMs: 30000 },
   );
 }
 
@@ -4265,7 +4487,7 @@ export interface StaleTeamsCalendar {
 }
 
 export function updateCurriculumModule(id: string, input: CurriculumModuleInput) {
-  return patchJson<{ updated: boolean; module: CurriculumModule; teamsCalendarsToUpdate?: StaleTeamsCalendar[] }>(`/curriculum/modules/${encodeURIComponent(id)}/`, input);
+  return patchJson<{ updated: boolean; module: CurriculumModule; revision?: string; teamsCalendarsToUpdate?: StaleTeamsCalendar[] }>(`/curriculum/modules/${encodeURIComponent(id)}/`, input);
 }
 
 export function updateCurriculumModuleCover(id: string, coverImage: string) {
@@ -4335,14 +4557,25 @@ export function archiveCurriculumHoliday(id: string | number) {
  * was last looked at. Deliberately a separate call from the holidays themselves:
  * it is a log, it is only read on that one page, and it must never be cached
  * alongside the dates.
+ *
+ * `revalidate` rather than `skipCache` by default: the log has to be current,
+ * which means not answering from this tab's cache -- but it is read straight
+ * from its table, so forcing a server rebuild bought nothing and made opening
+ * the page wait for one. The caller that has just pressed "check GOV.UK now"
+ * passes `skipCache` for itself.
  */
-export function fetchEnglandHolidaySyncs(signal?: AbortSignal, limit = 20): Promise<{
+export function fetchEnglandHolidaySyncs(
+  signal?: AbortSignal,
+  limit = 20,
+  options: { skipCache?: boolean } = {},
+): Promise<{
   status: EnglandHolidaySyncStatus;
   results: EnglandHolidaySync[];
 }> {
   return fetchJson(`/curriculum/england-holidays/syncs/?limit=${encodeURIComponent(String(limit))}`, {
     signal,
-    skipCache: true,
+    skipCache: options.skipCache,
+    revalidate: !options.skipCache,
   });
 }
 

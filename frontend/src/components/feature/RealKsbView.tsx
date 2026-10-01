@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { AnimatedProgressCircle } from '@/components/ui/AnimatedProgressCircle';
 import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import type { LearnerDetail } from '@/api/learnerDetail';
@@ -48,7 +49,7 @@ function Ring({ percent, colorClass, size = 64, stroke = 6 }: { percent: number;
   return (
     <svg width={size} height={size} className="-rotate-90 shrink-0">
       <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} className="text-background-200" stroke="currentColor" />
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} strokeLinecap="round"
+      <AnimatedProgressCircle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth={stroke} strokeLinecap="round"
         className={colorClass} stroke="currentColor" strokeDasharray={c} strokeDashoffset={c - (Math.min(100, percent) / 100) * c}
         style={{ transition: 'stroke-dashoffset 700ms ease-out' }} />
     </svg>

@@ -54,6 +54,15 @@ function isMeetingDetailEvent(event: CoachCalendarEvent) {
     || event.source === 'student-support';
 }
 
+function meetingDisplayTitle(event: CoachCalendarEvent, isProgressReview: boolean) {
+  const fallback = isProgressReview ? 'Progress Review' : 'Monthly Coaching Meeting';
+  const title = event.title || fallback;
+  const occurrence = event.occurrenceNumber ?? event.sequence;
+  if (!['mcr', 'progress-review'].includes(event.source || '') || /\s#\d+$/i.test(title)) return title;
+  if (occurrence == null) return `${title} — Manual Review`;
+  return `${title} #${occurrence}`;
+}
+
 function HeaderFact({ icon, text }: { icon: string; text: string }) {
   return (
     <span className="inline-flex min-h-7 items-center gap-1.5 rounded-md border border-primary-100 bg-white/80 px-2.5 text-[12px] font-medium text-foreground-700">
@@ -184,7 +193,10 @@ export default function CoachMeetingDetail() {
     const controller = new AbortController();
     setLoading(true);
     setError(null);
-    fetchCoachCalendarEvents(controller.signal)
+    fetchCoachCalendarEvents(controller.signal, {
+      includeLiveSessions: false,
+      includeSchedulerQueues: false,
+    })
       .then((data) => {
         const selected = (data.events || []).find(item => {
           const identityMatches = item.reviewInstanceId === eventKey || eventIdentity(item) === eventKey;
@@ -380,6 +392,9 @@ export default function CoachMeetingDetail() {
     : event?.status === 'awaiting-signature'
       ? 'Sign Form'
       : 'Open Form';
+  const showBookingNotes = Boolean(
+    event && !isProgressReview && !['mcr', 'progress-review', 'review'].includes(event.source || ''),
+  );
 
   return (
     <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle={isProgressReview ? 'Review Details' : 'Meeting Details'} pageSubtitle={isProgressReview ? 'Progress review workspace' : 'Monthly coaching meeting workspace'} userName={ownerName} userRole="Progress Coach">
@@ -391,7 +406,7 @@ export default function CoachMeetingDetail() {
           <>
             <PageHeader
               title={event.learner || (isProgressReview ? 'Progress Review' : 'Coaching Meeting')}
-              description={event.title || (isProgressReview ? 'Progress Review' : 'Monthly Coaching Meeting')}
+              description={meetingDisplayTitle(event, isProgressReview)}
               icon="ri-calendar-event-line"
               backTo={{ to: returnTo, label: backLabel }}
               meta={(
@@ -464,12 +479,14 @@ export default function CoachMeetingDetail() {
                 </div>
               </Panel>
 
-              <Panel className="bg-white">
-                <SectionHeading icon="ri-sticky-note-line" title="Notes" />
-                <p className="mt-4 text-[13px] leading-6 text-foreground-600">
-                  {event.notes || `No notes have been added to this ${isProgressReview ? 'review' : 'meeting'}.`}
-                </p>
-              </Panel>
+              {showBookingNotes ? (
+                <Panel className="bg-white">
+                  <SectionHeading icon="ri-sticky-note-line" title="Notes" />
+                  <p className="mt-4 text-[13px] leading-6 text-foreground-600">
+                    {event.notes || 'No notes have been added to this meeting.'}
+                  </p>
+                </Panel>
+              ) : null}
             </div>
 
             {url ? (

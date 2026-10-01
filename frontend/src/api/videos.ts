@@ -6,6 +6,7 @@ import { learningFetch } from '@/lib/personalLearning';
 // ============================================================================
 
 import { invalidateLearnerDetailCache } from '@/api/learnerDetail';
+import { CompletionValidationError, type WorkingRuleReason } from '@/lib/completionValidation';
 
 const BASE = '/learner_api/videos';
 
@@ -18,11 +19,15 @@ export interface VideoProgressSubmission {
   insideWorkingHoursConfirmed?: boolean;
   insideWorkingHoursConfirmedAt?: string | null;
   outsideWorkingHoursConfirmed?: boolean;
+  /** The working instant the learner declared after their Finish click was
+   *  refused. Omitted on a first, already-valid attempt. */
+  declaredCompletedAt?: string | null;
   trackingToken: string;
   videoTitle?: string | null;
   ksbs?: string[];
   feedback?: string;
   reportedTime?: string;
+  skipReflection?: boolean;
 }
 
 // Slim stored record (references the video by componentId; no name fields).
@@ -33,6 +38,7 @@ export interface VideoProgressRecord {
   ksbs: string[];
   feedback: string;
   reportedTime: string;
+  reflectionSkipped?: boolean;
   startedAt: string | null;
   submittedAt: string;
   timeTaken: string | null;
@@ -45,6 +51,8 @@ export interface VideoProgressRecord {
   insideWorkingHoursConfirmedAt?: string | null;
   outsideWorkingHoursConfirmed?: boolean;
   outsideWorkingHoursConfirmedAt?: string | null;
+  declaredCompletedAt?: string | null;
+  submissionValidationReason?: string;
 }
 
 // The full submit response: the slim record + display fields (not stored).
@@ -63,14 +71,25 @@ async function request<T>(url: string, init?: globalThis.RequestInit): Promise<T
     throw new Error('Could not reach the server. Is the backend running on port 8000?');
   }
   const text = await res.text();
-  let data: { error?: string } | null = null;
+  let data: { error?: string; validation?: { reason?: string; holidayName?: string } } | null = null;
   try {
     data = text ? JSON.parse(text) : null;
   } catch {
     throw new Error(`The server returned an unexpected response (${res.status}).`);
   }
   if (!res.ok) {
-    throw new Error((data && data.error) || `Request failed (${res.status})`);
+    const message = (data && data.error) || `Request failed (${res.status})`;
+    // 409 + validation is the working-rules refusal: nothing was written, and
+    // the caller opens the completion date/time dialog rather than reporting a
+    // failure. Any other 409 stays an ordinary error.
+    if (res.status === 409 && data && data.validation) {
+      throw new CompletionValidationError(
+        message,
+        (data.validation.reason || '') as WorkingRuleReason | '',
+        data.validation.holidayName || '',
+      );
+    }
+    throw new Error(message);
   }
   return data as T;
 }

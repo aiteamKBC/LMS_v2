@@ -160,6 +160,9 @@ export interface ReviewInstanceFormDefinition {
   /** Historical adapters can reuse the Review Workspace without enabling writes. */
   readOnly?: boolean;
   source?: 'curriculum' | 'aptem' | string;
+  /** Imported records can contain summary metadata without any form fields. */
+  formAvailable?: boolean;
+  summaryOnly?: boolean;
   pdf?: { available: boolean; reason: string } | null;
   /** Progress Review only, and null until a coach calculates it. */
   progressSnapshot?: ReviewProgressSnapshot | null;
@@ -212,7 +215,11 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
       : typeof data.error === 'string'
         ? data.error
         : `Request failed with ${response.status}`;
-    throw new Error(message);
+    const diagnostics = [
+      typeof data.code === 'string' ? `Code: ${data.code}` : '',
+      typeof data.request_id === 'string' ? `Reference: ${data.request_id}` : '',
+    ].filter(Boolean);
+    throw new Error(diagnostics.length ? `${message} (${diagnostics.join(' · ')})` : message);
   }
   return data as T;
 }

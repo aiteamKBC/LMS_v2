@@ -1,7 +1,7 @@
 """Learner-facing absence report API backed by Coach.coach_absence_report."""
 import hashlib
 import logging
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timezone as dt_timezone
 from html import escape
 from uuid import uuid4
 
@@ -32,6 +32,7 @@ from .alternative_recovery import (
     alternative_event_key,
     alternative_target_details,
     eligible_alternative_occurrences,
+    eligible_alternatives_by_occurrence,
     validate_alternative_occurrence,
 )
 
@@ -91,6 +92,11 @@ def _fetch_missed_sessions(learner, learner_id, *, meetings=False, kind=None):
         if _can_report_absence(row)
     ]
 
+    # Alternatives for every Teams lecture in one batch, not several queries per lecture.
+    alternatives = eligible_alternatives_by_occurrence([
+        str(row.get("occurrence_id") or row.get("session_id") or "")
+        for row in rows if row.get("source") == "microsoft-teams"
+    ])
     result = []
     for row in rows:
         item = {
@@ -107,8 +113,8 @@ def _fetch_missed_sessions(learner, learner_id, *, meetings=False, kind=None):
             "module": row.get("module_title", "") or "",
         }
         if row.get("source") == "microsoft-teams":
-            item["alternativeSessions"] = eligible_alternative_occurrences(
-                str(row.get("occurrence_id") or row.get("session_id") or "")
+            item["alternativeSessions"] = alternatives.get(
+                str(row.get("occurrence_id") or row.get("session_id") or ""), []
             )
         result.append(item)
     return result
@@ -245,8 +251,77 @@ def _email_coach_recovery(report, *, recovery_details=""):
         logger.exception("Coach recovery email failed for absence report %s", report.id)
 
 
-def _catchup_booking(learner, mirror, event_key, session_date, *, lock=False):
-    """Recheck the saved appointment; matching IDs never override another email."""
+def alternative_invite_ics(report, occurrence, title, join_url):
+    """A one-event calendar file for the learner's own calendar (METHOD:PUBLISH).
+
+    It never touches the other group's Teams meeting, so nobody else is emailed.
+    """
+    def stamp(value):
+        instant = value if timezone.is_aware(value) else timezone.make_aware(value, dt_timezone.utc)
+        return instant.astimezone(dt_timezone.utc).strftime('%Y%m%dT%H%M%SZ')
+
+    def text(value):
+        # RFC 5545 TEXT escaping.
+        return (str(value or '').replace('\\', '\\\\').replace(';', '\\;')
+                .replace(',', '\\,').replace('\n', '\\n'))
+
+    end = occurrence.scheduled_end or occurrence.scheduled_start
+    lines = [
+        'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Kent Business College//LMS//EN', 'METHOD:PUBLISH',
+        'BEGIN:VEVENT',
+        f'UID:absence-alternative-{report.id}@kbc-lms',
+        f'DTSTAMP:{stamp(timezone.now())}',
+        f'DTSTART:{stamp(occurrence.scheduled_start)}',
+        f'DTEND:{stamp(end)}',
+        f'SUMMARY:{text("Alternative session: " + title)}',
+        f'DESCRIPTION:{text(f"Make-up session for {report.session_title}. Join on Microsoft Teams: {join_url}")}',
+        'LOCATION:Microsoft Teams',
+        *([f'URL:{join_url}'] if join_url else []),
+        'END:VEVENT', 'END:VCALENDAR',
+    ]
+    return ('\r\n'.join(lines) + '\r\n').encode('utf-8')
+
+
+def _email_learner_alternative_invite(report, target_occurrence_id):
+    """Email the learner a calendar invite for the alternative session they chose."""
+    from curriculum_api.models import LiveSession, LiveSessionOccurrence
+    try:
+        occurrence = LiveSessionOccurrence.objects.using('enrolment').filter(pk=target_occurrence_id).first()
+        session = LiveSession.objects.using('enrolment').filter(pk=occurrence.live_session_id).first() if occurrence else None
+        if not occurrence or not session or not report.learner_email:
+            return
+        details = alternative_target_details(report.catchup_event_key, include_join_url=True) or {}
+        title = details.get('title') or session.module_title or 'Live session'
+        join_url = details.get('joinUrl') or occurrence.join_url or session.join_url or ''
+        when = f"{details.get('dateIso', '')} {details.get('startTime', '')}–{details.get('endTime', '')} (UK time)".strip()
+        html_body = (
+            f"<p>Your alternative session for <strong>{escape(report.session_title)}</strong> is booked.</p>"
+            f"<p><strong>{escape(title)}</strong><br>{escape(when)}<br>{escape(details.get('group') or '')}</p>"
+            "<p>Open the attached invite to add it to your Outlook or Teams calendar.</p>"
+            + (f'<p><a href="{escape(join_url)}">Join on Microsoft Teams</a></p>' if join_url else '')
+        )
+        sent, detail = email_azure.send_mail(
+            to=report.learner_email,
+            subject=f"Alternative session booked: {title}",
+            html_body=html_body,
+            text_body=f"Your alternative session for {report.session_title} is booked: {title}, {when}. {join_url}",
+            sender_name="Kent Business College LMS",
+            attachments=[{'name': 'alternative-session.ics', 'content_type': 'text/calendar',
+                          'content': alternative_invite_ics(report, occurrence, title, join_url)}],
+        )
+        if not sent:
+            logger.warning("Alternative session invite was not sent for absence report %s: %s", report.id, detail)
+    except Exception:
+        logger.exception("Alternative session invite failed for absence report %s", report.id)
+
+
+def _catchup_booking(learner, mirror, event_key, session_date, *, lock=False, for_report_id=None):
+    """Recheck the saved appointment; matching IDs never override another email.
+
+    One catch-up makes up one lecture: a booking already linked to another
+    (not declined) absence report is refused. ``for_report_id`` is the report
+    being (re)linked, which may keep its own booking.
+    """
     query = CoachCalendarEvent.objects
     if lock:
         query = query.select_for_update()
@@ -264,6 +339,11 @@ def _catchup_booking(learner, mirror, event_key, session_date, *, lock=False):
     start = datetime.combine(booking.scheduled_date, booking.scheduled_time)
     if booking.scheduled_date < session_date or start <= timezone.localtime().replace(tzinfo=None):
         raise RecoveryPlanError('Choose a future catch-up session on or after the lecture date.')
+    linked = CoachAbsenceReport.objects.filter(catchup_event_key=event_key).exclude(status='declined')
+    if for_report_id is not None:
+        linked = linked.exclude(pk=for_report_id)
+    if linked.exists():
+        raise RecoveryPlanError('This catch-up is already linked to another lecture. Book or select another session.')
     return booking
 
 
@@ -549,4 +629,6 @@ def learner_absence_reports(request, kind, learner_id):
         target = alternative or {}
         recovery_details = " ".join(filter(None, [target.get('dateIso'), target.get('startTime'), target.get('group')]))
     _email_coach_recovery(report, recovery_details=recovery_details)
+    if recovery_method == ALTERNATIVE_METHOD:
+        _email_learner_alternative_invite(report, target_occurrence_id)
     return JsonResponse(_serialize(report), status=201)

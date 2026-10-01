@@ -717,6 +717,173 @@ class InvitationTests(LoginTestBase):
         self.assertEqual(self.client.get(f"/login_api/invitation/?token={token}").status_code, 400)
 
 
+class InvitationLinkTests(LoginTestBase):
+    """Copyable set-password links, for learners whose employer blocks our email."""
+
+    def _learner(self, email=None):
+        from learner_api.models import EnrolmentUser
+
+        learner = EnrolmentUser.objects.create(
+            username="Blocked Learner", email=email or f"qa-learner-{uuid.uuid4().hex[:10]}@kbc.invalid",
+            learner_type="commercial",
+        )
+        self.addCleanup(lambda: EnrolmentUser.all_learners.filter(pk=learner.pk).delete())
+        return learner
+
+    def _issue(self, learner, inviter):
+        from .services import issue_invitation_link
+
+        with mock.patch("learner_api.learner_progression.advance_learner_by_id") as advance:
+            outcome = issue_invitation_link("learner", learner.id, inviter=inviter)
+        account = identity.account_for_subject("learner", learner.id)
+        if account is not None and account not in self._accounts:
+            self._accounts.append(account)
+        return outcome, account, advance
+
+    def test_staff_get_a_working_link_that_counts_as_the_invitation(self):
+        from .invitations import peek_invitation
+
+        staff = self.make_account(position="Enrolment Officer")
+        learner = self._learner()
+        outcome, account, advance = self._issue(learner, staff)
+        self.assertTrue(outcome["accountCreated"])
+        self.assertIn("/set-password?token=", outcome["link"])
+        token = outcome["link"].split("token=", 1)[1]
+        self.assertEqual(peek_invitation(token)["email"], account.email)
+        invitation = Invitation.objects.get(account_id=account.id)
+        self.assertIsNotNone(invitation.sent_at)
+        self.assertEqual(invitation.invited_by, staff.email)
+        advance.assert_called_once_with(learner.id)
+        self.assertTrue(LoginAudit.objects.filter(account_id=account.id, event="invite_sent", reason__contains="not emailed").exists())
+
+    def test_a_new_link_replaces_the_previous_one(self):
+        from .invitations import TokenError, peek_invitation
+
+        staff = self.make_account(position="Enrolment Officer")
+        learner = self._learner()
+        first, _, _ = self._issue(learner, staff)
+        second, _, _ = self._issue(learner, staff)
+        with self.assertRaises(TokenError):
+            peek_invitation(first["link"].split("token=", 1)[1])
+        peek_invitation(second["link"].split("token=", 1)[1])
+
+    def test_no_link_for_someone_who_already_has_a_password(self):
+        staff = self.make_account(position="Enrolment Officer")
+        learner = self._learner()
+        account, _ = identity.ensure_account("learner", learner.id, subject=learner)
+        account.password_hash = hash_password(self.password)
+        account.password_set_at = timezone.now()
+        account.save()
+        self._accounts.append(account)
+        outcome, _, advance = self._issue(learner, staff)
+        self.assertIsNone(outcome["link"])
+        self.assertIn("already set a password", outcome["error"])
+        self.assertFalse(Invitation.objects.filter(account_id=account.id).exists())
+        advance.assert_not_called()
+
+    def test_learners_and_anonymous_callers_cannot_mint_links(self):
+        from .services import issue_invitation_link
+
+        learner = self._learner()
+        other = self._learner()
+        account, _ = identity.ensure_account("learner", other.id, subject=other)
+        self._accounts.append(account)
+        for inviter in (None, account):
+            outcome = issue_invitation_link("learner", learner.id, inviter=inviter)
+            self.assertTrue(outcome["forbidden"])
+            self.assertIsNone(outcome["link"])
+        self.assertIsNone(identity.account_for_subject("learner", learner.id))
+
+    def test_only_learners_get_copyable_links(self):
+        from .services import issue_invitation_link
+
+        staff = self.make_account(position="Enrolment Officer")
+        outcome = issue_invitation_link("staff", self._staff.id, inviter=staff)
+        self.assertIsNone(outcome["link"])
+        self.assertIn("only be copied for learners", outcome["error"])
+
+
+class DefaultLearnerPasswordTests(LoginTestBase):
+    """changeme_password: a learner's first sign-in hands back their set-password link, never a session."""
+
+    def _learner(self):
+        from learner_api.models import EnrolmentUser
+
+        learner = EnrolmentUser.objects.create(username="Default Learner", email=self.email, learner_type="commercial")
+        self.addCleanup(lambda: EnrolmentUser.all_learners.filter(pk=learner.pk).delete())
+        return learner
+
+    def _login(self, password):
+        # RequestFactory, not the test Client: see PasswordResetTests._forgot_request.
+        from django.test import RequestFactory
+
+        from .sessions import COOKIE_NAME
+        from .views import login
+
+        request = RequestFactory().post(
+            "/login_api/login/", data=json.dumps({"email": self.email, "password": password}),
+            content_type="application/json", **XHR,
+        )
+        with mock.patch("learner_api.learner_progression.advance_learner_by_id"):
+            response = login(request)
+        self.assertNotIn(COOKIE_NAME, response.cookies)
+        return response
+
+    def _track(self, learner):
+        account = identity.account_for_subject("learner", learner.id)
+        if account is not None and account not in self._accounts:
+            self._accounts.append(account)
+        return account
+
+    def test_new_learner_is_sent_to_set_their_password_without_a_session(self):
+        from .invitations import peek_invitation
+
+        learner = self._learner()
+        response = self._login("changeme_password")
+        body = json.loads(response.content)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(body["passwordSetupRequired"])
+        self.assertTrue(body["setPasswordPath"].startswith("/set-password?token="))
+        self.assertNotIn("user", body)
+        account = self._track(learner)
+        self.assertEqual(peek_invitation(body["setPasswordPath"].split("token=", 1)[1])["email"], account.email)
+        self.assertFalse(LoginSession.objects.filter(account_id=account.id).exists())
+
+    def test_invited_learner_without_a_password_gets_the_same(self):
+        learner = self._learner()
+        account, _ = identity.ensure_account("learner", learner.id, subject=learner)
+        self._accounts.append(account)
+        self.assertTrue(json.loads(self._login("changeme_password").content)["passwordSetupRequired"])
+
+    def test_it_stops_working_once_the_learner_has_a_password(self):
+        learner = self._learner()
+        account, _ = identity.ensure_account("learner", learner.id, subject=learner)
+        account.password_hash = hash_password(self.password)
+        account.password_set_at = timezone.now()
+        account.save()
+        self._accounts.append(account)
+        self.assertEqual(self._login("changeme_password").status_code, 401)
+        self.assertFalse(Invitation.objects.filter(account_id=account.id).exists())
+
+    def test_staff_without_a_password_cannot_use_it(self):
+        staff = self.make_account(position="Coach", with_password=False)
+        self.assertEqual(self._login("changeme_password").status_code, 401)
+        self.assertFalse(Invitation.objects.filter(account_id=staff.id).exists())
+
+    def test_a_wrong_password_still_fails_for_a_new_learner(self):
+        learner = self._learner()
+        self.assertEqual(self._login("something-else-entirely").status_code, 401)
+        self.assertIsNone(self._track(learner))
+
+    def test_the_default_cannot_be_kept_as_the_new_password(self):
+        from .security import PasswordPolicyError, validate_password_strength
+
+        with self.assertRaises(PasswordPolicyError):
+            validate_password_strength("changeme_password")
+        with self.assertRaises(PasswordPolicyError):
+            validate_password_strength("ChangeMe_Password")
+
+
 class PasswordResetTests(LoginTestBase):
     def test_forgot_password_does_not_disclose_whether_an_account_exists(self):
         self.make_account()
@@ -728,6 +895,87 @@ class PasswordResetTests(LoginTestBase):
         self.assertEqual(known.status_code, 200)
         self.assertEqual(unknown.status_code, 200)
         self.assertEqual(known.json(), unknown.json())
+
+    def _enrolled_learner(self):
+        from learner_api.models import EnrolmentUser
+
+        learner = EnrolmentUser.objects.create(
+            username="Forgot Learner", email=self.email, learner_type="commercial",
+        )
+        self.addCleanup(lambda: EnrolmentUser.all_learners.filter(pk=learner.pk).delete())
+        return learner
+
+    def _forgot_request(self, email):
+        # RequestFactory rather than the test Client: the Client's end-of-request
+        # signal closes the pooled connection, which the enclosing TestCase
+        # transaction then cannot reopen on the Neon test branch.
+        from django.test import RequestFactory
+
+        from .views import forgot_password
+
+        request = RequestFactory().post(
+            "/login_api/forgot-password/", data=json.dumps({"email": email}),
+            content_type="application/json", **XHR,
+        )
+        return forgot_password(request)
+
+    def _forgot(self):
+        response = self._forgot_request(self.email)
+        self.assertEqual(response.status_code, 200)
+        unknown = self._forgot_request(f"absent-{uuid.uuid4().hex[:8]}@kbc.invalid")
+        # Whatever happened behind it, the answer never says.
+        self.assertEqual(json.loads(response.content), json.loads(unknown.content))
+        return response
+
+    def test_enrolled_learner_without_an_account_is_sent_the_set_password_invitation(self):
+        learner = self._enrolled_learner()
+        self._forgot()
+        account = LoginAccount.objects.get(subject_type="learner", subject_id=learner.id)
+        self._accounts.append(account)
+        self.assertEqual((account.role, account.is_active, account.has_password), ("learner", True, False))
+        self.assertEqual(Invitation.objects.filter(account_id=account.id).count(), 1)
+        self.assertFalse(PasswordReset.objects.filter(account_id=account.id).exists())
+
+    def test_invited_learner_who_never_set_a_password_gets_the_invitation_not_a_reset(self):
+        learner = self._enrolled_learner()
+        account, _ = identity.ensure_account("learner", learner.id, subject=learner)
+        self._accounts.append(account)
+        self._forgot()
+        self.assertEqual(Invitation.objects.filter(account_id=account.id).count(), 1)
+        self.assertFalse(PasswordReset.objects.filter(account_id=account.id).exists())
+
+    def test_staff_without_a_password_and_anyone_with_one_still_get_a_reset(self):
+        staff = self.make_account(position="Coach", with_password=False)
+        self._forgot()
+        self.assertTrue(PasswordReset.objects.filter(account_id=staff.id).exists())
+        self.assertFalse(Invitation.objects.filter(account_id=staff.id).exists())
+
+    def test_a_deactivated_learner_account_is_never_revived(self):
+        learner = self._enrolled_learner()
+        account, _ = identity.ensure_account("learner", learner.id, subject=learner)
+        account.is_active = False
+        account.save(update_fields=["is_active"])
+        self._accounts.append(account)
+        self._forgot()
+        account.refresh_from_db()
+        self.assertFalse(account.is_active)
+        self.assertFalse(Invitation.objects.filter(account_id=account.id).exists())
+        self.assertEqual(LoginAccount.objects.filter(subject_type="learner", subject_id=learner.id).count(), 1)
+
+    def test_set_password_invitations_share_the_reset_email_allowance(self):
+        from .security import THROTTLE_MAX_RESETS_PER_EMAIL
+
+        learner = self._enrolled_learner()
+        for _ in range(THROTTLE_MAX_RESETS_PER_EMAIL + 2):
+            self._forgot_request(self.email)
+        account = LoginAccount.objects.get(subject_type="learner", subject_id=learner.id)
+        self._accounts.append(account)
+        self.assertTrue(LoginAudit.objects.filter(email=self.email, event="login", reason="reset_throttled").exists())
+        # Each invitation supersedes the last; what matters is how many were sent.
+        self.assertEqual(
+            LoginAudit.objects.filter(email=self.email, event="reset_requested").count(),
+            THROTTLE_MAX_RESETS_PER_EMAIL,
+        )
 
     def test_completing_a_reset_changes_the_password(self):
         account = self.make_account()

@@ -32,7 +32,7 @@ class MetricsMergeTests(unittest.TestCase):
         cursor = connections.__getitem__.return_value.cursor.return_value.__enter__.return_value
         cursor.fetchone.return_value = (12, ['progress:1'])
         sentinel = object()
-        ns = {'_MISSING': sentinel, 'connections': connections, 'number': float,
+        ns = {'canonical_learning': SimpleNamespace(enabled=lambda _: False), '_MISSING': sentinel, 'connections': connections, 'number': float,
               'read_planned_hours': Mock(return_value=99), 'read_aptem_planned_total': Mock(return_value=410),
               'rows': Mock(return_value=[]), 'DatabaseError': ReadError, 'psycopg': SimpleNamespace(Error=ReadError),
               'read_accepted_ksb_rows': Mock(return_value=[{'source_ref': 'progress:1'}]),

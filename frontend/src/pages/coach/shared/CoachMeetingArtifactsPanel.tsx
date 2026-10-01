@@ -80,6 +80,24 @@ function artifactKey(artifact: CoachMeetingArtifact) {
   return `${type}-${artifact.graph_artifact_id || artifact.id}`;
 }
 
+function combinedTranscriptArtifact(artifacts: CoachMeetingArtifact[]): CoachMeetingArtifact | null {
+  if (!artifacts.length) return null;
+  const latest = artifacts[artifacts.length - 1];
+  return {
+    ...latest,
+    id: 'combined',
+    artifact_type: 'transcript',
+    graph_artifact_id: 'combined',
+    content_correlation_id: undefined,
+    metadata: {
+      ...(latest.metadata || {}),
+      combined: true,
+      segmentCount: artifacts.length,
+      sourceArtifactIds: artifacts.map(artifact => artifact.graph_artifact_id || artifact.id),
+    },
+  };
+}
+
 function durationLabel(seconds?: number) {
   const totalSeconds = Math.max(0, Math.round(Number(seconds || 0)));
   if (!totalSeconds) return '0 min';
@@ -694,8 +712,12 @@ export function CoachMeetingArtifactsPanel({
 
   const grouped = useMemo(() => {
     if (state.status !== 'ready') return { transcripts: [], recordings: [] };
+    const transcriptSegments = state.artifacts.filter(
+      artifact => artifact.artifact_type === 'transcript' && visibleArtifactTypes.includes('transcript'),
+    );
+    const combinedTranscript = combinedTranscriptArtifact(transcriptSegments);
     return {
-      transcripts: state.artifacts.filter(artifact => artifact.artifact_type === 'transcript' && visibleArtifactTypes.includes('transcript')),
+      transcripts: combinedTranscript ? [combinedTranscript] : [],
       recordings: state.artifacts.filter(artifact => artifact.artifact_type === 'recording' && visibleArtifactTypes.includes('recording')),
     };
   }, [state, visibleArtifactTypes]);

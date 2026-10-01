@@ -98,6 +98,36 @@ def mark_run_completed(run_id):
     _record_run(run_id)
 
 
+def mark_run_draft(run_id):
+    """Mark a generated/uploaded deck as ready for its owner to review.
+
+    A draft has a stored PPTX and source snapshot, but it is deliberately not
+    exposed as the learner-facing completed deck until ``publish_run`` runs.
+    """
+    with _conn().cursor() as cur:
+        cur.execute(
+            '''update "Learner"."progress_review_runs"
+               set generation_status = 'draft', generated_at = now(), updated_at = now()
+               where id = %s''',
+            [run_id],
+        )
+    _record_run(run_id)
+
+
+def publish_run(run_id):
+    """Publish one owner's draft without changing its immutable file."""
+    with _conn().cursor() as cur:
+        cur.execute(
+            '''update "Learner"."progress_review_runs"
+               set generation_status = 'completed', updated_at = now()
+               where id = %s and generation_status = 'draft' ''',
+            [run_id],
+        )
+        changed = cur.rowcount
+    _record_run(run_id)
+    return bool(changed)
+
+
 def mark_run_failed(run_id, errors: list):
     with _conn().cursor() as cur:
         cur.execute(
@@ -209,7 +239,30 @@ def get_latest_run_for_period(learner_id, review_date, review_kind="progress_rev
             select id, generation_status, generated_at, created_at, revision_source
               from "Learner"."progress_review_runs"
              where learner_id = %s and review_date = %s and review_kind = %s
-             order by created_at desc
+               and generation_status in ('draft', 'completed')
+             order by updated_at desc, created_at desc, id desc
+             limit 1
+            ''',
+            [learner_id, review_date, review_kind],
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        columns = [c[0] for c in cur.description]
+        return dict(zip(columns, row))
+
+
+def get_latest_completed_run_for_period(learner_id, review_date, review_kind="progress_review"):
+    """The newest published deck for an exact learner/review period."""
+    ensure_progress_review_tables()
+    with _conn().cursor() as cur:
+        cur.execute(
+            '''
+            select id, generation_status, generated_at, created_at, revision_source
+              from "Learner"."progress_review_runs"
+             where learner_id = %s and review_date = %s and review_kind = %s
+               and generation_status = 'completed'
+             order by updated_at desc, created_at desc, id desc
              limit 1
             ''',
             [learner_id, review_date, review_kind],

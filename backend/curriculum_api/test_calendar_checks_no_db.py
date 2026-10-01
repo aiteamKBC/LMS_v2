@@ -1,6 +1,7 @@
 """Run directly with Python. No Django imports, DB setup, credentials or network."""
 import ast
 import copy
+import hashlib
 import importlib.util
 import logging
 import re
@@ -21,6 +22,10 @@ checks = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(checks)
 
 
+#: What a Graph write carries when the author chose not to email.
+SILENT_INVITE = {'Prefer': 'outlook.send-invitations="none"'}
+
+
 class Response(dict):
     def __init__(self, data, status=200):
         super().__init__(data)
@@ -34,13 +39,14 @@ class CalendarChecksTests(unittest.TestCase):
         self.network.start()
         self.addCleanup(self.network.stop)
         self.events, self.instances, self.calls, self.headers, self.series, self.tracked = {}, [], [], [], [], []
+        self.forwards = []
         self.instances_by_master = {}
         self.options_ok = True
         self.attach = Mock()
         self.corrupt = ''
         self.payload = self.make_payload()
         self.v = types.ModuleType('curriculum_api.views')
-        self.v.__dict__.update(datetime=datetime, timedelta=timedelta, timezone=timezone, ZoneInfo=ZoneInfo,
+        self.v.__dict__.update(datetime=datetime, timedelta=timedelta, timezone=timezone, ZoneInfo=ZoneInfo, hashlib=hashlib,
                               escape=escape, re=re, urllib_parse=urllib_parse, logger=logging.getLogger('calendar-test'),
                               TEAMS_REPEAT_VALUES={'none', 'weekly', 'daily', 'weekdays'},
                               TEAMS_LOBBY_VALUES={'invited', 'organizer', 'everyone'}, DEFAULT_TEAMS_LOBBY_BYPASS='everyone', LIVE_SESSIONS_TABLE='series', LIVE_SESSION_OCCURRENCES_TABLE='occurrences',
@@ -54,24 +60,43 @@ class CalendarChecksTests(unittest.TestCase):
                               CalendarMismatch=checks.CalendarMismatch, safe_teams_join_url=checks.safe_teams_join_url,
                               utc_datetime=checks.utc_datetime, graph_calendar_time=checks.graph_calendar_time,
                               verify_calendar=checks.verify_calendar, publish_attendees=checks.publish_attendees,
+                              attendee_differences=checks.attendee_differences,
+                              attendees_already_match=checks.attendees_already_match,
+                              event_organizer_address=checks.event_organizer_address,
+                              unconfirmed_attendee_detail=checks.unconfirmed_attendee_detail,
                               teams_meeting_default_organizer=lambda: '', teams_new_meeting_organizer=lambda value: value,
                               json_body=lambda request: self.payload, ensure_live_sessions_table=lambda: None,
                               ensure_live_session_tracking_tables=lambda: None,
                               resolve_authoring_catalogue_id=lambda value: value, authoring_module_exists=lambda _: True,
+                              resolve_stored_module_catalogue_id=lambda value: value,
                               authoring_fetch_all=self.fetch_rows, has_column=lambda *args: True,
                               calendar_groups=lambda *args: [], stored_calendar_series=lambda _: [],
                               teams_non_delivery_reason=lambda *args, **kwargs: '',
                               truthy=lambda value: str(value).strip().lower() in {'1', 'true', 'yes', 'on'},
                               graph_event_utc=self.utc_event, persist_live_session_series=self.persist_series,
                               replace_live_session_occurrences=self.persist_occurrences,
+                              held_schedule_snapshot=lambda _live_session_id: [],
+                              with_schedule_change_notice=lambda response, _live_session_id, _before: response,
                               update_authoring_rows=self.update_series, json_db_value=lambda value: value,
                               apply_teams_meeting_options=lambda *args, **kwargs: (self.options_ok, {'id': 'online-1'}, []),
                               teams_series_email_list=lambda value: value or [],
-                              persist_recreated_occurrence_details=lambda *args: None)
+                              persist_recreated_occurrence_details=self.persist_recreated_details,
+                              # The instance read waits for Microsoft to finish expanding a
+                              # recurrence. A test double answers at once, so the wait is a
+                              # no-op here rather than real seconds on every short series.
+                              time=types.SimpleNamespace(sleep=lambda _seconds: None))
         names = {'clean_str', 'parse_graph_datetime', 'teams_attendee_emails', 'teams_event_body_html',
-                 'teams_event_payload', 'teams_calendar_minute_key', 'teams_shifted_occurrence_targets',
+                 'teams_event_payload', 'teams_single_occurrence_payload', 'teams_calendar_minute_key',
+                 'teams_shifted_occurrence_targets', 'teams_expanded_instances',
+                 'teams_standalone_occurrence_meeting',
                  'apply_teams_occurrence_shifts', 'curriculum_teams_meeting', 'curriculum_teams_meeting_schedule',
-                 'reschedule_single_live_session_occurrence', 'teams_schedule_settings'}
+                 # The occurrence-deletion rule and the sentence a refusal is reported with.
+                 'parse_int', 'vacated_occurrence_keys', 'tracked_occurrence_keys', 'execute_teams_occurrence_deletions',
+                 'teams_warning_sentence',
+                 'verify_teams_calendar_with_standalones', 'publish_teams_calendar_attendees',
+                 'teams_newly_invited', 'forward_teams_invitation',
+                 'reschedule_single_live_session_occurrence', 'saved_live_session_occurrences',
+                 'teams_schedule_settings'}
         tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8-sig'))
         for node in tree.body:
             if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == 'GRAPH_SILENT_INVITE_HEADERS' for target in node.targets):
@@ -88,8 +113,8 @@ class CalendarChecksTests(unittest.TestCase):
         self.addCleanup(self.modules.stop)
 
     def make_payload(self, hour=0):
-        dates = ['2026-09-17', '2026-10-08', '2026-10-15', '2026-10-22', '2026-10-29',
-                 '2026-11-05', '2026-11-12', '2026-11-19', '2026-11-26', '2026-12-03', '2026-12-10', '2026-12-17']
+        dates = ['2026-09-17', '2026-09-24', '2026-10-08', '2026-10-15', '2026-10-22', '2026-10-29',
+                 '2026-11-05', '2026-11-12', '2026-11-19', '2026-11-26', '2026-12-03', '2026-12-10']
         starts = [datetime.fromisoformat(day).replace(hour=hour, tzinfo=ZoneInfo('Europe/London')).astimezone(timezone.utc) for day in dates]
         return {'title': 'Synthetic', 'moduleCatalogueId': 'MOD-SYNTHETIC', 'organizerEmail': 'organizer@example.invalid',
                 'attendees': ['learner@example.invalid'], 'presenters': [], 'coOrganizers': [],
@@ -120,6 +145,12 @@ class CalendarChecksTests(unittest.TestCase):
         self.tracked = copy.deepcopy(payload['scheduledOccurrences'])
         return self.tracked
 
+    def persist_recreated_details(self, live_id, details):
+        by_number = {int(item['sessionNumber']): item for item in self.tracked}
+        for detail in details:
+            row = by_number[int(detail['session_number'])]
+            row.update(detail)
+
     def update_series(self, table, where, params, values):
         if self.series:
             self.series[0].update(values)
@@ -145,6 +176,13 @@ class CalendarChecksTests(unittest.TestCase):
             self.assertEqual(extra_headers, {'Prefer': 'outlook.send-invitations="none"'})
         self.headers.append((method, path, copy.deepcopy(extra_headers), copy.deepcopy(payload)))
         self.calls.append((method, path, copy.deepcopy(payload)))
+        if method == 'POST' and path.endswith('/forward'):
+            # Graph accepts a forward and returns nothing. It is the one write
+            # that reaches named people only, so a people-only save uses it to
+            # invite whoever it added without mailing everyone already invited.
+            self.forwards.append((urllib_parse.unquote(path.split('/')[-2]),
+                                  [item['emailAddress']['address'] for item in (payload or {}).get('ToRecipients', [])]))
+            return {}
         if method == 'POST':
             event_id = f'event-{len(self.events) + 1}'
             event = {**copy.deepcopy(payload), 'id': event_id, 'onlineMeeting': {'joinUrl': f'https://teams.microsoft.com/meet/synthetic-{event_id}'}, 'isCancelled': False}
@@ -185,6 +223,9 @@ class CalendarChecksTests(unittest.TestCase):
         result = self.create()
         self.assertEqual(result.status_code, 201, result)
         module_id, saved, settings, occurrences = self.attach.call_args.args
+        # Sending a calendar only links components the author already added;
+        # missing weeks stay content-only until Restore/Re-attach is requested.
+        self.assertFalse(self.attach.call_args.kwargs.get('create_missing'))
         self.assertEqual(module_id, 'MOD-SYNTHETIC')
         self.assertEqual(saved['id'], 'LIVE-SYNTHETIC')
         self.assertEqual(settings['liveSessionUrl'], result['meeting']['joinUrl'])
@@ -220,12 +261,12 @@ class CalendarChecksTests(unittest.TestCase):
         result = self.create()
         self.assertEqual(result.status_code, 201, result)
         self.assertEqual(self.events['event-1']['recurrence']['pattern']['daysOfWeek'], ['thursday'])
-        self.assertEqual(self.events['event-1']['recurrence']['range']['numberOfOccurrences'], 14)
+        self.assertEqual(self.events['event-1']['recurrence']['range']['numberOfOccurrences'], 13)
         self.assertEqual(len(self.instances), 12)
         self.assertEqual(len(self.tracked), 12)
         deletes = [i for i, call in enumerate(self.calls) if call[0] == 'DELETE']
         invitations = [i for i, call in enumerate(self.calls) if call[0] == 'PATCH' and 'attendees' in call[2]]
-        self.assertEqual(len(deletes), 2)
+        self.assertEqual(len(deletes), 1)
         self.assertEqual(len(invitations), 1)
         self.assertLess(max(deletes), invitations[0])
         self.assertTrue(self.events['event-1']['hideAttendees'])
@@ -259,6 +300,32 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertEqual(self.create().status_code, 502)
         self.assertFalse(self.events['event-1']['attendees'])
 
+    def test_an_update_refused_after_preparation_has_cancelled_nothing(self):
+        """A later validation failure must not find occurrences already deleted.
+
+        The deletes used to run inside the schedule shift, several Graph calls
+        before the meeting-option check could reject the whole update -- so an
+        author whose update was refused had already had Exchange tell the cohort
+        a session was cancelled. They are issued last now, after everything that
+        can still refuse has run.
+        """
+        self.assertEqual(self.create().status_code, 201)
+        shifted = []
+        for index, item in enumerate(self.payload['scheduledOccurrences']):
+            start = datetime.fromisoformat(item['startDateTimeUtc'])
+            # Move one session a day on -- genuine cleanup to hold back, and no
+            # collision with the session that follows it.
+            shifted.append({**item, 'startDateTimeUtc': (start + timedelta(days=1)).isoformat()} if index == 2 else item)
+        self.payload.update(scheduledOccurrences=shifted, notifyAttendees=False)
+        self.options_ok = False
+        self.calls.clear()
+
+        result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
+
+        self.assertEqual(result.status_code, 502, result)
+        self.assertFalse([item for item in self.calls if item[0] == 'DELETE'],
+                         'a refused update deleted a Microsoft occurrence anyway')
+
     def test_overlapping_sessions_rejected_before_graph(self):
         self.payload['scheduledOccurrences'][1]['startDateTimeUtc'] = self.payload['startDateTimeUtc']
         self.assertEqual(self.create().status_code, 400)
@@ -270,33 +337,64 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertEqual(self.create().status_code, 409)
         self.assertFalse(self.calls)
 
-    def test_people_only_save_does_not_reset_recurrence_or_duplicate_mail(self):
+    def test_people_only_save_writes_the_new_list_silently_without_resetting_recurrence(self):
+        """Changing who is invited changes who is invited, with or without mail.
+
+        This save used to write the new list to the online meeting only and to
+        leave the calendar event attendees alone unless the author had ticked
+        the review email box, so an author who chose not to email got a meeting
+        whose invitation list never changed. The list is written either way now;
+        only the Prefer header differs, and for a people-only save it is always
+        the silent one -- correcting who is invited is not news for everyone who
+        already was. The recurrence must still be left alone, and a second
+        identical save must still write nothing at all.
+        """
         self.assertEqual(self.create().status_code, 201)
         before = copy.deepcopy(self.instances)
         self.payload.update(peopleOnly=True, attendees=['replacement@example.invalid'])
         self.v.apply_teams_meeting_options = Mock(return_value=(True, {'id': 'online-1'}, []))
         self.calls.clear()
+        self.headers.clear()
         result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
         self.assertEqual(result.status_code, 200, result)
         patches = [call[2] for call in self.calls if call[0] == 'PATCH']
-        self.assertEqual(patches, [])
+        self.assertEqual([sorted(patch) for patch in patches], [['attendees']])
+        self.assertEqual(
+            [item['emailAddress']['address'] for item in patches[0]['attendees']],
+            ['replacement@example.invalid'],
+        )
+        announced = [item[2] for item in self.headers if item[0] == 'PATCH' and 'attendees' in (item[3] or {})]
+        self.assertEqual(announced, [SILENT_INVITE])
+        # Silence for the people already invited, not for the person added: they
+        # are forwarded the meeting, which is the only write Graph offers that
+        # reaches named recipients alone.
+        self.assertEqual(self.forwards, [('event-1', ['replacement@example.invalid'])])
         self.assertEqual(self.v.apply_teams_meeting_options.call_args.kwargs['attendees'],
                          ['replacement@example.invalid'])
         self.assertEqual([item['start'] for item in self.instances], [item['start'] for item in before])
         self.calls.clear()
+        self.forwards.clear()
         self.assertEqual(self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC').status_code, 200)
         self.assertFalse([call for call in self.calls if call[0] == 'PATCH'])
+        # Nobody is new the second time, so nobody is forwarded anything either.
+        self.assertFalse(self.forwards)
 
-    def test_existing_calendar_only_emails_attendees_when_explicitly_requested(self):
+    def test_browser_cannot_make_a_people_only_save_announce_itself(self):
         self.assertEqual(self.create().status_code, 201)
         self.payload.update(peopleOnly=True, attendees=['replacement@example.invalid'], notifyAttendees=True)
         self.calls.clear()
+        self.headers.clear()
 
         result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
 
         self.assertEqual(result.status_code, 200, result)
         invitations = [call for call in self.calls if call[0] == 'PATCH' and 'attendees' in call[2]]
         self.assertEqual(len(invitations), 1)
+        # What the save touched decides who hears about it, not what the browser
+        # asked for: a field claiming otherwise buys no mail to the people who
+        # were already invited.
+        self.assertEqual([item[2] for item in self.headers
+                          if item[0] == 'PATCH' and 'attendees' in (item[3] or {})], [SILENT_INVITE])
 
     def test_notified_date_update_waits_for_silent_repair_then_sends_final_master_state(self):
         self.assertEqual(self.create().status_code, 201)
@@ -375,7 +473,11 @@ class CalendarChecksTests(unittest.TestCase):
         result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
         self.assertEqual(result.status_code, 200, result)
         self.assertEqual(self.tracked, before)
-        self.assertFalse([call for call in self.calls if call[0] in ('POST', 'DELETE')])
+        self.assertFalse([call for call in self.calls
+                          if call[0] == 'DELETE' or (call[0] == 'POST' and not call[1].endswith('/forward'))])
+        # The one person this save added is invited directly, so nobody already
+        # on the meeting is mailed about them joining it.
+        self.assertEqual(self.forwards, [('event-1', ['replacement@example.invalid'])])
 
     def test_unrelated_event_id_rejected_before_graph(self):
         self.assertEqual(self.create().status_code, 201)
@@ -449,17 +551,300 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertEqual(self.series[0]['lobby_bypass'], 'organizer')
         self.assertEqual(self.series[0]['spoken_language'], 'ar-EG')
 
-    def test_pending_invites_repair_silently_without_recreating_or_rewriting_dates(self):
+    def test_weekday_people_save_forwards_the_meeting_to_whoever_it_added(self):
+        """A learner added to a per-day calendar is invited; nobody else hears.
+
+        Both day series are written under the silent preference, so not one of
+        the people already invited is mailed about somebody joining. The learner
+        who was just added would get nothing at all from that write, so each
+        day's meeting is forwarded to them by name -- the only call Graph offers
+        that reaches named recipients alone.
+        """
+        self.prepare_weekday_path()
+        self.assertEqual(self.create().status_code, 201)
+        self.payload.update(peopleOnly=True,
+                            attendees=['learner@example.invalid', 'joined@example.invalid'])
+        self.v.stored_calendar_series = lambda series: series.get('calendar_series') or []
+        self.calls.clear()
+        self.headers.clear()
+        self.forwards.clear()
+        result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
+        self.assertEqual(result.status_code, 200, result)
+        announced = [item[2] for item in self.headers if item[0] == 'PATCH' and 'attendees' in (item[3] or {})]
+        self.assertEqual(announced, [SILENT_INVITE, SILENT_INVITE])
+        self.assertEqual(sorted(self.forwards), sorted([('event-1', ['joined@example.invalid']),
+                                                        ('event-2', ['joined@example.invalid'])]))
+
+    def test_pending_invites_are_repaired_silently_without_recreating_or_rewriting_dates(self):
+        """A create that failed before inviting anyone is repaired by the update.
+
+        The invitation list used to stay empty until somebody ticked the review
+        email box, which left a real meeting that no learner was on and no
+        screen said so. The repair now puts the intended people on the calendar
+        under the silent preference: no new event, no rewritten date, and no
+        mail this application asked for.
+        """
         self.options_ok = False
         self.assertEqual(self.create().status_code, 502)
         self.options_ok = True
         self.calls.clear()
+        self.headers.clear()
         result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
         self.assertEqual(result.status_code, 200, result)
         self.assertFalse([call for call in self.calls if call[0] in ('POST', 'DELETE')])
         patches = [call[2] for call in self.calls if call[0] == 'PATCH']
-        self.assertEqual(patches, [])
-        self.assertTrue(all(not event['attendees'] for event in self.events.values()))
+        self.assertEqual([sorted(patch) for patch in patches], [['attendees', 'hideAttendees', 'subject']])
+        self.assertEqual([item[2] for item in self.headers if item[0] == 'PATCH'], [None])
+        self.assertTrue(all(
+            [item['emailAddress']['address'] for item in event['attendees']] == ['learner@example.invalid']
+            for event in self.events.values()
+        ))
+
+    def test_deleted_series_occurrence_is_restored_silently_and_tracked_with_its_real_link(self):
+        self.assertEqual(self.create().status_code, 201)
+        missing_start = datetime.fromisoformat(self.payload['scheduledOccurrences'][2]['startDateTimeUtc'])
+        wanted_starts = {
+            datetime.fromisoformat(item['startDateTimeUtc'])
+            for item in self.payload['scheduledOccurrences']
+        }
+        original = self.graph
+
+        def preserve_deleted_occurrence(method, path, payload=None, **kwargs):
+            result = original(method, path, payload, **kwargs)
+            if method == 'PATCH' and path.endswith('/events/event-1') and payload and 'recurrence' in payload:
+                master = self.instances_by_master['event-1']
+                self.instances_by_master['event-1'] = [
+                    item for item in master
+                    if checks.event_instant(item, 'start') in wanted_starts
+                    and checks.event_instant(item, 'start') != missing_start
+                ]
+            return result
+
+        self.instances_by_master['event-1'] = [
+            item for item in self.instances_by_master['event-1']
+            if checks.event_instant(item, 'start') != missing_start
+        ]
+        sys.modules['coach_api.views'].microsoft_graph_request = preserve_deleted_occurrence
+        self.v.apply_teams_meeting_options = Mock(return_value=(True, {'id': 'online-restored'}, []))
+        self.calls.clear()
+        self.headers.clear()
+
+        result = self.v.curriculum_teams_meeting_schedule(
+            types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC',
+        )
+
+        self.assertEqual(result.status_code, 200, result)
+        restored = self.events['event-2']
+        self.assertEqual(checks.event_instant(restored, 'start'), missing_start)
+        # The 1 October 2026 regression: a session rebuilt on its own event was
+        # created with nobody on it, and only a later publish, which ran only
+        # when the author had asked for email, would have put anyone there. It
+        # carries its people from the moment it exists.
+        self.assertEqual(
+            [item['emailAddress']['address'] for item in restored['attendees']],
+            ['learner@example.invalid'],
+        )
+        self.assertTrue(restored['hideAttendees'])
+        restored_row = next(item for item in self.tracked if int(item['sessionNumber']) == 3)
+        self.assertEqual(restored_row['graph_event_id'], 'event-2')
+        self.assertEqual(restored_row['join_url'], restored['onlineMeeting']['joinUrl'])
+        post = next(item for item in self.headers if item[0] == 'POST' and item[1].endswith('/events'))
+        self.assertEqual(post[2], self.v.GRAPH_SILENT_INVITE_HEADERS)
+        self.assertEqual(
+            [item['emailAddress']['address'] for item in post[3]['attendees']],
+            ['learner@example.invalid'],
+        )
+        # The update announces the newly added session to the existing roster.
+        self.assertTrue([
+            item for item in self.headers
+            if item[0] in ('POST', 'PATCH') and item[2] is None
+        ])
+
+        # Later people/options saves must update both the master meeting and the
+        # separately restored occurrence without creating another event or mail.
+        self.payload.update(peopleOnly=True, presenters=['presenter@example.invalid'])
+        self.calls.clear()
+        self.headers.clear()
+        self.v.apply_teams_meeting_options.reset_mock()
+        result = self.v.curriculum_teams_meeting_schedule(
+            types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC',
+        )
+        self.assertEqual(result.status_code, 200, result)
+        self.assertEqual(self.v.apply_teams_meeting_options.call_count, 2)
+        self.assertTrue(all(
+            call.kwargs['presenters'] == ['presenter@example.invalid']
+            for call in self.v.apply_teams_meeting_options.call_args_list
+        ))
+        self.assertFalse([call for call in self.calls
+                          if call[0] == 'DELETE' or (call[0] == 'POST' and not call[1].endswith('/forward'))])
+        # The presenter this save added is forwarded the master and the restored
+        # session, which is how somebody new gets the meeting on their calendar
+        # when Microsoft has been told to announce nothing.
+        self.assertEqual(self.forwards, [('event-1', ['presenter@example.invalid']),
+                                         ('event-2', ['presenter@example.invalid'])])
+        # The added presenter reaches the master and the separately restored
+        # session alike -- they are on both meetings, not only in the online
+        # meeting's roles -- and neither write asks Microsoft to announce it.
+        invited = [
+            [item['emailAddress']['address'] for item in call[2]['attendees']]
+            for call in self.calls if call[0] == 'PATCH' and call[2] and 'attendees' in call[2]
+        ]
+        self.assertEqual(len(invited), 2)
+        self.assertTrue(all(sorted(people) == ['learner@example.invalid', 'presenter@example.invalid']
+                            for people in invited))
+        self.assertEqual(
+            [item[2] for item in self.headers if item[0] == 'PATCH' and 'attendees' in (item[3] or {})],
+            [SILENT_INVITE, SILENT_INVITE],
+        )
+
+    def test_date_update_always_announces_the_change(self):
+        """Existing-calendar updates always announce the new session dates."""
+        self.assertEqual(self.create().status_code, 201)
+        shifted = []
+        for item in self.payload['scheduledOccurrences']:
+            start = datetime.fromisoformat(item['startDateTimeUtc']) + timedelta(hours=1)
+            shifted.append({**item, 'startDateTimeUtc': start.isoformat()})
+        self.payload.update(
+            localStartDateTime='2026-09-17T01:00:00',
+            startDateTimeUtc=shifted[0]['startDateTimeUtc'],
+            scheduledOccurrences=shifted,
+            notifyAttendees=False,
+        )
+        self.calls.clear()
+        self.headers.clear()
+
+        result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
+
+        self.assertEqual(result.status_code, 200, result)
+        writes = [item for item in self.headers if item[0] in ('POST', 'PATCH', 'DELETE')]
+        self.assertTrue(writes)
+        self.assertTrue([item for item in writes if item[2] is None])
+        # The calendar really moved, and everyone invited is still invited.
+        self.assertEqual(
+            {checks.event_instant(item, 'start') for item in self.instances},
+            {datetime.fromisoformat(item['startDateTimeUtc']) for item in shifted},
+        )
+        self.assertTrue(all(
+            [person['emailAddress']['address'] for person in event['attendees']] == ['learner@example.invalid']
+            for event in self.events.values()
+        ))
+
+    def test_ticked_date_update_keeps_everyone_invited_while_it_announces_the_change(self):
+        """Ticked is unchanged: one announced master write, and nobody loses their place."""
+        self.assertEqual(self.create().status_code, 201)
+        shifted = []
+        for item in self.payload['scheduledOccurrences']:
+            start = datetime.fromisoformat(item['startDateTimeUtc']) + timedelta(hours=1)
+            shifted.append({**item, 'startDateTimeUtc': start.isoformat()})
+        self.payload.update(
+            localStartDateTime='2026-09-17T01:00:00',
+            startDateTimeUtc=shifted[0]['startDateTimeUtc'],
+            scheduledOccurrences=shifted,
+            notifyAttendees=True,
+        )
+        self.headers.clear()
+
+        result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
+
+        self.assertEqual(result.status_code, 200, result)
+        announced = [item for item in self.headers
+                     if item[0] in ('POST', 'PATCH') and item[2] != self.v.GRAPH_SILENT_INVITE_HEADERS]
+        self.assertEqual(len(announced), 1)
+        self.assertIn('attendees', announced[0][3])
+        self.assertTrue(all(
+            [person['emailAddress']['address'] for person in event['attendees']] == ['learner@example.invalid']
+            for event in self.events.values()
+        ))
+
+    def test_a_standalone_without_its_learners_cannot_pass_verification(self):
+        """An empty or short invitation list is not a verified session.
+
+        Dates alone used to be the whole of "verified", which is how a session
+        rebuilt on its own event with nobody on it was reported as a success.
+        """
+        # One session the master still owns, one rebuilt on its own event: the
+        # shape the master/standalone verification exists for.
+        master_target = {'session_number': 2,
+                         'start': datetime(2026, 9, 24, 8, 0, tzinfo=timezone.utc),
+                         'end': datetime(2026, 9, 24, 10, 0, tzinfo=timezone.utc)}
+        target = {'session_number': 3,
+                  'start': datetime(2026, 10, 1, 8, 0, tzinfo=timezone.utc),
+                  'end': datetime(2026, 10, 1, 10, 0, tzinfo=timezone.utc)}
+        expected = [
+            {'emailAddress': {'address': 'a@example.invalid'}, 'type': 'required'},
+            {'emailAddress': {'address': 'b@example.invalid'}, 'type': 'required'},
+        ]
+        standalone_people = []
+
+        def read(method, path, payload=None, **kwargs):
+            event = {'id': 'event-2', 'isCancelled': False, 'hideAttendees': True,
+                     'attendees': standalone_people,
+                     'onlineMeeting': {'joinUrl': 'https://teams.microsoft.com/l/meetup-join/standalone'},
+                     'start': {'dateTime': '2026-10-01T08:00:00.0000000', 'timeZone': 'UTC'},
+                     'end': {'dateTime': '2026-10-01T10:00:00.0000000', 'timeZone': 'UTC'}}
+            if path.endswith('/events/event-1'):
+                return {**event, 'id': 'event-1', 'attendees': expected,
+                        'start': {'dateTime': '2026-09-24T08:00:00.0000000', 'timeZone': 'UTC'},
+                        'end': {'dateTime': '2026-09-24T10:00:00.0000000', 'timeZone': 'UTC'},
+                        'onlineMeeting': {'joinUrl': 'https://teams.microsoft.com/l/meetup-join/master'}}
+            return event
+
+        details = [{'session_number': 3, 'graph_event_id': 'event-2',
+                    'join_url': 'https://teams.microsoft.com/l/meetup-join/standalone'}]
+        verify = lambda: self.v.verify_teams_calendar_with_standalones(
+            read, 'organizer%40example.invalid', 'event-1', [master_target, target],
+            'https://teams.microsoft.com/l/meetup-join/master', False, details,
+            expected_attendees=expected,
+        )
+
+        # Nobody on it at all: the 1 October 2026 shape.
+        with self.assertRaises(checks.CalendarMismatch):
+            verify()
+        # One learner short of the list is just as wrong.
+        standalone_people = [expected[0]]
+        with self.assertRaises(checks.CalendarMismatch):
+            verify()
+        # Someone the series does not invite, the same equality publish_attendees
+        # confirms a published list with.
+        standalone_people = [*expected, {'emailAddress': {'address': 'stranger@example.invalid'}}]
+        with self.assertRaises(checks.CalendarMismatch):
+            verify()
+        # The intended list, in any order, passes.
+        standalone_people = [expected[1], expected[0]]
+        self.assertEqual(verify()['id'], 'event-1')
+
+    def test_a_silent_publish_writes_nothing_it_does_not_have_to_and_a_heard_one_always_writes(self):
+        """Membership and announcement are decided separately, and both are real.
+
+        A silent publish over a list that already matches asks Microsoft for
+        nothing. A publish meant to be heard writes even then: a session created
+        under the silent preference already carries its people, and Microsoft
+        puts a meeting on somebody's calendar only when something is sent, so
+        skipping that write would leave a correct attendee list nobody ever saw.
+        """
+        people = [{'emailAddress': {'address': 'learner@example.invalid'}, 'type': 'required'}]
+        event = {'id': 'event-1', 'subject': 'M3', 'attendees': people}
+        standalone = {'id': 'event-2', 'subject': 'M3', 'attendees': people}
+        details = [{'session_number': 3, 'graph_event_id': 'event-2'}]
+        sent = []
+
+        def request(method, path, payload=None, extra_headers=None, **kwargs):
+            if method != 'GET':
+                sent.append((method, path, extra_headers, payload))
+            return standalone
+
+        self.v.publish_teams_calendar_attendees(
+            request, 'organizer%40example.invalid', event, people, details, silent=True,
+        )
+        self.assertEqual(sent, [])
+
+        self.v.publish_teams_calendar_attendees(
+            request, 'organizer%40example.invalid', event, people, details,
+        )
+        self.assertEqual([item[0] for item in sent], ['PATCH', 'PATCH'])
+        self.assertEqual([item[1].rsplit('/', 1)[-1] for item in sent], ['event-1', 'event-2'])
+        self.assertTrue(all(item[2] is None for item in sent))
+        self.assertTrue(all(sorted(item[3]) == ['attendees'] for item in sent))
 
     def test_read_failure_does_not_trigger_blind_calendar_update(self):
         self.assertEqual(self.create().status_code, 201)
@@ -508,6 +893,80 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertEqual(result.status_code, 201, result)
         event = self.events['event-1']
         self.assertEqual(checks.event_instant(event, 'end') - checks.event_instant(event, 'start'), timedelta(hours=2))
+
+
+class AttendeeConfirmationTests(unittest.TestCase):
+    """What counts as Microsoft confirming the invitation list it was sent.
+
+    A pasted internal alias comes back from Graph as that mailbox's primary
+    address, and the organizer is never an attendee of their own event. Read
+    character by character, both looked like a lost invitation -- and because
+    the saved roster kept the alias, the same save failed again every time,
+    which also blocked simply taking somebody off the meeting.
+    """
+
+    def people(self, *addresses):
+        return [{'emailAddress': {'address': address}} for address in addresses]
+
+    def test_an_alias_stored_under_its_primary_address_is_the_same_person(self):
+        self.assertEqual(
+            checks.attendee_differences(
+                self.people('med.maher@example.invalid', 'learner@example.invalid'),
+                self.people('mohamed.maher@example.invalid', 'learner@example.invalid'),
+                'organizer@example.invalid',
+            ),
+            ([], []),
+        )
+
+    def test_the_organizer_is_not_expected_back_as_an_attendee(self):
+        self.assertEqual(
+            checks.attendee_differences(
+                self.people('organizer@example.invalid', 'learner@example.invalid'),
+                self.people('learner@example.invalid'),
+                'organizer@example.invalid',
+            ),
+            ([], []),
+        )
+
+    def test_a_learner_microsoft_dropped_is_still_a_failure(self):
+        missing, extra = checks.attendee_differences(
+            self.people('one@example.invalid', 'two@example.invalid'),
+            self.people('one@example.invalid'), 'organizer@example.invalid',
+        )
+        self.assertEqual((missing, extra), (['two@example.invalid'], []))
+        self.assertIn('two@example.invalid', checks.unconfirmed_attendee_detail(missing, extra))
+
+    def test_somebody_the_series_does_not_invite_is_still_a_failure(self):
+        self.assertEqual(
+            checks.attendee_differences(
+                self.people('one@example.invalid'),
+                self.people('one@example.invalid', 'stranger@example.invalid'),
+                'organizer@example.invalid',
+            ),
+            ([], ['stranger@example.invalid']),
+        )
+
+    def test_swapping_one_invitee_for_another_is_a_change_worth_writing(self):
+        # The write decision stays strict: pairing is only how a list already
+        # sent is read back, never how "has anything changed" is answered.
+        self.assertFalse(checks.attendees_already_match(
+            self.people('new@example.invalid'), self.people('old@example.invalid'),
+            'organizer@example.invalid',
+        ))
+
+    def test_removing_somebody_is_a_change_worth_writing(self):
+        self.assertFalse(checks.attendees_already_match(
+            self.people('one@example.invalid'),
+            self.people('one@example.invalid', 'two@example.invalid'),
+            'organizer@example.invalid',
+        ))
+
+    def test_an_unchanged_list_writes_nothing(self):
+        self.assertTrue(checks.attendees_already_match(
+            self.people('one@example.invalid'),
+            self.people('one@example.invalid', 'organizer@example.invalid'),
+            'organizer@example.invalid',
+        ))
 
 
 if __name__ == '__main__':

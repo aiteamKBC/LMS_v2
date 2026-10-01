@@ -27,8 +27,9 @@ _query_alias = ContextVar('old_otjh_query_alias', default=None)
 
 
 def query(sql, params=()):
+    from learner_api.journal_sources import retained_journal_sql
     with connections[_query_alias.get() or DB].cursor() as cursor:
-        cursor.execute(sql, params)
+        cursor.execute(retained_journal_sql(sql), params)
         if cursor.description is None:
             return []
         columns = [col[0] for col in cursor.description]
@@ -155,6 +156,12 @@ def create_transition(learner, months):
 def atomic():
     with transaction.atomic(using=DB):
         yield
+        # The event is written before this transaction commits, so the worker
+        # can never observe a refresh request for a write that later rolls back.
+        # Raw source imports outside this workflow remain covered by the 30s
+        # stale-read refresh and bounded reconciliation.
+        from .read_model import enqueue_record_monitor_refresh
+        enqueue_record_monitor_refresh(reason='previous-record-write', using=DB)
 
 
 def programme_key(learner):

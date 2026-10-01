@@ -25,6 +25,7 @@ import { assignmentTimeHours } from './AssignmentTimeEntries';
 import { HistoricalAssignmentCards } from './HistoricalAssignmentCards';
 import { useLearningStatements } from '@/hooks/useLearningStatements';
 import { parsePersonalLearning } from '@/lib/personalLearning';
+import styles from './assignmentWizard.module.css';
 
 export type AssignmentAnswers = {
   assignmentAnswer: string;
@@ -70,9 +71,6 @@ export function AssignmentSubmissionWizard({
   timeSeconds,
   timeSource = 'timer',
   timeControl,
-  workingHoursDeclaration,
-  outsideWorkingHours,
-  insideWorkingHoursConfirmed,
   submittingProgress,
   onEvidenceChanged,
   onRestoreTime,
@@ -102,9 +100,6 @@ export function AssignmentSubmissionWizard({
   timeSeconds: number | null;
   timeSource?: 'timer' | 'input';
   timeControl: ReactNode;
-  workingHoursDeclaration?: ReactNode;
-  outsideWorkingHours: boolean;
-  insideWorkingHoursConfirmed: boolean;
   submittingProgress: boolean;
   onEvidenceChanged: (files: EvidenceRecord[]) => void;
   onRestoreTime: (seconds: number, source: 'timer' | 'input') => void;
@@ -199,6 +194,12 @@ export function AssignmentSubmissionWizard({
     },
     [questionHtml, questionText],
   );
+  // Stable object identity: React 19 re-applies innerHTML whenever it changes,
+  // which would recreate an embedded <video> on every parent timer tick.
+  const questionInnerHtml = useMemo(
+    () => ({ __html: cleanQuestionHtml }),
+    [cleanQuestionHtml],
+  );
 
   const payload = (mode: 'draft' | 'submit'): LearningReflectionSubmissionInput => ({
     learnerKind: kind,
@@ -233,8 +234,6 @@ export function AssignmentSubmissionWizard({
     assignmentAnswer: answers.assignmentAnswer,
     whatYouLearned: answers.whatYouLearned,
     businessImpact: answers.businessImpact,
-    outsideWorkingHours,
-    insideWorkingHoursConfirmed,
     monthlyAssignment: { ...monthly, step },
     assignmentTimeSource: detailedSeconds !== null ? 'input' : timeSource,
   });
@@ -357,7 +356,7 @@ export function AssignmentSubmissionWizard({
     return () => window.clearTimeout(timeout);
     // The identifying fields are stable for the lifetime of this wizard.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [answers, monthly, step, evidenceFiles, Math.floor((timeSeconds || 0) / 30), insideWorkingHoursConfirmed, locked]);
+  }, [answers, monthly, step, evidenceFiles, Math.floor((timeSeconds || 0) / 30), locked]);
 
   useEffect(() => {
     const warn = (event: BeforeUnloadEvent) => {
@@ -416,10 +415,6 @@ export function AssignmentSubmissionWizard({
     }
     if (!claimedSeconds || claimedSeconds <= 0) {
       setSaveError('Enter the time spent on this assignment before submitting.');
-      return;
-    }
-    if (outsideWorkingHours && !insideWorkingHoursConfirmed) {
-      setSaveError('Confirm that you completed this assignment inside UK working hours before submitting.');
       return;
     }
     submittingRef.current = true;
@@ -487,7 +482,7 @@ export function AssignmentSubmissionWizard({
   return (
     <AssignmentAiCheckContext.Provider value={{ learnerId, learnerKind: kind, enabled: !readOnly }}>
       <AssignmentAttemptHistory attempts={submissionAttempts} />
-      <section ref={wizardRef} className="overflow-hidden rounded-2xl border border-slate-200 bg-white font-sans shadow-sm">
+      <section ref={wizardRef} className={`${styles.assignmentWizard} overflow-hidden rounded-2xl border border-slate-200 bg-white font-sans shadow-sm`}>
         <div className="border-b border-slate-200 bg-sky-50/50 px-5 py-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -556,7 +551,7 @@ export function AssignmentSubmissionWizard({
                 <p className="text-[10px] font-black uppercase tracking-[0.14em] text-primary-600">Assignment question</p>
                 <div className="mt-2 rounded-xl border border-background-200 bg-background-50 p-4 text-sm leading-6 text-foreground-800">
                   {cleanQuestionHtml ? (
-                    <div className="max-w-none [&_p]:mb-3 [&_ul]:list-disc [&_ul]:pl-5" dangerouslySetInnerHTML={{ __html: cleanQuestionHtml }} />
+                    <div className="max-w-none [&_p]:mb-3 [&_ul]:list-disc [&_ul]:pl-5" dangerouslySetInnerHTML={questionInnerHtml} />
                   ) : (
                     <p className="whitespace-pre-line">{questionText || (questionFileUrl ? 'Preview the attached file for your assignment question.' : 'Your tutor has not added the assignment question yet.')}</p>
                   )}
@@ -608,7 +603,6 @@ export function AssignmentSubmissionWizard({
               <AppIcon className="ri-arrow-left-line" />Back
             </button>
             <div className="flex min-w-0 flex-1 flex-col items-end gap-3 sm:flex-row sm:items-center sm:justify-end">
-              {workingHoursDeclaration && <div className="w-full min-w-0 sm:max-w-md">{workingHoursDeclaration}</div>}
               <div className="shrink-0">
                 {step < 7 ? (
                   <button
@@ -630,7 +624,7 @@ export function AssignmentSubmissionWizard({
                     onClick={() => void submit()}
                     aria-describedby={!learningConfirmed ? 'learning-confirmation-required' : undefined}
                     disabled={loadFailed || checking || savingDraft || submittingProgress || !learningConfirmed || checks.length !== 13 || checks.some(check => !check.passed)}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-5 py-2.5 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-bold text-white hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-40"
                   >
                     <AppIcon className={savingDraft || submittingProgress ? 'ri-loader-4-line animate-spin' : 'ri-send-plane-fill'} />
                     {savingDraft || submittingProgress ? 'Submitting…' : 'Submit assignment'}

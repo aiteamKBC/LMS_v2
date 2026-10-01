@@ -42,7 +42,11 @@ export function useCurriculumProgrammes({ skipCache = false, revalidate = false,
 
   useEffect(() => {
     const controller = new AbortController();
-    void load(controller.signal);
+    // A caller may request revalidation for background refreshes, but the first
+    // paint should still use a warm client snapshot when one exists. The live
+    // refresh below explicitly revalidates after focus/remote writes, and
+    // explicit post-save reloads can still opt into skipCache.
+    void load(controller.signal, { revalidate: false });
     return () => controller.abort();
   }, [load]);
 

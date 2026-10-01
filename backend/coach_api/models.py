@@ -128,6 +128,7 @@ class CoachCalendarEvent(models.Model):
                         "eligibility-review",
                         "workspace",
                         "training-plan",
+                        "uln-privacy",
                     ]
                 ),
                 name="coach_calendar_booking_seq_uniq",
@@ -142,6 +143,46 @@ class CoachCalendarEvent(models.Model):
     def __str__(self):
         return f"{self.event_type} #{self.sequence} for {self.learner_name or self.learner_id}"
 
+
+class ImportedReviewInstance(models.Model):
+    """Editable coach-owned state layered over an immutable Aptem review."""
+
+    STATUS_IN_PROGRESS = "in-progress"
+    STATUS_COMPLETED = "completed"
+    STATUS_CHOICES = [
+        (STATUS_IN_PROGRESS, "In Progress"),
+        (STATUS_COMPLETED, "Completed"),
+    ]
+
+    event_key = models.CharField(max_length=255)
+    owner_email = models.EmailField(max_length=255, db_index=True)
+    learner_id = models.IntegerField(db_index=True)
+    answers = models.JSONField(default=dict, blank=True)
+    status = models.CharField(
+        max_length=32,
+        choices=STATUS_CHOICES,
+        default=STATUS_IN_PROGRESS,
+        db_index=True,
+    )
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = _table_name(
+            'coach_test_imported_review_instances',
+            'Coach"."coach_imported_review_instance',
+        )
+        constraints = [
+            models.UniqueConstraint(
+                fields=["owner_email", "event_key"],
+                name="coach_imported_review_owner_event_unique",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(status__in=["in-progress", "completed"]),
+                name="coach_imported_review_status_valid",
+            ),
+        ]
 
 class CoachCalendarSequence(models.Model):
     """Cross-process sequence allocator for a learner/session-type scope."""
@@ -161,6 +202,28 @@ class CoachCalendarSequence(models.Model):
                 fields=["learner_id", "event_type"],
                 name="coach_calendar_sequence_scope_uniq",
             ),
+        ]
+
+
+class CoachDashboardSnapshot(models.Model):
+    """Persistent read model for the Coach Dashboard summary only.
+
+    Source tables remain authoritative.  A controlled refresh rebuilds this
+    projection; HTTP reads never recompute cross-schema learner aggregates.
+    """
+
+    owner_email = models.EmailField(max_length=255, unique=True)
+    payload = models.JSONField(default=dict)
+    schema_version = models.PositiveSmallIntegerField(default=1)
+    refreshed_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = _table_name(
+            "coach_test_dashboard_snapshots",
+            'Coach"."coach_dashboard_snapshot',
+        )
+        indexes = [
+            models.Index(fields=["-refreshed_at"], name="coach_dash_snapshot_fresh_idx"),
         ]
 
 
@@ -223,6 +286,73 @@ class CoachAbsenceReport(models.Model):
 
     def __str__(self):
         return f"{self.learner_name}: {self.session_title} ({self.status})"
+
+
+class CoachManualAttendance(models.Model):
+    STATUS_PRESENT = "present"
+    STATUS_ABSENT = "absent"
+    STATUS_CHOICES = [(STATUS_PRESENT, "Present"), (STATUS_ABSENT, "Absent")]
+
+    owner_email = models.EmailField(max_length=255, db_index=True)
+    learner_id = models.IntegerField(db_index=True)
+    enrolment_id = models.IntegerField(null=True, blank=True)
+    learner_name = models.CharField(max_length=255)
+    learner_email = models.EmailField(max_length=255, blank=True)
+    session_date = models.DateField(db_index=True)
+    module_name = models.CharField(max_length=255)
+    session_title = models.CharField(max_length=255)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES)
+    created_by = models.EmailField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = _table_name("coach_test_manual_attendance", 'Coach"."coach_manual_attendance')
+        ordering = ["-session_date", "-id"]
+        indexes = [
+            models.Index(fields=["owner_email", "learner_id", "-session_date"], name="coach_manual_att_owner_idx"),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(status__in=["present", "absent"]),
+                name="coach_manual_att_status_valid",
+            ),
+        ]
+
+
+class CoachAttendanceSourceAdjustment(models.Model):
+    """Coach correction for one learner's source attendance row.
+
+    The scheduled occurrence and its Teams evidence remain intact for every
+    other learner; this row is the authoritative per-learner correction read by
+    both the learner and coach registers.
+    """
+
+    owner_email = models.EmailField(max_length=255)
+    learner_id = models.IntegerField(db_index=True)
+    source = models.CharField(max_length=40)
+    source_id = models.CharField(max_length=255)
+    session_date = models.DateField(null=True, blank=True)
+    module_name = models.CharField(max_length=255, blank=True)
+    session_title = models.CharField(max_length=255, blank=True)
+    status = models.CharField(max_length=16, choices=CoachManualAttendance.STATUS_CHOICES, blank=True)
+    is_deleted = models.BooleanField(default=False)
+    updated_by = models.EmailField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = _table_name("coach_test_attendance_adjustment", 'Coach"."coach_attendance_adjustment')
+        constraints = [
+            models.UniqueConstraint(
+                fields=["learner_id", "source", "source_id"],
+                name="coach_attendance_adjustment_source_uniq",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(status__in=["", "present", "absent"]),
+                name="coach_attendance_adjustment_status_valid",
+            ),
+        ]
 
 
 class CoachCalendarColorPreference(models.Model):

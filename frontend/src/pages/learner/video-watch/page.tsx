@@ -15,6 +15,7 @@ import { submitVideoProgress } from '@/api/videos';
 import { submitComponentProgress } from '@/api/components';
 import { startTimeTracking, type TimeTrackingSession, type TrackingCountingMode } from '@/api/timeTracking';
 import { EvidenceFilesButton, EvidencePreviewModal, type EvidencePreview } from '@/components/feature/EvidenceFilesButton';
+import { AssignmentEvidence } from '@/components/feature/AssignmentEvidence';
 import {
   buildLearnerJourney, componentTypeMeta, componentContentKind, componentNoun, hasComponentContent, isOpenableComponent, gradePercent, formatHoursMinutes,
   componentCriteria, componentRequiresEvidence, completedComponentIds, isComponentComplete,
@@ -22,6 +23,7 @@ import {
 } from '@/utils/learnerJourney';
 import { fetchEvidence, getEvidenceDownloadUrl, deleteEvidence, type EvidenceRecord } from '@/api/evidence';
 import { ReflectionWindow, formatClock, formatRecordedClock } from '@/components/feature/ReflectionWindow';
+import { ReflectionChoicePopup } from '@/components/feature/ReflectionChoicePopup';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { rememberLearner } from '@/hooks/useMyLearner';
 import { useLearnerWorkspaceAccess } from '@/hooks/useLearnerWorkspaceAccess';
@@ -37,14 +39,20 @@ import {
 import { ReadOnlyLearnerNotice } from '@/components/feature/ReadOnlyLearnerNotice';
 import { ComponentAccessNotice } from '@/components/feature/ComponentAccessNotice';
 import { useComponentAccessWindow } from '@/hooks/useComponentAccessWindow';
+import { CompletionTimeDialog } from '@/components/feature/CompletionTimeDialog';
+import { CompletionValidationError, type WorkingRuleReason } from '@/lib/completionValidation';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { ActivitySidebar } from './ActivitySidebar';
 import { isNavigableComponent, placeActivity, weekDisplayLabel, type ActivityPlacement } from './weekPreview';
 import { componentRoute } from './componentRoute';
+import { ActivityElapsedTimer } from './ActivityElapsedTimer';
+import manualTimeStyles from './ActivityManualTimeInput.module.css';
+import layoutStyles from './ComponentActivityLayout.module.css';
 import { AssignmentSubmissionWizard, type AssignmentAnswers } from './AssignmentSubmissionWizard';
 import { useSavedAssignmentAccess } from './useSavedAssignmentAccess';
 import { resolveDocEmbed } from '@/lib/docEmbed';
 import { normalizeReadingHtml } from '@/lib/readingHtml';
+import { downloadReadingPdf, readingFiles } from './readingDownloads';
 import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
 import {
   loadTeamsMeetingArtifacts,
@@ -54,7 +62,7 @@ import {
 
 const learnerNav = roleNavMap.learner;
 
-type Phase = 'consume' | 'reflect' | 'confirm';
+type Phase = 'consume' | 'reflection-choice' | 'reflect' | 'confirm';
 type TimeSource = 'timer' | 'input';
 
 interface DoneRecord { activityKey: string; componentId: string; timeTaken: string | null }
@@ -128,50 +136,48 @@ function ActivityTimeSpentInput({ onChange, initialSeconds = null }: { onChange:
   };
 
   const fields: { key: keyof typeof parts; label: string; ariaLabel: string }[] = [
-    { key: 'hours', label: 'hour', ariaLabel: 'Hours spent' },
-    { key: 'minutes', label: 'min', ariaLabel: 'Minutes spent' },
+    { key: 'hours', label: 'Hours', ariaLabel: 'Hours spent' },
+    { key: 'minutes', label: 'Minutes', ariaLabel: 'Minutes spent' },
   ];
 
   return (
     <div
-      className="inline-flex items-center gap-2 rounded-xl border border-background-300 bg-white px-3 py-1.5 text-foreground-700 shadow-sm transition-colors focus-within:border-primary-300 focus-within:ring-2 focus-within:ring-primary-100"
+      className={manualTimeStyles.card}
       title="Enter time spent in hours and minutes"
       onBlur={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) normalise();
       }}
     >
-      <AppIcon className="ri-timer-line text-sm text-foreground-500" />
-      <span className="text-[12px] font-semibold text-foreground-600">Time spent</span>
-      <span className="flex items-center gap-1">
-        {fields.map((field, index) => (
-          <span key={field.key} className="flex items-center gap-1">
-            {index > 0 && <span className="font-mono text-foreground-300">:</span>}
-            <label className="grid justify-items-center gap-0.5">
-              <input
-                type="text"
-                inputMode="numeric"
-                value={parts[field.key]}
-                onChange={(event) => updatePart(field.key, event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') event.currentTarget.blur();
-                  if (event.key === 'Escape') {
-                    event.preventDefault();
-                    const empty = { hours: '', minutes: '' };
-                    setParts(empty);
-                    onChange(null);
-                  }
-                }}
-                placeholder="00"
-                aria-label={field.ariaLabel}
-                className="w-7 bg-transparent text-center font-mono text-sm font-bold tabular-nums outline-none placeholder:text-foreground-300"
-              />
-              {/* No tracking: "HOUR" is wider than the 00 input above it, and
-                  letter-spacing pushed it into the neighbouring field. */}
-              <span className="text-[8px] font-bold uppercase text-foreground-400">{field.label}</span>
-            </label>
-          </span>
+      <div className={manualTimeStyles.heading}>
+        <span className={manualTimeStyles.icon}><AppIcon className="ri-edit-2-line" /></span>
+        <span>Manual time entry</span>
+        <span className={manualTimeStyles.badge}>Editable</span>
+      </div>
+      <div className={manualTimeStyles.fields}>
+        {fields.map((field) => (
+          <label key={field.key} className={manualTimeStyles.field}>
+            <input
+              type="text"
+              inputMode="numeric"
+              value={parts[field.key]}
+              onChange={(event) => updatePart(field.key, event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') event.currentTarget.blur();
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  const empty = { hours: '', minutes: '' };
+                  setParts(empty);
+                  onChange(null);
+                }
+              }}
+              placeholder="00"
+              aria-label={field.ariaLabel}
+              className={manualTimeStyles.input}
+            />
+            <span className={manualTimeStyles.label}>{field.label}</span>
+          </label>
         ))}
-      </span>
+      </div>
     </div>
   );
 }
@@ -213,7 +219,9 @@ export default function ComponentViewPage() {
   // Reachable by URL even now the plan rows are inert for a staff viewer.
   // Completing the component here would be recorded as the learner's own work.
   const { canProgress } = useLearnerWorkspaceAccess(id);
-  const componentAccess = useComponentAccessWindow();
+  // Scoped to this component's cohort, so the dialog only ever refuses this
+  // learner's own college closures.
+  const componentAccess = useComponentAccessWindow(componentId);
   const canUseComponent = canProgress && componentAccess.open;
 
   const [detail, setDetail] = useState<LearnerDetail | null>(null);
@@ -230,7 +238,14 @@ export default function ComponentViewPage() {
   );
   const [manualTimeSeconds, setManualTimeSeconds] = useState<number | null>(null);
   const [timeSource, setTimeSource] = useState<TimeSource>('timer');
-  const [insideWorkingHoursConfirmed, setInsideWorkingHoursConfirmed] = useState(false);
+  // Opened only by a server refusal of the Finish click; null while learning.
+  const [correction, setCorrection] = useState<{ reason: WorkingRuleReason | ''; holidayName: string } | null>(null);
+  const [correctionError, setCorrectionError] = useState('');
+  // The reflection the learner already gave, replayed with their declared
+  // instant so Final Submit does not ask for it again.
+  const lastReflectionRef = useRef<{ ksbs: string[]; feedback: string; reportedTime: string }>({
+    ksbs: [], feedback: '', reportedTime: '',
+  });
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [record, setRecord] = useState<DoneRecord | null>(null);
@@ -245,6 +260,7 @@ export default function ComponentViewPage() {
   const [evidencePreview, setEvidencePreview] = useState<EvidencePreview | null>(null);
   const evidenceInputId = useId();
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const completionInFlightRef = useRef(false);
   const trackingSessionRef = useRef<TimeTrackingSession | null>(null);
   const trackingPromiseRef = useRef<Promise<TimeTrackingSession> | null>(null);
 
@@ -262,17 +278,14 @@ export default function ComponentViewPage() {
     setWallElapsed(readActivityTimer(timerStorageKey)?.elapsedSeconds ?? 0);
     setManualTimeSeconds(null);
     setTimeSource('timer');
-    setInsideWorkingHoursConfirmed(false);
+    setCorrection(null);
+    setCorrectionError('');
     setPendingEvidenceFileName(null);
     setEvidenceFiles([]);
     setEvidencePreview(null);
     // A pending "Remove this file?" must not survive onto the next activity.
     setConfirmingEvidenceRemoval(false);
   }, [timerStorageKey]);
-
-  useEffect(() => {
-    if (!componentAccess.outsideWorkingHours) setInsideWorkingHoursConfirmed(false);
-  }, [componentAccess.outsideWorkingHours]);
 
   useEffect(() => {
     if ((kind !== 'commercial' && kind !== 'apprenticeship') || !id) {
@@ -323,6 +336,7 @@ export default function ComponentViewPage() {
   // a page timer. The signed session still runs invisibly so the server can cap
   // and verify the submitted duration.
   const isLiveSession = (component?.type || '').trim().toLowerCase().replace(/-/g, '_') === 'live_session';
+  const hasActivityPanel = isVideo || isLiveSession;
   const isAssignment = (component?.type || '').trim().toLowerCase().replace(/-/g, '_') === 'assignment';
   const completed = !!component && isComponentComplete(component, completedIds);
   const recordingAttempt = isAssignment || !completed || repeating;
@@ -478,7 +492,7 @@ export default function ComponentViewPage() {
   // made a 1h42m video look like 102 hours.
   const plannedTimeLabel = plannedHours != null ? formatHoursMinutes(plannedHours) : '';
 
-  const trackingMode: TrackingCountingMode = isVideo && parsed?.kind !== 'vimeo'
+  const trackingMode: TrackingCountingMode = isVideo
     ? 'active_playback'
     : 'visible_page';
 
@@ -522,22 +536,23 @@ export default function ComponentViewPage() {
     return () => { cancelled = true; };
   }, [phase, recordingAttempt, openable, componentId, kind, id, canUseComponent, isVideo, trackingMode, timerStorageKey]);
 
-  // Only visible time counts for ordinary page content. Audio is intentionally
-  // allowed to keep counting in a background tab because playback can continue
-  // while the learner works elsewhere. Hidden tabs throttle intervals, so audio
-  // uses the real wall-clock delta instead of assuming every callback is exactly
-  // one second apart.
+  // Ordinary page content counts only while visible. Media counts while it is
+  // genuinely playing, even when the learner switches tab or opens another
+  // application. Hidden tabs throttle intervals, so active audio/video uses
+  // wall-clock deltas rather than assuming each callback is exactly one second.
   useEffect(() => {
-    if (phase !== 'consume' || !recordingAttempt || !canUseComponent || (!unsupported && !playerPlaying)) return;
-    let lastAudioTickAt = Date.now();
+    const activeMedia = isVideo || isAudio;
+    if (phase !== 'consume' || !recordingAttempt || !canUseComponent) return;
+    if (activeMedia ? !playerPlaying : (!unsupported && !playerPlaying)) return;
+    let lastTickAt = Date.now();
     timerRef.current = setInterval(() => {
-      if (isAudio || document.visibilityState === 'visible') {
+      if (activeMedia || document.visibilityState === 'visible') {
         const now = Date.now();
-        const increment = isAudio
-          ? Math.floor((now - lastAudioTickAt) / 1000)
+        const increment = activeMedia
+          ? Math.floor((now - lastTickAt) / 1000)
           : 1;
         if (increment < 1) return;
-        if (isAudio) lastAudioTickAt += increment * 1000;
+        if (activeMedia) lastTickAt += increment * 1000;
         setWallElapsed((seconds) => {
           const next = seconds + increment;
           saveActivityTimerElapsed(timerStorageKey, next);
@@ -546,7 +561,7 @@ export default function ComponentViewPage() {
       }
     }, 1000);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [phase, recordingAttempt, canUseComponent, unsupported, playerPlaying, isAudio, timerStorageKey]);
+  }, [phase, recordingAttempt, canUseComponent, unsupported, playerPlaying, isVideo, isAudio, timerStorageKey]);
 
   const finishConsuming = () => {
     if (!recordingAttempt) return;
@@ -555,7 +570,7 @@ export default function ComponentViewPage() {
       setPhase('confirm');
       return;
     }
-    setPhase('reflect');
+    setPhase('reflection-choice');
   };
 
   const confirmCompletion = () => {
@@ -569,21 +584,15 @@ export default function ComponentViewPage() {
 
   const finalizeSubmit = async (
     reflection: { ksbs: string[]; feedback: string; reportedTime: string },
-    options: { rethrow?: boolean } = {},
+    options: { rethrow?: boolean; skipReflection?: boolean; declaredCompletedAt?: string } = {},
   ) => {
-    if (!component || !componentId || !kind || !id || submitting || !canUseComponent) return;
-    if (componentAccess.holidayCalendarReady === false) {
-      const message = componentAccess.holidayError || 'Please wait for the holiday calendar before submitting.';
-      setSubmitError(message);
-      if (options.rethrow) throw new Error(message);
-      return;
-    }
-    if (componentAccess.outsideWorkingHours && !insideWorkingHoursConfirmed) {
-      const message = 'Confirm that you completed this activity inside UK working hours before submitting.';
-      setSubmitError(message);
-      if (options.rethrow) throw new Error(message);
-      return;
-    }
+    if (!component || !componentId || !kind || !id || completionInFlightRef.current || !canUseComponent) return;
+    // Nothing is checked here. The learner presses Finish whenever they like;
+    // the server judges the instant and refuses with a 409 that has written
+    // nothing, which opens the correction dialog below.
+    const declared = options.declaredCompletedAt ?? null;
+    lastReflectionRef.current = reflection;
+    completionInFlightRef.current = true;
     setSubmitting(true);
     setSubmitError(null);
     setRefreshError(null);
@@ -595,9 +604,10 @@ export default function ComponentViewPage() {
           week: weekTitle || null, module: moduleTitle || null,
           startedAt: tracking.startedAt, timeTakenSeconds: submittedTimeSeconds, trackingToken: tracking.trackingToken,
           timeEntrySource: timeSource,
-          insideWorkingHoursConfirmed,
+          declaredCompletedAt: declared,
           videoTitle: meta?.detail || meta?.label || 'Video',
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
+          skipReflection: options.skipReflection === true,
         });
         setRecord({ activityKey: timerStorageKey, componentId, timeTaken: res.record.timeTaken });
       } else {
@@ -605,9 +615,10 @@ export default function ComponentViewPage() {
           week: weekTitle || null, module: moduleTitle || null,
           startedAt: tracking.startedAt, timeTakenSeconds: submittedTimeSeconds, trackingToken: tracking.trackingToken,
           timeEntrySource: timeSource,
-          insideWorkingHoursConfirmed,
+          declaredCompletedAt: declared,
           componentTitle: pageTitle, componentType: component.type || undefined,
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
+          skipReflection: options.skipReflection === true,
         });
         setRecord({ activityKey: timerStorageKey, componentId, timeTaken: res.record.timeTaken });
       }
@@ -624,44 +635,57 @@ export default function ComponentViewPage() {
       });
       setDetail(refreshed);
       setPhase('consume');
+      // The completion is committed, so any correction dialog has served its
+      // purpose and must not linger over the finished activity.
+      setCorrection(null);
+      setCorrectionError('');
     } catch (e) {
+      if (e instanceof CompletionValidationError) {
+        // Nothing was written. Ask for a working instant instead of reporting
+        // a failure; a refusal of an instant the learner already chose is shown
+        // inside the dialog so it stays open.
+        if (declared) {
+          setCorrectionError(e.message);
+        } else {
+          setCorrection({ reason: e.reason, holidayName: e.holidayName });
+          setCorrectionError('');
+        }
+        setSubmitError(null);
+        // The assignment wizard awaits this call: it must not treat a refusal
+        // as a submission, so it still sees the throw while the dialog opens.
+        if (options.rethrow) throw e;
+        return;
+      }
       setSubmitError(e instanceof Error ? e.message : 'Could not save progress');
       if (options.rethrow) throw e;
     } finally {
+      completionInFlightRef.current = false;
       setSubmitting(false);
     }
   };
 
-  const outsideWorkingHoursDeclaration = componentAccess.outsideWorkingHours ? (
-    <label className="flex min-w-0 cursor-pointer items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs font-semibold leading-5 text-amber-950">
-      <input
-        type="checkbox"
-        checked={insideWorkingHoursConfirmed}
-        onChange={event => setInsideWorkingHoursConfirmed(event.target.checked)}
-        className="m-0 h-4 !min-h-0 w-4 shrink-0 accent-amber-700"
-      />
-      <span>I confirm that I completed this activity inside UK working hours.</span>
-    </label>
-  ) : null;
-  const showDeclarationInBanner = !isAssignment && phase === 'reflect';
-  const workingHoursNotice = component && canProgress && recordingAttempt && componentAccess.outsideWorkingHours && (
-    <div role="note" className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-4 text-amber-950 shadow-sm sm:px-5">
-      <div className="flex items-start gap-3">
-        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-amber-100 text-amber-700">
-          <AppIcon className="ri-time-line text-lg" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-bold">You are accessing this component outside UK working hours</p>
-          <p className="mt-1 text-xs leading-5 text-amber-900/80">
-            Working hours are Monday to Friday, 07:00-19:00 UK time, excluding official bank holidays and college holidays. The current UK time is {componentAccess.currentTimeLabel}.
-            Your activity time will continue to be calculated automatically. {isAssignment
-              ? 'Confirm the declaration at the bottom of the assignment before submitting.'
-              : showDeclarationInBanner
-              ? 'Confirm the declaration below before completing this component.'
-              : 'Confirm the declaration next to Finish before completing this component.'}
-          </p>
-          {showDeclarationInBanner && <div className="mt-3">{outsideWorkingHoursDeclaration}</div>}
-        </div>
+  const submitDeclared = (declaredAt: string) => {
+    void finalizeSubmit(lastReflectionRef.current, { declaredCompletedAt: declaredAt });
+  };
+
+  const activityHeading = component && (
+    <div className={isVideo ? layoutStyles.videoHeading : 'min-w-0'}>
+      <span className={isVideo
+        ? layoutStyles.videoEyebrow
+        : `text-[10px] font-semibold uppercase tracking-wider inline-flex items-center gap-1 ${meta?.color || 'text-foreground-500'}`}>
+        <AppIcon className={meta?.icon || 'ri-checkbox-circle-line'} /> {meta?.label || 'Activity'}
+      </span>
+      <h1 className={isVideo ? layoutStyles.videoTitle : 'mt-1 text-xl md:text-2xl font-heading font-bold text-foreground-900 leading-tight'}>{pageTitle}</h1>
+      <div className={isVideo ? layoutStyles.videoMeta : 'mt-2 flex flex-wrap items-center gap-3 text-[13px] text-foreground-500'}>
+        {isVideo && realDuration !== null ? (
+          <span className="inline-flex items-center gap-1"><AppIcon className="ri-time-line" />{formatClock(realDuration)}</span>
+        ) : component.durationMinutes != null && (
+          <span className="inline-flex items-center gap-1"><AppIcon className="ri-time-line" />{component.durationMinutes} min</span>
+        )}
+        {component.expectedOtjh != null && component.expectedOtjh > 0 && (
+          <span className="inline-flex items-center gap-1"><AppIcon className="ri-timer-line" />{component.expectedOtjh}h OTJ</span>
+        )}
+        {weekLabel && <span className="inline-flex items-center gap-1"><AppIcon className="ri-calendar-line" />{weekLabel}</span>}
       </div>
     </div>
   );
@@ -685,13 +709,6 @@ export default function ComponentViewPage() {
           Back to training plan
         </button>
 
-        {component && canProgress && recordingAttempt && componentAccess.holidayCalendarReady === false && (
-          <div role={componentAccess.holidayError ? 'alert' : 'status'} className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">
-            {componentAccess.holidayError || 'Checking the holiday calendar…'}
-            {componentAccess.holidayError && <button type="button" onClick={componentAccess.refreshHolidays} className="ml-2 underline">Retry</button>}
-          </div>
-        )}
-        {workingHoursNotice && <div className="mb-5">{workingHoursNotice}</div>}
 
         {loading ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-5"><RowsSkeleton rows={4} avatar={false} /></div>
@@ -715,14 +732,12 @@ export default function ComponentViewPage() {
         ) : isVideo && !parsed ? (
           <div className="bg-background-50 rounded-2xl border border-foreground-200/60 p-6"><EmptyState text="This video has no playable URL yet." /></div>
         ) : phase === 'reflect' ? (
-          <div className="w-full max-w-5xl mx-auto">
+          <div className="space-y-4">
             <ReflectionWindow
               noun={noun}
               plannedTimeLabel={plannedTimeLabel}
               plannedHours={plannedHours ?? undefined}
               learnerKsbs={learnerKsbs}
-              // Components carry their own authored KSB mappings, so the learner
-              // is shown what will be credited instead of picking by hand.
               autoKsbs={component.ksbMappings ?? []}
               elapsedSeconds={elapsedSeconds}
               submitting={submitting}
@@ -737,13 +752,14 @@ export default function ComponentViewPage() {
               learnerId={id}
               evidenceSectionRef={componentId}
               reflectionQuestion={component.reflectionQuestion}
-              onClose={() => navigate(backHref)}
+              onClose={() => setPhase('consume')}
             />
           </div>
         ) : (
           /* ── consume phase: content + details + sidebar ── */
           <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-6 items-start">
             <div className="min-w-0">
+              {isVideo && activityHeading}
               {!isAssignment && (
                 <ComponentContent component={{ ...component, liveSessionUrl: parsePersonalLearning(id) ? null : component.teamsLiveSessionId && component.teamsSessionNumber
                     ? `/learner_api/session-results/${kind}/${id}/${encodeURIComponent(component.teamsLiveSessionId)}/sessions/${component.teamsSessionNumber}/join/`
@@ -764,32 +780,23 @@ export default function ComponentViewPage() {
                 /> : <p className="mt-4 rounded-xl border bg-amber-50 p-4 text-sm">This live session needs its saved session number before results can be shown. Please contact your tutor.</p>
               )}
 
-              {/* Title + timer + finish */}
-              <div className="mt-4 flex items-start justify-between gap-4 flex-wrap">
-                <div className="min-w-0">
-                  <span className={`text-[10px] font-semibold uppercase tracking-wider inline-flex items-center gap-1 ${meta?.color || 'text-foreground-500'}`}>
-                    <AppIcon className={meta?.icon || 'ri-checkbox-circle-line'} /> {meta?.label || 'Activity'}
-                  </span>
-                  <h1 className="mt-1 text-xl md:text-2xl font-heading font-bold text-foreground-900 leading-tight">{pageTitle}</h1>
-                  <div className="mt-2 flex flex-wrap items-center gap-3 text-[13px] text-foreground-500">
-                    {isVideo && realDuration !== null ? (
-                      <span className="inline-flex items-center gap-1"><AppIcon className="ri-time-line" />{formatClock(realDuration)}</span>
-                    ) : component.durationMinutes != null && (
-                      <span className="inline-flex items-center gap-1"><AppIcon className="ri-time-line" />{component.durationMinutes} min</span>
-                    )}
-                    {component.expectedOtjh != null && component.expectedOtjh > 0 && (
-                      <span className="inline-flex items-center gap-1"><AppIcon className="ri-timer-line" />{component.expectedOtjh}h OTJ</span>
-                    )}
-                    {weekLabel && <span className="inline-flex items-center gap-1"><AppIcon className="ri-calendar-line" />{weekLabel}</span>}
-                  </div>
-                </div>
+              {/* Activity controls stay below the player; video details are above it. */}
+              <div className={isVideo
+                ? `mt-4 ${layoutStyles.videoArea}`
+                : isLiveSession
+                  ? `mt-4 ${layoutStyles.liveArea}`
+                  : 'mt-4 flex items-start justify-between gap-4 flex-wrap'}>
+                {!isVideo && activityHeading}
 
-                {!isAssignment && recordingAttempt && <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-3">
+                {!isAssignment && recordingAttempt && <div className={isVideo
+                  ? layoutStyles.videoActions
+                  : isLiveSession
+                    ? layoutStyles.liveActions
+                    : 'ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-3'}>
                   {!usesManualTimeOnly && (
-                    <div className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl font-mono text-sm font-semibold tabular-nums bg-background-100 text-foreground-700" title="Time on this activity">
-                      <AppIcon className="ri-timer-line" /> {formatClock(elapsedSeconds)}
-                    </div>
+                    <ActivityElapsedTimer time={formatClock(elapsedSeconds)} />
                   )}
+                  <div className={hasActivityPanel ? layoutStyles.videoTools : 'contents'}>
                   <ActivityTimeSpentInput
                     key={timerStorageKey}
                     onChange={(seconds) => {
@@ -797,6 +804,18 @@ export default function ComponentViewPage() {
                       setTimeSource(seconds == null && !usesManualTimeOnly ? 'timer' : 'input');
                     }}
                   />
+                  {activityEvidenceContext && canUseComponent && (
+                    <AssignmentEvidence
+                      kind={activityEvidenceContext.kind}
+                      learnerId={activityEvidenceContext.learnerId}
+                      componentId={activityEvidenceContext.componentId}
+                      trainingPlanDetails={activityEvidenceContext.trainingPlanDetails}
+                      onUploaded={activityEvidenceContext.onUploaded}
+                      onFileSelected={setPendingEvidenceFileName}
+                      inputId={evidenceInputId}
+                      showPanel={false}
+                    />
+                  )}
                   {activityEvidenceContext && canUseComponent && (
                     evidenceFileLabel ? (
                       <span className="inline-flex items-center gap-1.5">
@@ -866,29 +885,27 @@ export default function ComponentViewPage() {
                       </label>
                     )
                   )}
-                  <div className="flex min-w-0 max-w-full items-center gap-3">
-                    {outsideWorkingHoursDeclaration && (
-                      <div className="min-w-0 max-w-xs">{outsideWorkingHoursDeclaration}</div>
-                    )}
+                  </div>
+                  <div className={hasActivityPanel ? layoutStyles.videoFooter : 'flex min-w-0 max-w-full items-center gap-3'}>
                     <button
                       onClick={finishConsuming}
-                      disabled={(!!criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !insideWorkingHoursConfirmed)}
+                      disabled={(!!criteria && !criteria.met) || manualTimeMissing}
                       title={
                         criteria && !criteria.met
                           ? 'Complete the criteria below before finishing.'
                           : manualTimeMissing
                             ? 'Enter the time spent before finishing.'
-                            : componentAccess.outsideWorkingHours && !insideWorkingHoursConfirmed
-                              ? 'Confirm the out-of-hours declaration before finishing.'
                             : undefined
                       }
                       className={`inline-flex shrink-0 items-center gap-1.5 text-sm font-semibold px-4 py-2 rounded-xl transition-colors ${
-                        (criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !insideWorkingHoursConfirmed)
+                        (criteria && !criteria.met) || manualTimeMissing
                           ? 'bg-background-200 text-foreground-400 cursor-not-allowed'
-                          : 'bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer'
+                          : isVideo
+                            ? 'bg-primary-600 text-white hover:bg-primary-700 cursor-pointer'
+                            : 'bg-emerald-600 text-white hover:bg-emerald-700 cursor-pointer'
                       }`}
                     >
-                      <AppIcon className={(criteria && !criteria.met) || manualTimeMissing || (componentAccess.outsideWorkingHours && !insideWorkingHoursConfirmed) ? 'ri-lock-line' : 'ri-check-line'} />
+                      <AppIcon className={(criteria && !criteria.met) || manualTimeMissing ? 'ri-lock-line' : 'ri-check-line'} />
                       Finish
                     </button>
                   </div>
@@ -976,20 +993,19 @@ export default function ComponentViewPage() {
                     timeSource={timeSource}
                     timeControl={(
                       <div className="space-y-3">
-                      <p className="text-sm">{timeSource === 'input' ? 'Confirmed time' : 'Automatic time'}: <span className="font-mono font-bold">{formatClock(submittedTimeSeconds)}</span></p>
-                      <ActivityTimeSpentInput
-                        initialSeconds={manualTimeSeconds}
-                        onChange={(seconds) => {
-                          setManualTimeSeconds(seconds);
-                          setTimeSource(seconds == null ? 'timer' : 'input');
-                        }}
-                      />
-                      <p className="text-xs text-slate-500">The timer runs normally. Only enter a time above if you need to correct it.</p>
+                        {timeSource === 'input'
+                          ? <p className="text-sm">Confirmed time: <span className="font-mono font-bold">{formatClock(submittedTimeSeconds)}</span></p>
+                          : <ActivityElapsedTimer time={formatClock(submittedTimeSeconds)} />}
+                        <ActivityTimeSpentInput
+                          initialSeconds={manualTimeSeconds}
+                          onChange={(seconds) => {
+                            setManualTimeSeconds(seconds);
+                            setTimeSource(seconds == null ? 'timer' : 'input');
+                          }}
+                        />
+                        <p className="text-xs text-slate-500">The timer runs normally. Only enter a time above if you need to correct it.</p>
                       </div>
                     )}
-                    workingHoursDeclaration={workingHoursNotice ? outsideWorkingHoursDeclaration : null}
-                    outsideWorkingHours={componentAccess.outsideWorkingHours}
-                    insideWorkingHoursConfirmed={insideWorkingHoursConfirmed}
                     submittingProgress={submitting}
                     onEvidenceChanged={activityEvidenceContext.onUploaded}
                     onRestoreTime={(seconds, source) => {
@@ -1070,8 +1086,33 @@ export default function ComponentViewPage() {
             onConfirm={confirmCompletion}
           />
         )}
+        {phase === 'reflection-choice' && (
+          <ReflectionChoicePopup
+            noun={noun}
+            submitting={submitting}
+            error={submitError}
+            onCancel={() => setPhase('consume')}
+            onAddReflection={() => setPhase('reflect')}
+            onFinishWithoutReflection={() => void finalizeSubmit({
+              ksbs: (component?.ksbMappings || []).map(mapping => mapping.code),
+              feedback: '',
+              reportedTime: plannedTimeLabel,
+            }, { skipReflection: true })}
+          />
+        )}
         {evidencePreview && (
           <EvidencePreviewModal preview={evidencePreview} onClose={() => setEvidencePreview(null)} />
+        )}
+        {correction && (
+          <CompletionTimeDialog
+            reason={correction.reason}
+            holidayName={correction.holidayName}
+            holidays={componentAccess.holidays ?? []}
+            submitting={submitting}
+            serverError={correctionError}
+            onSubmit={submitDeclared}
+            onClose={() => { setCorrection(null); setCorrectionError(''); }}
+          />
         )}
       </div>
     </WorkspaceShell>
@@ -1394,12 +1435,19 @@ function AccessibleReadingMaterial({
 }) {
   const componentId = component.componentId || title;
   const sourceHtml = normalizeReadingHtml(component.contentHtml || '');
+  const files = useMemo(() => readingFiles(component.resourceUrl, component.fileName, sourceHtml), [component.resourceUrl, component.fileName, sourceHtml]);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [downloadError, setDownloadError] = useState('');
   const savedDocument = readStoredJson(readingStorageKey(componentId, 'document'), { sourceHtml: '', html: '' });
   const [html, setHtml] = useState(
     savedDocument.sourceHtml === sourceHtml && savedDocument.html
       ? DOMPurify.sanitize(savedDocument.html)
       : sourceHtml,
   );
+  // React 19 re-applies innerHTML whenever this object's identity changes, so a
+  // fresh literal on every render (the parent re-renders each second for the
+  // activity timer) would tear down and recreate any embedded <video>/<iframe>.
+  const innerHtml = useMemo(() => ({ __html: html }), [html]);
   const [preferences, setPreferences] = useState<ReadingPreferences>(() => readStoredJson(readingStorageKey(componentId, 'preferences'), DEFAULT_READING_PREFERENCES));
   const [saved, setSaved] = useState(true);
   const [speaking, setSpeaking] = useState(false);
@@ -1465,6 +1513,19 @@ function AccessibleReadingMaterial({
     setSpeaking(true);
   };
 
+  const downloadText = async () => {
+    if (downloadingPdf) return;
+    setDownloadingPdf(true);
+    setDownloadError('');
+    try {
+      await downloadReadingPdf(title, sourceHtml);
+    } catch (error) {
+      setDownloadError(error instanceof Error ? error.message : 'Could not download the reading. Please try again.');
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
+
   const downloadNotes = () => {
     const documentHtml = `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>body{max-width:850px;margin:40px auto;padding:0 24px;font-family:Arial,sans-serif;font-size:${preferences.fontSize}px;line-height:${preferences.lineHeight};letter-spacing:${preferences.letterSpacing}em}mark{background:#fde047;color:#111827}</style></head><body><h1>${title}</h1>${html}</body></html>`;
     const blob = new Blob([documentHtml], { type: 'text/html;charset=utf-8' });
@@ -1488,12 +1549,17 @@ function AccessibleReadingMaterial({
         speaking={speaking}
         saved={saved}
       />
-      <div ref={readingBodyRef}>
-      {component.contentHtml && (
-        <div className="mb-3 flex justify-end">
-          <button type="button" onClick={downloadNotes} className="inline-flex items-center gap-1.5 rounded-lg border border-background-300 bg-white px-3 py-1.5 text-xs font-bold text-foreground-700 hover:bg-background-50"><AppIcon className="ri-download-2-line" />Download highlighted reading</button>
+      {(files.length > 0 || component.contentHtml) && (
+        <div className="mb-3 flex flex-wrap justify-end gap-2" aria-label="Reading downloads">
+          {files.map(file => <DownloadFileButton key={file.url} url={file.url} fileName={file.fileName} label={files.length === 1 ? 'Download original file' : `Download: ${file.label}`} />)}
+          {component.contentHtml && <>
+            <button type="button" onClick={downloadText} disabled={downloadingPdf} className="inline-flex items-center gap-1.5 rounded-lg border border-background-300 bg-white px-3 py-1.5 text-xs font-bold text-foreground-700 hover:bg-background-50 disabled:cursor-wait disabled:opacity-60"><AppIcon className="ri-file-pdf-2-line" />{downloadingPdf ? 'Preparing PDF…' : 'Download reading as PDF'}</button>
+            <button type="button" onClick={downloadNotes} className="inline-flex items-center gap-1.5 rounded-lg border border-background-300 bg-white px-3 py-1.5 text-xs font-bold text-foreground-700 hover:bg-background-50"><AppIcon className="ri-download-2-line" />Download highlighted reading</button>
+          </>}
         </div>
       )}
+      {downloadError && <p role="alert" className="mb-3 text-sm text-red-700">{downloadError}</p>}
+      <div ref={readingBodyRef}>
       {component.contentHtml && (
         <div
           className="relative overflow-hidden rounded-xl border border-background-200 p-5"
@@ -1505,7 +1571,7 @@ function AccessibleReadingMaterial({
           <div
             ref={contentRef}
             className="relative z-0 max-w-none [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:font-heading [&_h2]:text-lg [&_h2]:font-bold [&_h3]:mb-1.5 [&_h3]:mt-3 [&_h3]:font-heading [&_h3]:text-base [&_h3]:font-semibold [&_p]:mb-3 [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-5 [&_li]:mb-1 [&_strong]:font-semibold [&_em]:italic [&_a]:text-blue-600 [&_a]:underline"
-            dangerouslySetInnerHTML={{ __html: html }}
+            dangerouslySetInnerHTML={innerHtml}
           />
         </div>
       )}
@@ -1557,10 +1623,8 @@ function decodeInlineText(value: string): string {
 /**
  * Download the file itself.
  *
- * Shown only where the author allowed it (`downloadAllowed` on the component —
- * a PowerPoint's authoring form calls it "Download allowed"). The learner page
- * carried the flag all the way from the database and then never offered the
- * download, so a deck marked downloadable could only be read in the viewer.
+ * Reading attachments are always downloadable for learners with access.
+ * Slide decks still respect the author's `downloadAllowed` setting.
  *
  * `download` names the saved file rather than leaving the learner with the
  * upload's timestamped name; it works because these are served same-origin.
@@ -1663,7 +1727,7 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
 
         if (isWord) {
           const arrayBuffer = await response.arrayBuffer();
-          const mammoth = await import('mammoth');
+          const mammoth = await import('mammoth/mammoth.browser');
           const result = await mammoth.convertToHtml({ arrayBuffer });
           if (!cancelled) {
             setPreview({ status: 'ready', kind: 'html', html: DOMPurify.sanitize(result.value || '<p>No preview content found.</p>') });
@@ -1703,6 +1767,11 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
     };
   }, [canParseInline, isExcel, isText, isWord, previewUrl]);
 
+  // Stable identity so the parent's per-second timer re-render does not re-apply
+  // innerHTML (React 19 compares this object by reference).
+  const previewHtml = preview?.status === 'ready' && preview.kind === 'html' ? preview.html : null;
+  const previewInnerHtml = useMemo(() => (previewHtml == null ? undefined : { __html: previewHtml }), [previewHtml]);
+
   if (media) return <InlineMediaPreview url={url} title={title} fileName={fileName} />;
 
   if (isPdf) {
@@ -1724,7 +1793,7 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
       <div className="max-h-[72vh] overflow-auto rounded-xl border border-background-300 bg-white p-6 shadow-sm" style={readingPreferences ? readingSurfaceStyle(readingPreferences) : undefined}>
         <div
           className="learner-file-preview max-w-none text-sm leading-relaxed text-foreground-800 [&_h1]:mb-3 [&_h1]:text-2xl [&_h1]:font-bold [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:text-xl [&_h2]:font-bold [&_h3]:mb-2 [&_h3]:mt-3 [&_h3]:text-lg [&_h3]:font-semibold [&_p]:mb-3 [&_ul]:mb-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:mb-3 [&_ol]:list-decimal [&_ol]:pl-5 [&_table]:w-full [&_table]:border-collapse [&_td]:border [&_td]:border-background-300 [&_td]:px-3 [&_td]:py-2 [&_th]:border [&_th]:border-background-300 [&_th]:bg-background-100 [&_th]:px-3 [&_th]:py-2 [&_th]:text-left"
-          dangerouslySetInnerHTML={{ __html: preview.html }}
+          dangerouslySetInnerHTML={previewInnerHtml}
         />
       </div>
     );
@@ -2189,7 +2258,15 @@ export function ComponentBody({ component, contentKind, parsed, title, onDuratio
           <div><p className="text-sm font-semibold text-foreground-900">{title}</p><p className="text-xs text-foreground-400">Listen, then finish and reflect below.</p></div>
         </div>
         {audioSource ? (
-          <audio controls preload="metadata" className="w-full" src={audioSource}>Your browser does not support audio playback.</audio>
+          <audio
+            controls
+            preload="metadata"
+            className="w-full"
+            src={audioSource}
+            onPlay={() => onPlayingChange(true)}
+            onPause={() => onPlayingChange(false)}
+            onEnded={() => { onPlayingChange(false); onEnded(); }}
+          >Your browser does not support audio playback.</audio>
         ) : component.audioUrl ? (
           <>
             {/* Not a direct media file (e.g. a podcast listening page) — fetch
@@ -2223,11 +2300,6 @@ export function ComponentBody({ component, contentKind, parsed, title, onDuratio
             <p className="text-sm font-semibold text-foreground-900">{title}</p>
             <p className="text-xs text-foreground-400">Read the material, then finish and reflect below.</p>
           </div>
-          {/* Same flag, same promise: an attached document the author marked
-              downloadable can be taken away, not only read here. */}
-          {component.downloadAllowed && component.resourceUrl && (
-            <DownloadFileButton url={component.resourceUrl} fileName={component.fileName} />
-          )}
         </div>
         <AccessibleReadingMaterial component={component} title={title} />
         {component.audioUrl && (

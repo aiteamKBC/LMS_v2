@@ -14,6 +14,10 @@ import { fetchLearnerEventReviewInstance, type LearnerReviewDefinition } from '@
 import type { LearnerKind } from '@/api/learnerDetail';
 import { flattenReviewFields } from '@/api/reviewInstances';
 import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
+import { LearnerLogs } from '@/features/monthly-logs/page';
+import monthlyLogDesign from '@/features/old-otjh/design.module.css';
+import monthlyLogJournal from '@/features/old-otjh/journal.module.css';
+import monthlyLogStyles from '@/features/monthly-logs/monthlyLogs.module.css';
 
 /**
  * The learner's half of the ONE Curriculum-driven Review form -- also reused
@@ -117,10 +121,10 @@ function seedAnswersFromDefinition(definition: LearnerReviewDefinition): Record<
 
 export function LearnerReviewInstanceForm({
   definition, onSign, onDownload, signatoryName = 'Learner',
-  viewerRole = 'participant', onSaveAnswers,
+  viewerRole = 'participant', onSaveAnswers, mcmMonthlyLog,
 }: {
   definition: LearnerReviewDefinition;
-  onSign?: (signature: string) => Promise<void>;
+  onSign?: (signature: string, options?: { applyMonthlyLogSignature?: boolean }) => Promise<void>;
   onDownload?: () => Promise<void>;
   signatoryName?: string;
   /** Which respondent role this rendering represents -- 'participant' (the
@@ -130,11 +134,14 @@ export function LearnerReviewInstanceForm({
    *  definition. Omitted (every existing caller until it opts in), the form
    *  stays fully read-only exactly as it always has. */
   onSaveAnswers?: (answers: Record<string, unknown>) => Promise<LearnerReviewDefinition>;
+  /** The target-month log is reviewed inside the MCM signing modal, never inline. */
+  mcmMonthlyLog?: { id: string; month: string; contractKind: LearnerKind };
 }) {
   const [openSectionId, setOpenSectionId] = useState('');
   const [signing, setSigning] = useState(false);
   const [signatureError, setSignatureError] = useState('');
-  const [signatureOpen, setSignatureOpen] = useState(true);
+  const [signatureOpen, setSignatureOpen] = useState(!mcmMonthlyLog);
+  const [applyMonthlyLogSignature, setApplyMonthlyLogSignature] = useState(true);
   const [savedSignature, setSavedSignature] = useState('');
   const [drawingSignature, setDrawingSignature] = useState(false);
   const signingInFlight = useRef(false);
@@ -143,10 +150,18 @@ export function LearnerReviewInstanceForm({
   const [savingAnswers, setSavingAnswers] = useState(false);
   const [saveAnswersError, setSaveAnswersError] = useState('');
 
-  function showSignatures() {
-    setSignatureOpen(true);
+  function focusSignatureSection() {
     signatureSection.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     signatureSection.current?.focus({ preventScroll: true });
+  }
+
+  function showSignatures() {
+    if (canSign && mcmMonthlyLog) {
+      setSignatureOpen(true);
+      return;
+    }
+    setSignatureOpen(true);
+    focusSignatureSection();
   }
 
   async function saveSignature(signature: string) {
@@ -155,7 +170,7 @@ export function LearnerReviewInstanceForm({
     setSigning(true);
     setSignatureError('');
     try {
-      await onSign(signature);
+      await onSign(signature, mcmMonthlyLog ? { applyMonthlyLogSignature } : undefined);
       writeSavedLearnerSignature(signatoryName, signature);
       setSavedSignature(signature);
       setDrawingSignature(false);
@@ -172,9 +187,13 @@ export function LearnerReviewInstanceForm({
   }, [definition]);
 
   useEffect(() => {
-    setSavedSignature(readSavedLearnerSignature(signatoryName));
+    setSavedSignature(definition.savedSignature || readSavedLearnerSignature(signatoryName));
     setDrawingSignature(false);
-  }, [signatoryName]);
+  }, [definition.savedSignature, signatoryName]);
+
+  useEffect(() => {
+    setApplyMonthlyLogSignature(true);
+  }, [definition.instance?.id, mcmMonthlyLog?.month]);
 
   // The renderer draws from `answers`, not from the field rows, so the saved
   // answers are seeded the same way ReviewInstanceModal seeds them. Kept as
@@ -360,6 +379,7 @@ export function LearnerReviewInstanceForm({
         readOnly
         fieldReadOnly={field => !canWriteAnswers || !writableFieldIds.has(field.id)}
         respondentRole={viewerRole}
+        showSavedAnswerStatus
         openSectionId={openSectionId}
         onOpenSectionChange={setOpenSectionId}
       />
@@ -367,7 +387,59 @@ export function LearnerReviewInstanceForm({
       <div ref={signatureSection} tabIndex={-1} aria-label="Signature step" className="scroll-mt-6 space-y-3 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500">
         <ReviewSignatures signatures={definition.signatures} />
         <ReviewPdfDownload availability={definition.pdf} onDownload={onDownload} />
-      {canSign && signatureOpen ? (
+      {canSign && signatureOpen ? mcmMonthlyLog ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-3 sm:p-6" role="presentation">
+          <div className="flex max-h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-violet-200 bg-background-50 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="mcm-sign-dialog-title">
+            <header className="flex items-start justify-between gap-4 border-b border-violet-100 bg-violet-50 px-5 py-4 sm:px-6">
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-[0.14em] text-violet-700">Review &amp; sign</p>
+                <h2 id="mcm-sign-dialog-title" className="mt-1 text-lg font-bold text-violet-950">Review the monthly log before signing</h2>
+                <p className="mt-1 text-sm text-violet-900">Sign the MCM below. You can choose whether the same learner signature is also saved on this month’s log.</p>
+              </div>
+              <button type="button" disabled={signing} onClick={() => setSignatureOpen(false)} className="rounded-lg border border-violet-200 bg-white px-3 py-2 text-sm font-semibold text-violet-800 hover:bg-violet-100 disabled:opacity-50" aria-label="Close review and sign dialog">Close</button>
+            </header>
+            <div className="min-h-0 overflow-y-auto p-3 sm:p-5">
+              {mcmMonthlyLog ? (
+                <section className="mb-5 space-y-3 rounded-2xl border border-violet-200 bg-violet-50/40 p-3 sm:p-4" aria-label="Monthly learning log">
+                  <div className="flex flex-wrap items-start justify-between gap-3 px-1">
+                    <div><p className="text-sm font-bold text-violet-950">Monthly learning log</p><p className="mt-1 text-sm text-violet-900">Review the activities for {new Date(`${mcmMonthlyLog.month}-01T00:00:00`).toLocaleDateString('en-GB', { month: 'long', year: 'numeric' })} before signing.</p></div>
+                    <span className="rounded-full border border-violet-200 bg-white px-3 py-1.5 text-xs font-bold text-violet-800">Read only</span>
+                  </div>
+                  <div className={`${monthlyLogDesign.scope} ${monthlyLogDesign.page} ${monthlyLogStyles.theme} ${monthlyLogJournal.canvas}`}>
+                    <LearnerLogs id={mcmMonthlyLog.id} month={mcmMonthlyLog.month} base="" perspective="learner" contractKind={mcmMonthlyLog.contractKind} workflow="mcm" embedded />
+                  </div>
+                  <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-violet-200 bg-white px-4 py-3 text-sm text-violet-950">
+                    <input type="checkbox" className="mt-0.5 h-4 w-4 accent-violet-700" checked={applyMonthlyLogSignature} onChange={event => setApplyMonthlyLogSignature(event.target.checked)} disabled={signing} />
+                    <span><span className="block font-bold">Apply my signature to this Monthly Log as well</span><span className="mt-0.5 block text-xs text-violet-800">If unchecked, only the MCM form will be signed. You can sign the Monthly Log later from its normal page.</span></span>
+                  </label>
+                </section>
+              ) : null}
+              <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4" aria-busy={signing}>
+                <p className="mb-3 text-sm font-bold text-violet-950">Your signature is required for the MCM</p>
+                {signatureError && <p role="alert" className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{signatureError} You can try signing again.</p>}
+                {signing && <p role="status" className="mb-3 text-sm text-violet-900">Saving your signature…</p>}
+                {savedSignature && !drawingSignature ? (
+                  <div className="max-w-md rounded-xl border border-foreground-200 bg-white p-3">
+                    <p className="text-[12px] text-foreground-700">Saved signature for</p>
+                    <p className="mt-1 text-[13px] font-medium text-foreground-900">{signatoryName}</p>
+                    <img src={savedSignature} alt="Your saved signature" className="mt-3 max-h-24 w-full rounded-lg border border-foreground-100 bg-white object-contain p-3" />
+                    <p className="mt-3 text-[11px] text-foreground-500">Use this saved signature for this review, or draw a new one.</p>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <button type="button" disabled={signing} onClick={() => { void saveSignature(savedSignature); }} className="rounded-xl bg-violet-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-800 disabled:opacity-50">Use saved signature</button>
+                      <button type="button" disabled={signing} onClick={() => setDrawingSignature(true)} className="rounded-xl border border-violet-200 bg-white px-4 py-2.5 text-sm font-semibold text-violet-800 hover:bg-violet-100 disabled:opacity-50">Draw new signature</button>
+                      <button type="button" disabled={signing} onClick={() => setSignatureOpen(false)} className="rounded-xl border border-background-200 bg-white px-4 py-2.5 text-sm font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-50">Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <fieldset disabled={signing} className="min-w-0 border-0 p-0">
+                    <SignaturePad signatoryName={signatoryName} onCommit={(signature) => { void saveSignature(signature); }} onCancel={() => { setSignatureOpen(false); setDrawingSignature(false); }} />
+                  </fieldset>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : (
         <div className="rounded-2xl border border-violet-200 bg-violet-50 p-4" aria-busy={signing}>
           <p className="mb-3 text-sm font-bold text-violet-950">Your signature is required</p>
           {signatureError && <p role="alert" className="mb-3 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{signatureError} You can try signing again.</p>}
@@ -379,15 +451,9 @@ export function LearnerReviewInstanceForm({
               <img src={savedSignature} alt="Your saved signature" className="mt-3 max-h-24 w-full rounded-lg border border-foreground-100 bg-white object-contain p-3" />
               <p className="mt-3 text-[11px] text-foreground-500">Use this saved signature for this review, or draw a new one.</p>
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <button type="button" disabled={signing} onClick={() => { void saveSignature(savedSignature); }} className="rounded-xl bg-violet-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-800 disabled:opacity-50">
-                  Use saved signature
-                </button>
-                <button type="button" disabled={signing} onClick={() => setDrawingSignature(true)} className="rounded-xl border border-violet-200 bg-white px-4 py-2.5 text-sm font-semibold text-violet-800 hover:bg-violet-100 disabled:opacity-50">
-                  Draw new signature
-                </button>
-                <button type="button" disabled={signing} onClick={() => setSignatureOpen(false)} className="rounded-xl border border-background-200 bg-white px-4 py-2.5 text-sm font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-50">
-                  Cancel
-                </button>
+                <button type="button" disabled={signing} onClick={() => { void saveSignature(savedSignature); }} className="rounded-xl bg-violet-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-800 disabled:opacity-50">Use saved signature</button>
+                <button type="button" disabled={signing} onClick={() => setDrawingSignature(true)} className="rounded-xl border border-violet-200 bg-white px-4 py-2.5 text-sm font-semibold text-violet-800 hover:bg-violet-100 disabled:opacity-50">Draw new signature</button>
+                <button type="button" disabled={signing} onClick={() => setSignatureOpen(false)} className="rounded-xl border border-background-200 bg-white px-4 py-2.5 text-sm font-semibold text-foreground-600 hover:bg-background-100 disabled:opacity-50">Cancel</button>
               </div>
             </div>
           ) : (

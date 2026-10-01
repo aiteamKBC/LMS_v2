@@ -5,11 +5,21 @@ from .csrf import coach_csrf_token
 from . import personal_learning
 from .monthly_reports import coach_monthly_report_detail, coach_monthly_reports
 from .meeting_reminders import coach_meeting_reminder
+from .enrolment_documents import (
+    coach_enrolment_document,
+    coach_enrolment_documents,
+    coach_sign_enrolment_document,
+)
 from .review_pdf import coach_mcm_pdf
+from .dashboard_view import coach_dashboard
 from .views import (
     coach_attendance,
     coach_attendance_details,
-    coach_dashboard,
+    coach_manual_attendance,
+    coach_source_attendance,
+    coach_learner_case_file,
+    coach_learner_case_file_next_session,
+    coach_learner_case_file_reviews,
     coach_absence_reports,
     coach_caseload,
     coach_caseload_coach_rag,
@@ -48,11 +58,22 @@ urlpatterns = [
     path('csrf', coach_csrf_token, name='coach-csrf'),
     path('coaches', coach_directory, name='coach-directory'),
     path('coach/dashboard', coach_dashboard, name='coach-dashboard'),
+    path('coach/learners/<int:learner_id>/case-file', coach_learner_case_file, name='coach-learner-case-file'),
+    path('coach/learners/<int:learner_id>/next-session', coach_learner_case_file_next_session, name='coach-learner-case-file-next-session'),
+    path('coach/learners/<int:learner_id>/reviews', coach_learner_case_file_reviews, name='coach-learner-case-file-reviews'),
+    # Enrolment Documents tab: the learner's enrolment review documents, signed
+    # by the coach with their saved signature (coach_api/enrolment_documents.py).
+    path('coach/learners/<int:learner_id>/enrolment-documents', coach_enrolment_documents, name='coach-enrolment-documents'),
+    path('coach/learners/<int:learner_id>/enrolment-documents/<str:event_key>', coach_enrolment_document, name='coach-enrolment-document'),
+    path('coach/learners/<int:learner_id>/enrolment-documents/<str:event_key>/sign', coach_sign_enrolment_document, name='coach-enrolment-document-sign'),
     path('coach/caseload', coach_caseload, name='coach-caseload'),
     path('coach/imported-review-history', coach_imported_review_history, name='coach-imported-review-history'),
     path('coach/caseload/<int:learner_id>/coach-rag', coach_caseload_coach_rag, name='coach-caseload-coach-rag'),
     path('coach/attendance', coach_attendance, name='coach-attendance'),
     path('coach/attendance/details', coach_attendance_details, name='coach-attendance-details'),
+    path('coach/attendance/manual', coach_manual_attendance, name='coach-manual-attendance-create'),
+    path('coach/attendance/manual/<int:record_id>', coach_manual_attendance, name='coach-manual-attendance-detail'),
+    path('coach/attendance/source', coach_source_attendance, name='coach-source-attendance'),
     path('coach/absence-reports', coach_absence_reports, name='coach-absence-reports'),
     path('coach/evidence-awaiting-review', coach_evidence_awaiting_review, name='coach-evidence-awaiting-review'),
     # The learners' end-of-month reports. The detail route is declared first;

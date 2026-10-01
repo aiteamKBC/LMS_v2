@@ -581,32 +581,69 @@ def completed_hours_from_progress(progress, components=None):
 
 
 def replace_training_plan(learner, plan):
+    """Rebuild the learner's plan_modules/weeks/components mirror.
+
+    One insert per level, not one per row. Written row by row this cost a
+    separate round trip for every module and every week -- a learner on five
+    thirteen-week modules paid about 140 of them, which is why assigning a
+    single learner to a module sat there for several seconds against a remote
+    database. The rows written are identical; only the number of trips changed.
+    """
     LearnerTrainingPlanModule.objects.filter(learner=learner).delete()
-    for module_position, module in enumerate(plan or [], 1):
-        module_row = LearnerTrainingPlanModule.objects.create(
+    modules = list(plan or [])
+    if not modules:
+        return
+
+    module_rows = LearnerTrainingPlanModule.objects.bulk_create([
+        LearnerTrainingPlanModule(
             learner=learner,
             position=module_position,
             module_ref=_s(module.get("moduleId")) or None,
             module_title=_s(module.get("moduleTitle")),
         )
-        for week_position, week in enumerate(module.get("weeks") or [], 1):
-            week_row = LearnerTrainingPlanWeek.objects.create(
-                plan_module=module_row,
-                position=week_position,
-                week_ref=_s(week.get("weekId")) or None,
-                week_title=_s(week.get("weekTitle")),
-            )
-            LearnerTrainingPlanComponent.objects.bulk_create(
-                [
-                    LearnerTrainingPlanComponent(
-                        plan_week=week_row,
-                        position=position,
-                        component_ref=_s(component.get("componentId")) or None,
-                        component_title=_s(component.get("componentTitle")),
-                    )
-                    for position, component in enumerate(week.get("components") or [], 1)
-                ]
-            )
+        for module_position, module in enumerate(modules, 1)
+    ])
+    # Postgres hands the ids back from a bulk insert; a backend that cannot has
+    # to be asked for them, or the children below have no parent to point at.
+    if any(row.pk is None for row in module_rows):
+        module_rows = list(LearnerTrainingPlanModule.objects
+                           .filter(learner=learner).order_by("position", "id"))
+
+    week_plan = [
+        (module_row, week_position, week)
+        for module_row, module in zip(module_rows, modules)
+        for week_position, week in enumerate(module.get("weeks") or [], 1)
+    ]
+    if not week_plan:
+        return
+
+    week_rows = LearnerTrainingPlanWeek.objects.bulk_create([
+        LearnerTrainingPlanWeek(
+            plan_module=module_row,
+            position=week_position,
+            week_ref=_s(week.get("weekId")) or None,
+            week_title=_s(week.get("weekTitle")),
+        )
+        for module_row, week_position, week in week_plan
+    ])
+    if any(row.pk is None for row in week_rows):
+        saved = {
+            (row.plan_module_id, row.position): row
+            for row in LearnerTrainingPlanWeek.objects
+            .filter(plan_module__in=module_rows).order_by("plan_module_id", "position", "id")
+        }
+        week_rows = [saved[(module_row.pk, week_position)] for module_row, week_position, _ in week_plan]
+
+    LearnerTrainingPlanComponent.objects.bulk_create([
+        LearnerTrainingPlanComponent(
+            plan_week=week_row,
+            position=position,
+            component_ref=_s(component.get("componentId")) or None,
+            component_title=_s(component.get("componentTitle")),
+        )
+        for week_row, (_, _, week) in zip(week_rows, week_plan)
+        for position, component in enumerate(week.get("components") or [], 1)
+    ], batch_size=1000)
 
 
 def replace_free_courses(learner, free_courses):
@@ -1064,6 +1101,7 @@ def save_progress_record(learner, record, activity=None):
             passed=record.get("passed") if isinstance(record.get("passed"), bool) else None,
             feedback=_s(record.get("feedback")),
             reported_time=_s(record.get("reportedTime")),
+            reflection_skipped=record.get("reflectionSkipped") is True,
             started_at=_datetime(record.get("startedAt")),
             submitted_at=_datetime(record.get("submittedAt")),
             time_taken=_s(record.get("timeTaken")),
@@ -1078,6 +1116,8 @@ def save_progress_record(learner, record, activity=None):
             outside_working_hours_confirmed_at=_datetime(record.get("outsideWorkingHoursConfirmedAt")),
             inside_working_hours_confirmed=record.get("insideWorkingHoursConfirmed") is True,
             inside_working_hours_confirmed_at=_datetime(record.get("insideWorkingHoursConfirmedAt")),
+            declared_completed_at=_datetime(record.get("declaredCompletedAt")),
+            submission_validation_reason=_s(record.get("submissionValidationReason")),
             feed_kind=_s(activity.get("kind") or record.get("kind")),
             feed_action=_s(activity.get("action")),
             feed_title=_s(activity.get("title") or record.get("componentTitle")),

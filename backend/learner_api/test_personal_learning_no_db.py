@@ -49,6 +49,17 @@ class PersonalLearningTests(unittest.TestCase):
         blocker = patch('socket.socket', side_effect=AssertionError('Network is forbidden'))
         blocker.start()
         self.addCleanup(blocker.stop)
+        # The working rules themselves stay real -- these activities are
+        # completed on a Friday morning, which is a working instant -- but the
+        # learner's holiday calendar is a curriculum read, and this file runs
+        # without a database. learner_api.tests covers the scoped resolver.
+        try:
+            calendar = patch('learner_api.working_rules.learner_holiday_details', return_value={})
+            calendar.start()
+        except (ImportError, ModuleNotFoundError):   # standalone `python -I` run
+            pass
+        else:
+            self.addCleanup(calendar.stop)
         self.account = types.SimpleNamespace(id=7, role='admin', display_name='Synthetic Admin', email='admin@example.invalid')
         self.context = policy.context_for('pl.7.study.MOD-A', self.account)
         self.state = {'progress': [], 'submissions': {}, 'evidence': {}}
@@ -165,6 +176,16 @@ class PersonalLearningTests(unittest.TestCase):
         self.assertEqual(self.state['submissions']['reading:C1']['status'], 'submitted_for_tutor_review')
         detail = policy.progress_detail(self.detail, self.state['progress'], self.state['submissions'])
         self.assertEqual(self.ns['progress'](detail, 'MOD-A')['progressPercent'], 0)
+
+    def test_tutor_required_activity_accepts_an_explicit_reflection_skip(self):
+        self.detail['components'][0]['tutorValidationRequired'] = True
+        result = self.ns['complete_activity'](
+            self.context, self.account, self.detail, 'C1', 'component',
+            {'feedback': '', 'skipReflection': True},
+        )
+        self.assertTrue(result['record']['reflectionSkipped'])
+        self.assertEqual(result['record']['feedback'], '')
+        self.assertFalse(result['record']['passed'])
 
     def test_quiz_uses_server_grade_and_retry_retains_original_result(self):
         self.detail['components'] = [{'componentId': 'Q1', 'component': 'Final quiz', 'moduleId': 'MOD-A', 'module': 'Module A', 'isQuiz': True, 'quizMeta': {'quizId': 1}}]

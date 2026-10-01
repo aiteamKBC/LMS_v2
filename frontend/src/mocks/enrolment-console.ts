@@ -106,32 +106,33 @@ export const PCP_KSBS: Ksb[] = [
 ];
 
 // ---- Policies (Tab 8) ----
-export const POLICY_DOCS_KBC: PolicyDoc[] = [
-  'Apprentice Attendance and Engagement Policy Kent Business College.pdf',
-  'BUSINESS CONTINUITY POLICY KENT BUSINESS COLLEGE.pdf',
-  'COMPLAINT PROCEDURES POLICY KENT BUSINESS COLLEGE.pdf',
-  'HARASSMENT AND BULLYING POLICY KENT BUSINESS COLLEGE.pdf',
-  'Health and Safety Handbook Kent Business College.pdf',
-  'Introduction to British Values Kent Business College.pdf',
-  'Introduction to Equality, Diversity _ Inclusion Kent Business College.pdf',
-  'Introduction to Safeguarding and Prevent Kent Business College.pdf',
-  'Learner Code of Conduct Kent Business College.pdf',
-  'Manager_Handbook Kent Business College.pdf',
-  'Safeguarding and Prevent Handbook Kent Business College.pdf',
-].map((label, i) => ({ id: `kbc-${i}`, label, url: '#', requiresAck: true }));
-
-export const POLICY_DOCS_IBIS: PolicyDoc[] = [
-  'Health and Safety Handbook IBIS.pdf',
-  'HARASSMENT AND BULLYING POLICY IBIS.pdf',
-  'COMPLAINT PROCEDURES POLICY IBIS.pdf',
-  'BUSINESS CONTINUITY POLICY IBIS.pdf',
-  'Safeguarding and Prevent Handbook IBIS.pdf',
-  'Learner Code of Conduct IBIS.pdf',
-  'Introduction to Safeguarding _ PREVENT IBIS.pdf',
-  'Introduction to Equality, Diversity _ Inclusion IBIS.pdf',
-  'Introduction to British Values IBIS.pdf',
-  'Apprentice Attendance and Engagement Policy IBIS.pdf',
-].map((label, i) => ({ id: `ibis-${i}`, label, url: '#', requiresAck: false }));
+// The Kent Business College policies each learner confirms they have read. The
+// PDFs are in Azure (enrolment-docs/policies/kbc/, uploaded by
+// `manage.py upload_policy_documents`) and open through the backend, which
+// checks the viewer is signed in and redirects to a short-lived link.
+//
+// The ids are what acknowledgements are stored against, and must match
+// backend/enrolment_api/policy_documents.py. Never reuse one for a different
+// document: a replaced policy gets a new id, so an earlier tick is not counted
+// for a file the learner never saw (the old kbc-0…kbc-10 ids belong to the
+// previous set and are kept in learners' records as they were).
+export const POLICY_DOCS_KBC: PolicyDoc[] = ([
+  ['kbc-policy-attendance-engagement', 'Kent Business College - Apprentice Attendance and Engagement Policy.pdf'],
+  ['kbc-policy-british-values', 'Kent Business College - British Values.pdf'],
+  ['kbc-policy-business-continuity', 'Kent Business College - Business Continuity Policy.pdf'],
+  ['kbc-policy-complaint-procedures', 'Kent Business College - Complaint Procedures Policy.pdf'],
+  ['kbc-policy-equality-diversity-inclusion', 'Kent Business College - Equality, Diversity and Inclusion Policy.pdf'],
+  ['kbc-policy-harassment-bullying', 'Kent Business College - Harassment and Bullying Policy.pdf'],
+  ['kbc-policy-health-safety', 'Kent Business College - Health and Safety.pdf'],
+  ['kbc-policy-learner-code-of-conduct', 'Kent Business College - Learner Code of Conduct.pdf'],
+  ['kbc-policy-safeguarding-prevent', 'Kent Business College - Safeguarding and Prevent Policy.pdf'],
+  ['kbc-policy-safeguarding-prevent-handbook', 'Safeguarding and Prevent Handbook Kent Business College.pdf'],
+  ['kbc-policy-manager-handbook', 'Manager_Handbook Kent Business College.pdf'],
+  ['kbc-policy-library', 'A1_-_Library_Policy.pdf'],
+  ['kbc-policy-events-management', 'A2_-_Events_Management_Policy.pdf'],
+  ['kbc-policy-events-travel-reimbursement', 'C4_Reimbursement_for_Events_Travel_and_Mileage_Claims_Policy.pdf'],
+  ['kbc-policy-events-travel-short-guide', 'C4a - Travel_Reimbursement_for_KBC_Events_Short_Guide (updated).pdf'],
+] as const).map(([id, label]) => ({ id, label, url: `/enrolment_api/policy-documents/${id}/`, requiresAck: true }));
 
 // ---- Option lists (selects) ----
 export const ETHNICITY_OPTIONS = [

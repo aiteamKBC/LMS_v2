@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
@@ -135,6 +135,40 @@ describe('restored monthly coaching list', () => {
     expect(screen.queryByText('Next Month Learner')).toBeNull();
   });
 
+  it('loads past and upcoming meetings across all months', async () => {
+    mount();
+    await screen.findByText('Scheduled Learner');
+
+    fireEvent.click(screen.getByRole('button', { name: 'All months' }));
+
+    expect(await screen.findByText('Next Month Learner')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'All months' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('route')).toHaveTextContent('months=all');
+    expect(fetchEvents).toHaveBeenLastCalledWith(expect.any(AbortSignal), {
+      includeLiveSessions: false, includeSchedulerQueues: false,
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Previous month' }));
+    expect(screen.queryByText('Next Month Learner')).toBeNull();
+    expect(screen.getByRole('button', { name: 'All months' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('shows the newest meetings first and keeps the sort control available', async () => {
+    mount('/coach/monthly-coaching?months=all');
+    await screen.findByText('Next Month Learner');
+
+    const table = screen.getByRole('table');
+    const learnerNames = within(table).getAllByRole('row').slice(1).map(row => row.querySelector('strong')?.textContent);
+    expect(learnerNames).toEqual([
+      'Next Month Learner', 'Scheduled Learner', 'Due Soon Learner',
+      'In Progress Learner', 'Awaiting Signature Learner', 'Completed Learner', 'Overdue Learner',
+    ]);
+    const sort = screen.getByRole('combobox', { name: 'Sort by' });
+    expect(sort).toHaveValue('date-desc');
+    fireEvent.change(sort, { target: { value: 'date-asc' } });
+    expect(within(screen.getByRole('table')).getAllByRole('row')[1]).toHaveTextContent('Overdue Learner');
+  });
+
   it('offers learner name suggestions while typing', async () => {
     mount();
     await screen.findByText('Scheduled Learner');
@@ -176,13 +210,15 @@ describe('restored monthly coaching list', () => {
 
   it('restores Schedule and Reschedule popups for imported Aptem meetings', async () => {
     fetchEvents.mockResolvedValue({ events: [
-      meeting(20, { id: 'imported-review:20', eventKey: 'imported-review:20', learner: 'Imported Unscheduled', status: 'not-scheduled', reviewSource: 'aptem', aptemReviewId: '20', hasReviewForm: true }),
-      meeting(21, { id: 'imported-review:21', eventKey: 'imported-review:21', learner: 'Imported Scheduled', status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00', reviewSource: 'aptem', aptemReviewId: '21', hasReviewForm: true }),
+      meeting(20, { id: 'imported-review:20', eventKey: 'imported-review:20', learner: 'Imported Unscheduled', status: 'not-scheduled', reviewSource: 'aptem', aptemReviewId: '20', hasReviewForm: false, reviewTemplateId: undefined }),
+      meeting(21, { id: 'imported-review:21', eventKey: 'imported-review:21', learner: 'Imported Scheduled', status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00', reviewSource: 'aptem', aptemReviewId: '21', hasReviewForm: false, reviewTemplateId: undefined }),
     ] });
     mount('/coach/monthly-coaching?filter=all');
     await screen.findByText('Imported Scheduled');
 
-    fireEvent.click(within(screen.getByText('Imported Unscheduled').closest('tr')!).getByRole('button', { name: 'Schedule' }));
+    const unscheduledRow = within(screen.getByText('Imported Unscheduled').closest('tr')!);
+    expect(unscheduledRow.getByRole('button', { name: 'View Form' })).toBeVisible();
+    fireEvent.click(unscheduledRow.getByRole('button', { name: 'Schedule' }));
     expect(screen.getByRole('dialog', { name: 'Schedule meeting' })).toBeVisible();
     fireEvent.click(within(screen.getByRole('dialog', { name: 'Schedule meeting' })).getByRole('button', { name: 'Cancel' }));
 
@@ -194,8 +230,9 @@ describe('restored monthly coaching list', () => {
     expect(scheduledRow.getAllByRole('button').map(button => button.textContent)).toEqual([
       'Reschedule', 'View', 'View Form', 'View Slides',
     ]);
-    fireEvent.click(scheduledRow.getByRole('button', { name: 'View' }));
-    expect(screen.getByTestId('route')).toHaveTextContent('/coach/meetings/imported-review%3A21');
+    fireEvent.click(scheduledRow.getByRole('button', { name: 'View Form' }));
+    expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A21');
+    expect(openReview).not.toHaveBeenCalled();
   });
 
   it('opens an imported Aptem View Form directly instead of the learner profile', async () => {
@@ -281,17 +318,33 @@ describe('restored monthly coaching list', () => {
     expect(statusFilters().getByRole('button', { name: 'Awaiting Signature0' })).toBeVisible();
   });
 
-  it('requests only the selected month and excludes unrelated timetable sources', async () => {
+  it('uses the all-month source for each month and excludes unrelated timetable sources', async () => {
     mount();
     await screen.findByText('Scheduled Learner');
     expect(fetchEvents).toHaveBeenCalledWith(expect.any(AbortSignal), {
-      start: '2026-09-01', end: '2026-09-30', includeLiveSessions: false, includeSchedulerQueues: false,
+      includeLiveSessions: false, includeSchedulerQueues: false,
     });
     fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
     await screen.findByText('Next Month Learner');
-    expect(fetchEvents).toHaveBeenLastCalledWith(expect.any(AbortSignal), {
-      start: '2026-10-01', end: '2026-10-31', includeLiveSessions: false, includeSchedulerQueues: false,
-    });
+    expect(fetchEvents).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText('Progress Review Learner')).toBeNull();
+    expect(screen.queryByText('Live Session Learner')).toBeNull();
+  });
+
+  it('shows meetings in their booked month across statuses even when the target month differs', async () => {
+    fetchEvents.mockResolvedValue({ events: [
+      meeting(20, { learner: 'Moved Scheduled', targetDate: '2026-09-20', scheduledDate: '2026-10-04', status: 'scheduled' }),
+      meeting(21, { learner: 'October Completed', targetDate: '2026-10-12', status: 'completed' }),
+      meeting(22, { learner: 'October Unscheduled', targetDate: '2026-10-15' }),
+    ] });
+    mount();
+    await screen.findByText('0 coaching meetings');
+    fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
+    expect(await screen.findByText('Moved Scheduled')).toBeVisible();
+    expect(statusFilters().getByRole('button', { name: 'All3' })).toBeVisible();
+    expect(statusFilters().getByRole('button', { name: 'Scheduled1' })).toBeVisible();
+    expect(statusFilters().getByRole('button', { name: 'Completed1' })).toBeVisible();
+    expect(statusFilters().getByRole('button', { name: 'Not Scheduled1' })).toBeVisible();
   });
 
   it('only shows Join when the shared join rule allows it', async () => {
@@ -322,6 +375,23 @@ describe('restored monthly coaching list', () => {
     await screen.findByRole('button', { name: 'Next page' });
     expect(visibleLearners()).toHaveLength(2);
     expect(screen.getByTestId('route')).toHaveTextContent(returnTo!);
+  });
+
+  it('loads meeting details without optional timetable sources that may fail', async () => {
+    fetchEvents.mockImplementation((_signal: AbortSignal, options?: { includeLiveSessions?: boolean; includeSchedulerQueues?: boolean }) => {
+      if (options?.includeLiveSessions !== false || options?.includeSchedulerQueues !== false) {
+        return Promise.reject(new Error('Request failed with 503'));
+      }
+      return Promise.resolve({ events: [meetings[2]] });
+    });
+    mount();
+    await screen.findByText('Scheduled Learner');
+    fireEvent.click(screen.getByRole('button', { name: 'View' }));
+    expect(await screen.findByRole('link', { name: 'Back to Coaching Meetings' })).toBeVisible();
+    expect(screen.queryByText('Unable to load this meeting.')).toBeNull();
+    expect(fetchEvents).toHaveBeenLastCalledWith(expect.any(AbortSignal), {
+      includeLiveSessions: false, includeSchedulerQueues: false,
+    });
   });
 
   it('reports API errors without showing a successful empty list', async () => {

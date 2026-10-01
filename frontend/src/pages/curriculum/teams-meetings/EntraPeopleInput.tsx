@@ -7,6 +7,7 @@ const isEmail = (value: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(value);
 export function EntraPeopleInput({ value, onChange, label, single = false }: {
   value: string; onChange: (value: string) => void; label: string; single?: boolean;
 }) {
+  type RemovedEmail = { email: string; index: number; remaining: string[] };
   const [draft, setDraft] = useState('');
   const [people, setPeople] = useState<EntraPerson[]>([]);
   const [open, setOpen] = useState(false);
@@ -14,6 +15,7 @@ export function EntraPeopleInput({ value, onChange, label, single = false }: {
   const [error, setError] = useState('');
   const [hasMore, setHasMore] = useState(false);
   const [active, setActive] = useState(-1);
+  const [undoStack, setUndoStack] = useState<RemovedEmail[]>([]);
   const input = useRef<HTMLInputElement>(null);
   const listId = useId();
   const emails = emailList(value);
@@ -49,14 +51,44 @@ export function EntraPeopleInput({ value, onChange, label, single = false }: {
     }
     const next = single ? additions : [...emails, ...additions];
     onChange(Array.from(new Map(next.map(email => [email.toLowerCase(), email])).values()).join('\n'));
+    setUndoStack([]);
     setDraft('');
     setPeople([]);
     setError('');
     setOpen(false);
   };
 
+  const removeAt = (index: number) => {
+    const email = emails[index];
+    if (!email) return;
+    const remaining = emails.filter((_, i) => i !== index);
+    onChange(remaining.join('\n'));
+    setUndoStack(stack => [...stack, { email, index, remaining }].slice(-20));
+    input.current?.focus();
+  };
+
+  const undoLastRemoval = () => {
+    const entry = undoStack[undoStack.length - 1];
+    if (!entry) return;
+    const current = emailList(value);
+    // Do not reinsert a stale deletion after another edit changed the field.
+    if (current.join('\n') !== entry.remaining.join('\n')) {
+      setUndoStack([]);
+      return;
+    }
+    const restored = [...current];
+    restored.splice(Math.min(entry.index, restored.length), 0, entry.email);
+    onChange(restored.join('\n'));
+    setUndoStack(stack => stack.slice(0, -1));
+  };
+
   return (
-    <div className="relative" onBlur={event => {
+    <div className="relative" onKeyDown={event => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !draft.trim() && undoStack.length) {
+        event.preventDefault();
+        undoLastRemoval();
+      }
+    }} onBlur={event => {
       if (!event.currentTarget.contains(event.relatedTarget as Node)) {
         if (draft.trim()) commit(draft);
         setOpen(false);
@@ -66,9 +98,9 @@ export function EntraPeopleInput({ value, onChange, label, single = false }: {
         {emails.map((email, index) => (
           <span key={`${email}-${index}`} className={`inline-flex max-w-full items-center gap-1 rounded-full border px-2 py-1 text-[11px] font-semibold ${isEmail(email) ? 'border-primary-200 bg-primary-50 text-primary-800' : 'border-red-200 bg-red-50 text-red-700'}`}>
             <button type="button" className="truncate text-left hover:underline" title="Click to edit" onClick={() => {
-              setDraft(email); onChange(emails.filter((_, i) => i !== index).join('\n')); setOpen(true); input.current?.focus();
+              setDraft(email); onChange(emails.filter((_, i) => i !== index).join('\n')); setUndoStack([]); setOpen(true); input.current?.focus();
             }}>{email}</button>
-            <button type="button" aria-label={`Remove ${email}`} className="rounded px-1 hover:bg-black/10" onClick={() => onChange(emails.filter((_, i) => i !== index).join('\n'))}>×</button>
+            <button type="button" aria-label={`Remove ${email}`} className="rounded px-1 hover:bg-black/10" onClick={() => removeAt(index)}>×</button>
           </span>
         ))}
         <input ref={input} value={draft} role="combobox" aria-label={label}
@@ -84,7 +116,7 @@ export function EntraPeopleInput({ value, onChange, label, single = false }: {
                 : (current + (event.key === 'ArrowDown' ? 1 : people.length - 1)) % people.length) : -1);
             } else if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setOpen(false); }
             else if (event.key === 'Enter') { event.preventDefault(); commit(open && people[active] ? people[active].email : draft); }
-            else if (event.key === 'Backspace' && !draft && emails.length) onChange(emails.slice(0, -1).join('\n'));
+            else if (event.key === 'Backspace' && !draft && emails.length) removeAt(emails.length - 1);
           }}
           onPaste={event => {
             const pasted = event.clipboardData.getData('text');

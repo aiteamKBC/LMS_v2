@@ -1,9 +1,13 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, CalendarDays, Check, CheckCheck, ChevronDown, Clock3, ExternalLink, FileText, List, PenLine, UserRound, Video } from 'lucide-react';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
 import type { MeetingAttendance } from '@/api/meetingAttendance';
+import { StatusBadge } from '@/components/ui/StatusBadge';
+import type { StatusTone } from '@/lib/statusTone';
 import { meetingBookingWarning, meetingCalendarHref } from '../reviews/meetingBooking';
+import ProgrammeReviewTimeline from '../reviews/ProgrammeReviewTimeline';
+import { completedReviewTimelineStatus } from '../reviews/reviewTimelineStatus';
 import { coachingOverview, type CoachingGroup, type CoachingReviewDefinitions, type CoachingSessionState } from './coachingOverview';
 import CurrentMonthLogLink from './CurrentMonthLogLink';
 import styles from './coachingHome.module.css';
@@ -28,6 +32,29 @@ export interface CoachingHomeProps {
 const tabs: { id: CoachingGroup; label: string }[] = [
   { id: 'needs-action', label: 'Needs your action' }, { id: 'upcoming', label: 'Upcoming' }, { id: 'past', label: 'Past' },
 ];
+// Same colour language as the coach's own status badges (@/lib/statusTone):
+// green only for a real outcome, amber for "someone else's turn", red for a
+// real problem, blue for a plain fact about time, grey for not yet known.
+const STATUS_LABEL_TONE: Record<string, StatusTone> = {
+  Cancelled: 'critical',
+  'Your signature is needed': 'caution',
+  'Waiting for your coach': 'caution',
+  'Waiting for other signatures': 'caution',
+  Completed: 'positive',
+  'Signature pending': 'caution',
+  'Summary available': 'info',
+  Attended: 'positive',
+  'Absence reported': 'caution',
+  'Meeting missed': 'critical',
+  'Booking needs attention': 'critical',
+  'Awaiting update': 'neutral',
+  Today: 'info',
+  Scheduled: 'info',
+  'In Progress': 'info',
+  'Choose a meeting time': 'caution',
+  Planned: 'neutral',
+  'Details to be confirmed': 'neutral',
+};
 const dateLabel = (date: string | null, short = false) => date
   ? new Intl.DateTimeFormat('en-GB', { ...(short ? {} : { weekday: 'short' as const }), day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${date}T12:00:00Z`))
   : 'Date to be confirmed';
@@ -37,10 +64,22 @@ const timeLabel = (state: CoachingSessionState) => {
   const time = state.attendance ? state.attendance.startTime : state.session.scheduledTime;
   return state.booked && time ? time.slice(0, 5) : 'Time to be confirmed';
 };
+const coachingTimelineStatus = (state: CoachingSessionState, reviews?: CoachingReviewDefinitions) => {
+  const review = reviews?.[state.session.eventKey] || reviews?.[state.session.id];
+  return completedReviewTimelineStatus(state.session, state.attendance, review?.instance?.status);
+};
 
 export default function CoachingHome(props: CoachingHomeProps) {
   const { sessions, attendance, reviews, learner, today, loading, error } = props;
   const overview = useMemo(() => coachingOverview(sessions, attendance, today, reviews), [sessions, attendance, today, reviews]);
+  const timeline = useMemo(() => [...overview.all].sort((a, b) => {
+    const first = a.session.targetDate || '9999-12-31';
+    const second = b.session.targetDate || '9999-12-31';
+    return first.localeCompare(second)
+      || (a.session.occurrenceNumber ?? a.session.sequence) - (b.session.occurrenceNumber ?? b.session.sequence)
+      || a.session.id.localeCompare(b.session.id);
+  }), [overview.all]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [params, setParams] = useSearchParams();
   const allView = params.get('view') === 'all';
   const tab = tabs.find(item => item.id === params.get('tab'))?.id || 'upcoming';
@@ -72,17 +111,27 @@ export default function CoachingHome(props: CoachingHomeProps) {
   };
   const otherActions = overview.needsAction.filter(item => item.session.id !== overview.current?.session.id);
   const lastMeeting = overview.past.find(item => item.date && item.date <= today && item.statusLabel !== 'Cancelled');
-  const current = overview.current;
+  const selected = overview.all.find(item => item.session.id === selectedId);
+  const current = selected || overview.current;
+  const isSelected = Boolean(selected && selected.session.id !== overview.current?.session.id);
+  const activeTimelineId = selected?.session.id
+    || overview.needsAction.find(item => item.action === 'sign')?.session.id
+    || overview.current?.session.id || null;
+  const selectTimelineItem = (id: string) => {
+    setSelectedId(id);
+    if (allView) setParams(new URLSearchParams({ kind: learner.kind, learner: learner.id }));
+  };
   const assignedCoach = props.currentCoach;
-  const currentCoachName = assignedCoach?.name.trim() || (assignedCoach ? 'Not yet assigned' : 'To be confirmed');
+  const currentCoachName = isSelected ? current?.session.coachName.trim() || 'To be confirmed'
+    : assignedCoach?.name.trim() || (assignedCoach ? 'Not yet assigned' : 'To be confirmed');
   const bookedHost = current?.booked ? current.session.coachName.trim() : '';
-  const hostDiffers = Boolean(bookedHost && (!assignedCoach
+  const hostDiffers = !isSelected && Boolean(bookedHost && (!assignedCoach
     || (assignedCoach.email && current?.session.coachEmail
       ? assignedCoach.email.toLowerCase() !== current.session.coachEmail.toLowerCase()
       : assignedCoach.name.trim().toLowerCase() !== bookedHost.toLowerCase())));
   const duration = current?.attendance ? current.attendance.durationMinutes : current?.session.durationMinutes;
   const provider = current?.attendance ? current.attendance.meetingProvider : current?.session.meetingProvider;
-  const currentCaption = current?.action === 'sign' ? 'YOUR NEXT STEP'
+  const currentCaption = isSelected ? 'SELECTED MEETING' : current?.action === 'sign' ? 'YOUR NEXT STEP'
     : current?.action === 'reschedule' ? 'REARRANGE YOUR MEETING'
       : current?.isToday ? "TODAY'S MEETING" : current?.booked ? 'YOUR NEXT MEETING' : 'PLAN YOUR MEETING';
   const dateCaption = current?.action === 'sign' ? 'Meeting summary ready to review'
@@ -98,7 +147,7 @@ export default function CoachingHome(props: CoachingHomeProps) {
   }
 
   function renderStatus(state: CoachingSessionState) {
-    return <span className={styles.badge} data-tone={state.needsAction ? 'attention' : state.group === 'past' ? 'muted' : state.isToday ? 'today' : 'booked'}>{state.isToday && <span className={styles.statusDot}/>} {state.statusLabel}</span>;
+    return <StatusBadge tone={STATUS_LABEL_TONE[state.statusLabel] ?? 'neutral'} label={state.statusLabel} size="sm" />;
   }
 
   function renderMeetingLink(state: CoachingSessionState) {
@@ -108,11 +157,11 @@ export default function CoachingHome(props: CoachingHomeProps) {
     </a>;
   }
 
-  function renderOptions(state: CoachingSessionState) {
+  function renderOptions(state: CoachingSessionState, expanded = false) {
     const status = (state.attendance?.status || state.session.status).trim().toLowerCase().replace(/[ _]+/g, '-');
     const canReschedule = state.booked && status === 'scheduled' && !state.attendance?.attendanceConfirmed && state.action !== 'reschedule';
-    return <details className={styles.options}>
-      <summary>More options<ChevronDown size={16}/></summary>
+    return <details className={expanded ? `${styles.options} ${styles.optionsExpanded}` : styles.options}>
+      <summary>{expanded ? 'Details' : 'More options'}<ChevronDown size={16}/></summary>
       <div className={styles.optionPanel}>
         <Link to={detailHref(state)}><FileText size={16}/>View meeting</Link>
         {canReschedule && <button type="button" disabled={!props.canAct || props.busy} onClick={() => props.onSchedule(state.session)}><CalendarDays size={16}/>Reschedule</button>}
@@ -127,10 +176,15 @@ export default function CoachingHome(props: CoachingHomeProps) {
     <header className={styles.header}>
       <div><p className={styles.eyebrow}>YOUR LEARNING, TOGETHER</p><h1 ref={heading} tabIndex={-1}>{allView ? 'All coaching meetings' : 'My coaching'}</h1>
         <p className={styles.intro}>{allView ? 'Find a meeting, check its status or revisit a summary.' : 'Your next meeting and anything that needs your attention.'}</p></div>
-      <div className={styles.headerLinks}><CurrentMonthLogLink learner={learner} className={styles.secondaryButton} />{allView ? <><Link className={styles.secondaryButton} to={linkToView(false)}><ArrowLeft size={17}/>Back to current meeting</Link>
+      <div className={styles.headerLinks}><CurrentMonthLogLink learner={learner} className={styles.secondaryButton} />{allView ? <><Link className={styles.secondaryButton} to={linkToView(false)} onClick={() => setSelectedId(null)}><ArrowLeft size={17}/>Back to current meeting</Link>
         <Link className={styles.textLink} to={`/learner/calendar?kind=${learner.kind}&learner=${learner.id}`}><CalendarDays size={16}/>Open calendar</Link></>
         : <Link className={styles.secondaryButton} to={linkToView(true)}><List size={18}/>View all meetings<ArrowRight size={17}/></Link>}</div>
     </header>
+    {sessions.length > 0 && <ProgrammeReviewTimeline label="Monthly coaching" showStatus activeId={activeTimelineId} onSelect={selectTimelineItem} items={timeline.map(state => ({
+      id: state.session.id, title: titleOf(state), date: state.date,
+      status: coachingTimelineStatus(state, reviews),
+      sequence: state.session.occurrenceNumber ?? state.session.sequence,
+    }))} />}
     {loading && !sessions.length ? <div className={styles.skeleton} role="status" aria-label="Loading coaching meetings"><span/><span/><span/></div>
       : error && !sessions.length ? <div className={styles.empty}><CalendarDays/><h2>Your meetings could not be loaded</h2><p>Use Try again above to reload your meetings.</p></div>
       : allView ? <section className={styles.archive} aria-label="All coaching meetings">
@@ -157,19 +211,19 @@ export default function CoachingHome(props: CoachingHomeProps) {
           {otherActions.slice(0, 2).map(state => <article key={state.session.id} className={styles.attentionRow}><div><h3>{state.statusLabel}</h3><p>{dateLabel(state.date)} · {state.session.coachName || 'Your coach'}</p><p>{state.description}</p></div>{renderAction(state, true)}</article>)}
         </section>}
         <div className={styles.currentLayout}>
-          {overview.current ? <article className={styles.current} aria-label="Current coaching meeting">
-            <div className={styles.currentTop}><p className={styles.eyebrow}>{currentCaption}</p>{renderStatus(overview.current)}</div>
-            <h2>{titleOf(overview.current)}</h2>
-            <div className={styles.appointment}><span className={styles.dateIcon}><CalendarDays size={28}/></span><div><p>{dateLabel(overview.current.date)}</p><span>{dateCaption}</span>
-              {overview.current.booked && <span className={styles.timeZone}>{props.timeZone || 'Europe/London'}{duration != null && duration > 0 && <> · {duration} minutes</>}</span>}</div></div>
-            <div className={styles.coach}><span><UserRound size={20}/></span><div><small>Your current coach</small><strong>{currentCoachName}</strong>
+          {current ? <article className={styles.current} aria-label={isSelected ? 'Selected coaching meeting' : 'Current coaching meeting'}>
+            <div className={styles.currentTop}><p className={styles.eyebrow}>{currentCaption}</p>{renderStatus(current)}</div>
+            <h2>{titleOf(current)}</h2>
+            <div className={styles.appointment}><span className={styles.dateIcon}><CalendarDays size={28}/></span><div><p>{dateLabel(current.date)}</p><span>{dateCaption}</span>
+              {current.booked && <span className={styles.timeZone}>{props.timeZone || 'Europe/London'}{duration != null && duration > 0 && <> · {duration} minutes</>}</span>}</div></div>
+            <div className={styles.coach}><span><UserRound size={20}/></span><div><small>{isSelected ? 'Meeting coach' : 'Your current coach'}</small><strong>{currentCoachName}</strong>
               {hostDiffers && <p className={styles.bookedHost}>This meeting is booked with {bookedHost}.</p>}</div>
-              {overview.current.booked && <span className={styles.provider}><Video size={17}/>{provider || 'Location to be confirmed'}</span>}</div>
-            <p className={styles.nextStep}>{overview.current.description}</p>
-            {meetingBookingWarning(overview.current.session, overview.current.attendance?.syncWarning) && <div className={styles.warning} role="status"><strong>Calendar sync pending</strong><p>{meetingBookingWarning(overview.current.session, overview.current.attendance?.syncWarning)}</p></div>}
-            <div className={styles.currentActions}>{renderAction(overview.current)}{renderMeetingLink(overview.current)}{renderOptions(overview.current)}</div>
-            {overview.current.booked && !overview.current.joinUrl && <p className={styles.linkUnavailable}>Meeting link is not available yet.</p>}
-            {overview.current.attendance?.canAttend && !overview.current.attendance.attendanceConfirmed && !overview.current.attendance.absenceReported && <div className={styles.attendanceConfirm}><p>Already attended this meeting?</p><button type="button" disabled={!props.canAct || props.busy} onClick={() => props.onAttend(overview.current!.attendance!.id)}><Check size={16}/>{props.busy ? 'Saving…' : 'Confirm attendance'}</button></div>}
+              {current.booked && <span className={styles.provider}><Video size={17}/>{provider || 'Location to be confirmed'}</span>}</div>
+            <p className={styles.nextStep}>{current.description}</p>
+            {meetingBookingWarning(current.session, current.attendance?.syncWarning) && <div className={styles.warning} role="status"><strong>Calendar sync pending</strong><p>{meetingBookingWarning(current.session, current.attendance?.syncWarning)}</p></div>}
+            <div className={styles.currentActions}>{renderAction(current)}{renderMeetingLink(current)}{renderOptions(current, true)}</div>
+            {current.booked && !current.joinUrl && <p className={styles.linkUnavailable}>Meeting link is not available yet.</p>}
+            {current.attendance?.canAttend && !current.attendance.attendanceConfirmed && !current.attendance.absenceReported && <div className={styles.attendanceConfirm}><p>Already attended this meeting?</p><button type="button" disabled={!props.canAct || props.busy} onClick={() => props.onAttend(current.attendance!.id)}><Check size={16}/>{props.busy ? 'Saving…' : 'Confirm attendance'}</button></div>}
           </article> : <article className={`${styles.current} ${styles.empty}`} aria-label="Current coaching meeting"><span className={styles.emptyIcon}><CheckCheck size={30}/></span><h2>No current meeting</h2><p>Your next appointment will appear here. You can still open your previous meeting records.</p><Link className={styles.secondaryButton} to={linkToView(true)}>View your meetings<ArrowRight size={17}/></Link></article>}
           <aside className={styles.sideColumn} aria-label="Meeting preparation"><section className={styles.preparation}><span className={styles.preparationIcon}><FileText size={22}/></span><h2>A little preparation helps</h2><p>Bring a few notes to make the most of your time together.</p><ol><li><span>1</span><div><strong>Your progress</strong><p>What have you learned or put into practice?</p></div></li><li><span>2</span><div><strong>Anything you need help with</strong><p>Bring your questions or challenges.</p></div></li><li><span>3</span><div><strong>Your next steps</strong><p>Think about what you want to work on next.</p></div></li></ol></section>
             {lastMeeting && <section className={styles.lastMeeting}><p className={styles.eyebrow}>LAST MEETING</p><h3>{dateLabel(lastMeeting.date, true)}</h3><p>{lastMeeting.statusLabel}</p><Link to={detailHref(lastMeeting)}>View meeting summary<ArrowRight size={16}/></Link></section>}

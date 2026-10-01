@@ -24,6 +24,8 @@ from curriculum_api.session_overrides import (
     apply_session_overrides, override_clock, schedule_override, session_overrides, validate_exception_plan,
 )
 from curriculum_api.teams_cancellation_checks import CalendarStateError, cancellation_plan
+from curriculum_api.teams_cancel import cancellation_confirmed, send_cancellation
+from curriculum_api.weekly_schedule import module_weekly_schedule
 from curriculum_api.teams_calendar_checks import utc_datetime, event_instant
 
 
@@ -81,24 +83,45 @@ class ManagementTests(CalendarFixture):
         self.ns.update(calendar_reader=reader,
             load_calendar_state=lambda _live, **_: (copy.deepcopy(self.series), copy.deepcopy(self.rows), copy.deepcopy(self.saved)),
             load_module=lambda *_args, **_kwargs: copy.deepcopy(self.module), store_snapshot=Mock(side_effect=save),
-            graph_action=Mock(return_value=True), verified_move=Mock(return_value=True),
-            persist_move=Mock(side_effect=self.persist), reconcile_calendar=Mock(side_effect=self.reconcile))
+            graph_action=Mock(side_effect=self.graph_action), verified_move=Mock(return_value=True),
+            # The cancellation verifier is the real one: what counts as proof
+            # that Microsoft cancelled a meeting is the behaviour under test.
+            cancellation_confirmed=cancellation_confirmed,
+            persist_move=Mock(side_effect=self.persist),
+            persist_cancellation=Mock(side_effect=self.cancel_locally))
 
     def persist(self, _series, _rows, _module, command, _snapshot):
         self.module['session_overrides'][str(command['sessionNumber'])] = command['exception']
         row = next(row for row in self.rows if row['id'] == command['occurrenceId'])
         row.update(scheduled_start=command['start'], scheduled_end=command['end'], graph_event_id=command['eventId'])
 
-    def reconcile(self, _live):
-        commands = self.saved['management']['commands']
-        for command in commands:
-            if command['state'] == 'attempted':
-                if not command.get('occurrenceId'):
-                    self.series['status'] = 'cancelled'
-                for row in self.rows:
-                    if not command.get('occurrenceId') or row['id'] == command['occurrenceId']:
-                        row['status'] = 'cancelled'
-        return {}
+    def graph_action(self, _series, command, _comment, _notify=True):
+        """Microsoft accepting the mutation, and its calendar afterwards.
+
+        A cancelled occurrence leaves the master's instances and joins its
+        cancelledOccurrences; a cancelled master leaves the calendar entirely.
+        A move is verified separately, so it only has to be accepted here.
+        """
+        if command['action'] != 'cancel':
+            return True
+        if command.get('rootId') and command['rootId'] != command['eventId']:
+            gone = next(item for item in self.instances if item['id'] == command['eventId'])
+            self.instances = [item for item in self.instances if item['id'] != gone['id']]
+            self.master['cancelledOccurrences'] = [*self.master['cancelledOccurrences'], gone['occurrenceId']]
+        else:
+            self.master = None
+        return True
+
+    def cancel_locally(self, _live, command, scope, complete=False):
+        if scope == 'occurrence':
+            for row in self.rows:
+                if row['id'] == command.get('occurrenceId'):
+                    row['status'] = 'cancelled'
+        elif complete:
+            for row in self.rows:
+                if row['status'] == 'scheduled':
+                    row['status'] = 'cancelled'
+            self.series['status'] = 'cancelled'
 
     def review(self, action='cancel', scope='occurrence', **kwargs):
         return self.ns['action_preview']('LIVE-1', dict(action=action, scope=scope, sessionNumber=1, **kwargs), 'ACTOR-1')
@@ -128,17 +151,17 @@ class ManagementTests(CalendarFixture):
         self.assertEqual(self.tokens[review['reviewToken']]['commands'][0]['eventId'], 'master-1')
         self.assertEqual(len(review['sessions']), 2)
 
-    def test_reschedule_review_allows_a_silent_choice(self):
+    def test_reschedule_always_notifies_invitees(self):
         review = self.move()
         self.assertFalse(review['notificationRequired'])
         result = self.ns['confirm_action']('LIVE-1', {
             'reviewToken': review['reviewToken'],
             'notifyAttendees': False,
-            'acknowledgeNotifications': False,
+            'acknowledgeNotifications': True,
         }, 'ACTOR-1')
         self.assertEqual(result['status'], 'done')
         self.ns['graph_action'].assert_called_once()
-        self.assertFalse(self.ns['graph_action'].call_args.args[3])
+        self.assertTrue(self.ns['graph_action'].call_args.args[3])
 
     def test_foreign_session_is_rejected(self):
         with self.assertRaises(ValueError):
@@ -183,6 +206,52 @@ class ManagementTests(CalendarFixture):
         self.assertEqual(self.confirm(self.review())['status'], 'done')
         self.assertEqual([row['status'] for row in self.rows], ['cancelled', 'scheduled'])
         self.assertEqual(self.series['status'], 'active')
+        self.ns['graph_action'].assert_called_once()
+
+    def test_a_cancelled_occurrence_is_confirmed_even_when_the_master_never_lists_it(self):
+        """The production failure: Microsoft cancelled it, the LMS never agreed.
+
+        The occurrence is gone from the calendar but the master's
+        `cancelledOccurrences` stays empty. Read only through that one property,
+        the session "could not be matched", the operation stopped at uncertain,
+        its email never went and every later cancellation was refused.
+        """
+        def cancel_without_listing_it(*args, **kwargs):
+            self.graph_action(*args, **kwargs)
+            self.master['cancelledOccurrences'] = []
+            return True
+        self.ns['graph_action'].side_effect = cancel_without_listing_it
+        self.assertEqual(self.confirm(self.review())['status'], 'done')
+        self.assertEqual([row['status'] for row in self.rows], ['cancelled', 'scheduled'])
+        self.assertEqual(self.series['status'], 'active')
+
+    def test_an_occurrence_the_master_lists_as_cancelled_is_confirmed(self):
+        """Microsoft is still processing the 202: the instance reads back alive."""
+        def list_it_but_keep_it(_series, command, *_args, **_kwargs):
+            occurrence = next(item for item in self.instances if item['id'] == command['eventId'])
+            self.master['cancelledOccurrences'] = [occurrence['occurrenceId']]
+            return True
+        self.ns['graph_action'].side_effect = list_it_but_keep_it
+        self.assertEqual(self.confirm(self.review())['status'], 'done')
+        self.assertEqual([row['status'] for row in self.rows], ['cancelled', 'scheduled'])
+
+    def test_a_meeting_still_live_is_never_recorded_as_cancelled(self):
+        """No evidence is not evidence. Nothing local moves until Microsoft says so."""
+        self.ns['graph_action'].side_effect = lambda *_args, **_kwargs: True
+        self.assertEqual(self.confirm(self.review())['status'], 'uncertain')
+        self.assertEqual([row['status'] for row in self.rows], ['scheduled', 'scheduled'])
+        self.ns['persist_cancellation'].assert_not_called()
+        # Recovery re-reads only; it never sends the mutation a second time.
+        self.ns['graph_action'].side_effect = self.graph_action
+        self.master['cancelledOccurrences'] = ['OID-OCC-1']
+        self.assertEqual(self.ns['continue_action']('LIVE-1', self.saved['management']['id'])['status'], 'done')
+        self.ns['graph_action'].assert_called_once()
+        self.assertEqual([row['status'] for row in self.rows], ['cancelled', 'scheduled'])
+
+    def test_series_cancellation_closes_the_calendar_and_its_remaining_sessions(self):
+        self.assertEqual(self.confirm(self.review(scope='series'))['status'], 'done')
+        self.assertEqual(self.series['status'], 'cancelled')
+        self.assertEqual([row['status'] for row in self.rows], ['cancelled', 'cancelled'])
         self.ns['graph_action'].assert_called_once()
 
     def test_double_confirmation_does_not_send_twice(self):
@@ -236,6 +305,26 @@ class ManagementTests(CalendarFixture):
         self.saved['management'] = {'status': 'uncertain'}
         with self.assertRaisesRegex(CalendarStateError, 'status check'):
             self.review()
+
+    def test_review_reconciles_confirmed_uncertain_action_before_next_session(self):
+        def lost_after_send(*args, **kwargs):
+            # Microsoft cancelled it; the answer never reached us.
+            self.graph_action(*args, **kwargs)
+            raise TransportError('connection lost after send')
+        self.ns['graph_action'].side_effect = lost_after_send
+        first = self.review()
+        self.assertEqual(self.confirm(first)['status'], 'uncertain')
+        self.ns['with_change_notice'] = lambda _live, result: result
+        self.ns['with_change_emails'] = lambda _live, result: result
+        next_review = self.ns['action_preview']('LIVE-1', {
+            'action': 'cancel', 'scope': 'occurrence', 'sessionNumber': 2,
+        }, 'ACTOR-1')
+        self.assertTrue(next_review['reviewToken'])
+        # The second review only reconciles the first operation; it never
+        # sends another Graph mutation for the already accepted cancellation.
+        self.ns['graph_action'].assert_called_once()
+        self.assertEqual(self.rows[0]['status'], 'cancelled')
+        self.assertEqual(self.rows[1]['status'], 'scheduled')
 
     def test_holiday_is_rejected(self):
         self.v.module_cohort_selected_holidays.return_value = ['2026-10-09']
@@ -425,10 +514,17 @@ class PureTests(unittest.TestCase):
             'module_session_plan_for_weeks': lambda *_args, **_kwargs: plan,
             'defaultdict': defaultdict,
             'module_session_clock': lambda module, group=None, session_date=None: override_clock(module, session_date) or ('09:00', '11:00', 120),
+            # Group-first resolution is its own subject, in
+            # test_group_delivery_pattern_no_db; this call passes no group.
+            'module_delivery_row': lambda module, group=None: module,
             'clean_str': lambda v: str(v or '').strip(), 'parse_int': lambda v, default=0: int(v or default),
             'format_date': lambda v: str(v or ''),
-            'calendar_clock_to_utc_iso': lambda day, clock: day + 'T' + clock + ':00+01:00'}
-        functions(ROOT / 'views.py', ['apply_module_session_plan_to_weeks'], ns)
+            # The reader resolves each slot through the real live-session clock,
+            # so an override still outranks the component's stored time here.
+            'module_weekly_schedule': module_weekly_schedule, 'override_clock': override_clock, 're': re,
+            'calendar_clock_to_utc_iso': lambda day, clock, zone=None: day + 'T' + clock + ':00+01:00'}
+        functions(ROOT / 'views.py', ['apply_module_session_plan_to_weeks', 'module_live_session_clock',
+                                      'clock_time_plus_minutes', 'parse_clock_minutes'], ns)
         ns['apply_module_session_plan_to_weeks'](module, {}, weeks, holidays=[])
         first = weeks[0]['components'][0]['settings']
         self.assertEqual((first['sessionDate'], first['sessionTime']), ('2026-10-09', '12:00'))
@@ -474,12 +570,18 @@ class PureTests(unittest.TestCase):
             'cohort_selected_holidays_by_cohort': lambda _ids: {'COHORT-1': []},
             'module_session_plan_for_weeks': lambda *_args, **_kwargs: copy.deepcopy(plan),
             'module_session_clock': lambda *_args, **_kwargs: ('09:00', '11:00', 120),
-            'calendar_clock_to_utc_iso': lambda day, clock: f'{day}T{clock}:00Z',
+            # As above: this call passes no group row of its own.
+            'module_delivery_row': lambda module, group=None: module,
+            'calendar_clock_to_utc_iso': lambda day, clock, zone=None: f'{day}T{clock}:00Z',
             'format_date': lambda value: str(value or ''), 'defaultdict': defaultdict,
             'datetime': Frozen, 'json_db_value': lambda value: value,
+            # As above: the real clock decides the slot; this module states no
+            # weekly schedule and no override, so the stored time stands.
+            'module_weekly_schedule': module_weekly_schedule, 'override_clock': override_clock, 're': re,
             'update_authoring_rows': update,
         }
-        functions(ROOT / 'views.py', ['apply_module_session_plan_to_weeks', 'persist_group_module_session_dates'], ns)
+        functions(ROOT / 'views.py', ['apply_module_session_plan_to_weeks', 'persist_group_module_session_dates',
+                                      'module_live_session_clock', 'clock_time_plus_minutes', 'parse_clock_minutes'], ns)
 
         updated = ns['persist_group_module_session_dates']([module], {})
 
@@ -488,6 +590,309 @@ class PureTests(unittest.TestCase):
         settings = writes[0][3]['settings_json']
         self.assertEqual((settings['sessionDate'], settings['sessionDay']), ('2026-09-11', 'Friday'))
         self.assertEqual(settings['custom'], 'keep')
+
+
+class PersistMoveTests(unittest.TestCase):
+    """Where a confirmed move writes, and what it writes there.
+
+    The subject is the write path, not the diff: ``persist_move`` wrote its
+    components with a raw UPDATE that never reached ``versioning.record_rows``,
+    so a session moving to a different day left no trace. It goes through the
+    authoring helper now. What the trail then keeps of that write is the
+    recorder's decision and is proved against a real database in
+    ``tests_audit_trail.CalendarMoveAuditTests``.
+    """
+
+    STORED = {'version': '0.1', 'contentStatus': 'Draft', 'sessionDate': '2026-10-08',
+              'sessionDay': 'Thursday', 'sessionTime': '09:00', 'durationMinutes': 120,
+              'teamsOccurrenceId': 'OCC-1', 'teamsLiveSessionId': 'LIVE-1', 'teamsSessionNumber': 1}
+
+    def setUp(self):
+        network = patch('socket.socket', side_effect=AssertionError('Network forbidden'))
+        network.start()
+        self.addCleanup(network.stop)
+        self.matched = [{'id': 'COMP-1', 'settings_json': {**self.STORED, 'custom': 'keep'}}]
+        self.reads, self.writes, self.statements = [], [], []
+
+        def fetch(table, where='', params=None, *_args, **_kwargs):
+            self.reads.append((table, ' '.join(where.split()), list(params or [])))
+            return copy.deepcopy(self.matched)
+
+        def update(table, where, params, values):
+            self.writes.append((table, where, list(params), copy.deepcopy(values)))
+            return []
+
+        self.v = types.SimpleNamespace(
+            AUTHORING_COMPONENTS_TABLE='components', authoring_fetch_all=fetch,
+            update_authoring_rows=update, json_db_value=lambda value: value,
+            as_json_value=lambda value, fallback: value if isinstance(value, dict) else fallback,
+            module_stored_session_count=lambda _module: 2,
+            module_session_plan_for_count=lambda *_args: {'finalEndDate': '2026-12-10'},
+            invalidate_curriculum_cache=Mock())
+        self.previous_views = getattr(package, 'views', None)
+        package.views = self.v
+        self.addCleanup(lambda: setattr(package, 'views', self.previous_views))
+
+        test = self
+
+        class Cursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_exc):
+                return False
+
+            def execute(self, sql, params):
+                test.statements.append((' '.join(sql.split()), list(params)))
+
+        self.ns = dict(json=json, datetime=datetime, timezone=timezone,
+                       session_overrides=session_overrides,
+                       connection=types.SimpleNamespace(cursor=Cursor),
+                       __package__='curriculum_api')
+        functions(ROOT / 'teams_calendar_actions.py', ['persist_move'], self.ns)
+        self.module = {'module_catalogue_id': 'MODULE-1', 'session_overrides': {}, 'sessions_number': 2}
+        self.snapshot = {'occurrences': {'OCC-1': {'eventId': 'event-before', 'dates': []}}}
+
+    def move(self, **exception):
+        command = {'sessionNumber': 1, 'occurrenceId': 'OCC-1', 'eventId': 'event-after',
+                   'start': '2026-10-15T08:00:00Z', 'end': '2026-10-15T10:00:00Z',
+                   'exception': {'date': '2026-10-15', 'startTime': '09:00', 'durationMinutes': 120, **exception}}
+        self.ns['persist_move']({'id': 'LIVE-1'}, [], self.module, command, self.snapshot)
+        return command
+
+    def test_components_are_written_through_the_audited_helper(self):
+        self.move()
+        self.assertEqual([write[0] for write in self.writes], ['components'])
+        # And never again as a statement of its own, which is what bypassed the
+        # recorder before.
+        self.assertFalse([sql for sql, _params in self.statements if 'components' in sql])
+
+    def test_the_moved_schedule_is_what_gets_written(self):
+        self.move()
+        settings = self.writes[0][3]['settings_json']
+        self.assertEqual(settings['sessionDate'], '2026-10-15')
+        self.assertEqual(settings['sessionDay'], 'Thursday')
+        self.assertEqual(settings['sessionTime'], '09:00')
+        self.assertEqual(settings['durationMinutes'], 120)
+        self.assertEqual(settings['teamsDurationMinutes'], 120)
+        self.assertEqual(settings['sessionDateTimeUtc'], '2026-10-15T08:00:00Z')
+        self.assertEqual(settings['teamsStartDateTimeUtc'], '2026-10-15T08:00:00Z')
+        self.assertEqual(settings['teamsEventId'], 'event-after')
+
+    def test_settings_the_move_does_not_name_survive(self):
+        """The statement this replaced merged into settings_json; so must this."""
+        self.move()
+        settings = self.writes[0][3]['settings_json']
+        self.assertEqual(settings['custom'], 'keep')
+        self.assertEqual(settings['contentStatus'], 'Draft')
+        self.assertEqual(settings['teamsOccurrenceId'], 'OCC-1')
+
+    def test_each_component_keeps_its_own_other_settings(self):
+        """One assignment for every matched row would flatten them into one."""
+        self.matched.append({'id': 'COMP-2', 'settings_json': {**self.STORED, 'custom': 'second'}})
+        self.move()
+        self.assertEqual([write[2] for write in self.writes], [['COMP-1'], ['COMP-2']])
+        self.assertEqual([write[3]['settings_json']['custom'] for write in self.writes], ['keep', 'second'])
+
+    def test_one_matched_component_is_written_once(self):
+        self.move()
+        self.assertEqual(len(self.writes), 1)
+        self.assertEqual(self.writes[0][1], 'id = %s')
+
+    def test_only_this_session_is_selected(self):
+        """Scoping is the invariant: never another group's or another session's."""
+        self.move()
+        table, where, params = self.reads[0]
+        self.assertEqual(table, 'components')
+        self.assertIn('deleted_at IS NULL', where)
+        self.assertIn("type IN ('live-session', 'live_session')", where)
+        self.assertIn("settings_json->>'teamsOccurrenceId' = %s", where)
+        self.assertIn("settings_json->>'teamsLiveSessionId' = %s", where)
+        self.assertEqual(params, ['MODULE-1', 'OCC-1', 'LIVE-1', '1'])
+
+    def test_a_component_nothing_matches_is_not_invented(self):
+        self.matched = []
+        self.move()
+        self.assertEqual(self.writes, [])
+        self.v.invalidate_curriculum_cache.assert_called_once()
+
+    def test_the_module_and_the_occurrence_are_written_as_before(self):
+        """Everything either side of the component write is untouched by this fix."""
+        command = self.move()
+        modules, occurrences = self.statements
+        self.assertIn('UPDATE curriculum.modules', modules[0])
+        self.assertEqual(modules[1][1], '2026-12-10')
+        self.assertIn('UPDATE curriculum.live_session_occurrences', occurrences[0])
+        self.assertEqual(occurrences[1][:3], [command['start'], command['end'], command['eventId']])
+        self.assertEqual(occurrences[1][4:], ['OCC-1', 'LIVE-1'])
+
+    def test_the_saved_snapshot_still_follows_the_move(self):
+        command = self.move()
+        binding = self.snapshot['occurrences']['OCC-1']
+        self.assertEqual(binding['eventId'], 'event-after')
+        self.assertEqual(binding['dates'], [command['start'], command['end']])
+        self.assertEqual(self.module['session_overrides'], {})
+
+
+class PersistCancellationTests(unittest.TestCase):
+    """What a confirmed cancellation writes locally, and what it leaves alone."""
+
+    def setUp(self):
+        network = patch('socket.socket', side_effect=AssertionError('Network forbidden'))
+        network.start()
+        self.addCleanup(network.stop)
+        self.statements = []
+        self.rowcount = 1
+        test = self
+
+        class Cursor:
+            rowcount = 1
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_exc):
+                return False
+
+            def execute(self, sql, params):
+                test.statements.append((' '.join(sql.split()), list(params)))
+                self.rowcount = test.rowcount
+
+        self.v = types.SimpleNamespace(invalidate_curriculum_cache=Mock())
+        self.previous_views = getattr(package, 'views', None)
+        package.views = self.v
+        self.addCleanup(lambda: setattr(package, 'views', self.previous_views))
+        self.ns = dict(datetime=datetime, timezone=timezone,
+                       connection=types.SimpleNamespace(cursor=Cursor), __package__='curriculum_api')
+        functions(ROOT / 'teams_cancel.py', ['persist_cancellation'], self.ns)
+
+    def persist(self, scope, complete=False):
+        return self.ns['persist_cancellation'](
+            'LIVE-1', {'occurrenceId': 'OCC-1', 'eventId': 'instance-OCC-1'}, scope, complete=complete)
+
+    def test_one_session_writes_only_its_own_row(self):
+        self.persist('occurrence')
+        self.assertEqual(len(self.statements), 1)
+        sql, params = self.statements[0]
+        self.assertIn('UPDATE curriculum.live_session_occurrences', sql)
+        self.assertEqual(params[1:], ['OCC-1', 'LIVE-1'])
+        self.assertNotIn('live_sessions SET', sql)
+
+    def test_history_is_never_rewritten(self):
+        """Attendance, an actual start or a report means the session happened."""
+        self.persist('occurrence')
+        sql = self.statements[0][0]
+        self.assertIn("status = 'scheduled'", sql)
+        self.assertIn('actual_start IS NULL', sql)
+        self.assertIn("COALESCE(attendance_report_id, '') = ''", sql)
+        self.assertIn('COALESCE(participant_count, 0) = 0', sql)
+
+    def test_a_series_closes_the_calendar_only_once_every_meeting_is_confirmed(self):
+        self.persist('series')
+        self.assertEqual(self.statements, [])
+        self.persist('series', complete=True)
+        self.assertEqual(len(self.statements), 2)
+        self.assertIn('live_session_occurrences', self.statements[0][0])
+        self.assertIn("UPDATE curriculum.live_sessions SET status = 'cancelled'", self.statements[1][0])
+        self.assertIn("status = 'active'", self.statements[1][0])
+
+    def test_the_curriculum_cache_is_dropped_only_when_something_changed(self):
+        self.rowcount = 0
+        self.persist('occurrence')
+        self.v.invalidate_curriculum_cache.assert_not_called()
+        self.rowcount = 1
+        self.persist('occurrence')
+        self.v.invalidate_curriculum_cache.assert_called_once()
+
+
+class CancelTransportTests(unittest.TestCase):
+    """One accepted mutation per meeting, and what counts as accepted."""
+
+    def setUp(self):
+        self.sent = []
+
+    def client(self, *answers):
+        replies = list(answers)
+        def record(verb):
+            def call(path, **kwargs):
+                self.sent.append((verb, path, kwargs.get('json')))
+                return replies.pop(0)
+            return call
+        return types.SimpleNamespace(post=record('POST'), delete=record('DELETE'))
+
+    def cancel(self, client, *, occurrence=False, comment=''):
+        return send_cancellation(client, 'users/o/events/e', comment, occurrence=occurrence, not_sent=ActionNotSent)
+
+    def test_every_accepted_answer_counts_as_sent(self):
+        for status in (200, 202, 204):
+            with self.subTest(status=status):
+                self.assertTrue(self.cancel(self.client(Response(status=status))))
+
+    def test_an_ambiguous_answer_is_verified_rather_than_resent(self):
+        # 500/408/409 leave the caller to read Microsoft back; it must not
+        # raise "nothing was sent", which would invite a second cancellation.
+        for status in (408, 409, 500, 503):
+            with self.subTest(status=status):
+                self.assertFalse(self.cancel(self.client(Response(status=status))))
+
+    def test_a_rejected_whole_meeting_is_definitively_not_sent(self):
+        with self.assertRaisesRegex(ActionNotSent, 'rejected'):
+            self.cancel(self.client(Response({'error': {'code': 'ErrorInvalidRequest'}}, 400)))
+
+    def test_an_occurrence_graph_will_not_cancel_is_deleted_instead(self):
+        client = self.client(Response({'error': {'code': 'ErrorCannotCancelOccurrence'}}, 400), Response(status=204))
+        self.assertTrue(self.cancel(client, occurrence=True, comment='Tutor unavailable'))
+        self.assertEqual([verb for verb, *_ in self.sent], ['POST', 'DELETE'])
+        self.assertEqual(self.sent[0][2], {'comment': 'Tutor unavailable'})
+
+    def test_an_occurrence_rejected_for_another_reason_is_not_deleted(self):
+        client = self.client(Response({'error': {'code': 'ErrorAccessDenied'}}, 403))
+        with self.assertRaisesRegex(ActionNotSent, 'rejected'):
+            self.cancel(client, occurrence=True)
+        self.assertEqual([verb for verb, *_ in self.sent], ['POST'])
+
+
+class CancellationEvidenceTests(CalendarFixture):
+    """What the LMS will and will not accept as proof of a cancellation."""
+
+    def setUp(self):
+        super().setUp()
+        self.occurrence = {'eventId': 'instance-OCC-1', 'rootId': 'master-1', 'occurrenceId': 'OCC-1',
+                           'occurrenceGraphId': 'OID-OCC-1', 'action': 'cancel'}
+        self.whole = {'eventId': 'master-1', 'action': 'cancel'}
+
+    def confirmed(self, command):
+        return cancellation_confirmed(self.series, command, self.read)
+
+    def test_a_meeting_gone_from_the_calendar_is_cancelled(self):
+        self.instances = self.instances[1:]
+        self.assertTrue(self.confirmed(self.occurrence))
+
+    def test_a_meeting_flagged_cancelled_is_cancelled(self):
+        self.instances[0]['isCancelled'] = True
+        self.assertTrue(self.confirmed(self.occurrence))
+
+    def test_an_occurrence_listed_on_its_master_is_cancelled(self):
+        self.master['cancelledOccurrences'] = ['OID-OCC-1']
+        self.assertTrue(self.confirmed(self.occurrence))
+
+    def test_a_cancelled_series_carries_its_occurrences_with_it(self):
+        self.instances = self.instances[1:]
+        self.master['isCancelled'] = True
+        self.assertTrue(self.confirmed(self.occurrence))
+
+    def test_a_live_meeting_is_not_cancelled(self):
+        self.assertFalse(self.confirmed(self.occurrence))
+        self.assertFalse(self.confirmed(self.whole))
+
+    def test_a_whole_meeting_off_the_calendar_is_cancelled(self):
+        self.master = None
+        self.assertTrue(self.confirmed(self.whole))
+
+    def test_verification_never_writes_to_microsoft(self):
+        self.master = None
+        self.confirmed(self.whole)
+        self.assertTrue(all('/cancel' not in path for path in self.calls))
 
 
 if __name__ == '__main__':

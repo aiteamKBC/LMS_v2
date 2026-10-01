@@ -111,6 +111,34 @@ def compliance_document_state(learner_kind, learner_id):
     return state
 
 
+# Where each document keeps the learner's own signature.
+LEARNER_SIGNATURE_FIELDS = {
+    "apprenticeshipAgreement": "apprentice_signature",
+    "ilr": "learner_signature",
+    "trainingPlan": "apprentice_signature",
+    "writtenAgreement": "learner_signature",
+}
+
+
+def learner_signed_compliance_documents(learner_kind, learner_id):
+    """True once the learner has signed all four issued compliance documents.
+
+    Their own signatures only — the employer's and provider's may still be
+    outstanding. It is what opens their first learning session booking.
+    """
+    for name, model in COMPLIANCE_DOCUMENT_MODELS:
+        try:
+            document = model.objects.filter(
+                learner_kind=learner_kind, learner_id=learner_id, status=model.STATUS_ACTIVE,
+            ).only(LEARNER_SIGNATURE_FIELDS[name]).first()
+        except DatabaseError:
+            logger.exception("learner_signed_compliance_documents: %s lookup failed", name)
+            return False
+        if document is None or not _s(getattr(document, LEARNER_SIGNATURE_FIELDS[name], "")):
+            return False
+    return True
+
+
 def compliance_documents_complete(learner_kind, learner_id):
     """True when all four compliance documents are fully signed."""
     return all(compliance_document_state(learner_kind, learner_id).values())

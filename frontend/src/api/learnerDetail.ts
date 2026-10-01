@@ -155,6 +155,10 @@ export interface LearnerDetail {
   phone: string;
   programme: string;
   programmeStatus: string;
+  /** The enrolment wizard: 'Submitted' by the learner, 'Completed' by staff; older payloads omit it. */
+  onboardingStatus?: string;
+  /** A Delivery apprentice who has signed all four compliance documents may book their first session. */
+  firstSessionUnlocked?: boolean;
   learnerType?: LearnerKind;
   programmeStartDate?: string;
   /** The learner's own recorded start, from Created_users.Learner_start_date.
@@ -214,7 +218,7 @@ export interface LearnerDetail {
 }
 
 export type LearnerSummary = Pick<LearnerDetail,
-  'id' | 'name' | 'email' | 'phone' | 'programme' | 'programmeStatus' |
+  'id' | 'name' | 'email' | 'phone' | 'programme' | 'programmeStatus' | 'onboardingStatus' | 'firstSessionUnlocked' |
   'cohort' | 'group' | 'employer' | 'employerId' | 'organization' | 'learnerType' | 'isActive'
 > & Pick<LearnerDetail, 'studentActivityAvailable' | 'programmeStartDate' | 'learnerStartDate' | 'learnerEndDate' | 'programmeEndDate' | 'accessGate' | 'learningAccess'>;
 
@@ -280,6 +284,8 @@ export interface LearnerVideoProgress {
   expectedOtjh?: number | null;
   kind: 'video';
   componentId: string;
+  /** Saved title of this completion, including historical videos no longer in the current plan. */
+  componentTitle?: string;
   attempt?: number;
   ksbs?: string[];
   feedback?: string;

@@ -9,17 +9,28 @@ from .service import ServiceError, _state, normalize
 
 
 def cohort_records():
-    return repo.query('''SELECT DISTINCT ON (c.id)
+    return repo.query('''WITH enrolment_link_counts AS (
+        SELECT ltrim(btrim(aptem_id),'0') AS aptem_key, count(*) AS link_count
+        FROM enrolment."Created_users"
+        GROUP BY ltrim(btrim(aptem_id),'0')
+    ), audit_link_counts AS (
+        SELECT aptem_id, count(*) AS link_count
+        FROM "Last_audit".learners
+        GROUP BY aptem_id
+    )
+        SELECT DISTINCT ON (c.id)
         c.id AS enrolment_id, l.aptem_id AS id, l.learner_name AS name,
         c."Email" AS email, l.programme_name AS programme,
         c."Programme_status" AS enrolment_status, l.programme_status AS audit_status,
         l.coach_name, lower(btrim(coalesce(l.coach_email,''))) AS coach_email,
-        (SELECT count(*) FROM enrolment."Created_users" other
-          WHERE ltrim(btrim(other.aptem_id),'0')=l.aptem_id::text) AS enrolment_links,
-        (SELECT count(*) FROM "Last_audit".learners other
-          WHERE other.aptem_id=l.aptem_id) AS audit_links
+        coalesce(enrolment_counts.link_count, 0) AS enrolment_links,
+        coalesce(audit_counts.link_count, 0) AS audit_links
         FROM enrolment."Created_users" c JOIN "Last_audit".learners l
           ON ltrim(btrim(c.aptem_id),'0')=l.aptem_id::text
+        LEFT JOIN enrolment_link_counts enrolment_counts
+          ON enrolment_counts.aptem_key=l.aptem_id::text
+        LEFT JOIN audit_link_counts audit_counts
+          ON audit_counts.aptem_id=l.aptem_id
         WHERE l.aptem_id>0 AND lower(btrim(l.programme_status))='active'
         ORDER BY c.id, l.learner_id''')
 
@@ -134,7 +145,7 @@ STATUSES = {'all', 'completed', 'not_started', 'no_data', 'link_issue', 'pending
             'learner_outstanding', 'coach_outstanding', 'learner_signed', 'coach_signed', 'needs_attention'}
 
 
-def dashboard(params):
+def dashboard(params, *, records=None, updated_at=None):
     try:
         page = max(1, int(params.get('page', 1)))
     except (ValueError, TypeError):
@@ -144,7 +155,7 @@ def dashboard(params):
         raise ServiceError('Invalid review status.')
     search = normalize(params.get('search', ''))[:200]
     coach, programme = params.get('coach'), params.get('programme')
-    records = load_records()
+    records = load_records() if records is None else records
     stats = {key: sum(matches_status(r, key) for r in records) for key in
              ('completed', 'not_started', 'learner_outstanding', 'coach_outstanding',
               'learner_signed', 'coach_signed', 'ready_to_complete', 'needs_attention', 'no_data', 'link_issue')}
@@ -181,5 +192,5 @@ def dashboard(params):
             'coaches': sorted(by_coach.values(), key=lambda r: normalize(r['name'])),
             'programmes': sorted({r['programme'] for r in records if r['programme']}),
             'monthly': [by_month[key] for key in sorted(by_month)],
-            'updated_at': datetime.now(timezone.utc).isoformat(), 'cutoff_date': '2026-08-31',
+            'updated_at': updated_at or datetime.now(timezone.utc).isoformat(), 'cutoff_date': '2026-08-31',
             'scope': 'Active in the previous audit, linked to enrolment', 'read_only': True}

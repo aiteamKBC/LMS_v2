@@ -317,3 +317,6 @@ $RECYCLE.BIN/
 !/AI_marking_prompt.MD
 !/backend/
 !/frontend/
+
+# performance diagnostics — local only
+/backend/perf/

@@ -38,6 +38,80 @@ function expandMonthAndWeek(month = 'February 2026') {
 describe('learner subject cards', () => {
   afterEach(() => vi.restoreAllMocks());
 
+  it('filters old Aptem modules separately from new Curriculum modules', async () => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({
+      covers: {}, current_subjects: [{ id: 'MOD-NEW', title: 'New curriculum module' }],
+    });
+    render(<StudentActivityPanel data={data} real={{ components: [{
+      moduleId: 'MOD-NEW', module: 'New curriculum module', componentId: 'NEW-1',
+      component: 'New activity', type: 'reading', week: 'Week 1',
+    }] } as LearnerDetail} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+
+    await screen.findByRole('heading', { name: 'New curriculum module' });
+    expect(screen.getByRole('heading', { name: 'Leadership' })).toBeVisible();
+    expect(screen.getByRole('tab', { name: 'All modules' })).toHaveAttribute('aria-selected', 'true');
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Old LMS' }));
+    expect(screen.getByRole('heading', { name: 'Leadership' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'New curriculum module' })).not.toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Old LMS' })).toHaveAttribute('aria-selected', 'true');
+
+    fireEvent.click(screen.getByRole('tab', { name: 'New LMS' }));
+    expect(screen.getByRole('heading', { name: 'New curriculum module' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Leadership' })).not.toBeInTheDocument();
+    expect(screen.getByText(/1 shown/)).toBeVisible();
+
+    fireEvent.click(screen.getByRole('tab', { name: 'All modules' }));
+    expect(screen.getByRole('heading', { name: 'New curriculum module' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Leadership' })).toBeVisible();
+  });
+
+  it('keeps unstarted enrolled courses visible with an Upcoming badge', async () => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {},
+      current_subjects: [{ id: 'FUTURE-1', title: 'Future enrolled course' }],
+    });
+    const unstarted = { ...data, completed_count: 0,
+      activities: data.activities.map(activity => ({ ...activity, completed: false, status: null })) };
+    render(<StudentActivityPanel data={unstarted} real={{ components: [] } as unknown as LearnerDetail}
+      kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
+    const assigned = await screen.findByRole('button', { name: /Future enrolled course.*Open subject/ });
+    expect(within(assigned).getByText('Upcoming')).toBeVisible();
+    const imported = screen.getByRole('button', { name: /Leadership.*Open subject/ });
+    expect(within(imported).getByText('Upcoming')).toBeVisible();
+    expect(imported).toBeEnabled();
+    expect(assigned).toBeEnabled();
+  });
+
+  it('shows scheduled learning and working help destinations in the catalogue sidebar', async () => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue({ covers: {} });
+    render(<StudentActivityPanel data={data} real={{ components: [
+      { moduleId: 'M1', module: 'Project', componentId: 'LIVE-1', component: 'Project workshop', type: 'live_session', week: 'Week 1', sessionDateTimeUtc: '2099-08-03T10:00:00Z' },
+      { moduleId: 'M1', module: 'Project', componentId: 'LIVE-2', component: 'Second workshop', type: 'live_session', week: 'Week 1', sessionDate: '2099-08-04' },
+      { moduleId: 'M1', module: 'Project', componentId: 'LIVE-3', component: 'Third workshop', type: 'live_session', week: 'Week 1', sessionDateTimeUtc: '2099-08-05T10:00:00Z' },
+      { moduleId: 'M1', module: 'Project', componentId: 'LIVE-4', component: 'Fourth workshop', type: 'live_session', week: 'Week 1', sessionDateTimeUtc: '2099-08-06T10:00:00Z' },
+    ] } as LearnerDetail} kind="commercial" learnerId="132" loading={false} error={null} onRetry={vi.fn()}
+      upcomingSessions={[
+        { id: 'future', moduleId: 'M1', title: 'Project workshop', start: '2099-08-03T10:00:00Z', end: '2099-08-03T11:00:00Z', minutes: 60, joinUrl: 'https://example.com/session', status: 'scheduled', attended: null },
+        { id: 'second', moduleId: 'M1', title: 'Second workshop', start: '2099-08-04T10:00:00Z', end: null, minutes: 60, joinUrl: null, status: 'scheduled', attended: null },
+        { id: 'third', moduleId: 'M1', title: 'Third workshop', start: '2099-08-05T10:00:00Z', end: null, minutes: 60, joinUrl: null, status: 'scheduled', attended: null },
+        { id: 'fourth', moduleId: 'M1', title: 'Fourth workshop', start: '2099-08-06T10:00:00Z', end: null, minutes: 60, joinUrl: null, status: 'scheduled', attended: null },
+        { id: 'cancelled', moduleId: 'M1', title: 'Cancelled workshop', start: '2099-01-04T10:00:00Z', end: null, minutes: 60, joinUrl: null, status: 'cancelled', attended: null },
+      ]} />);
+    const shortcuts = within(await screen.findByRole('complementary', { name: 'Learning shortcuts' }));
+    expect(shortcuts.getByRole('link', { name: /Project workshop/ })).toHaveAttribute('href', '/learner/component/commercial/132/LIVE-1?week=Week%201');
+    expect(shortcuts.getByRole('link', { name: /Second workshop/ })).toHaveAttribute('href', '/learner/component/commercial/132/LIVE-2?week=Week%201');
+    expect(shortcuts.getByRole('link', { name: /Project workshop/ })).toHaveTextContent('11:00');
+    expect(shortcuts.getByRole('link', { name: /Project workshop/ })).toHaveTextContent('Online');
+    expect(shortcuts.queryByText('Cancelled workshop')).not.toBeInTheDocument();
+    expect(shortcuts.queryByText('Fourth workshop')).not.toBeInTheDocument();
+    fireEvent.click(shortcuts.getByRole('button', { name: 'View all' }));
+    expect(shortcuts.getByRole('link', { name: /Fourth workshop/ })).toBeVisible();
+    expect(shortcuts.getByRole('link', { name: /Fourth workshop/ })).toHaveAttribute('href', '/learner/component/commercial/132/LIVE-4?week=Week%201');
+    expect(shortcuts.getByRole('link', { name: /Book a tutor meeting/ })).toHaveAttribute('href', '/learner/calendar?book=student-support');
+    expect(shortcuts.getByRole('link', { name: /Contact student support/ })).toHaveAttribute('href', '/learner/support?action=new-ticket&category=learning');
+    expect(shortcuts.queryByRole('link', { name: /Technical support/ })).not.toBeInTheDocument();
+  });
+
   it.each(['legacy:1','current:MOD-1'])('opens the exact subject from a Continue learning deep link (%s)', async subjectId => {
     const imported=subjectId.startsWith('legacy:');
     vi.spyOn(api,'subjectRequest').mockResolvedValue({covers:{},current_subjects:[{id:'MOD-1',title:'Current module'}],
@@ -71,14 +145,14 @@ describe('learner subject cards', () => {
     expect(container.querySelector('input[type="file"]')).toBeNull();
   });
 
-  it('clears an old subject image when its Builder cover is removed', async () => {
+  it('uses the module default when its Builder cover is removed', async () => {
     vi.spyOn(api, 'subjectRequest').mockResolvedValue({
       covers: { 'legacy:1': '' },
       builder_subjects: { 'legacy:1': { id: 'MOD-1', title: 'Updated Leadership' } },
     });
     render(<StudentActivityPanel data={{ ...data, covers: { 'legacy:1': 'https://example.com/old.png' } }} learnerId="132" loading={false} error={null} onRetry={vi.fn()} />);
     await screen.findByRole('heading', { name: 'Updated Leadership' });
-    expect(screen.queryByRole('img')).not.toBeInTheDocument();
+    expect(screen.getByRole('img', { name: 'Updated Leadership cover' })).toHaveAttribute('src', '/assets/my-learning/default-module-cover.png');
   });
 
   it('loads on opening Modules and ignores an old learner response after navigation', async () => {

@@ -3,6 +3,7 @@
     enrolment."Review_Eligibility"     - Eligibility Review & FS Discussion
     enrolment."Review_RPL"             - RPL And Experience
     enrolment."Review_Health_Safety"   - Workplace Health & Safety Declaration
+    enrolment."Review_ULN_Privacy"     - ULN Privacy Notice & Learner Acknowledgement
 
 Each row belongs to one Enrolment_Reviews row via Review_id (ON DELETE CASCADE),
 one row per review, so the answers for each review type get real columns to
@@ -101,6 +102,10 @@ TABLES = {
         ('"Inform_changes"', "text"),
         ('"HS_policy"', "text"),
         ('"Liability_insurance"', "text"),
+    ],
+    "Review_ULN_Privacy": [
+        ('"Privacy_notice_read"', "text"),
+        ('"Learner_acknowledged"', "text"),
     ],
 }
 

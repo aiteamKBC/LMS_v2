@@ -15,7 +15,7 @@ export function EvidenceGroups({ items, expandMatches, onOpen }: { items: Eviden
   const allOpen = groups.every(month => isOpen(month.key));
   return <section className={styles.root} aria-label="Evidence by month">
     <div className={styles.heading}>
-      <div><h2>Evidence by month</h2><p>{groups.length} {groups.length === 1 ? 'month' : 'months'} · Organised by component</p></div>
+      <div className={styles.headingIntro}><span className={styles.headingIcon}><CalendarDays size={25} /></span><div><h2>Evidence by month</h2><p>Your evidence organised by month and component.</p></div></div>
       <button type="button" className={styles.expandButton} onClick={() => {
         setOpenMonths(Object.fromEntries(groups.map(month => [month.key, !allOpen])));
         if (!allOpen) { setClosedComponents({}); setExpandComponents(true); }

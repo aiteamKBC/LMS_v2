@@ -27,7 +27,7 @@ const isAbortError = (err: unknown): boolean => err instanceof DOMException && e
 
 /** Review Types with a signed PDF export, by the Review Type's stable code --
  *  mirrors curriculum_api.review_pdf.EXPORTABLE_REVIEW_TYPES. */
-const EXPORTABLE_REVIEW_TYPES = ['mcm', 'progress_review'];
+const EXPORTABLE_REVIEW_TYPES = ['mcm', 'aptem_mcm', 'progress_review'];
 
 function MeetingSummaryInlineEditor({
   fieldId,
@@ -317,6 +317,7 @@ export function ReviewInstanceModal({
   );
   const answeredCount = requiredCount - missingFieldIds.size;
   const isImportedReadOnly = Boolean(definition?.readOnly);
+  const isSummaryOnly = Boolean(definition?.summaryOnly);
   const isSignatureStage = definition ? ['awaiting-signature', 'completed'].includes(definition.instance.status) : false;
   const advisorSignature = definition?.signatures.advisor;
   const advisorSignaturePending = Boolean(
@@ -548,7 +549,9 @@ export function ReviewInstanceModal({
               <h1 className="mt-1 max-w-4xl text-xl font-bold leading-tight text-white sm:text-2xl lg:text-[28px]">
                 {definition ? `${headingLabel} #${definition.instance.occurrenceNumber}` : 'Loading review...'}
               </h1>
-              <p className="mt-1 text-[13px] text-white/60">Work through each Curriculum-defined step, then save or complete the review.</p>
+              <p className="mt-1 text-[13px] text-white/60">{isSummaryOnly
+                ? 'Review the summary information retained from the imported Aptem record.'
+                : 'Work through each Curriculum-defined step, then save or complete the review.'}</p>
             </div>
           </div>
           {requiredCount ? (
@@ -582,10 +585,12 @@ export function ReviewInstanceModal({
 
         {!loading && definition ? (
           <>
-            {isImportedReadOnly ? (
+            {definition.source === 'aptem' ? (
               <section className="rounded-2xl border border-primary-200 bg-primary-50 p-4" aria-label="Imported review">
-                <p className="text-sm font-bold text-primary-950">Historical Aptem review</p>
-                <p className="mt-1 text-xs leading-5 text-primary-900">This imported review is read-only. Its sections and answers are shown exactly as stored.</p>
+                <p className="text-sm font-bold text-primary-950">Imported Aptem review</p>
+                <p className="mt-1 text-xs leading-5 text-primary-900">{isSummaryOnly
+                  ? 'This review has a summary only; no section details were imported.'
+                  : 'Changes are saved to this LMS review. The original Aptem import remains unchanged.'}</p>
               </section>
             ) : isSignatureStage ? (
               <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4" aria-label="Edit completed review">
@@ -619,7 +624,9 @@ export function ReviewInstanceModal({
             ) : null}
             <div className="flex items-start gap-3 rounded-xl border border-primary-100 bg-primary-50/80 px-4 py-3 text-[13px] leading-5 text-primary-800 shadow-sm">
               <AppIcon className="ri-information-line mt-0.5 shrink-0 text-primary-600"></AppIcon>
-              <span>{isImportedReadOnly
+              <span>{isSummaryOnly
+                ? 'The imported summary remains available for reference, but there is no form to edit or complete.'
+                : isImportedReadOnly
                 ? 'These historical answers are displayed from the imported Aptem review and cannot be changed here.'
                 : `These answers are saved to this ${definition.template.name} and follow the sections/questions configured in Curriculum.`}</span>
             </div>
@@ -724,18 +731,20 @@ export function ReviewInstanceModal({
                 code, never by the template's name. Calculating is locked once
                 the review reaches the signature step, so the figures a party
                 signs cannot move afterwards. */}
-            {definition.template.reviewTypeCode === 'progress_review' ? (
+            {['progress_review', 'aptem_progress_review'].includes(definition.template.reviewTypeCode || '') ? (
               <ReviewProgressPanel
                 snapshot={definition.progressSnapshot}
                 ragHistory={definition.ragHistory}
-                canCalculate={!isSignatureStage}
+                canCalculate={definition.source !== 'aptem' && !isSignatureStage}
                 calculating={calculating}
                 onCalculate={() => { void calculateProgress(); }}
               />
             ) : null}
 
             <ReviewFormRenderer
-              sections={definition.sections}
+              sections={definition.source === 'aptem' && definition.progressSnapshot
+                ? definition.sections.filter((section) => section.title.trim().toLocaleLowerCase() !== 'learning progress')
+                : definition.sections}
               answers={answers}
               onAnswerChange={handleAnswerChange}
               errors={showErrors ? { missingFieldIds } : undefined}

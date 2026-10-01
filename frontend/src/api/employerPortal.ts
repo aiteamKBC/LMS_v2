@@ -12,6 +12,7 @@
 // ============================================================================
 
 import type { LearnerDetail } from '@/api/learnerDetail';
+import type { ReviewFormResponse } from '@/api/reviewForm';
 
 const BASE = '/learner_api/employer-portal';
 
@@ -198,6 +199,38 @@ export function signReviewAsEmployer(
 ): Promise<unknown> {
   return request(
     `${BASE}/${employerId}/learner/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/review/`,
+    { method: 'POST', body: JSON.stringify({ party: 'employer', ...input }) },
+  );
+}
+
+/**
+ * Read a legacy Enrolment_Reviews document as the employer, for "Show
+ * document". The learner-side read is closed to employers.
+ */
+export function fetchEmployerEnrolmentReview(
+  employerId: string,
+  kind: string,
+  learnerId: string,
+  eventKey: string,
+): Promise<ReviewFormResponse> {
+  return request<ReviewFormResponse>(
+    `${BASE}/${employerId}/learner/${kind}/${learnerId}/reviews/${encodeURIComponent(eventKey)}/`,
+  );
+}
+
+/**
+ * Sign a legacy Enrolment_Reviews row (one with no Curriculum review instance)
+ * as the employer. The review-instance endpoint above 404s for these, so they
+ * keep the original enrolment-review sign route. An empty signature withdraws.
+ */
+export function signEnrolmentReviewAsEmployer(
+  kind: string,
+  learnerId: string,
+  eventKey: string,
+  input: { name: string; signature: string },
+): Promise<unknown> {
+  return request(
+    `/learner_api/reviews/${kind}/${learnerId}/${encodeURIComponent(eventKey)}/sign/`,
     { method: 'POST', body: JSON.stringify({ party: 'employer', ...input }) },
   );
 }

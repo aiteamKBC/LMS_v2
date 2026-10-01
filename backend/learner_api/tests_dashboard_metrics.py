@@ -8,12 +8,18 @@ from django.db import DatabaseError
 from django.test import SimpleTestCase, RequestFactory
 
 from .dashboard_metrics import (programme_totals, ksb_totals, read_planned_hours,
-                                activity_planned_hours, read_metrics, learner_metrics)
+                                activity_planned_hours, read_metrics, learner_metrics,
+                                metrics_from_loaded, _read_legacy_metrics)
 from .student_activity import _direct_progress_otjh
 from .attendance import combined_attendance_rows, _summarize_attendance
 
 
 class DashboardMetricsTests(SimpleTestCase):
+    def setUp(self):
+        # Legacy calculation helpers are retained only for migration comparison;
+        # the live read_metrics entry point is covered separately as SSOT-only.
+        self.enterContext(patch('learner_api.dashboard_metrics.canonical_learning.enabled', return_value=False))
+
     def test_authored_snake_case_ksb_mapping_counts_after_completion(self):
         native = [{'id': 'reading', 'ksb_mappings': json.dumps([{'ksb_code': 'K1.1', 'weight': 1}])}]
         before = ksb_totals(native, [])
@@ -177,7 +183,7 @@ class DashboardMetricsTests(SimpleTestCase):
                 manager.using.return_value.filter.return_value.order_by.return_value.values.return_value.first.return_value = document
                 cursor = connections.__getitem__.return_value.cursor.return_value.__enter__.return_value
                 cursor.fetchall.return_value = [('module-one', 'First module'), ('module-two', 'Second module')]
-                result = read_metrics(source, 'commercial')
+                result = _read_legacy_metrics(source, 'commercial')
                 self.assertEqual(result['otjh']['planned'], expected)
                 self.assertEqual(result['otjh']['actual'], 0)
                 query, params = cursor.execute.call_args_list[0].args
@@ -222,13 +228,56 @@ class DashboardMetricsTests(SimpleTestCase):
                         saved_attempts,
                         [(2, '10', 'imported')],
                     ]
-                    result = read_metrics(source, 'commercial')
+                    result = _read_legacy_metrics(source, 'commercial')
                     self.assertEqual(tuple(result[metric][key] for metric in ('programme', 'ksb')
                                            for key in ('completed', 'total', 'percent')), expected)
                     self.assertEqual(result['ksb']['historicalCompleted'], 2)
                     self.assertEqual(result['otjh'], {'historical': 1171.34, 'new': 0,
                                                      'actual': 1171.34, 'completed_actual': None, 'planned': 867})
             live.assert_not_called()
+
+    def test_live_metrics_read_is_ssot_only(self):
+        source = SimpleNamespace(pk=125, aptem_id=92, email='test@example.com')
+        expected = {'otjh': {'actual': 12.5, 'planned': 20}}
+        with patch('learner_api.dashboard_metrics.canonical_learning.metrics', return_value=expected) as canonical, \
+             patch('learner_api.dashboard_metrics.connections') as legacy_connections:
+            self.assertEqual(read_metrics(source, 'commercial'), expected)
+        canonical.assert_called_once_with(125)
+        legacy_connections.__getitem__.assert_not_called()
+
+    def test_accepted_ledger_title_is_used_for_ksb_evidence(self):
+        source = SimpleNamespace(pk=125, aptem_id=92, email='test@example.com')
+        with patch('learner_api.dashboard_metrics.connections'), \
+             patch('learner_api.dashboard_metrics.read_planned_hours', return_value=0):
+            result = metrics_from_loaded(
+                source,
+                'commercial',
+                migrated=True,
+                native=[],
+                progress=[],
+                direct_progress=[],
+                historical=[],
+                attempts=set(),
+                links={},
+                history_ready=True,
+                manual_hours=0,
+                preloaded={
+                    'aptem_planned_total': 0,
+                    'reflection_submissions': [],
+                    'accepted_ksb_rows': [{
+                        'id': 6266,
+                        'source_ref': 'manual:6266',
+                        'activity_id': 81224,
+                        'activity_title': 'P1 - Introduction to Strategic Marketing',
+                        'ksb_mappings': ['B1'],
+                    }],
+                },
+            )
+
+        self.assertEqual(
+            result['_ksb_evidence_sources'][0]['title'],
+            'P1 - Introduction to Strategic Marketing',
+        )
 
     def test_endpoint_scopes_identity_and_returns_retryable_error(self):
         source = SimpleNamespace(pk=125, aptem_id=92, email='test@example.com')

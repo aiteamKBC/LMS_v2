@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useEffect, useRef, useLayoutEffect, type CSSProperties, type RefObject } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef, useLayoutEffect, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { useLocation, Link } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import {
@@ -68,6 +68,7 @@ import {
   X,
   Zap,
   type LucideIcon,
+  Lock,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { LEARNER_LOGO_URL, LEARNER_SIDEBAR_PATTERN_URL, LEARNER_SIDEBAR_COLLAPSED_WIDTH, LEARNER_SIDEBAR_WIDTH } from './learnerShellAssets';
@@ -120,6 +121,13 @@ export interface SidebarNavItem {
    * through the router, so no route guard applies to it.
    */
   external?: boolean;
+  /**
+   * Shown but not yet usable — e.g. a learner's Reviews before their enrolment
+   * is submitted. Rendered with a padlock and not as a link; `lockedReason` is
+   * its tooltip and screen-reader explanation.
+   */
+  locked?: boolean;
+  lockedReason?: string;
   children?: SidebarNavItem[];
 }
 
@@ -147,6 +155,7 @@ interface SidebarProps {
 function resolveSidebarIcon(id = '', label = '', sourceIcon = ''): LucideIcon {
   const key = `${id} ${label} ${sourceIcon}`.toLowerCase();
 
+  if (id === 'admin-inclusion' || id === 'coach-inclusion') return HeartPulse;
   if (id === 'learner-onboarding') return Users;
   if (id === 'learner-compliance-documents') return ShieldCheck;
   if (/clipboard/.test(sourceIcon.toLowerCase())) return ClipboardList;
@@ -257,6 +266,39 @@ function NewTabHint({ item }: { item: SidebarNavItem }) {
   // The space sits outside the span: whitespace at the start of an element is
   // dropped from the accessible name, which would read "Moments(opens...".
   return item.external ? <>{' '}<span className="sr-only">(opens in a new tab)</span></> : null;
+}
+
+/**
+ * A nav item's link — or, while the item is locked, the same row as inert text
+ * with a padlock, so it cannot be followed.
+ */
+function NavItemLink({ item, className, children, ...rest }: {
+  item: SidebarNavItem;
+  className: string;
+  children: ReactNode;
+  onClick?: () => void;
+  title?: string;
+  'aria-current'?: 'page';
+}) {
+  if (item.locked) {
+    const reason = item.lockedReason || 'Locked';
+    return (
+      <span role="link" aria-disabled="true" title={`${item.label} — ${reason}`} className={`${className} cursor-not-allowed opacity-60`}>
+        {children}
+        <span className="sr-only">{` (locked: ${reason})`}</span>
+      </span>
+    );
+  }
+  return (
+    <Link to={item.href ?? '#'} {...externalLinkProps(item)} className={className} {...rest}>
+      {children}
+    </Link>
+  );
+}
+
+/** The padlock beside a locked item. */
+function LockMark({ size = 13 }: { size?: number }) {
+  return <Lock aria-hidden="true" size={size} strokeWidth={2} className="shrink-0" />;
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -800,9 +842,8 @@ function RailLink({ item, isActive, compact }: {
 }) {
   const active = isActive(item.href, item.matchPaths);
   return (
-    <Link
-      to={item.href ?? '#'}
-      {...externalLinkProps(item)}
+    <NavItemLink
+      item={item}
       aria-current={active ? 'page' : undefined}
       title={item.label}
       className={`${ROW_BASE} ${active ? ROW_ACTIVE : ROW_IDLE} w-full flex-col justify-center gap-1 ${compact ? 'py-1.5' : 'py-2'} px-1`}
@@ -813,10 +854,11 @@ function RailLink({ item, isActive, compact }: {
         {item.badge ? <RailDot className="bg-primary-500" /> : null}
         {item.statusDot && !item.badge ? <RailDot className="bg-red-500" /> : null}
         {(item.comingSoon || item.tag) && !item.badge && !item.statusDot ? <RailDot className="bg-amber-400" /> : null}
+        {item.locked ? <span className="absolute -right-2 -top-1"><LockMark size={10} /></span> : null}
       </span>
       <RailLabel compact={compact}>{item.label}</RailLabel>
       <NewTabHint item={item} />
-    </Link>
+    </NavItemLink>
   );
 }
 
@@ -874,12 +916,11 @@ function SecondaryNavCard({ item, active, onNavigate }: {
   active: boolean;
   onNavigate?: () => void;
 }) {
-  const hasStatus = Boolean(item.comingSoon || item.tag || item.statusDot || item.badge);
+  const hasStatus = Boolean(item.comingSoon || item.tag || item.statusDot || item.badge || item.locked);
 
   return (
-    <Link
-      to={item.href ?? '#'}
-      {...externalLinkProps(item)}
+    <NavItemLink
+      item={item}
       aria-current={active ? 'page' : undefined}
       onClick={onNavigate}
       className={`group flex min-h-10 w-full min-w-0 items-center rounded-lg px-3 py-2 text-left text-[13px] leading-snug transition-colors duration-150 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white/80 motion-reduce:!transition-none ${active ? 'bg-brand-accent font-semibold text-white' : 'text-white/75 hover:bg-white/10 hover:text-white'}`}
@@ -890,9 +931,10 @@ function SecondaryNavCard({ item, active, onNavigate }: {
           {item.comingSoon ? <SoonBadge /> : item.tag ? <NavTag label={item.tag} /> : null}
           {item.statusDot && <StatusDot color={item.statusDot} />}
           {item.badge ? <NavBadge count={item.badge} /> : null}
+          {item.locked && <LockMark />}
         </span>
       )}
-    </Link>
+    </NavItemLink>
   );
 }
 
@@ -909,9 +951,8 @@ function ExpandedLink({ item, isActive, onNavigate, compact, presentation }: {
   }
 
   return (
-    <Link
-      to={item.href ?? '#'}
-      {...externalLinkProps(item)}
+    <NavItemLink
+      item={item}
       aria-current={active ? 'page' : undefined}
       onClick={onNavigate}
       title={presentation === 'rail' ? item.label : undefined}
@@ -923,6 +964,7 @@ function ExpandedLink({ item, isActive, onNavigate, compact, presentation }: {
         {presentation === 'rail' && item.badge ? <RailDot className="bg-primary-500" /> : null}
         {presentation === 'rail' && item.statusDot && !item.badge ? <RailDot className="bg-red-500" /> : null}
         {presentation === 'rail' && (item.comingSoon || item.tag) && !item.badge && !item.statusDot ? <RailDot className="bg-amber-400" /> : null}
+        {presentation === 'rail' && item.locked ? <span className="absolute -right-2 -top-1"><LockMark size={10} /></span> : null}
       </span>
       <span className={presentation === 'rail' ? 'sr-only' : presentation === 'row' ? 'min-w-0 flex-1 whitespace-normal break-words text-left' : 'min-w-0 flex-1 truncate'}>{item.label}<NewTabHint item={item} /></span>
       {presentation !== 'rail' && (
@@ -930,9 +972,10 @@ function ExpandedLink({ item, isActive, onNavigate, compact, presentation }: {
           {item.comingSoon ? <SoonBadge /> : item.tag ? <NavTag label={item.tag} /> : null}
           {item.statusDot && <StatusDot color={item.statusDot} />}
           {item.badge ? <NavBadge count={item.badge} /> : null}
+          {item.locked && <LockMark />}
         </span>
       )}
-    </Link>
+    </NavItemLink>
   );
 }
 

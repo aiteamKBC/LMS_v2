@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { BookOpen, ChevronDown, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { ChevronDown, PanelLeftClose, PanelLeftOpen, X } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { SidebarIcon, type SidebarNavItem } from './Sidebar';
+import { LEARNER_LOGO_URL, LEARNER_SIDEBAR_PATTERN_URL } from './learnerShellAssets';
 import styles from './CoachSidebar.module.css';
 
 interface CoachSidebarProps {
@@ -56,7 +57,8 @@ export function CoachSidebar({ navItems, mobileOpen, onCloseMobile, collapsed, o
   const panel = (mobile: boolean) => {
     const compact = !mobile && collapsed;
     return <>
-    <div className={styles.brand}><BookOpen aria-hidden="true" /><span>LearningHub</span>
+    <div className={styles.pattern} aria-hidden="true" style={{ backgroundImage: `url(${LEARNER_SIDEBAR_PATTERN_URL})` }} />
+    <div className={styles.brand}><img src={LEARNER_LOGO_URL} alt="Kent Business College" />
       {mobile && <button type="button" className={styles.close} aria-label="Close navigation" onClick={onCloseMobile}><X size={18} /></button>}
     </div>
     <nav className={styles.nav} aria-label={`Coach ${mobile ? 'mobile menu' : 'primary navigation'}`}>
@@ -76,7 +78,10 @@ export function CoachSidebar({ navItems, mobileOpen, onCloseMobile, collapsed, o
             <SidebarIcon id={child.id} label={child.label} sourceIcon={child.icon} size={15} /><span className={styles.label}>{child.label}</span>
           </Link>)}
         </div>}
-      </div> : <Link key={item.id} to={item.href} className={styles.row} aria-current={active(item) ? 'page' : undefined} onClick={onCloseMobile}
+      </div> : item.external ? <a key={item.id} href={item.href} target="_blank" rel="noopener noreferrer" className={styles.row} onClick={onCloseMobile}
+        aria-label={compact ? item.label : undefined} title={compact ? item.label : undefined}>
+        <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} /><span className={styles.label}>{item.label}</span>
+      </a> : <Link key={item.id} to={item.href} className={styles.row} aria-current={active(item) ? 'page' : undefined} onClick={onCloseMobile}
         aria-label={compact ? item.label : undefined} title={compact ? item.label : undefined}>
         <SidebarIcon id={item.id} label={item.label} sourceIcon={item.icon} /><span className={styles.label}>{item.label}</span>
       </Link>)}
@@ -88,12 +93,12 @@ export function CoachSidebar({ navItems, mobileOpen, onCloseMobile, collapsed, o
     <aside className={styles.desktop} aria-label="Coach sidebar" data-workspace-role="coach" data-collapsed={collapsed}>
       <button type="button" className={styles.collapseToggle} aria-label={collapsed ? 'Expand coach sidebar' : 'Collapse coach sidebar'}
         aria-expanded={!collapsed} onClick={() => onCollapsedChange(!collapsed)}>
-        {collapsed ? <ChevronRight aria-hidden="true" /> : <ChevronLeft aria-hidden="true" />}
+        {collapsed ? <PanelLeftOpen aria-hidden="true" /> : <PanelLeftClose aria-hidden="true" />}
       </button>
       {panel(false)}
     </aside>
     {mobileOpen && <div className={styles.backdrop} onClick={onCloseMobile} aria-hidden="true" />}
-    <div ref={drawerRef} className={styles.mobile} data-open={mobileOpen} aria-label="Coach mobile navigation"
+    <div ref={drawerRef} id="coach-mobile-navigation" className={styles.mobile} data-open={mobileOpen} aria-label="Coach mobile navigation"
       role={mobileOpen ? 'dialog' : undefined} aria-modal={mobileOpen ? true : undefined} aria-hidden={!mobileOpen} inert={!mobileOpen}>{panel(true)}</div>
   </>;
 }

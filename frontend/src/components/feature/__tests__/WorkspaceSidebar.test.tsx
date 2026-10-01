@@ -55,6 +55,50 @@ beforeEach(() => {
   sessionStorage.clear();
 });
 
+it.each(['coach', 'learner', 'curriculum'])(
+  'shows the shared back button by default in the %s workspace', role => {
+    showWorkspace(role);
+    expect(screen.getByRole('button', { name: 'Back to previous page' })).toBeVisible();
+  },
+);
+
+it('does not add the shared back button to other workspaces', () => {
+  showWorkspace('admin');
+  expect(screen.queryByRole('button', { name: 'Back to previous page' })).toBeNull();
+});
+
+it('allows a focused learner page to hide the shared back button explicitly', () => {
+  const config = roleNavMap.learner;
+  render(
+    <MemoryRouter initialEntries={['/learner/onboarding']}>
+      <WorkspaceShell role="learner" roleLabel={config.label} navItems={config.items} pageTitle="Onboarding" showBackButton={false}>
+        <CurrentRoute />
+      </WorkspaceShell>
+    </MemoryRouter>,
+  );
+  expect(screen.queryByRole('button', { name: 'Back to previous page' })).toBeNull();
+});
+
+it.each(['commercial', 'apprenticeship'] as const)('highlights Dashboard after opening it from %s Home', kind => {
+  const path = `/workspace/learner/${kind}/101/dashboard`;
+  const { rail } = showWorkspace('learner', path);
+  expect(within(rail).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('href', path);
+  expect(within(rail).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('aria-current', 'page');
+  expect(within(rail).getByRole('link', { name: 'Home' })).not.toHaveAttribute('aria-current');
+});
+
+it('keeps Home active on the learner landing page and Dashboard active on its other route', () => {
+  const { rail } = showWorkspace('learner', '/workspace/learner/commercial/101');
+  expect(within(rail).getByRole('link', { name: 'Home' })).toHaveAttribute('aria-current', 'page');
+  expect(within(rail).getByRole('link', { name: 'Dashboard' })).not.toHaveAttribute('aria-current');
+});
+
+it('keeps the alternate learner Dashboard route active', () => {
+  const { rail } = showWorkspace('learner', '/workspace/learner/dashboard/commercial/101');
+  expect(within(rail).getByRole('link', { name: 'Dashboard' })).toHaveAttribute('aria-current', 'page');
+  expect(within(rail).getByRole('link', { name: 'Home' })).not.toHaveAttribute('aria-current');
+});
+
 it('groups learner progress pages in the same menu while keeping direct destinations fixed', async () => {
   const { sidebar, rail, panel } = showWorkspace('learner', '/learner/clubs/events');
   expect(sidebar.style.width).toBe('240px');
@@ -142,11 +186,12 @@ it('keeps an administrator in the selected coach workspace', () => {
   viewer.isAdmin = true;
   const { sidebar, rail } = showWorkspace('coach', '/workspace/coach');
   expect(sidebar.closest('.workspace-shell')).toHaveAttribute('data-workspace-role', 'coach');
-  expect(within(rail).getAllByRole('link').slice(0, 4).map(link => link.textContent)).toEqual(['Dashboard', 'Notifications', 'Attendance', 'Marking']);
-  expect(within(rail).getByRole('link', { name: 'Notifications' })).toHaveAttribute('href', '/notifications');
+  expect(within(sidebar).getByRole('img', { name: 'Kent Business College' })).toBeVisible();
+  expect(within(rail).getAllByRole('link').slice(0, 3).map(link => link.textContent)).toEqual(['Dashboard', 'Attendance', 'Marking']);
+  expect(within(rail).queryByRole('link', { name: 'Notifications' })).toBeNull();
   expect(within(rail).getByRole('button', { name: 'Meetings' })).toBeVisible();
   expect(within(rail).getByRole('link', { name: 'Marking' })).toHaveAttribute('href', '/coach/marking-queue');
-  expect(within(rail).getByRole('link', { name: 'Absence Reports' })).toHaveAttribute('href', '/coach/absence-reports');
+  expect(within(rail).queryByRole('link', { name: 'Absence Reports' })).toBeNull();
   expect(within(rail).getByRole('link', { name: 'Marking' }).querySelector('svg')).not.toBeNull();
   expect(within(sidebar).queryByRole('button', { name: 'Open account settings' })).toBeNull();
 });
@@ -183,7 +228,7 @@ describe.each(Object.keys(roleNavMap))('%s shared workspace sidebar', role => {
       expect(sidebar).toHaveAttribute('data-collapsed', 'false');
       fireEvent.click(within(sidebar).getByRole('button', { name: 'Collapse coach sidebar' }));
       expect(sidebar).toHaveAttribute('data-collapsed', 'true');
-      expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('76px');
+      expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('64px');
       expect(localStorage.getItem('kbc_coach_sidebar_collapsed')).toBe('true');
       const group = roleNavMap.coach.items.find(item => item.children?.length)!;
       const toggle = within(sidebar).getByRole('button', { name: group.label });

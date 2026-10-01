@@ -51,7 +51,9 @@ WORKSPACES = {
     'support': 'Support',
     'finance': 'Finance',
     'admin': 'Administration',
+    'enrolment': 'Enrolment',
     'audit': 'Audit',
+    'record-monitor': 'Record Monitor',
     'platform': 'Platform',
 }
 
@@ -59,10 +61,10 @@ WORKSPACES = {
 # segment is already a workspace key needs no entry.
 SEGMENT_WORKSPACE = {
     'employers': 'employer',
-    'users': 'admin',
+    'users': 'enrolment',
     'internal-panel': 'admin',
     'activity-categories': 'audit',
-    'old-otjh': 'learner',
+    'old-otjh': 'record-monitor',
     'my-courses': 'learner',
     'training-plan': 'learner',
 }
@@ -187,6 +189,8 @@ COACH = (
     ('/coach/ksb-impact', 'ksb-impact', 'KSB impact', '', ''),
     ('/coach/otjh-reports', 'otjh-reports', 'OTJH reports', '', ''),
     ('/coach/reports', 'coach-reports', 'Coach reports', '', ''),
+    ('/coach/audit-trail', 'coach-audit-trail', 'Audit trail', '', ''),
+    ('/coach/audit-trail/people/{id}', 'coach-audit-trail-person', 'Audit trail: one person', 'person', 'id'),
 )
 
 TUTOR = (
@@ -205,6 +209,7 @@ TUTOR = (
 
 LEARNER = (
     ('/learner', 'learner-home', 'Learner home', '', ''),
+    ('/learner/home', 'learner-home', 'Learner home', '', ''),
     ('/learner/my-learning', 'my-learning', 'My learning', '', ''),
     ('/learner/my-learning/{kind}/{id}', 'my-learning-course', 'My learning: one course', 'course', 'id'),
     ('/learner/modules', 'learner-modules', 'Modules', '', ''),
@@ -261,6 +266,17 @@ LEARNER = (
     ('/learner/messages', 'learner-messages', 'Messages', '', ''),
     ('/learner/support', 'learner-support', 'Support', '', ''),
     ('/learner/profile', 'learner-profile', 'Profile', '', ''),
+)
+
+RECORD_MONITOR = (
+    ('/old-otjh', 'record-monitor-home', 'Record Monitor', '', ''),
+    ('/old-otjh/months', 'record-monitor-months', 'Record Monitor months', '', ''),
+    ('/old-otjh/months/{month}', 'record-monitor-month', 'Record Monitor month', 'month', 'month'),
+    ('/old-otjh/coach', 'record-monitor-coaches', 'Record Monitor coaches', '', ''),
+    ('/old-otjh/monitor', 'record-monitor-dashboard', 'Record Monitor dashboard', '', ''),
+    ('/old-otjh/coach/{aptemId}', 'record-monitor-learner', 'Record Monitor learner', 'learner', 'aptemId'),
+    ('/old-otjh/coach/{aptemId}/months', 'record-monitor-learner-months', 'Record Monitor learner months', 'learner', 'aptemId'),
+    ('/old-otjh/coach/{aptemId}/months/{month}', 'record-monitor-learner-month', 'Record Monitor learner month', 'learner', 'aptemId'),
 )
 
 EMPLOYER = (
@@ -465,8 +481,10 @@ PAGES_BY_WORKSPACE = {
     'safeguarding': SAFEGUARDING,
     'support': SUPPORT,
     'finance': FINANCE,
-    'admin': ADMIN,
+    'admin': tuple(route for route in ADMIN if not route[0].startswith('/users')),
+    'enrolment': tuple(route for route in ADMIN if route[0].startswith('/users')),
     'audit': AUDIT,
+    'record-monitor': RECORD_MONITOR,
     'platform': PLATFORM,
 }
 
@@ -559,6 +577,7 @@ def resolve(path):
             'targetType': target_type if target_id else '',
             'targetId': target_id[:120],
             'path': path,
+            'routePattern': '/' + '/'.join(template),
             'known': True,
         }
     workspace = workspace_for(path)
@@ -571,10 +590,15 @@ def resolve(path):
         'targetType': '',
         'targetId': '',
         'path': path,
+        'routePattern': '',
         'known': False,
     }
 
 
+# Auditors need every workspace, including ones they do not personally use.
+FILTERABLE_WORKSPACES = tuple(WORKSPACES)
+
+
 def workspace_options():
     """The workspaces, for the audit trail's filter."""
-    return [{'value': key, 'label': label} for key, label in WORKSPACES.items()]
+    return [{'value': key, 'label': WORKSPACES[key]} for key in FILTERABLE_WORKSPACES]

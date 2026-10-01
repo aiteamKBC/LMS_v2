@@ -15,7 +15,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, useLocation } from 'react-router-dom';
-import { PORTAL_WORKSPACES, workspacesFor } from '@/lib/portalWorkspaces';
+import { workspacesFor } from '@/lib/portalWorkspaces';
 
 const authValue = vi.fn();
 const switchRole = vi.fn();

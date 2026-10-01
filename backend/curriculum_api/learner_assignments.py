@@ -202,24 +202,55 @@ def _handle(request, scope, identifier):
         catalogue = {module['moduleId']: module for module in plans._all_modules()}
         if set(target['moduleIds']) - catalogue.keys():
             return JsonResponse({'error': 'The module list changed. Reload and try again.'}, status=409)
-        changed = 0
         alias = EnrolmentUser.all_learners.db
-        with transaction.atomic(using=alias):
-            learners = list(EnrolmentUser.all_learners.select_for_update().filter(pk__in=ids).order_by('pk'))
-            if len(learners) != len(ids):
-                return JsonResponse({'error': 'One or more selected learners no longer exist.'}, status=400)
-            cache = {}
-            for learner in learners:
-                if request.method == 'DELETE':
-                    changed += int(_unassign(learner, target, cache))
-                else:
-                    changed += int(_assign(learner, target, catalogue, cache))
-        from .views import invalidate_curriculum_cache
-        invalidate_curriculum_cache()
-        return JsonResponse({'assignedCount': len(ids), 'changedCount': changed, 'moduleCount': len(target['moduleIds'])})
+        if EnrolmentUser.all_learners.filter(pk__in=ids).count() != len(ids):
+            return JsonResponse({'error': 'One or more selected learners no longer exist.'}, status=400)
+        changed = 0
+        failed = []
+        failure_message = ''
+        cache = {}
+        # One committed transaction per learner. Holding every learner's plan
+        # write open in a single transaction is what made a fifteen-learner save
+        # run past the gateway timeout and come back as a 500/503 with nothing
+        # saved; per learner, the ones that succeed stay saved and the caller is
+        # told exactly which ones to retry.
+        for learner_id in ids:
+            try:
+                with transaction.atomic(using=alias):
+                    learner = (EnrolmentUser.all_learners.select_for_update()
+                               .filter(pk=learner_id).first())
+                    if learner is None:
+                        failed.append(str(learner_id))
+                        failure_message = failure_message or 'One or more selected learners no longer exist.'
+                        continue
+                    if request.method == 'DELETE':
+                        # Four arguments, matching _assign: passing three put
+                        # `cache` in the catalogue slot and left `cache`
+                        # unfilled, so every removal raised TypeError and the
+                        # drawer showed a bare 500.
+                        changed += int(_unassign(learner, target, catalogue, cache))
+                    else:
+                        changed += int(_assign(learner, target, catalogue, cache))
+            except Exception:  # noqa: BLE001 - one learner must not sink the batch
+                logger.exception('Curriculum learner assignment failed for learner %s', learner_id)
+                failed.append(str(learner_id))
+                failure_message = failure_message or 'Unable to save learner assignments. Please try again.'
+        if changed:
+            from .views import invalidate_curriculum_cache
+            invalidate_curriculum_cache()
+        if len(failed) == len(ids):
+            return JsonResponse({'error': failure_message or 'Unable to save learner assignments. Please try again.'}, status=503)
+        return JsonResponse({
+            'assignedCount': len(ids) - len(failed), 'changedCount': changed,
+            'moduleCount': len(target['moduleIds']),
+            'failedIds': failed, 'failureMessage': failure_message,
+        })
     except DatabaseError:
         logger.exception('Curriculum learner assignment failed')
         return JsonResponse({'error': 'Unable to save learner assignments. Please try again.'}, status=503)
+    except Exception:  # noqa: BLE001 - a bare 500 gives the drawer nothing to show
+        logger.exception('Curriculum learner assignment failed')
+        return JsonResponse({'error': 'Unable to save learner assignments. Please try again.'}, status=500)
 
 
 @csrf_exempt

@@ -5,8 +5,9 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { useResolvedLearner } from '@/hooks/useMyLearner';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
+import { useExtraActivities } from '@/api/extraActivities';
 import { AssignmentDetailsCard } from './AssignmentDetailsCard';
-import { defaultAssignmentMonth, groupMonthlyAssignments, monthName, statusLabels } from './model';
+import { assignmentToday, defaultAssignmentMonth, groupMonthlyAssignments, isOverdueAssignment, monthName, statusLabels } from './model';
 import { useMonthlyAssignmentPlan } from './useMonthlyAssignmentPlan';
 import styles from './monthlySubmission.module.css';
 
@@ -16,25 +17,49 @@ export default function MonthlySubmissionPage() {
   const { kind, id } = useResolvedLearner(routeKind, routeId);
   const { real, loading, loadError, refresh } = useLearnerDetailParam(kind, id, true);
   const plan = useMonthlyAssignmentPlan(kind, id);
+  const extras = useExtraActivities(kind, id);
   const [params, setParams] = useSearchParams();
   const nav = roleNavMap.learner;
-  const groups = useMemo(() => real ? groupMonthlyAssignments(real, plan.metadata, plan.contract, plan.statuses, plan.submissionCounts) : [],
-    [real, plan.metadata, plan.contract, plan.statuses, plan.submissionCounts]);
+  const today = assignmentToday();
+  const currentMonth = today.slice(0, 7);
+  const datesUnavailable = plan.errors.includes('Assignment dates could not be loaded.');
+  const groups = useMemo(() => {
+    const months = real ? groupMonthlyAssignments(real, plan.metadata, plan.contract, plan.statuses, plan.submissionCounts) : [];
+    for (const activity of extras.activities) {
+      if (activity.status !== 'accepted' || !/^\d{4}-\d{2}$/.test(activity.month) || months.some(item => item.month === activity.month)) continue;
+      months.push({ month: activity.month, label: monthName(activity.month), topics: [], assignments: [], submitted: 0 });
+    }
+    if (months.length && !datesUnavailable && !months.some(item => item.month === currentMonth)) {
+      months.push({ month: currentMonth, label: monthName(currentMonth), topics: [], assignments: [], submitted: 0 });
+    }
+    return months.sort((a, b) => a.month && b.month ? a.month.localeCompare(b.month) : a.month ? -1 : b.month ? 1 : 0);
+  }, [real, plan.metadata, plan.contract, plan.statuses, plan.submissionCounts, extras.activities, currentMonth, datesUnavailable]);
   const selectionKey = `monthly-assignment-selection:${kind}:${id}`;
   let savedSelection: { month?: string; assignment?: string } | null = null;
   try { savedSelection = JSON.parse(sessionStorage.getItem(selectionKey) || 'null'); } catch { /* Storage may be unavailable. */ }
   const requestedMonth = params.get('month') ?? savedSelection?.month;
-  const group = groups.find(item => item.month === requestedMonth) || defaultAssignmentMonth(groups);
-  const statusFilter = ['accepted', 'rejected'].includes(params.get('status') || '') ? params.get('status')! : 'all';
-  const visibleAssignments = group?.assignments.filter(item => statusFilter === 'all' || item.status === statusFilter) || [];
+  const group = groups.find(item => item.month === requestedMonth)
+    || (datesUnavailable ? groups.find(item => !item.month) : undefined) || defaultAssignmentMonth(groups);
+  const view = params.get('view') === 'overdue' ? 'overdue' : 'month';
+  const acceptedExtras = extras.activities.filter(activity => activity.status === 'accepted' && activity.month === group?.month);
+  const visibleAssignments = view === 'overdue'
+    ? groups.flatMap(item => item.assignments.filter(assignment => isOverdueAssignment(assignment, today)).map(row => ({ row, sourceGroup: item })))
+    : group?.assignments.map(row => ({ row, sourceGroup: group })) || [];
+  const visibleExtras = view === 'month' ? acceptedExtras : [];
   const requestedAssignment = params.get('assignment')
-    ?? (savedSelection?.month === group?.month ? savedSelection?.assignment : undefined);
-  const assignment = visibleAssignments.find(item => item.id === requestedAssignment)
-    || visibleAssignments.find(item => !item.submitted) || visibleAssignments[0];
-  const filterByStatus = (status: string) => {
+    ?? (view === 'month' && savedSelection?.month === group?.month ? savedSelection?.assignment : undefined);
+  const selectedExtra = visibleExtras.find(item => item.activityId === requestedAssignment)
+    || (!visibleAssignments.length ? visibleExtras[0] : undefined);
+  const selectedAssignment = selectedExtra ? undefined : visibleAssignments.find(item => item.row.id === requestedAssignment)
+    || visibleAssignments.find(item => !item.row.submitted) || visibleAssignments[0];
+  const assignment = selectedAssignment?.row;
+  const assignmentGroup = selectedAssignment?.sourceGroup;
+  const selectedId = selectedExtra?.activityId || assignment?.id;
+  const filterByView = (nextView: 'month' | 'overdue') => {
     setParams(current => {
       const next = new URLSearchParams(current);
-      if (status === 'all') next.delete('status'); else next.set('status', status);
+      if (nextView === 'overdue') next.set('view', 'overdue'); else next.delete('view');
+      next.delete('status');
       next.delete('assignment');
       return next;
     }, { replace: true });
@@ -43,22 +68,33 @@ export default function MonthlySubmissionPage() {
     setParams(current => {
       const next = new URLSearchParams(current);
       next.set('month', month);
+      next.delete('view');
+      next.delete('status');
       if (assignmentId) next.set('assignment', assignmentId); else next.delete('assignment');
+      return next;
+    }, { replace: true });
+  };
+  const selectOverdueAssignment = (assignmentId: string) => {
+    setParams(current => {
+      const next = new URLSearchParams(current);
+      next.set('assignment', assignmentId);
       return next;
     }, { replace: true });
   };
   const busy = loading || plan.loading;
   useEffect(() => {
-    if (busy || loadError || plan.errors.length || !kind || !id || !group || !assignment) return;
-    try { sessionStorage.setItem(selectionKey, JSON.stringify({ month: group.month, assignment: assignment.id })); } catch { /* URL selection still works without storage. */ }
-    if (params.get('month') === group.month && params.get('assignment') === assignment.id) return;
+    if (busy || extras.loading || loadError || plan.errors.length || !kind || !id || !group || !selectedId) return;
+    if (view === 'month') {
+      try { sessionStorage.setItem(selectionKey, JSON.stringify({ month: group.month, assignment: selectedId })); } catch { /* URL selection still works without storage. */ }
+    }
+    if (params.get('month') === group.month && params.get('assignment') === selectedId) return;
     setParams(current => {
       const next = new URLSearchParams(current);
       next.set('month', group.month);
-      next.set('assignment', assignment.id);
+      next.set('assignment', selectedId);
       return next;
     }, { replace: true });
-  }, [busy, loadError, plan.errors.length, kind, id, group, assignment, selectionKey, params, setParams]);
+  }, [busy, extras.loading, loadError, plan.errors.length, kind, id, group, selectedId, selectionKey, view, params, setParams]);
   return <WorkspaceShell role="learner" roleLabel={nav.label} navItems={nav.items} workspaceLabel={nav.workspaceLabel}
     pageTitle="Monthly submission" pageSubtitle="Your assignment, evidence and coaching preparation" userName={real?.name || 'Learner'} userRole="Learner">
     <main className={`page-container ${styles.page}`}>
@@ -70,6 +106,7 @@ export default function MonthlySubmissionPage() {
         : loadError ? <div role="alert" className={styles.error}><p>{loadError}</p><button type="button" onClick={refresh}>Retry assignments</button></div>
         : <>
           {plan.errors.length > 0 && <div role="alert" className={styles.error}>{plan.errors.map(error => <p key={error}>{error}</p>)}<button type="button" onClick={plan.retry}>Retry plan details</button></div>}
+          {extras.error && <div role="alert" className={styles.error}><p>{extras.error}</p><button type="button" onClick={extras.refresh}>Retry extra activities</button></div>}
           {group && kind && id ? <>
             <section className={styles.monthSelector} aria-label="Selected submission month">
               <div className={styles.monthSummary}>
@@ -79,6 +116,7 @@ export default function MonthlySubmissionPage() {
                 {group.topics.length > 0 && <p>{group.topics.join(' · ')}</p>}
                 <p>{group.assignments.length} assignment{group.assignments.length === 1 ? '' : 's'} · {group.submitted} submitted</p>
               </div>
+              <span className={styles.monthArt} aria-hidden="true"><img src="/assets/monthly-submission-calendar.png" alt="" /></span>
               <div className={styles.monthControls}><label className={styles.monthSelectLabel}>Choose month
                 <select value={group.month} onChange={event => select(event.target.value)}>
                   {groups.map(item => <option key={item.month} value={item.month}>
@@ -87,28 +125,64 @@ export default function MonthlySubmissionPage() {
                 </select>
               </label><Link className={`${styles.primary} ${styles.extraActivityButton}`} to={`/learner/monthly-submission/${kind}/${id}/extra-activities`}>+ Extra activities</Link></div>
             </section>
-            <section className={styles.assignmentSection} aria-label={`Assignments for ${group.label}`}>
-              <div className={styles.sectionHeading}><div><p className={styles.eyebrow}>Assignments this month</p><h2>{group.label}</h2></div>
-                <span>{visibleAssignments.length} of {group.assignments.length} assignments</span></div>
-              <div className={styles.statusFilters} role="group" aria-label="Filter assignments by status">
-                {(['all', 'accepted', 'rejected'] as const).map(status => <button key={status} type="button"
-                  aria-pressed={statusFilter === status} data-filter={status} onClick={() => filterByStatus(status)}>
-                  {status === 'all' ? 'All' : status === 'accepted' ? 'Accepted' : 'Rejected'}
-                </button>)}
+            <div className={styles.assignmentWorkspace}>
+            <div className={styles.assignmentDetail}>
+            {assignment && assignmentGroup && <AssignmentDetailsCard assignment={assignment} group={assignmentGroup} kind={kind} learnerId={id} />}
+            {selectedExtra && <section className={`${styles.hero} ${styles.extraDetails}`} aria-label="Extra activity details">
+              <header className={styles.heroHeader}>
+                <div className={styles.heroHeading}><span className={styles.heroIcon}><FileText size={24} aria-hidden="true" /></span>
+                  <div><p className={styles.eyebrow}>Your extra activity · {monthName(group.month)}</p><h2>{selectedExtra.title}</h2></div></div>
+                <span className={styles.status} data-status="accepted"><CheckCircle2 size={15} aria-hidden="true" />Accepted</span>
+              </header>
+              <div className={styles.extraDetailsBody}>
+                <div className={styles.extraDetailsContent}>
+                  <details key={selectedExtra.activityId} className={styles.extraAnswer}>
+                    <summary>View submitted activity</summary><div className={styles.extraProse}>{selectedExtra.answer}</div>
+                  </details>
+                  {selectedExtra.coachFeedback && <section className={styles.extraFeedback} aria-label="Coach feedback">
+                    <h3><CheckCircle2 size={19} aria-hidden="true" />Coach feedback</h3><p className={styles.extraProse}>{selectedExtra.coachFeedback}</p>
+                  </section>}
+                </div>
+                <aside className={styles.extraMetadata} aria-label="Extra activity information">
+                  <h3>Submission details</h3><dl>
+                    <div><dt>Submitted</dt><dd>{selectedExtra.submittedAt ? new Date(selectedExtra.submittedAt).toLocaleString('en-GB', { timeZone: 'Europe/London' }) + ' (UK time)' : 'Date unavailable'}</dd></div>
+                    {selectedExtra.hours && <div><dt>Hours claimed</dt><dd>{selectedExtra.hours} {Number(selectedExtra.hours) === 1 ? 'hour' : 'hours'}</dd></div>}
+                    {selectedExtra.ksbs.length > 0 && <div><dt>KSBs claimed</dt><dd className={styles.extraKsbTags}>{selectedExtra.ksbs.map((code, index) => <span key={`${code}:${index}`}>{code}</span>)}</dd></div>}
+                  </dl>
+                </aside>
               </div>
-              {!group.month && <p className={styles.unscheduled}>These assignments do not have a confirmed Training Plan date yet.</p>}
-              {!visibleAssignments.length && <p className={styles.filterEmpty} role="status">No {statusFilter === 'all' ? '' : `${statusFilter} `}assignments for this month. Choose another filter or month.</p>}
-              <div className={styles.assignmentGrid}>{visibleAssignments.map(row => <button type="button" key={row.id}
-                className={styles.assignment} aria-pressed={row.id === assignment?.id} onClick={() => select(group.month, row.id)}>
+            </section>}
+            </div>
+            <section className={styles.assignmentSection} aria-label={view === 'overdue' ? 'Overdue assignments' : `Assignments for ${group.label}`}>
+              <div className={styles.filterToolbar}>
+                <div className={styles.statusFilters} role="group" aria-label="Filter assignments by time">
+                  {(['month', 'overdue'] as const).map(option => <button key={option} type="button"
+                    aria-pressed={view === option} onClick={() => filterByView(option)}>
+                    {option === 'month' ? 'This month' : 'Overdue'}
+                  </button>)}
+                </div>
+                <span className={styles.assignmentCount}>{view === 'overdue' ? `${visibleAssignments.length} overdue assignments` : `${visibleAssignments.length} of ${group.assignments.length} assignments${acceptedExtras.length > 0 ? ` · ${visibleExtras.length} of ${acceptedExtras.length} extra activities` : ''}`}</span>
+              </div>
+              {view === 'month' && !group.month && <p className={styles.unscheduled}>These assignments do not have a confirmed Training Plan date yet.</p>}
+              {!visibleAssignments.length && !visibleExtras.length && <p className={styles.filterEmpty} role="status">{view === 'overdue' ? 'No overdue assignments with a confirmed due date.' : 'No assignments for this month. Choose another month or check Overdue.'}</p>}
+              <div className={styles.assignmentGrid}>{visibleAssignments.map(({ row, sourceGroup }) => <button type="button" key={row.id}
+                className={styles.assignment} aria-pressed={row.id === assignment?.id} onClick={() => view === 'overdue' ? selectOverdueAssignment(row.id) : select(sourceGroup.month, row.id)}>
                 <span className={styles.assignmentTop}><span className={styles.assignmentIcon}><FileText size={19} aria-hidden="true" /></span>
                   <span className={styles.status} data-status={row.status}>{statusLabels[row.status] || row.status.replaceAll('_', ' ') || 'Status unavailable'}</span></span>
-                <strong>{row.component}</strong><span className={styles.assignmentTopic}>{[row.module, row.week].filter(Boolean).join(' · ')}</span>
+                <strong>{row.component}</strong><span className={styles.assignmentTopic}>{[view === 'overdue' ? monthName(sourceGroup.month) : '', row.module, row.week].filter(Boolean).join(' · ')}</span>
                 {row.submissionCount !== undefined && <span>{row.submissionCount} submission{row.submissionCount === 1 ? '' : 's'}</span>}
                 <span className={styles.assignmentBottom}><span>{row.expectedOtjh != null ? `${row.expectedOtjh} OTJ hours` : 'Hours not specified'}</span>
                   <span>{row.id === assignment?.id ? <><CheckCircle2 size={15} aria-hidden="true" />Selected</> : <>View details<ArrowUpRight size={15} aria-hidden="true" /></>}</span></span>
+              </button>)}{visibleExtras.map(activity => <button type="button" key={activity.activityId}
+                className={styles.assignment} aria-pressed={activity.activityId === selectedExtra?.activityId} onClick={() => select(group.month, activity.activityId)}>
+                <span className={styles.assignmentTop}><span className={styles.assignmentIcon}><FileText size={19} aria-hidden="true" /></span>
+                  <span className={styles.status} data-status="accepted">Accepted</span></span>
+                <strong>Extra Activity · {activity.title}</strong><span className={styles.assignmentTopic}>{monthName(activity.month)}</span>
+                <span className={styles.assignmentBottom}><span>{activity.hours ? `${activity.hours} hours claimed` : 'Hours not specified'}</span>
+                  <span>{activity.activityId === selectedExtra?.activityId ? <><CheckCircle2 size={15} aria-hidden="true" />Selected</> : <>View details<ArrowUpRight size={15} aria-hidden="true" /></>}</span></span>
               </button>)}</div>
             </section>
-            {assignment && <AssignmentDetailsCard assignment={assignment} group={group} kind={kind} learnerId={id} />}
+            </div>
           </> : <div className={styles.empty}><FileText size={28} aria-hidden="true" /><h2>No assignments yet</h2><p>Your assigned monthly work will appear here when it is added to your Training Plan.</p></div>}
         </>}
     </main>

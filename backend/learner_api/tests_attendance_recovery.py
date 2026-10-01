@@ -38,14 +38,26 @@ class RecoveryBookingTests(SimpleTestCase):
         self.clock.start()
         self.addCleanup(self.clock.stop)
 
-    def resolve(self, event, *, lock=False):
-        with patch('learner_api.absence_reports.CoachCalendarEvent.objects') as manager:
+    def resolve(self, event, *, lock=False, linked_elsewhere=False, for_report_id=None):
+        with patch('learner_api.absence_reports.CoachCalendarEvent.objects') as manager,                 patch('learner_api.absence_reports.CoachAbsenceReport.objects') as reports:
             manager.filter.return_value.first.return_value = event
             manager.select_for_update.return_value.filter.return_value.first.return_value = event
-            result = _catchup_booking(SOURCE, MIRROR, 'catch-up:99:1', date(2026, 10, 1), lock=lock)
+            linked = reports.filter.return_value.exclude.return_value
+            linked.exists.return_value = linked_elsewhere
+            linked.exclude.return_value.exists.return_value = linked_elsewhere
+            result = _catchup_booking(SOURCE, MIRROR, 'catch-up:99:1', date(2026, 10, 1), lock=lock,
+                                      for_report_id=for_report_id)
             if lock:
                 manager.select_for_update.assert_called_once()
+            self.last_reports = reports
             return result
+
+    def test_a_catchup_already_making_up_another_lecture_is_refused(self):
+        with self.assertRaisesRegex(RecoveryPlanError, 'already linked to another lecture'):
+            self.resolve(booked_event(), linked_elsewhere=True)
+        # Re-linking the same report keeps its own booking out of the check.
+        self.assertIsNotNone(self.resolve(booked_event(), for_report_id=34))
+        self.last_reports.filter.return_value.exclude.return_value.exclude.assert_called_once_with(pk=34)
 
     def test_saved_pending_approval_booking_is_valid_and_can_be_locked(self):
         event = booked_event()
@@ -364,3 +376,57 @@ class CatchupOutcomeTests(SimpleTestCase):
                     events.filter.return_value.exists.return_value = True
                     response = inspect.unwrap(link_catchup)(request, kind='apprenticeship', learner_id=12)
                 self.assertEqual(response.status_code, expected)
+
+
+class LinkedCatchupCalendarTests(SimpleTestCase):
+    def test_learner_calendar_marks_catchups_already_making_up_a_lecture(self):
+        from .calendar import _annotate_linked_catchups
+        events = [{'source': 'catch-up', 'eventKey': 'catch-up:1'}, {'source': 'catch-up', 'eventKey': 'catch-up:2'},
+                  {'source': 'mcr', 'eventKey': 'mcr:1'}]
+        with patch('coach_api.models.CoachAbsenceReport.objects') as reports:
+            reports.filter.return_value.exclude.return_value.values_list.return_value = [('catch-up:1', 40)]
+            _annotate_linked_catchups(events)
+        self.assertEqual([event.get('linkedReportId') for event in events], [40, None, None])
+        self.assertNotIn('linkedReportId', events[2])
+        reports.filter.assert_called_once_with(catchup_event_key__in=['catch-up:1', 'catch-up:2'])
+
+
+class AlternativeModuleMatchTests(SimpleTestCase):
+    def test_group_copies_named_by_weekday_or_copy_are_the_same_module(self):
+        from .alternative_recovery import _module_key
+        self.assertEqual(_module_key('Martech - Thur'), _module_key('Martech - Fri'))
+        self.assertEqual(_module_key('Martech (Fri)'), 'martech')
+        self.assertEqual(_module_key('MM21 copy'), _module_key('MM21'))
+        # Only a trailing weekday is ignored: a title that starts with one keeps it.
+        self.assertEqual(_module_key('Monday Planning'), 'monday planning')
+        self.assertNotEqual(_module_key('Martech - Thur'), _module_key('Social Media - Thur'))
+
+
+class AlternativeInviteTests(SimpleTestCase):
+    def test_learner_gets_a_calendar_invite_for_the_alternative_session_only(self):
+        from .absence_reports import _email_learner_alternative_invite, alternative_invite_ics
+        report = SimpleNamespace(id=41, learner_email='aya@example.test', session_title='Martech - Thur — Session 3',
+                                 catchup_event_key='alternative:OCC-ALT')
+        occurrence = SimpleNamespace(live_session_id='LIVE-FRI', join_url='https://teams.example/fri',
+                                     scheduled_start=datetime(2026, 10, 9, 7, 0), scheduled_end=datetime(2026, 10, 9, 9, 0))
+        session = SimpleNamespace(module_title='Martech - Fri', join_url='')
+        ics = alternative_invite_ics(report, occurrence, 'Martech - Fri — Session 3', 'https://teams.example/fri').decode()
+        self.assertIn('METHOD:PUBLISH', ics)
+        self.assertIn('DTSTART:20261009T070000Z', ics)
+        self.assertIn('DTEND:20261009T090000Z', ics)
+        self.assertIn('UID:absence-alternative-41@kbc-lms', ics)
+        self.assertNotIn('ATTENDEE', ics)
+        with patch('curriculum_api.models.LiveSessionOccurrence.objects') as occurrences, \
+                patch('curriculum_api.models.LiveSession.objects') as sessions, \
+                patch('learner_api.absence_reports.alternative_target_details', return_value={
+                    'title': 'Martech - Fri — Session 3', 'dateIso': '2026-10-09', 'startTime': '08:00',
+                    'endTime': '10:00', 'group': 'G2-MarTech', 'joinUrl': 'https://teams.example/fri'}), \
+                patch('learner_api.absence_reports.email_azure.send_mail', return_value=(True, None)) as send_mail:
+            occurrences.using.return_value.filter.return_value.first.return_value = occurrence
+            sessions.using.return_value.filter.return_value.first.return_value = session
+            _email_learner_alternative_invite(report, 'OCC-ALT')
+        kwargs = send_mail.call_args.kwargs
+        self.assertEqual(kwargs['to'], 'aya@example.test')
+        self.assertEqual(kwargs['attachments'][0]['name'], 'alternative-session.ics')
+        self.assertEqual(kwargs['attachments'][0]['content_type'], 'text/calendar')
+        self.assertIn('https://teams.example/fri', kwargs['html_body'])

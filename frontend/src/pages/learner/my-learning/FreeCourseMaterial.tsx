@@ -1,3 +1,4 @@
+import { useMemo } from 'react';
 import DOMPurify from 'dompurify';
 import { Media } from './StudentMaterial';
 import { normalizeReadingHtml } from '@/lib/readingHtml';
@@ -12,15 +13,22 @@ import type { FreeCourseActivity } from '@/api/freeCourses';
 // ============================================================================
 
 function ReadingHtml({ value }: { value: string }) {
-  const normalized = normalizeReadingHtml(value);
-  const clean = DOMPurify.sanitize(normalized, { FORBID_TAGS: ['form'], FORBID_ATTR: ['srcdoc'] });
-  const parsed = new DOMParser().parseFromString(normalized, 'text/html');
-  const embeds = [...parsed.querySelectorAll('iframe')]
-    .map((frame) => frame.getAttribute('src') || '')
-    .filter((url) => /^https?:\/\//i.test(url));
+  // Memoised so a parent re-render keeps the same innerHTML object (React 19
+  // re-applies innerHTML on a new identity, restarting any embedded <video>).
+  const { innerHtml, embeds } = useMemo(() => {
+    const normalized = normalizeReadingHtml(value);
+    const clean = DOMPurify.sanitize(normalized, { FORBID_TAGS: ['form'], FORBID_ATTR: ['srcdoc'] });
+    const parsed = new DOMParser().parseFromString(normalized, 'text/html');
+    return {
+      innerHtml: { __html: clean },
+      embeds: [...parsed.querySelectorAll('iframe')]
+        .map((frame) => frame.getAttribute('src') || '')
+        .filter((url) => /^https?:\/\//i.test(url)),
+    };
+  }, [value]);
   return (
     <div className="space-y-4">
-      <div className="prose max-w-none break-words" dangerouslySetInnerHTML={{ __html: clean }} />
+      <div className="prose max-w-none break-words" dangerouslySetInnerHTML={innerHtml} />
       {embeds.map((url, index) => <Media key={`${index}:${url}`} value={url} kind="embed" title={`Embedded content ${index + 1}`} />)}
     </div>
   );

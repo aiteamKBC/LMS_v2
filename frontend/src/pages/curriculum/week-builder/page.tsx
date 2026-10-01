@@ -12,6 +12,8 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { roleNavMap } from '@/mocks/navigation';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { formatHoursMinutes, hoursMinutesToHours, splitHoursMinutes } from '@/lib/format';
+import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
+import { mergeWeekTemplates } from './weekTemplateMerge';
 // Deck preview below: the same one the learner's page uses, so an author sees
 // what the learner will (see UploadedDeckPreview).
 import { resolveDocEmbed } from '@/lib/docEmbed';
@@ -34,6 +36,7 @@ import {
   fetchWorkspaceQuizzes,
   toWeekTemplateInput,
   updateWeekTemplate,
+  weekTemplateConflict,
   uploadWeekComponentResource,
   validateWeekComponent,
   weekPaletteGroups,
@@ -462,7 +465,11 @@ function CreateTemplateModal({ onClose, onCreated }: { onClose: () => void; onCr
 // ---------------------------------------------------------------------------
 // Editor
 // ---------------------------------------------------------------------------
-function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: { initial: WeekTemplate; isNew: boolean; onClose: (changed: boolean, returnToPrevious?: boolean) => void; returnToPrevious?: boolean }) {
+// Exported for the same reason WeekComponentRail, WeekOverviewPanel and
+// ComponentEditor above are: what happens when two people save this template at
+// once is decided in here, and it is not worth reaching through the library
+// page and a URL parameter to ask it.
+export function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: { initial: WeekTemplate; isNew: boolean; onClose: (changed: boolean, returnToPrevious?: boolean) => void; returnToPrevious?: boolean }) {
   const [template, setTemplate] = useState<WeekTemplate>(initial);
   const [persistedId, setPersistedId] = useState(isNew ? '' : initial.id);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -598,6 +605,60 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
 
   const dirty = JSON.stringify(template) !== savedSnapshot.current;
 
+  /**
+   * Somebody else's save landing on the template this editor is holding.
+   *
+   * The editor read this template once, when it opened, and until now that was
+   * the only read it ever did: a colleague's save was invisible here and the
+   * next save from this screen replaced it outright, because the endpoint takes
+   * the whole template and there is no revision on it to refuse with.
+   *
+   * So the stored copy is re-read and merged. `savedSnapshot` is the base --
+   * the copy this editor last agreed with the server on -- which is what tells
+   * a component the reader edited apart from one their colleague edited. Their
+   * components arrive, the reader's stay, and a field both of them changed
+   * keeps the reader's and is named on screen.
+   */
+  const [coEditNotices, setCoEditNotices] = useState<string[]>([]);
+  const templateRef = useRef(template);
+  templateRef.current = template;
+  /**
+   * Which read is the newest one to have been started. Two can be in the air at
+   * once when a colleague saves twice in quick succession, and the older reply
+   * landing last would reinstate what the newer one had just corrected.
+   */
+  const readSequence = useRef(0);
+  /**
+   * How many times a refused save will rebase and try again before it stops
+   * and says so. Three, the same bound the Module Builder uses.
+   */
+  const WEEK_TEMPLATE_REBASE_LIMIT = 3;
+  const mergeStoredTemplate = useCallback(async () => {
+    if (!persistedId || saving) return;
+    const sequence = readSequence.current + 1;
+    readSequence.current = sequence;
+    const stored = await fetchWeekTemplateDetail(persistedId).catch(() => null);
+    // A later read has already answered; this reply is a version of the
+    // template that has since been superseded.
+    if (readSequence.current !== sequence) return;
+    if (!stored) return;
+    const storedJson = JSON.stringify(stored);
+    // Nothing moved: the write that woke this up was somewhere else in the
+    // curriculum, and there is nothing to merge or to mention.
+    if (storedJson === savedSnapshot.current) return;
+    const base = JSON.parse(savedSnapshot.current) as WeekTemplate;
+    const { template: merged, notices } = mergeWeekTemplates(base, templateRef.current, stored);
+    savedSnapshot.current = storedJson;
+    // The token comes from the stored copy, never from the merge: the next save
+    // has to be checked against the version this editor has just agreed with.
+    setTemplate({ ...merged, revision: stored.revision });
+    // A component the other editor deleted takes the selection with it, rather
+    // than leaving the panel on the right editing something that is gone.
+    setSelectedId(prev => (prev && merged.components.some(component => component.id === prev) ? prev : null));
+    setCoEditNotices(notices);
+  }, [persistedId, saving]);
+  useLiveRefresh(mergeStoredTemplate, { enabled: Boolean(persistedId) });
+
   const update = useCallback((updater: (prev: WeekTemplate) => WeekTemplate) => {
     setTemplate(prev => recalcWeekTemplate(updater(prev)));
   }, []);
@@ -620,8 +681,38 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
     }
     setSaving(true);
     try {
-      const input = toWeekTemplateInput(template);
-      const result = persistedId ? await updateWeekTemplate(persistedId, input) : await createWeekTemplate(input);
+      // The server refuses a save built on a version somebody else has already
+      // replaced -- it has to, because this PATCH deletes every component row
+      // the template owns and re-inserts the list it was sent, so a stale save
+      // used to take a colleague's whole afternoon with it. The refusal carries
+      // the stored template, which is merged here and sent again.
+      //
+      // Bounded at three, like the Module Builder: a busy template is the normal
+      // reason to be here, so one attempt is too few, and an unbounded chain is
+      // an editor that never finishes saving and never says why.
+      let working = template;
+      let result: WeekTemplate | null = null;
+      for (let rebases = 0; ; rebases += 1) {
+        try {
+          const input = toWeekTemplateInput(working);
+          result = persistedId
+            ? await updateWeekTemplate(persistedId, working.revision ? { ...input, expectedRevision: working.revision } : input)
+            : await createWeekTemplate(input);
+          break;
+        } catch (err) {
+          const conflict = weekTemplateConflict(err);
+          // Nothing to rebase onto, or this template is being written faster
+          // than one person can answer. Either way the work is still on screen.
+          if (!conflict?.template || rebases >= WEEK_TEMPLATE_REBASE_LIMIT) throw err;
+          const base = JSON.parse(savedSnapshot.current) as WeekTemplate;
+          const merged = mergeWeekTemplates(base, working, conflict.template);
+          working = { ...merged.template, revision: conflict.currentRevision };
+          savedSnapshot.current = JSON.stringify(conflict.template);
+          setTemplate(working);
+          setSelectedId(prev => (prev && working.components.some(item => item.id === prev) ? prev : null));
+          setCoEditNotices(merged.notices);
+        }
+      }
       setPersistedId(result.id);
       setTemplate(result);
       savedSnapshot.current = JSON.stringify(result);
@@ -703,6 +794,27 @@ function TemplateEditor({ initial, isNew, onClose, returnToPrevious = false }: {
 
   return (
     <div className="px-5 lg:px-8 py-6 space-y-6">
+      {/* The receipt for a merge that has already happened: their components
+          are in the rail by the time this renders, and the ones the reader had
+          also changed still hold what they typed. It reports rather than asks,
+          so dismissing is the only button it needs. */}
+      {coEditNotices.length > 0 && (
+        <div
+          data-testid="week-builder-co-edit"
+          className="flex items-start justify-between gap-3 rounded-xl border border-amber-200/70 bg-amber-50 px-4 py-3 text-[12px] font-medium text-amber-800"
+        >
+          <span className="flex min-w-0 items-start gap-2">
+            <AppIcon className="ri-refresh-line mt-0.5 shrink-0 text-base"></AppIcon>
+            <span className="min-w-0">
+              <span className="block font-bold">Someone else saved this week template while you were editing. Their changes are on this screen; yours are still here.</span>
+              <ul className="mt-1 list-disc space-y-0.5 pl-4">
+                {coEditNotices.map(notice => <li key={notice}>{notice}</li>)}
+              </ul>
+            </span>
+          </span>
+          <button type="button" onClick={() => setCoEditNotices([])} className="shrink-0 rounded-lg px-2 py-1 font-bold text-amber-700 hover:bg-amber-100">Got it</button>
+        </div>
+      )}
       {/* Header band — the hero identity + at-a-glance flow */}
       <div className="relative rounded-2xl border border-background-200 bg-background-50 overflow-hidden">
         <span className={`absolute left-0 top-0 bottom-0 w-1.5 ${course.bar}`} />
@@ -1001,11 +1113,11 @@ function RailNodeCard({ component, index, selected, focused = false, issues, wee
                 in the session's own settings would. */}
             {dateDrift && (
               <span
-                title={`Teams has this meeting on ${formatDateLabel(dateDrift.storedDate)}, but this week now runs on ${dateDrift.weekDates.map(formatDateLabel).join(' and ')}. Every other live session follows its week automatically; this one is held here because real attendees were invited to the booked date. Move it from the Teams Meetings page, which asks Microsoft and mails the change.`}
+                title={`Teams calendar currently has this meeting on ${formatDateLabel(dateDrift.storedDate)}. This week is now planned for ${dateDrift.weekDates.map(formatDateLabel).join(' and ')}. Every other live session follows its week automatically; this one stays put because real attendees were invited to the booked date. Go to the Teams Meetings page and run Update there so the Teams calendar matches the date planned here -- that is what actually moves the Microsoft meeting and mails attendees the change.`}
                 className="inline-flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-1.5 py-px text-[9px] font-bold text-amber-800"
               >
                 <AppIcon className="ri-calendar-schedule-line text-[10px]"></AppIcon>
-                Teams holds this date · week runs {formatDateLabel(dateDrift.weekDates[0])}
+                Teams calendar: {formatDateLabel(dateDrift.storedDate)} · planned here: {formatDateLabel(dateDrift.weekDates[0])} · update Teams to match
               </span>
             )}
             {/* Says what is missing rather than filling it in: this session is
@@ -1911,6 +2023,14 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
   const s = (key: string) => String(component.settings[key] ?? '');
   const sourceMode = ['File', 'LMS resource'].includes(s('readingSource')) ? 'File' : 'Text';
   const [writtenPreviewOpen, setWrittenPreviewOpen] = useState(false);
+  // Stable innerHTML object: React 19 re-applies innerHTML on every new identity,
+  // so an inline literal would restart preview videos on each keystroke anywhere
+  // in the form. Only sanitised while the preview is open.
+  const readingContent = s('readingContent');
+  const writtenPreviewHtml = useMemo(
+    () => (writtenPreviewOpen ? { __html: DOMPurify.sanitize(normalizeAuthoredPreviewHtml(readingContent)) } : undefined),
+    [writtenPreviewOpen, readingContent],
+  );
 
   return (
     <>
@@ -1941,7 +2061,7 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
             {writtenPreviewOpen && s('readingContent').trim() && (
               <div className="mt-3 overflow-hidden rounded-xl border border-background-200 bg-white">
                 <div className="flex items-center gap-2 border-b border-background-200 bg-background-100/60 px-3 py-2 text-[11px] font-bold text-foreground-700"><AppIcon className="ri-eye-line text-primary-600" />Learner preview</div>
-                <div className="rich-text-surface max-h-[520px] overflow-auto p-5 text-sm leading-relaxed text-foreground-800" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(normalizeAuthoredPreviewHtml(s('readingContent'))) }} />
+                <div className="rich-text-surface max-h-[520px] overflow-auto p-5 text-sm leading-relaxed text-foreground-800" dangerouslySetInnerHTML={writtenPreviewHtml} />
               </div>
             )}
           </div>
@@ -2026,6 +2146,10 @@ const PODCAST_SOURCE_TYPES_WEEK = ['Audio File', 'External Link', 'Embed'] as co
 function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResource }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
   const rawSourceType = s('podcastSource');
+  // Stable identity so typing in other fields does not re-apply innerHTML and
+  // reload the embedded player iframe (React 19 compares by reference).
+  const podcastEmbedCode = s('podcastEmbedCode');
+  const podcastEmbedHtml = useMemo(() => ({ __html: podcastEmbedCode }), [podcastEmbedCode]);
   const sourceType = rawSourceType === 'Device upload'
     ? 'Audio File'
     : rawSourceType === 'External URL'
@@ -2092,7 +2216,7 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
             {s('podcastEmbedCode') && (
               <div className="mt-3">
                 <span className="block text-[11px] font-semibold text-foreground-500 mb-1.5">Preview</span>
-                <div className="rich-text-surface rounded-lg border border-background-200 bg-background-50 p-3" dangerouslySetInnerHTML={{ __html: s('podcastEmbedCode') }} />
+                <div className="rich-text-surface rounded-lg border border-background-200 bg-background-50 p-3" dangerouslySetInnerHTML={podcastEmbedHtml} />
               </div>
             )}
           </div>
@@ -2862,12 +2986,11 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
   const rawSelectedKeys = component.settings.selectedGroupKeys as string[] | undefined;
   const norm = (value?: string) => String(value ?? '').trim().toLowerCase();
   // The module was built for this group, so it's never really optional — shown
-  // locked/dimmed and always included, not something the user can uncheck.
-  const lockedOption = groupName ? groupOptions.find(option => norm(option.name) === norm(groupName)) : undefined;
+  // It starts selected, but remains editable and can be cleared by the tutor.
+  const moduleGroupOption = groupName ? groupOptions.find(option => norm(option.name) === norm(groupName)) : undefined;
   const storedKeys = rawSelectedKeys ?? [];
-  const selectedKeys = lockedOption && !storedKeys.includes(lockedOption.key)
-    ? [...storedKeys, lockedOption.key]
-    : storedKeys;
+  const selectedKeys = storedKeys;
+  const hasStoredSelection = Array.isArray(component.settings.selectedGroupKeys);
   const [browsingKey, setBrowsingKey] = useState<string | null>(null);
   const setGroups = (keys: string[]) => onChange({
     settings: { ...component.settings, selectedGroupKeys: keys, selectedGroupNames: groupOptions.filter(option => keys.includes(option.key)).map(option => option.name) },
@@ -2878,9 +3001,9 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
   // week saved without ever touching this list would still store it as
   // unassigned underneath.
   useEffect(() => {
-    if (lockedOption && !storedKeys.includes(lockedOption.key)) setGroups(selectedKeys);
+    if (moduleGroupOption && !hasStoredSelection) setGroups([moduleGroupOption.key]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lockedOption?.key]);
+  }, [moduleGroupOption?.key, hasStoredSelection]);
 
   // Placed copies this component has produced elsewhere, one entry per copy
   // (parallel arrays — ComponentSettingValue has no object type). A single
@@ -2908,7 +3031,6 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
   };
 
   const handleToggle = async (key: string) => {
-    if (key === lockedOption?.key) return;
     if (!selectedKeys.includes(key)) {
       setGroups([...selectedKeys, key]);
       return;
@@ -2971,7 +3093,6 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
       <GroupMultiSelect
         options={groupOptions}
         selectedKeys={selectedKeys}
-        lockedKey={lockedOption?.key ?? null}
         onChange={setGroups}
         onToggle={key => void handleToggle(key)}
         browsingKey={browsingKey}
@@ -2992,12 +3113,11 @@ function AssignedGroupsSection({ component, onChange, groupOptions, programmeId,
   );
 }
 
-function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey, browsingKey, onBrowse }: {
+function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, browsingKey, onBrowse }: {
   options: GroupOption[];
   selectedKeys: string[];
   onChange: (keys: string[]) => void;
   onToggle: (key: string) => void;
-  lockedKey: string | null;
   browsingKey: string | null;
   onBrowse: (key: string) => void;
 }) {
@@ -3005,7 +3125,7 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey
   // Groups now span every programme/cohort (not just this module's own), so
   // this narrows the picker in two steps — programme, then that programme's
   // cohorts — before the groups themselves are listed. The module's own
-  // (locked) group always stays visible regardless of what's picked here.
+  // The selected group list follows the active programme and cohort filters.
   const programmeChoices = useMemo(() => {
     const byId = new Map<string, string>();
     options.forEach(option => {
@@ -3054,7 +3174,7 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey
             <button onClick={() => onChange(Array.from(new Set([...selectedKeys, ...filteredOptions.map(option => option.key)])))} className="rounded-md px-2 py-0.5 text-[10px] font-bold text-primary-600 hover:bg-primary-50 transition-smooth">
               {filtering ? 'Select shown' : 'Select all'}
             </button>
-            <button onClick={() => onChange(lockedKey ? [lockedKey] : [])} className="rounded-md px-2 py-0.5 text-[10px] font-bold text-foreground-400 hover:bg-background-100 transition-smooth">Clear</button>
+            <button onClick={() => onChange([])} className="rounded-md px-2 py-0.5 text-[10px] font-bold text-foreground-400 hover:bg-background-100 transition-smooth">Clear</button>
           </div>
         )}
       </div>
@@ -3114,7 +3234,7 @@ function GroupMultiSelect({ options, selectedKeys, onChange, onToggle, lockedKey
           {filteredOptions.map(option => {
             const on = selectedSet.has(option.key);
             const browsing = browsingKey === option.key;
-            const locked = option.key === lockedKey;
+            const locked = false;
             if (locked) {
               return (
                 <div

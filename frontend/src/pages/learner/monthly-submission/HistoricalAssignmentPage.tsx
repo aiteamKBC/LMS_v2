@@ -22,7 +22,7 @@ export function HistoricalFilePreview({ file, url }: { file: EvidenceRecord; url
     (async () => {
       const response = await fetch(url, { signal: controller.signal });
       if (!response.ok) throw new Error('Could not load the document preview.');
-      const mammoth = await import('mammoth');
+      const mammoth = await import('mammoth/mammoth.browser');
       const result = await mammoth.convertToHtml({ arrayBuffer: await response.arrayBuffer() });
       if (!controller.signal.aborted) setHtml(DOMPurify.sanitize(result.value, { FORBID_TAGS: ['img', 'style'], FORBID_ATTR: ['style'] }));
     })().catch(() => { if (!controller.signal.aborted) setError('Preview is unavailable. You can still open or download the original file.'); })
@@ -100,7 +100,7 @@ export default function HistoricalAssignmentPage() {
           weekTitle={submission.weekTitle || ''} plannedOtjh={null} ksbMappings={[]}
           questionText="The original assignment is preserved in the attached file."
           evidenceFiles={files} evidenceDetails={{}} timeSeconds={null} timeControl={<p>See the original record for time evidence.</p>}
-          outsideWorkingHours={false} insideWorkingHoursConfirmed={false} submittingProgress={false}
+          submittingProgress={false}
           onEvidenceChanged={() => {}} onRestoreTime={() => {}} onSubmitProgress={async () => {}}
           resolveEvidenceUrl={resolveEvidenceUrl} renderEvidencePreview={(file, url) => <HistoricalFilePreview key={file.id} file={file} url={url} />} />
         {!submission.legacyAssignment?.content && (submission.legacyAssignment?.feedbacks || []).map((feedback, index) => <section key={index} className="rounded-xl border bg-white p-5">

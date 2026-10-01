@@ -79,21 +79,112 @@ beforeEach(() => {
 });
 
 describe('review reopen flow', () => {
-  it('renders an imported Aptem definition in the same workspace without write actions', async () => {
-    vi.mocked(fetchReviewInstanceForm).mockResolvedValue({
-      ...definition('scheduled'),
+  it('renders an imported Aptem table as accessible columns and rows', async () => {
+    const importedDefinition: ReviewInstanceFormDefinition = {
+      ...definition('in-progress'),
+      source: 'aptem',
+      instance: { ...definition('in-progress').instance, id: 'imported-review:TABLE', reviewTemplateId: '' },
+      sections: [{ id: 'actions', title: 'Actions', estimatedMinutes: 0, displayOrder: 1, enabled: true,
+        fields: [{ id: 'aptem-table:actions:0', title: 'Imported table', fieldType: 'title_description', required: false,
+          displayOrder: 0, configuration: { imported: true, importedTable: [
+            ['Action', 'Responsible', 'Deadline'],
+            ['Submit outstanding assignments', 'Laura Baxter', '9 October 2026'],
+          ] } }],
+      }],
+    };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(importedDefinition);
+
+    mount();
+
+    const table = await screen.findByRole('table');
+    expect(screen.getByRole('columnheader', { name: 'Action' })).toBeVisible();
+    expect(table).toHaveTextContent('Submit outstanding assignments');
+    expect(table).toHaveTextContent('Laura Baxter');
+  });
+
+  it('edits and saves an imported Aptem definition in the same workspace', async () => {
+    const importedDefinition = {
+      ...definition('in-progress'),
+      readOnly: false,
+      source: 'aptem',
+      formAvailable: true,
+      summaryOnly: false,
+      instance: { ...definition('in-progress').instance, id: 'imported-review:A-1', reviewTemplateId: '' },
+      template: { ...definition('in-progress').template, id: '', name: 'Imported progress review', reviewTypeCode: 'aptem_progress_review' },
+      signatures: {
+        advisor: { required: false, signed: false },
+        participant: { required: false, signed: false },
+        manager: { required: false, signed: false },
+        employer: { required: false, signed: false },
+        referrer: { required: false, signed: false },
+      },
+    };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(importedDefinition);
+    vi.mocked(saveReviewInstanceAnswers).mockResolvedValue(importedDefinition);
+    mount();
+    expect(await screen.findByText('Imported Aptem review')).toBeVisible();
+    expect(screen.getByDisplayValue('Review the next module')).toBeEnabled();
+    expect(screen.getByText(/The original Aptem import remains unchanged\./)).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(saveReviewInstanceAnswers).toHaveBeenCalledWith(
+      'imported-review:A-1',
+      expect.objectContaining({ 'field-1': 'Review the next module' }),
+    ));
+    expect(screen.getByRole('button', { name: 'Complete review' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+  });
+
+  it('renders canonical Learning Progress for an imported Aptem progress review without duplicating its raw section', async () => {
+    const importedDefinition: ReviewInstanceFormDefinition = {
+      ...definition('in-progress'),
+      source: 'aptem',
+      progressSnapshot: snapshotFixture(),
+      instance: { ...definition('in-progress').instance, id: 'imported-review:A-2', reviewTemplateId: '' },
+      template: { ...definition('in-progress').template, id: '', reviewTypeCode: 'aptem_progress_review' },
+      sections: [{
+        id: 'aptem-section:progress', title: 'Learning Progress', estimatedMinutes: 0, displayOrder: 1, enabled: true,
+        fields: [{ id: 'aptem-text:progress', title: 'Imported text', fieldType: 'title_description', required: false, displayOrder: 0, configuration: { imported: true, description: 'Legacy progress text' } }],
+      }],
+    };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(importedDefinition);
+
+    mount();
+
+    expect(await screen.findByRole('img', { name: /Learning Plan Progress/i })).toBeVisible();
+    expect(screen.queryByText('Imported text')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Recalculate|Calculate/i })).not.toBeInTheDocument();
+  });
+
+  it('shows an owned summary-only import without edit or completion actions', async () => {
+    const summaryOnlyDefinition: ReviewInstanceFormDefinition = {
+      ...definition('not-scheduled'),
       readOnly: true,
       source: 'aptem',
-      instance: { ...definition('scheduled').instance, id: 'imported-review:A-1', reviewTemplateId: '' },
-      template: { ...definition('scheduled').template, id: '', name: 'Imported progress review', reviewTypeCode: 'aptem_progress_review' },
-    });
+      formAvailable: false,
+      summaryOnly: true,
+      instance: {
+        ...definition('not-scheduled').instance,
+        id: 'imported-review:14010',
+        reviewTemplateId: '',
+      },
+      template: {
+        ...definition('not-scheduled').template,
+        id: '',
+        name: 'Imported monthly coaching review',
+        reviewTypeCode: 'aptem_mcm',
+      },
+      sections: [],
+    };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(summaryOnlyDefinition);
+
     mount();
-    expect(await screen.findByText('Historical Aptem review')).toBeVisible();
-    expect(screen.getByDisplayValue('Review the next module')).toBeDisabled();
-    expect(screen.queryByRole('button', { name: 'Save draft' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Complete review' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+
+    expect(await screen.findByText('This review has a summary only; no section details were imported.')).toBeVisible();
+    expect(screen.getByText(/there is no form to edit or complete/i)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Save draft' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Complete review' })).not.toBeInTheDocument();
     expect(saveReviewInstanceAnswers).not.toHaveBeenCalled();
+    expect(completeReviewInstance).not.toHaveBeenCalled();
   });
 
   it('reopens a completed review with a reason and returns it to editing', async () => {
@@ -571,6 +662,25 @@ describe('Review Meeting Summary integration', () => {
 });
 
 describe('Monthly Coaching Meeting signature summary + signed PDF', () => {
+  it('shows the same PDF download for a completed imported Aptem MCM', async () => {
+    const imported = mcmDefinition('completed');
+    imported.source = 'aptem';
+    imported.instance = { ...imported.instance, id: 'imported-review:A-13276', reviewTemplateId: '' };
+    imported.template = { ...imported.template, id: '', reviewTypeCode: 'aptem_mcm' };
+    imported.signatures.advisor = { required: false, signed: false };
+    imported.signatures.participant = { required: false, signed: false };
+    imported.pdf = { available: true, reason: '' };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(imported);
+    vi.mocked(downloadReviewInstancePdf).mockResolvedValue(undefined);
+
+    mount();
+
+    const download = await screen.findByRole('button', { name: 'Download signed PDF' });
+    expect(download).toBeEnabled();
+    fireEvent.click(download);
+    await waitFor(() => expect(downloadReviewInstancePdf).toHaveBeenCalledWith('imported-review:A-13276'));
+  });
+
   it('shows the full signature summary and a disabled PDF button once at the signature stage, for the mcm review type only', async () => {
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(mcmDefinition('awaiting-signature'));
     mount();

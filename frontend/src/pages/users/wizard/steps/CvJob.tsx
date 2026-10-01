@@ -1,47 +1,233 @@
+import { useEffect, useState, type ReactNode } from 'react';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { useWizard } from '../WizardContext';
-import { FieldRow, inputClass, FileList } from '../../components/ui';
+import { useToast } from '@/hooks/useToast';
+import type { LearnerKind } from '@/api/extendedIlr';
+import {
+  deleteCvDocument,
+  fetchCvDocuments,
+  getCvDocumentUrl,
+  uploadCvDocument,
+  type CvDocKind,
+  type CvDocument,
+} from '@/api/cvJobDocuments';
+import { EmptyState, FieldRow, YesNoRadio, inputClass } from '../../components/ui';
 import { LabeledInput, LabeledSelect, StepHeading } from './fields';
+import { FieldError, invalidClass, requiredMessage, useMissing, useMissingCheck } from '../stepErrors';
+import { CvJobText, fieldQualificationLabels } from './cvJobText';
 
-const FS_ENROL_OPTIONS = ['Yes - English', 'Yes - Maths', 'Yes - English and Maths', 'No', 'Not applicable'];
+const ACCEPT = '.pdf,.png,.jpg,.jpeg,.doc,.docx';
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="mb-6">
+      <h3 className="text-[14px] font-heading font-semibold text-foreground-800 border-b border-foreground-100 pb-1.5 mb-2">{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+/**
+ * The step's uploads, loaded once for all four fields.
+ *
+ * Each file is sent to Azure as soon as it is picked (quarantine -> scan ->
+ * approved) and recorded, with its blob path, on the learner's Wizard_Cv_Job
+ * row — independently of the step's answers, which travel with the draft.
+ */
+function useCvDocuments(kind: LearnerKind, learnerId: string) {
+  const { error } = useToast();
+  const [docs, setDocs] = useState<CvDocument[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState<CvDocKind | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    fetchCvDocuments(kind, learnerId)
+      .then((res) => { if (!cancelled) setDocs(res); })
+      .catch((e) => { if (!cancelled) error('Could not load your documents', e instanceof Error ? e.message : 'Unexpected error'); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [kind, learnerId]);
+
+  const upload = async (docKind: CvDocKind, files: File[]) => {
+    if (files.length === 0) return;
+    setUploading(docKind);
+    try {
+      // One at a time, so a refused file is reported by name and the rest still go.
+      for (const file of files) {
+        try {
+          const saved = await uploadCvDocument(kind, learnerId, docKind, file);
+          setDocs((prev) => [...prev, saved]);
+        } catch (e) {
+          error(`Could not upload ${file.name}`, e instanceof Error ? e.message : 'Unexpected error');
+        }
+      }
+    } finally {
+      setUploading(null);
+    }
+  };
+
+  const remove = async (doc: CvDocument) => {
+    setBusyId(doc.id);
+    try {
+      await deleteCvDocument(kind, learnerId, doc.id);
+      setDocs((prev) => prev.filter((d) => d.id !== doc.id));
+    } catch (e) {
+      error(`Could not remove ${doc.filename}`, e instanceof Error ? e.message : 'Unexpected error');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const open = async (doc: CvDocument) => {
+    setBusyId(doc.id);
+    try {
+      window.open(await getCvDocumentUrl(kind, learnerId, doc.id), '_blank', 'noopener');
+    } catch (e) {
+      error(`Could not open ${doc.filename}`, e instanceof Error ? e.message : 'Unexpected error');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  return { docs, loading, uploading, busyId, upload, remove, open };
+}
+
+type CvDocs = ReturnType<typeof useCvDocuments>;
+
+function DocumentField({ label, docKind, store }: { label: string; docKind: CvDocKind; store: CvDocs }) {
+  const files = store.docs.filter((d) => d.docKind === docKind);
+  const uploading = store.uploading === docKind;
+  const disabled = store.loading || store.uploading !== null;
+  return (
+    <FieldRow label={label}>
+      <div className="space-y-2">
+        {store.loading ? (
+          <EmptyState text="Loading…" />
+        ) : files.length > 0 && (
+          <div className="divide-y divide-foreground-100 border border-foreground-100 rounded-lg">
+            {files.map((f) => (
+              <div key={f.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                <button
+                  type="button"
+                  onClick={() => void store.open(f)}
+                  disabled={store.busyId === f.id}
+                  className="text-[12px] text-primary-600 hover:underline inline-flex items-center gap-1.5 min-w-0 cursor-pointer disabled:opacity-60"
+                >
+                  <AppIcon className="ri-file-text-line shrink-0" />
+                  <span className="truncate">{f.filename}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void store.remove(f)}
+                  disabled={store.busyId === f.id}
+                  aria-label={`Delete ${f.filename}`}
+                  className="text-red-500 hover:text-red-600 transition-smooth cursor-pointer shrink-0 disabled:opacity-60"
+                >
+                  <AppIcon className="ri-delete-bin-line text-sm" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <label className={`relative inline-flex items-center gap-2 px-3 py-1.5 text-[12px] bg-background-100 text-foreground-600 rounded-lg border border-background-200 hover:bg-background-200 transition-smooth ${disabled ? 'opacity-60 pointer-events-none' : 'cursor-pointer'}`}>
+          <AppIcon className={uploading ? 'ri-loader-4-line animate-spin' : 'ri-upload-2-line'} />
+          {uploading ? 'Uploading…' : 'Select file…'}
+          <input
+            type="file"
+            accept={ACCEPT}
+            disabled={disabled}
+            aria-label={label}
+            className="sr-only"
+            onChange={(e) => {
+              const picked = Array.from(e.target.files ?? []);
+              // Cleared so picking the same file again still fires onChange.
+              e.target.value = '';
+              void store.upload(docKind, picked);
+            }}
+          />
+        </label>
+      </div>
+    </FieldRow>
+  );
+}
 
 export default function CvJob() {
-  const { draft, setSection } = useWizard();
+  const { draft, setSection, board, userId, isCommercial } = useWizard();
   const cv = draft.cvJob;
   const set = (patch: Partial<typeof cv>) => setSection('cvJob', { ...cv, ...patch });
+  const kind: LearnerKind = isCommercial ? 'commercial' : 'apprenticeship';
+  const store = useCvDocuments(kind, userId);
+  const has = (docKind: CvDocKind) => store.docs.some((d) => d.docKind === docKind);
+  const fieldLabels = fieldQualificationLabels(board.programme?.name);
+
+  // Red rows once Next is pressed with them unanswered.
+  const missing = useMissingCheck();
+  const yn = (key: string) => (missing(key) ? requiredMessage('', 'choose') : undefined);
+  const experienceMissing = Boolean(useMissing('Previous experience (or N/A)'));
 
   return (
     <div>
-      <StepHeading title="CV/Job Description" subtitle="Your Work Experience" />
-      <p className="text-[13px] text-foreground-500 mb-5 max-w-3xl leading-relaxed">
-        It is important that we match your previous experience and current job role and responsibilities to ensure this
-        apprenticeship is the most appropriate route for you.
-      </p>
+      <StepHeading title="CV/Job Description" />
       <div className="max-w-3xl">
-        <FieldRow label="Please upload an up to date CV which includes your current job role:">
-          {cv.cvFile ? (
-            <FileList files={[{ id: 'cv', name: cv.cvFile }]} onDelete={() => set({ cvFile: undefined })} />
-          ) : (
-            <label className="inline-flex items-center gap-2 px-3 py-2 text-[13px] bg-background-100 text-foreground-600 rounded-lg border border-background-200 hover:bg-background-200 transition-smooth cursor-pointer">
-              <AppIcon className="ri-upload-2-line" />Upload CV
-              <input type="file" className="hidden" onChange={(e) => set({ cvFile: e.target.files?.[0]?.name })} />
-            </label>
+        <Section title="Your Work Experience">
+          <p className="text-[12px] text-foreground-500 mb-3 leading-relaxed">{CvJobText.intro}</p>
+          <DocumentField label={CvJobText.cvUpload} docKind="cv" store={store} />
+          <FieldRow label={CvJobText.experience} required>
+            <textarea
+              rows={4}
+              value={cv.experienceText ?? ''}
+              onChange={(e) => set({ experienceText: e.target.value })}
+              aria-invalid={experienceMissing || undefined}
+              className={`${inputClass}${experienceMissing ? invalidClass : ''}`}
+            />
+            {experienceMissing && <FieldError message="Please describe your experience, or write N/A if you uploaded your CV." />}
+          </FieldRow>
+          <LabeledInput label={CvJobText.highestQualification} required missingKey="Highest-level qualification" value={cv.highestQualification ?? ''} onChange={(v) => set({ highestQualification: v })} />
+          <LabeledInput label={CvJobText.highestQualificationField} required missingKey="Field of highest qualification" value={cv.highestQualificationField ?? ''} onChange={(v) => set({ highestQualificationField: v })} />
+          {/* Answering No clears the named qualification, so a hidden answer is never saved. */}
+          <YesNoRadio
+            legend={fieldLabels.hasFieldQualification}
+            name="cv-field-qual"
+            error={yn('Qualifications in your programme field')}
+            value={cv.hasFieldQualification ?? null}
+            onChange={(v) => set({ hasFieldQualification: v, ...(v ? {} : { highestFieldQualification: '' }) })}
+          />
+          {cv.hasFieldQualification === true && (
+            <LabeledInput label={fieldLabels.highestFieldQualification} required missingKey="Highest qualification in your programme field" value={cv.highestFieldQualification ?? ''} onChange={(v) => set({ highestFieldQualification: v })} />
           )}
-        </FieldRow>
-        <FieldRow label="If you do not have a CV to upload, please list your previous experience and description of your current job role and responsibilities:">
-          <textarea rows={5} value={cv.experienceText ?? ''} onChange={(e) => set({ experienceText: e.target.value })} className={inputClass} />
-        </FieldRow>
-        <LabeledInput
-          label="Do you have any project management qualifications? If yes, please name them. If not, just write 'no.'"
-          value={cv.pmQualifications}
-          onChange={(v) => set({ pmQualifications: v })}
-          placeholder="e.g. Site Management Safety Training Scheme"
-        />
-        <LabeledSelect
-          label="If you do not have GCSEs available, or if you do not meet the required grades in English and Maths, would you like to enrol in a funded Functional Skills course in these subjects?"
-          value={cv.functionalSkillsEnrol ?? ''}
-          options={FS_ENROL_OPTIONS}
-          onChange={(v) => set({ functionalSkillsEnrol: v })}
-        />
+          {/* Shown while it holds a file too, so an upload is never hidden by a changed answer. */}
+          {(cv.hasFieldQualification === true || has('transcript')) && (
+            <DocumentField label={CvJobText.transcript} docKind="transcript" store={store} />
+          )}
+        </Section>
+
+        <Section title="GCSEs">
+          <p className="text-[12px] text-foreground-500 mb-3 leading-relaxed">{CvJobText.gcseNote}</p>
+          <YesNoRadio legend={CvJobText.gcseEnglish} name="cv-gcse-english" error={yn('GCSE in English')} value={cv.gcseEnglish ?? null} onChange={(v) => set({ gcseEnglish: v })} />
+          {(cv.gcseEnglish === true || has('gcse-english')) && (
+            <DocumentField label={CvJobText.gcseEnglishUpload} docKind="gcse-english" store={store} />
+          )}
+          <YesNoRadio legend={CvJobText.gcseMaths} name="cv-gcse-maths" error={yn('GCSE in Maths')} value={cv.gcseMaths ?? null} onChange={(v) => set({ gcseMaths: v })} />
+          {(cv.gcseMaths === true || has('gcse-maths')) && (
+            <DocumentField label={CvJobText.gcseMathsUpload} docKind="gcse-maths" store={store} />
+          )}
+        </Section>
+
+        <Section title="Functional Skills">
+          <p className="text-[12px] text-foreground-500 mb-3 leading-relaxed">{CvJobText.functionalSkillsNote}</p>
+          <LabeledSelect
+            label={CvJobText.functionalSkills}
+            required
+            missingKey="Functional Skills enrolment"
+            value={cv.functionalSkillsEnrol ?? ''}
+            options={[...CvJobText.functionalSkillsOptions]}
+            onChange={(v) => set({ functionalSkillsEnrol: v })}
+          />
+        </Section>
       </div>
     </div>
   );

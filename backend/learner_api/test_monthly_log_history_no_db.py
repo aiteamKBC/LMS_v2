@@ -84,7 +84,8 @@ class HistoricalLogsTests(unittest.TestCase):
     def test_september_detail_does_not_read_audit_totals_or_contract(self):
         history = SimpleNamespace(enabled=Mock(), detail=Mock())
         sources = SimpleNamespace(monthly_target=Mock(return_value=5))
-        ns = dict(history=history, sources=sources, old_repo=self.repo)
+        ns = dict(history=history, sources=sources, old_repo=self.repo,
+                  canonical=SimpleNamespace(enabled=lambda _learner_id: False))
         logs = functions(Path(__file__).parent / 'monthly_logs.py', ns)
         ns.update(valid_month=Mock(), require_closed_month=Mock(), signatures=Mock(return_value=[]),
                   current_months=Mock(return_value={'2026-09': []}),
@@ -131,6 +132,7 @@ class HistoricalLogsTests(unittest.TestCase):
         history = SimpleNamespace(enabled=lambda learner: True,
             later_rows=Mock(return_value={'2026-09': [audit]}), merge_rows=self.history.merge_rows)
         ns = dict(defaultdict=defaultdict, history=history, old_repo=self.repo,
+                  canonical=SimpleNamespace(enabled=lambda _learner_id: False),
                   timezone=SimpleNamespace(localdate=lambda: date(2026, 10, 20)),
                   sources=SimpleNamespace(activity_rows=lambda learner: [lms]),
                   public_detail=lambda learner, data: data)
