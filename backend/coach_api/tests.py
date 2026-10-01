@@ -819,6 +819,32 @@ class CanonicalCoachMetricsTests(SimpleTestCase):
         self.assertEqual((result["metricsSource"], result["ksbSource"], result["otjhSource"]),
                          ("learner-dashboard", "learner-dashboard", "learner-dashboard"))
 
+    def test_caseload_row_uses_the_case_file_metrics_instead_of_stored_fallbacks(self):
+        payload = {
+            "otjhCompleted": 70.5, "otjhTarget": None, "otjhPlanned": None,
+            "overallProgress": 100, "overallProgressAvailable": True,
+            "componentsCompleted": 27, "componentsPlanned": 27,
+            "activityProgress": 100, "activityProgressAvailable": True,
+            "ksbCompleted": 33, "ksbTarget": 33, "ksbProgress": 100,
+            "ksbProgressAvailable": True, "enrollmentStatus": "active",
+        }
+        case_file_metrics = {
+            "migrated": True,
+            "programme": {"completed": 34, "total": 244, "percent": 13.92, "status": "ready"},
+            "otjh": {"actual": 116.8, "completed_actual": 116.8, "planned": 352},
+            "ksb": {"completed": 33, "total": 33, "percent": 100, "status": "ready"},
+        }
+
+        result = apply_canonical_learner_metrics(payload, case_file_metrics)
+
+        self.assertEqual((result["otjhCompleted"], result["otjhTarget"]), (116.8, 352))
+        self.assertEqual(result["overallProgress"], 13.92)
+        self.assertEqual(
+            (result["componentsCompleted"], result["componentsPlanned"], result["activityProgress"]),
+            (34, 244, 13.92),
+        )
+        self.assertEqual((result["ksbCompleted"], result["ksbTarget"], result["ksbProgress"]), (33, 33, 100))
+
     def test_coach_overlay_has_exact_parity_with_the_shared_learner_calculator(self):
         from learner_api.canonical_learning import metrics_from_records
 

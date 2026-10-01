@@ -2,7 +2,7 @@
 import copy
 import unittest
 
-from test_canonical_learning_no_db import adapter
+from learner_api.test_canonical_learning_no_db import adapter
 
 
 class RecordedCourseScheduleTests(unittest.TestCase):

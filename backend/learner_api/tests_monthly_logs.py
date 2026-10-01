@@ -35,6 +35,7 @@ class MonthlyLogsTests(SimpleTestCase):
         required_profile.start()
         self.addCleanup(required_profile.stop)
         self.row = sources.row('progress:1', '2026-09-12T10:00:00Z', 'Reading', 'Reading', hours=1)
+        unlocked = {'locked': False, 'locked_at': None, 'unlocked_at': None, 'unlocked_by': None}
         # Keep this SimpleTestCase a true unit suite as the production journal
         # gains canonical/history persistence dependencies. Those integrations
         # have dedicated tests; these cases exercise monthly-log orchestration.
@@ -45,6 +46,9 @@ class MonthlyLogsTests(SimpleTestCase):
             patch.object(logs.history, 'detail', side_effect=lambda learner, month, demo=False: logs.old.month_detail(learner, month)),
             patch.object(logs, 'lock_state', return_value={
                 'locked': False, 'locked_at': None, 'unlocked_at': None, 'unlocked_by': None,
+            }),
+            patch.object(logs, 'lock_states', side_effect=lambda _learner_id, months, **_kwargs: {
+                month: dict(unlocked) for month in months
             }),
         ]
         for dependency in dependencies:
@@ -583,3 +587,17 @@ class MonthlyLogsTests(SimpleTestCase):
         self.assertEqual(sources.monthly_target(learner, '2026-09'), 12.5)
         self.assertIsNone(sources.monthly_target(learner, '2026-10'))
         self.assertIsNone(sources.monthly_target(learner, '2026-11'))
+
+
+class MonthlyLogLockBatchTests(SimpleTestCase):
+    def test_summary_lock_states_are_loaded_in_one_query(self):
+        with patch.object(logs.old_repo, 'query', return_value=[{
+            'report_month': '2026-09', 'locked_at': date(2026, 10, 1),
+            'unlocked_at': None, 'unlocked_by': None,
+        }]) as query:
+            states = logs.lock_states(
+                7, ['2026-08', '2026-09'], canonical_owner={'id': 70},
+            )
+        query.assert_called_once()
+        self.assertFalse(states['2026-08']['locked'])
+        self.assertTrue(states['2026-09']['locked'])

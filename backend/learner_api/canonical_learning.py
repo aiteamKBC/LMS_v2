@@ -113,56 +113,83 @@ def entries_for(owner):
         WHERE progress.learner_id=%s AND progress.deleted_at IS NULL
     ), canonical AS (
         SELECT * FROM candidates WHERE canonical_rank=1
-    )
-        SELECT to_jsonb(p) AS payload,
-        coalesce((SELECT jsonb_agg(k.ksb_code ORDER BY k.position)
-          FROM "Learner".learner_progress_ksbs k WHERE k.progress_id=p.id),'[]'::jsonb) AS ksbs,
-        coalesce((SELECT jsonb_agg(to_jsonb(s) ORDER BY s.segment_order,s.id)
-          FROM "Learner".learner_activity_reporting_segments s
-          WHERE s.progress_id=p.id AND s.learner_id=p.learner_id),'[]'::jsonb) AS segments,
-        coalesce((SELECT jsonb_agg(jsonb_build_object(
+    ), progress_ksbs AS (
+        SELECT k.progress_id,jsonb_agg(k.ksb_code ORDER BY k.position) AS payload
+        FROM "Learner".learner_progress_ksbs k
+        JOIN canonical p ON p.id=k.progress_id
+        GROUP BY k.progress_id
+    ), reporting_segments AS (
+        SELECT s.progress_id,jsonb_agg(to_jsonb(s) ORDER BY s.segment_order,s.id) AS payload
+        FROM "Learner".learner_activity_reporting_segments s
+        JOIN canonical p ON p.id=s.progress_id AND p.learner_id=s.learner_id
+        GROUP BY s.progress_id
+    ), activity_sources AS (
+        SELECT s.canonical_progress_id AS progress_id,jsonb_agg(jsonb_build_object(
             'source_id',s.id,'source_system',s.source_system,'source_activity_id',s.source_activity_id,
             'completed',s.completed,
             'source_course_ref',c.source_course_ref,'source_course_id',c.id,
             'course_title',c.source_course_title,'catalogue_id',a.id,
             'component_ref',coalesce(nullif(s.curriculum_component_ref,''),a.curriculum_component_ref),
             'module_ref',c.curriculum_module_ref,'group_ref',c.curriculum_group_ref,
-            'source_activity_kind',a.source_activity_kind) ORDER BY s.id)
-          FROM "Learner".learner_activity_sources s
-          LEFT JOIN curriculum.source_activities a ON a.id=s.source_catalog_activity_id AND a.deleted_at IS NULL
-          LEFT JOIN curriculum.source_courses c ON c.id=a.source_course_id AND c.deleted_at IS NULL
-          WHERE s.canonical_progress_id=p.id AND s.learner_id=p.learner_id
-            AND s.deleted_at IS NULL),'[]'::jsonb) AS sources,
-        coalesce((SELECT jsonb_agg(jsonb_build_object(
-            'group_id',j.group_id,'activity_id',j.activity_id,'source_ref',j.source_ref) ORDER BY j.id)
-          FROM "Learner".learner_journal_rows j
-          JOIN "Learner".learner_activity_sources js ON js.id=j.source_id
-            AND js.learner_id=p.learner_id AND js.canonical_progress_id=p.id AND js.deleted_at IS NULL
-          WHERE j.progress_id=p.id AND j.canonical_learner_id=p.learner_id
-            AND j.deleted_at IS NULL),'[]'::jsonb) AS journal_routes,
-        coalesce((SELECT jsonb_agg(to_jsonb(h) ORDER BY h.id)
-          FROM "Learner".learner_progress_historical_components link
-          JOIN curriculum.historical_components h ON h.id=link.historical_component_ref
-            AND h.deleted_at IS NULL AND h.historical_only=true
-          WHERE link.progress_id=p.id),'[]'::jsonb) AS historical_components
+            'source_activity_kind',a.source_activity_kind) ORDER BY s.id) AS payload
+        FROM "Learner".learner_activity_sources s
+        JOIN canonical p ON s.canonical_progress_id=p.id AND s.learner_id=p.learner_id
+        LEFT JOIN curriculum.source_activities a ON a.id=s.source_catalog_activity_id AND a.deleted_at IS NULL
+        LEFT JOIN curriculum.source_courses c ON c.id=a.source_course_id AND c.deleted_at IS NULL
+        WHERE s.deleted_at IS NULL
+        GROUP BY s.canonical_progress_id
+    ), journal_routes AS (
+        SELECT j.progress_id,jsonb_agg(jsonb_build_object(
+            'group_id',j.group_id,'activity_id',j.activity_id,'source_ref',j.source_ref) ORDER BY j.id) AS payload,
+            sum(j.planned_hours) AS planned
+        FROM "Learner".learner_journal_rows j
+        JOIN canonical p ON j.progress_id=p.id AND j.canonical_learner_id=p.learner_id
+        JOIN "Learner".learner_activity_sources s ON s.id=j.source_id
+          AND s.learner_id=p.learner_id AND s.canonical_progress_id=p.id AND s.deleted_at IS NULL
+        WHERE j.deleted_at IS NULL
+        GROUP BY j.progress_id
+    ), historical_components AS (
+        SELECT link.progress_id,jsonb_agg(to_jsonb(h) ORDER BY h.id) AS payload
+        FROM "Learner".learner_progress_historical_components link
+        JOIN canonical p ON p.id=link.progress_id
+        JOIN curriculum.historical_components h ON h.id=link.historical_component_ref
+          AND h.deleted_at IS NULL AND h.historical_only=true
+        GROUP BY link.progress_id
+    )
+        SELECT to_jsonb(p) AS payload,
+          coalesce(k.payload,'[]'::jsonb) AS ksbs,
+          coalesce(seg.payload,'[]'::jsonb) AS segments,
+          coalesce(src.payload,'[]'::jsonb) AS sources,
+          coalesce(j.payload,'[]'::jsonb) AS journal_routes,
+          j.planned AS journal_planned_hours,
+          coalesce(h.payload,'[]'::jsonb) AS historical_components
         FROM canonical p
+        LEFT JOIN progress_ksbs k ON k.progress_id=p.id
+        LEFT JOIN reporting_segments seg ON seg.progress_id=p.id
+        LEFT JOIN activity_sources src ON src.progress_id=p.id
+        LEFT JOIN journal_routes j ON j.progress_id=p.id
+        LEFT JOIN historical_components h ON h.progress_id=p.id
         ORDER BY p.reporting_month,p.reporting_started_at NULLS LAST,p.id''',
         [owner['id']])
-    result = current_records(owner, [{**decoded(record['payload'], {}), **{
-        field: decoded(record.get(field), [])
-        for field in ('ksbs', 'segments', 'sources', 'journal_routes', 'historical_components')}} for record in records])
     from learner_api import journal_sources
-    if journal_sources.enabled():
-        planned = journal_sources.planned_by_progress(owner['id'], query)
+    journal_enabled = journal_sources.enabled()
+    loaded = []
+    for record in records:
+        item = {**decoded(record['payload'], {}), **{
+            field: decoded(record.get(field), [])
+            for field in ('ksbs', 'segments', 'sources', 'journal_routes', 'historical_components')}}
+        if journal_enabled and record.get('journal_planned_hours') is not None:
+            item['expected_otjh'] = float(record['journal_planned_hours'])
+            item['journal_planned_hours'] = float(record['journal_planned_hours'])
+        loaded.append(item)
+    result = current_records(owner, loaded)
+    if journal_enabled:
         for record in result:
             # Source completion is independent of hours eligibility. Excluded
             # administration and represented recordings still retain completion.
             record['completed'] = record.get('completed', record.get('accepted')) is True or any(
                 source.get('source_system') == 'old_lms' and source.get('completed') is True
                 for source in record.get('sources') or [])
-            if record['id'] in planned:
-                record['expected_otjh'] = planned[record['id']]
-                record['journal_planned_hours'] = planned[record['id']]
     return result
 
 
