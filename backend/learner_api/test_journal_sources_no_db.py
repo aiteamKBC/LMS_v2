@@ -114,6 +114,7 @@ class JournalSourceTests(unittest.TestCase):
             {'accepted': True, 'actual_seconds': 7200},
             {'accepted': False, 'activity_status': 'Submitted', 'actual_seconds': 1800}],
             targets=lambda _: {'2026-01': 3, '2026-02': 2},
+            programme_planned_hours=lambda _: 20,
             recorded_seconds=lambda row: row['actual_seconds'])
         args = (SimpleNamespace(pk=1, aptem_id=None), 'commercial', [], [], [], [], date(2026, 1, 31))
         self.assertEqual(scope['read_home_progress'](*args)['otjh']['actual'], 999)

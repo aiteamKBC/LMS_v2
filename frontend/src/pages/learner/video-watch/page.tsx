@@ -1601,10 +1601,8 @@ function decodeInlineText(value: string): string {
 /**
  * Download the file itself.
  *
- * Shown only where the author allowed it (`downloadAllowed` on the component —
- * a PowerPoint's authoring form calls it "Download allowed"). The learner page
- * carried the flag all the way from the database and then never offered the
- * download, so a deck marked downloadable could only be read in the viewer.
+ * Reading attachments are always downloadable for learners with access.
+ * Slide decks still respect the author's `downloadAllowed` setting.
  *
  * `download` names the saved file rather than leaving the learner with the
  * upload's timestamped name; it works because these are served same-origin.
@@ -2275,9 +2273,7 @@ export function ComponentBody({ component, contentKind, parsed, title, onDuratio
             <p className="text-sm font-semibold text-foreground-900">{title}</p>
             <p className="text-xs text-foreground-400">Read the material, then finish and reflect below.</p>
           </div>
-          {/* Same flag, same promise: an attached document the author marked
-              downloadable can be taken away, not only read here. */}
-          {component.downloadAllowed && component.resourceUrl && (
+          {component.resourceUrl && (
             <DownloadFileButton url={component.resourceUrl} fileName={component.fileName} />
           )}
         </div>
