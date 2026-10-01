@@ -7,14 +7,14 @@ import { dateLabel, hours, Meter, moduleStatus, State } from './presentation';
 import styles from './trainingPlan.module.css';
 import layout from './TrainingPlanDetails.module.css';
 
-type Props = { module?: TimelineModule; hasModules: boolean; coachName: string; href: string; canOpenActivities: boolean };
+type Props = { module?: TimelineModule; hasModules: boolean; coachName: string; href: string; canOpenActivities: boolean; showSchedule?: boolean };
 const activityLabels: Record<string, string> = {
   reading: 'Readings', video: 'Videos', podcast: 'Podcasts', audio: 'Audio activities', powerpoint: 'Presentations',
   quiz: 'Quizzes', reading_quiz: 'Readings & quizzes', assignment: 'Assignments', checkpoint: 'Checkpoints',
   reflection: 'Reflections', live_session: 'Live sessions', activity: 'Other activities',
 };
 
-export function ModuleOverview({ module, hasModules, coachName, href, canOpenActivities }: Props) {
+export function ModuleOverview({ module, hasModules, coachName, href, canOpenActivities, showSchedule = true }: Props) {
   const detail = module?.detail;
   const timetable = [detail?.session_week_day, detail?.session_start_time
     ? `${detail.session_start_time}${detail.session_end_time ? `–${detail.session_end_time}` : ''}` : ''].filter(Boolean).join(' · ');
@@ -65,7 +65,7 @@ export function ModuleOverview({ module, hasModules, coachName, href, canOpenAct
           dates they are delivered, and the delivery days a cohort holiday
           closed still present as Reading Weeks. Without these the learner sees
           an unexplained gap where a bank holiday was. */}
-      <CurriculumTimeline slots={detail?.curriculumSlots} sessions={module.sessions} />
+      {showSchedule && <CurriculumTimeline slots={detail?.curriculumSlots} sessions={module.sessions} />}
       {Object.keys(module.activityCounts).length > 0 && <div className={layout.moduleSection}>
         <h3>Learning activities <span>{module.activityCount}</span></h3>
         <ul className={layout.activityBreakdown}>{Object.entries(module.activityCounts).map(([type, count]) =>

@@ -15,7 +15,7 @@
 .stepNumber { display: grid; place-items: center; flex: 0 0 36px; height: 36px; border: 1px solid #e1d4f4; border-radius: 12px; background: #f0e9fa; color: #64359e; font-size: 12px; font-weight: 750; }
 .sectionHeading h2 { margin: 0; color: #2d1945; font-size: 19px; font-weight: 750; }
 .sectionHeading p { margin: 5px 0 0; color: #72657f; font-size: 13px; line-height: 1.6; }
-.options { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.options { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 16px; }
 .option { display: flex; flex-direction: column; align-items: stretch; min-width: 0; padding: 22px; border: 1px solid #e5def0; border-radius: 18px; background: white; text-align: left; color: #3a2059; box-shadow: 0 3px 12px #36126304; transition: border-color .15s, box-shadow .15s, background .15s; cursor: pointer; }
 .option:hover:not(:disabled) { border-color: #9e77c8; box-shadow: 0 6px 20px #36126312; }
 .option[aria-pressed='true'] { border-color: #7038b8; background: #f5f0fc; box-shadow: inset 0 0 0 1px #7038b8; }

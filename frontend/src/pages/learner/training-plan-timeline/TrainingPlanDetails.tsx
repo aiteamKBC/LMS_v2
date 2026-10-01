@@ -1,19 +1,28 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
-import { ArrowRight, CalendarDays, ChevronLeft, ChevronRight, FileText, RefreshCw, Video } from 'lucide-react';
+import { ArrowRight, CalendarDays, ChevronLeft, ChevronRight, Clock3, Equal, FileText, GraduationCap, RefreshCw, Target, TrendingDown, TrendingUp, Video } from 'lucide-react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import type { TrainingPlanDashboard, PlanReview } from '@/api/trainingPlanDashboard';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { fetchAttendanceWorkspace, peekAttendanceWorkspace, type AttendanceLecture } from '@/api/attendanceLectures';
+import { invalidateLearnerReads } from '@/api/learnerRead';
+import { useLiveLearnerRead } from '@/hooks/useLiveLearnerRead';
+import { coachFetch } from '@/lib/coachFetch';
 import type { Subject } from '../my-learning/SubjectWorkspace';
 import type { PlanActivitySummary, PlanSubjectSummary } from '@/api/learnerOverview';
 import { buildPlanModules, dateKey, monthMetrics, moduleVisualEnd, reviewDate, sessionDay, uniquePlanSessions } from './model';
 import { dateLabel, hours, monthLabel, sessionTime, State } from './presentation';
 import styles from './trainingPlan.module.css';
 import layout from './TrainingPlanDetails.module.css';
+import board from './MonthlyFocusBoard.module.css';
 import { ModuleTimeline } from './ModuleTimeline';
 import { ModuleOverview } from './ModuleOverview';
 import { ProgressCharts, type ProgrammeProgressSnapshot } from './ProgressCharts';
 import MeetingBookingDialog from '../reviews/MeetingBookingDialog';
+import AbsenceReportDialog from '../attendance/components/AbsenceReportDialog';
+import AbsenceReportForm from '../attendance/components/AbsenceReportForm';
+import CatchupBooking from '../attendance/components/CatchupBooking';
+import attendanceStyles from '../attendance/attendance.module.css';
 
 type Props = {
   data: TrainingPlanDashboard; subjects: (Subject | PlanSubjectSummary)[]; kind: LearnerKind; learnerId: string;
@@ -22,6 +31,9 @@ type Props = {
   programmeStartDate?: string | null; programmeEndDate?: string | null;
   activityOverviewOnly?: boolean;
   timelineOnly?: boolean;
+  monthlyOnly?: boolean;
+  trainingOnly?: boolean;
+  overviewOnly?: boolean;
   programmeSnapshot?: ProgrammeProgressSnapshot;
 };
 
@@ -42,10 +54,23 @@ function bookingEvent(review: PlanReview): LearnerCalendarEvent {
   };
 }
 
+/** Keep the monthly lecture action aligned with Attendance's recovery priority. */
+function catchupAction(row: AttendanceLecture): string | null {
+  if (row.status !== 'absent' || row.effectiveAttendance === 1) return null;
+  const planOpen = Boolean(row.recovery?.calendarKey && (!row.recovery.ended || row.recovery.method === 'recorded')
+    && row.catchupStatus !== 'missed');
+  if (planOpen && row.recovery) {
+    if (row.recovery.method === 'alternative') return null;
+    return row.recovery.method === 'catch-up' ? 'Change catch-up' : 'Book catch-up';
+  }
+  if (row.catchupStatus === 'completed') return null;
+  return row.recovery?.method === 'catch-up' && row.catchupStatus === 'pending' ? 'Change catch-up' : 'Book Catchup Session';
+}
+
 /** Weekly learning and monthly coaching share the dashboard above the linked module panels. */
 export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh, refreshing = false,
   onRetryContract, initialSubjectId = '', initialMonth = '', canOpenActivities = true, weeklyFocus, programmeStartDate, programmeEndDate,
-  activityOverviewOnly = false, timelineOnly = false, programmeSnapshot }: Props) {
+  activityOverviewOnly = false, timelineOnly = false, monthlyOnly = false, trainingOnly = false, overviewOnly = false, programmeSnapshot }: Props) {
   const modules = useMemo(() => buildPlanModules(subjects, data), [subjects, data]);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -83,6 +108,12 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
   const [selectedMonth, setSelectedMonth] = useState(initialSelectedMonth);
   const [selectedId, setSelectedId] = useState(initialSubjectId);
   const [bookingReview, setBookingReview] = useState<PlanReview | null>(null);
+  const [absenceLecture, setAbsenceLecture] = useState<AttendanceLecture | null>(null);
+  const [catchupLecture, setCatchupLecture] = useState<AttendanceLecture | null>(null);
+  const [catchupBooking, setCatchupBooking] = useState<LearnerCalendarEvent | null>(null);
+  const [catchupBusy, setCatchupBusy] = useState(false);
+  const [catchupError, setCatchupError] = useState('');
+  const attendance = useLiveLearnerRead(kind, learnerId, monthlyOnly && canOpenActivities, fetchAttendanceWorkspace, peekAttendanceWorkspace);
   const monthData = (module: TimelineModule) => module as TimelineModuleMonthData;
   useEffect(() => {
     setSelectedMonth(current => {
@@ -97,6 +128,30 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
   const metrics = monthMetrics(selectedMonth, modules, data);
   const month = data.months[selectedMonth];
   const monthSessions = sessions.filter(session => sessionDay(session.start).startsWith(selectedMonth));
+  const attendanceForSession = (session: (typeof sessions)[number]) => attendance.data?.lectures.find(row =>
+    row.source === 'microsoft-teams' && row.sessionId === `teams:${session.id}` && row.date === sessionDay(session.start));
+  const openCatchup = (row: AttendanceLecture) => {
+    setCatchupBooking(null);
+    setCatchupError('');
+    setCatchupLecture(row);
+  };
+  const closeCatchup = () => { setCatchupLecture(null); attendance.refresh(); };
+  const saveCatchup = async () => {
+    if (!catchupLecture?.absenceReport || !catchupBooking) return;
+    setCatchupBusy(true);
+    setCatchupError('');
+    try {
+      const response = await coachFetch(`/learner_api/session-catchup/${kind}/${learnerId}/`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reportId: catchupLecture.absenceReport.id, eventKey: catchupBooking.eventKey }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not link catch-up.');
+      invalidateLearnerReads();
+      closeCatchup();
+    } catch (reason) { setCatchupError(reason instanceof Error ? reason.message : 'Could not link catch-up.'); }
+    finally { setCatchupBusy(false); }
+  };
   const monthReviews = data.reviews.filter(review => review.source !== 'student-support' && review.status !== 'cancelled' && reviewDate(review).startsWith(selectedMonth))
     .sort((a, b) => reviewDate(a).localeCompare(reviewDate(b)));
   const monthActivities = modules.flatMap(module => (monthData(module).monthlyActivities || []).map(activity => ({ module, activity })))
@@ -119,6 +174,118 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
   const reviewStatus = (review: TrainingPlanDashboard['reviews'][number]) => ({ completed: 'Attended', scheduled: review.invited === false ? 'Booking pending' : 'Booked',
     'not-scheduled': reviewDate(review) && reviewDate(review) < today ? 'Overdue' : 'Not booked',
     'awaiting-signature': 'Awaiting signatures', 'in-progress': 'In progress' }[review.status] || 'Not booked');
+  const lectureDetails = (session: (typeof sessions)[number]) => {
+    const module = modules.find(m => m.moduleId === session.moduleId);
+    const lecture = (module ? monthData(module).monthlyActivities || [] : [])
+      .find(activity => activity.type === 'live_session' && activity.date === sessionDay(session.start));
+    const moduleTitle = module?.title?.trim();
+    const lectureTitle = lecture?.title?.trim();
+    const sessionTitle = session.title?.trim();
+    const displayTitle = lectureTitle || moduleTitle || sessionTitle || 'Live session';
+    const tutor = module?.detail?.tutor_name || module?.detail?.coach_name || data.coach.name || 'Tutor';
+    const sessionEnd = session.end ? Date.parse(session.end) : NaN;
+    const isAvailable = !['cancelled', 'deleted', 'completed'].includes(session.status)
+      && (Number.isFinite(sessionEnd) ? sessionEnd > now : Date.parse(session.start) > now);
+    const attendLink = isAvailable && /^https?:\/\//i.test(session.joinUrl || '') ? session.joinUrl : null;
+    return { lecture, displayTitle, tutor, isAvailable, attendLink };
+  };
+  // The learner's own review pages hold the form for the matching event.
+  const reviewFormHref = (review: PlanReview) => {
+    if (!review.reviewTemplateId && !review.reviewInstanceId) return null;
+    const base = review.source === 'mcr' ? '/learner/monthly-coaching' : review.source === 'progress-review' ? '/learner/progress-reviews' : '';
+    return base ? `${base}/${encodeURIComponent(review.eventKey || review.id)}?${new URLSearchParams({ kind, learner: learnerId })}` : null;
+  };
+  const clockTime = (value: string) => new Date(value).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/London' });
+  const difference = metrics.planned == null || metrics.actual == null ? null : metrics.actual - metrics.planned;
+  const monthMetricCells: { label: string; value: number | null; tone?: string; icon: ReactNode }[] = [
+    { label: 'Required hours', value: metrics.planned, icon: <Target size={20} /> },
+    { label: 'Achieved hours', value: metrics.actual, tone: 'positive', icon: <Clock3 size={20} /> },
+    { label: 'Difference', value: difference, tone: metrics.actual != null && metrics.planned != null && metrics.actual >= metrics.planned ? 'positive' : undefined, icon: difference != null && difference < 0 ? <TrendingDown size={20} /> : difference != null && difference > 0 ? <TrendingUp size={20} /> : <Equal size={20} /> },
+  ];
+  // Monthly Plan tab only (monthlyOnly): same data and actions as the section
+  // below, laid out as the dashboard reference.
+  const monthlyBoard = <section className={board.root} aria-label="Monthly study plan">
+    <div className={board.header}>
+      <div className={board.heading}><p>Monthly Focus</p><h2>{monthLabel(selectedMonth)}</h2></div>
+      <div className={board.monthNav}>
+        <button type="button" onClick={() => shiftMonth(-1)} disabled={!canGoPrevious}><ChevronLeft size={15} aria-hidden="true" />Previous month</button>
+        <button type="button" onClick={() => shiftMonth(1)} disabled={!canGoNext}>Next month<ChevronRight size={15} aria-hidden="true" /></button>
+      </div>
+    </div>
+    {!!month?.topics.length && <p className={board.topics}>{month.topics.join(' · ')}</p>}
+    {data.contractStatus === 'loading' && <p role="status" className={board.hint}>Loading study hour targets…</p>}
+    {data.contractStatus === 'unavailable' && <p role="status" className={board.hint}>Study hour targets could not be loaded. <button type="button" className={board.retry} onClick={onRetryContract}>Retry study hours</button></p>}
+    <section className={`${board.card} ${board.metrics}`} aria-label="Progress this month">
+      {monthMetricCells.map(cell => <div key={cell.label} className={board.metric}>
+        <span className={board.metricRing} data-empty={cell.value == null || undefined} aria-hidden="true">{cell.value == null ? '--' : cell.icon}</span>
+        <div><span>{cell.label}</span><strong data-tone={cell.value == null ? undefined : cell.tone}>{cell.value == null ? 'Not available' : `${cell.label === 'Difference' && cell.value > 0 ? '+' : ''}${hours(cell.value)} hrs`}</strong></div>
+      </div>)}
+      <div className={board.metric}>
+        <span className={`${board.metricRing} ${board.metricIcon}`} aria-hidden="true"><GraduationCap size={20} /></span>
+        <div><span>KSBs this month</span><div className={board.ksbs}>{monthKsbCodes.length ? monthKsbCodes.map(code => <span key={code}>{code}</span>) : <em>—</em>}</div></div>
+      </div>
+    </section>
+    <div className={board.pair}>
+      <section className={board.card} aria-label="Reviews this month">
+        <h3 className={board.cardTitle}>Reviews this month</h3>
+        <div className={board.reviewRows}>{monthReviews.length ? monthReviews.map(review => {
+          const needsBooking = review.status === 'not-scheduled';
+          const isBooked = ['scheduled', 'in-progress'].includes(review.status);
+          const meetingLink = isBooked && /^https?:\/\//i.test(review.meetingLink || '') ? review.meetingLink : null;
+          const timeNote = review.scheduledTime ? `${review.scheduledTime.slice(0, 5)} · UK time` : review.durationMinutes ? `${review.durationMinutes} min` : '';
+          return <article key={review.eventKey} className={board.reviewRow} title={review.coachName || data.coach.name || undefined}>
+            <span className={board.reviewDate}>{dateLabel(reviewDate(review))}</span>
+            <span className={board.reviewTime}>{timeNote || '—'}</span>
+            <span className={board.reviewTitle}>{review.title}</span>
+            <span className={board.reviewState}>{reviewFormHref(review) && <Link className={board.outlineAction} to={reviewFormHref(review)!}>View form</Link>}{needsBooking ? <button type="button" className={board.pillAction} onClick={() => setBookingReview(review)}>Schedule</button>
+              : meetingLink ? <a className={board.pillAction} href={meetingLink} target="_blank" rel="noopener noreferrer">Attend</a>
+                : <State value={reviewStatus(review)} />}</span>
+          </article>;
+        }) : <p className={board.empty}>No reviews planned for this month.</p>}</div>
+      </section>
+      <section className={board.card} aria-label="Assignments this month">
+        <h3 className={board.cardTitle}>Assignments</h3>
+        <div className={board.assignments}>{monthAssignments.length ? monthAssignments.slice(0, 2).map(({ module, activity }) => {
+          const assignmentPercent = activity.completed ? 100 : 0;
+          return <article key={`${module.id}:${activity.id}`} className={board.assignment}>
+            <div className={board.assignmentHead}><span className={board.assignmentIcon}><FileText size={18} /></span><div><strong>{activity.title}</strong><small>{activity.weekTitle || module.title}</small></div></div>
+            <div className={board.assignmentStats}>
+              <div><span>Required hours</span><b>{hours(activity.expectedHours)} hrs</b></div>
+              <div><span>Achieved hours</span><b>{activity.completed ? hours(activity.expectedHours) : '0'} hrs</b></div>
+              <div className={board.assignmentProgress}><span>Progress</span><i role="img" aria-label={`${assignmentPercent}% complete`} style={{ '--assignment-progress': `${assignmentPercent}%` } as CSSProperties}><b>{assignmentPercent}%</b></i></div>
+              {canOpenActivities ? <Link className={board.primaryAction} to={assignmentHref(module.id, activity.componentId, activity.weekTitle)}>{activity.completed ? 'View' : 'Start'}<ArrowRight size={15} aria-hidden="true" /></Link> : <State value={activity.completed ? 'Completed' : 'Not started'} />}
+            </div>
+          </article>;
+        }) : <p className={board.empty}>No assignments found for this month.</p>}</div>
+      </section>
+    </div>
+    <section className={board.card} aria-label="Lectures this month">
+      <div className={board.cardHeader}><h3 className={board.cardTitle}>Lectures this month</h3>
+        {canOpenActivities && selected && <Link className={board.viewAll} to={subjectHref(selected.id)} aria-label={`View all activities for ${monthLabel(selectedMonth)}`}>View all activities<ArrowRight size={15} aria-hidden="true" /></Link>}
+      </div>
+      {attendance.error && !attendance.data && <p role="alert" className={board.hint}>Absence actions could not load. <button type="button" className={board.retry} onClick={attendance.refresh}>Retry</button></p>}
+      {monthSessions.length ? <div className={board.tableScroll}><table className={board.table}>
+        <thead><tr><th scope="col">Date</th><th scope="col">Time</th><th scope="col">Session</th><th scope="col">Tutor</th><th scope="col">Duration</th><th scope="col"><span className={board.srOnly}>Join</span></th></tr></thead>
+        <tbody>{monthSessions.slice(0, 3).map(session => {
+          const { displayTitle, tutor, isAvailable, attendLink } = lectureDetails(session);
+          const attendanceRow = attendanceForSession(session);
+          const catchupLabel = attendanceRow ? catchupAction(attendanceRow) : null;
+          return <tr key={session.id}>
+            <td>{dateLabel(sessionDay(session.start))}</td>
+            <td>{clockTime(session.start)}</td>
+            <td>{displayTitle}</td>
+            <td>{tutor}</td>
+            <td>{session.minutes} min</td>
+            <td><div className={board.lectureActions}>
+              {attendLink ? <a className={`${board.pillAction} ${board.attendAction}`} href={attendLink} target="_blank" rel="noopener noreferrer">Attend</a> : isAvailable ? <State value="Link pending" /> : null}
+              {catchupLabel && attendanceRow ? <button type="button" className={`${board.pillAction} ${board.catchupAction}`} onClick={() => openCatchup(attendanceRow)}>{catchupLabel}</button>
+                : attendanceRow?.status !== 'absent' && attendanceRow?.canReportAbsence && <button type="button" className={`${board.pillAction} ${board.absenceAction}`} onClick={() => setAbsenceLecture(attendanceRow)}>Report absence</button>}
+            </div></td>
+          </tr>;
+        })}</tbody>
+      </table></div> : <p className={board.empty}>No lectures scheduled for this month.</p>}
+    </section>
+  </section>;
   const progressCharts = <ProgressCharts modules={modules} selected={selected} data={data} onModuleSelect={module => setSelectedId(module.id)}
     programmeStartMonth={minMonth} programmeEndMonth={maxMonth} programmeSnapshot={programmeSnapshot} />;
   if (timelineOnly) {
@@ -128,13 +295,16 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
         onMonthChange={selectMonth} onModuleSelect={module => setSelectedId(module.id)} />
     </div>;
   }
+  const showMonthly = !trainingOnly && !overviewOnly;
+  const showTraining = !monthlyOnly && !overviewOnly;
   return <div className={`${styles.root} ${layout.root}`}>
-    <div className={`${layout.topRow} ${weeklyFocus ? layout.withWeeklyFocus : ''} ${activityOverviewOnly ? layout.activityOverviewTopRow : ''}`}
+    {!trainingOnly && <div className={`${layout.topRow} ${weeklyFocus && !monthlyOnly ? layout.withWeeklyFocus : ''} ${activityOverviewOnly ? layout.activityOverviewTopRow : ''} ${activityOverviewOnly && !showMonthly ? layout.overviewSingle : ''}`}
       data-layout="split">
       {activityOverviewOnly
-        ? <div className={layout.activityOverviewMain}>{weeklyFocus}{progressCharts}</div>
-        : weeklyFocus}
-      <section className={layout.engagement} aria-label="Monthly study plan">
+        ? <div className={layout.activityOverviewMain}>{overviewOnly ? null : weeklyFocus}{progressCharts}</div>
+        : !monthlyOnly ? weeklyFocus : null}
+      {showMonthly && monthlyOnly && monthlyBoard}
+      {showMonthly && !monthlyOnly && <section className={layout.engagement} aria-label="Monthly study plan">
         <div className={styles.panelHeading}><div className={layout.focusHeading}><p className={styles.eyebrow}>Monthly focus</p><h2>{monthLabel(selectedMonth)}</h2></div><div className={styles.controls}><button className={styles.iconButton} onClick={() => shiftMonth(-1)} disabled={!canGoPrevious} aria-label="Previous month"><ChevronLeft size={16} /></button><button className={styles.iconButton} onClick={() => shiftMonth(1)} disabled={!canGoNext} aria-label="Next month"><ChevronRight size={16} /></button></div></div>
         {!!month?.topics.length && <p className={styles.focusTitle}>{month.topics.join(' · ')}</p>}
         {data.contractStatus === 'loading' && <p role="status" className={styles.hint}>Loading study hour targets…</p>}
@@ -190,18 +360,7 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
           <section className={layout.monthBlock} aria-label="Lectures this month">
             <div className={layout.monthBlockHeader}><div><h3>Lectures this month</h3><p>Your live and recorded lectures</p></div></div>
             <div className={layout.compactRows}>{monthSessions.length ? monthSessions.slice(0, 3).map(session => {
-              const module = modules.find(m => m.moduleId === session.moduleId);
-              const lecture = (module ? monthData(module).monthlyActivities || [] : [])
-                .find(activity => activity.type === 'live_session' && activity.date === sessionDay(session.start));
-              const moduleTitle = module?.title?.trim();
-              const lectureTitle = lecture?.title?.trim();
-              const sessionTitle = session.title?.trim();
-              const displayTitle = lectureTitle || moduleTitle || sessionTitle || 'Live session';
-              const tutor = module?.detail?.tutor_name || module?.detail?.coach_name || data.coach.name || 'Tutor';
-              const sessionEnd = session.end ? Date.parse(session.end) : NaN;
-              const isAvailable = !['cancelled', 'deleted', 'completed'].includes(session.status)
-                && (Number.isFinite(sessionEnd) ? sessionEnd > now : Date.parse(session.start) > now);
-              const attendLink = isAvailable && /^https?:\/\//i.test(session.joinUrl || '') ? session.joinUrl : null;
+              const { lecture, displayTitle, tutor, isAvailable, attendLink } = lectureDetails(session);
               return <article key={session.id} className={layout.compactRow}>
                 <span className={layout.rowIcon}><Video size={16} /></span>
                 <strong>{sessionTime(session.start)}<small>{session.minutes} min</small></strong>
@@ -214,28 +373,28 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
           </section>
         </div>
         {canOpenActivities && selected && <Link className={`${styles.textLink} ${layout.monthFooterLink}`} to={subjectHref(selected.id)}>View all activities for {monthLabel(selectedMonth)}<ArrowRight size={14} /></Link>}
-      </section>
-    </div>
-    {!activityOverviewOnly && <section id="training-plan-details" aria-label="Monthly learning and coaching">
+      </section>}
+    </div>}
+    {showTraining && !activityOverviewOnly && <section id="training-plan-details" aria-label="Monthly learning and coaching">
     {!activityOverviewOnly && <>
     <div className={layout.toolbar}>
-      <div className={layout.title}><h2>Your training plan</h2><a className={styles.textLink} href="#module-timeline">View full timeline<ArrowRight size={14} /></a></div>
-      <div className={layout.filters}>
+      <div className={layout.title}><h2>Your training plan</h2>{!trainingOnly && <a className={styles.textLink} href="#module-timeline">View full timeline<ArrowRight size={14} /></a>}</div>
+      {!trainingOnly && <div className={layout.filters}>
         <label>Month<input aria-label="Focus month" type="month" min={minMonth || undefined} max={maxMonth || undefined} value={selectedMonth} onChange={event => selectMonth(event.target.value)} /></label>
         <label className={layout.moduleSelect}>Module<select aria-label="Focus module" value={selectedId} onChange={event => setSelectedId(event.target.value)}><option value="">Module for selected month</option>{modules.map(module => <option key={module.id} value={module.id}>{module.title}</option>)}</select></label>
         <button type="button" className={styles.iconButton} onClick={onRefresh} disabled={refreshing} aria-busy={refreshing} aria-label="Refresh monthly learning"><RefreshCw size={17} /></button>
-      </div>
+      </div>}
     </div>
     {refreshing && <p role="status" className={layout.refreshing}>Refreshing your training plan…</p>}
     </>}
-    <div className={`${layout.cards} ${activityOverviewOnly ? layout.activityOverviewCards : ''}`}>
+    <div className={`${layout.cards} ${activityOverviewOnly ? layout.activityOverviewCards : ''} ${trainingOnly ? layout.trainingCards : ''}`}>
       <div className={layout.learningVisuals}>
       {!activityOverviewOnly && <ModuleTimeline canOpenActivities={canOpenActivities} data={data} modules={modules} kind={kind} learnerId={learnerId} today={today}
         programmeStartDate={programmeStartDate} detailsMode="overview" selectedMonth={selectedMonth} selectedId={selected?.id} onMonthChange={selectMonth} onModuleSelect={module => setSelectedId(module.id)} />}
-      {progressCharts}
+      {!trainingOnly && progressCharts}
       </div>
       {!activityOverviewOnly && <ModuleOverview module={selected} hasModules={modules.length > 0} coachName={data.coach.name}
-        href={selected ? subjectHref(selected.id) : ""} canOpenActivities={canOpenActivities} />}
+        href={selected ? subjectHref(selected.id) : ""} canOpenActivities={canOpenActivities} showSchedule={!trainingOnly} />}
     </div>
     </section>}
     {bookingReview && <MeetingBookingDialog
@@ -246,5 +405,24 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
       onClose={() => setBookingReview(null)}
       onBooked={() => { setBookingReview(null); onRefresh(); }}
     />}
+    {absenceLecture && <AbsenceReportDialog onClose={() => setAbsenceLecture(null)}>
+      <AbsenceReportForm key={absenceLecture.id}
+        preselectMatch={{ id: absenceLecture.id, dateIso: absenceLecture.date, title: absenceLecture.title }}
+        onSubmitted={attendance.refresh} onCancel={() => setAbsenceLecture(null)}
+        showGuidance={false} showHistory compact />
+    </AbsenceReportDialog>}
+    {catchupLecture && <AbsenceReportDialog title="Book Catchup Session" onClose={closeCatchup}>
+      {catchupLecture.absenceReport ? <>
+        <p className={attendanceStyles.catchupLectureTitle}>{catchupLecture.title} · {catchupLecture.date}</p>
+        <CatchupBooking key={catchupLecture.id} lecture={{ ...catchupLecture, status: 'absent', dateIso: catchupLecture.date,
+          sessionType: 'live_session', coach: catchupLecture.coach || '' }} selectedKey={catchupBooking?.eventKey || ''}
+          onSelect={setCatchupBooking} onBusyChange={setCatchupBusy} standalone />
+        {catchupError && <p role="alert">{catchupError}</p>}
+        <button type="button" className={attendanceStyles.catchupDone} disabled={catchupBusy || !catchupBooking} onClick={() => void saveCatchup()}>Link catch-up to this absence</button>
+        <button type="button" className={attendanceStyles.catchupDone} disabled={catchupBusy} onClick={closeCatchup}>Close</button>
+      </> : <AbsenceReportForm key={catchupLecture.id} initialRecoveryMethod="catch-up"
+        preselectMatch={{ id: catchupLecture.id, dateIso: catchupLecture.date, title: catchupLecture.title }}
+        onSubmitted={closeCatchup} onCancel={closeCatchup} showGuidance={false} showHistory={false} compact />}
+    </AbsenceReportDialog>}
   </div>;
 }

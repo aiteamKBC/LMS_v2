@@ -14,6 +14,7 @@ somebody who had already signed in with the old password would stay signed in.
 from __future__ import annotations
 
 import os
+from urllib.parse import quote
 
 from django.db import transaction
 from django.utils import timezone
@@ -55,6 +56,36 @@ def invitation_link(token):
 
 def reset_link(token):
     return f"{frontend_base_url()}/reset-password?token={token}"
+
+
+def one_to_one_booking(account):
+    """``(case owner name, booking link)`` for a learner's invitation, or None.
+
+    The link opens the case owner's public booking page with the one-to-one
+    option already chosen. Best effort: the invitation is the point of the email,
+    so a learner with no case owner, a case owner with no booking page, or a
+    lookup failure leaves the option out instead of stopping the invitation.
+    """
+    if account.subject_type != "learner":
+        return None
+    try:
+        from learner_api.models import EnrolmentUser
+
+        from .coach_directory import ONE_TO_ONE, one_to_one_page
+
+        learner = EnrolmentUser.all_learners.filter(pk=account.subject_id).only("case_owner").first()
+        page = one_to_one_page(getattr(learner, "case_owner", "")) if learner is not None else None
+    except Exception:  # noqa: BLE001 - an optional extra must not block the invitation
+        import logging
+
+        logging.getLogger("login").exception(
+            "Could not look up the one-to-one booking page for account %s", account.id
+        )
+        return None
+    if page is None:
+        return None
+    link = f"{frontend_base_url()}/coach-booking/{quote(page['slug'], safe='')}?session={ONE_TO_ONE}"
+    return page["name"], link
 
 
 def record(event, *, email=None, account_id=None, succeeded=False, reason=None,
@@ -113,10 +144,13 @@ def send_invitation(account, *, invited_by=None, ip=None, user_agent=None):
     """
     invitation, token = create_invitation(account, invited_by=invited_by, ip=ip)
 
+    booking = one_to_one_booking(account)
     subject, html, text = email_azure.invitation_message(
         display_name=account.display_name,
         link=invitation_link(token),
         expires_days=INVITATION_TTL.days,
+        booking_owner=booking[0] if booking else None,
+        booking_link=booking[1] if booking else None,
     )
     sent, detail = email_azure.send_mail(
         to=account.email, subject=subject, html_body=html, text_body=text,
