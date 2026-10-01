@@ -194,12 +194,30 @@ def read_learner(cursor, aptem_id, email):
     if not email or not secret or not endpoint:
         logger.warning('learner_live_source stage=configuration result=failed aptem_id=%s endpoint_configured=%s api_key_configured=%s', aptem_id, bool(endpoint), bool(secret))
         return None
-    cursor.execute('''SELECT l.learner_id,coalesce(a.lms_learner_id,l.learner_id),
-        CASE WHEN a.lms_learner_id IS NULL THEN l.learner_email ELSE a.lms_email END
-        FROM "Last_audit".learners l
-        LEFT JOIN "Last_audit".learner_lms_aliases a
-          ON a.aptem_id=l.aptem_id AND a.canonical_lms_id=l.learner_id
-        WHERE l.aptem_id=%s AND lower(btrim(l.learner_email))=%s''', [aptem_id, email])
+    cursor.execute('''WITH owner AS (
+        SELECT l.id,l.aptem_id
+        FROM "Learner".learners l
+        JOIN enrolment."Created_users" account ON account.id=l.enrolment_id
+        WHERE l.aptem_id=%s
+          AND lower(btrim(l.email))=%s
+          AND lower(btrim(account."Email"))=lower(btrim(l.email))
+          AND (nullif(btrim(account.aptem_id::text),'') IS NULL
+            OR ltrim(account.aptem_id::text,'0')=ltrim(l.aptem_id::text,'0'))
+    )
+        SELECT alias.canonical_lms_id,alias.lms_learner_id,alias.lms_email
+        FROM owner
+        JOIN "Learner".source_lms_learner_aliases alias
+          ON alias.aptem_id=owner.aptem_id
+        UNION
+        SELECT source.learner_id,source.learner_id,
+          coalesce(nullif(source.lms_learner_email,''),source.learner_email)
+        FROM owner
+        JOIN "Learner".source_lms_learners source
+          ON source.aptem_id=owner.aptem_id
+        WHERE NOT EXISTS (
+          SELECT 1 FROM "Learner".source_lms_learner_aliases alias
+          WHERE alias.aptem_id=owner.aptem_id
+        )''', [aptem_id, email])
     identities = cursor.fetchall()
     if not identities:
         logger.warning('learner_live_source stage=database_identity result=no-match aptem_id=%s aliases=0', aptem_id)

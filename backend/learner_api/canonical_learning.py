@@ -31,6 +31,23 @@ def counts_as_actual(record):
     return record.get('accepted') is True
 
 
+def counts_as_completed(record):
+    """Completion and accepted OTJ hours are deliberately separate facts."""
+    if record.get('completed') is True or record.get('accepted') is True:
+        return True
+    statuses = {str(record.get('activity_status') or '').strip().casefold()}
+    statuses.update(
+        str(source.get('activity_status') or '').strip().casefold()
+        for source in (record.get('sources') or []) if isinstance(source, dict)
+    )
+    if any(source.get('completed') is True
+           for source in (record.get('sources') or []) if isinstance(source, dict)):
+        return True
+    return bool(statuses & {
+        'accepted', 'complete', 'completed', 'passed',
+    })
+
+
 def enabled(learner_id):
     return profile(learner_id) is not None
 
@@ -112,7 +129,8 @@ def entries_for(owner):
             'course_title',c.source_course_title,'catalogue_id',a.id,
             'component_ref',coalesce(nullif(s.curriculum_component_ref,''),a.curriculum_component_ref),
             'module_ref',c.curriculum_module_ref,'group_ref',c.curriculum_group_ref,
-            'source_activity_kind',a.source_activity_kind) ORDER BY s.id)
+            'source_activity_kind',a.source_activity_kind,
+            'activity_status',s.activity_status,'completed',s.completed) ORDER BY s.id)
           FROM "Learner".learner_activity_sources s
           LEFT JOIN curriculum.source_activities a ON a.id=s.source_catalog_activity_id AND a.deleted_at IS NULL
           LEFT JOIN curriculum.source_courses c ON c.id=a.source_course_id AND c.deleted_at IS NULL
@@ -133,9 +151,14 @@ def entries_for(owner):
         FROM canonical p
         ORDER BY p.reporting_month,p.reporting_started_at NULLS LAST,p.id''',
         [owner['id']])
-    result = current_records(owner, [{**decoded(record['payload'], {}), **{
-        field: decoded(record.get(field), [])
-        for field in ('ksbs', 'segments', 'sources', 'journal_routes', 'historical_components')}} for record in records])
+    canonical_records = []
+    for record in records:
+        payload = {**decoded(record['payload'], {}), **{
+            field: decoded(record.get(field), [])
+            for field in ('ksbs', 'segments', 'sources', 'journal_routes', 'historical_components')}}
+        payload['completed'] = counts_as_completed(payload)
+        canonical_records.append(payload)
+    result = current_records(owner, canonical_records)
     from learner_api import journal_sources
     if journal_sources.enabled():
         planned = journal_sources.planned_by_progress(owner['id'], query)
@@ -631,7 +654,7 @@ def recorded_course_items(courses, catalogue, records):
                 'position': definition.get('position') or 0,
                 'date': at.date().isoformat() if at else None,
                 'month': record.get('reporting_month'), 'date_source': 'consolidated_record',
-                'completed': record.get('completed', accepted) is True,
+                'completed': counts_as_completed(record),
                 'historical_completed': accepted,
                 'actual': recorded_seconds(record) / 3600 if accepted else 0,
                 'hours_mapped': accepted and any(p.get('actual_seconds') is not None for p in allocations(record)),
@@ -669,7 +692,7 @@ def metrics_from_records(records, monthly_targets):
     """
     counted = list(records)
     accepted = [item for item in counted if item.get('accepted') is True]
-    completed = [item for item in counted if item.get('completed', item.get('accepted')) is True]
+    completed = [item for item in counted if counts_as_completed(item)]
     def ratio(done, total):
         return {'completed': done, 'total': total,
                 'percent': round(done / total * 100, 2) if total else None,
@@ -764,6 +787,7 @@ def metrics_bulk(learner_ids):
     for payload in progress_rows:
         owner_id = int(payload.pop('owner_id'))
         payload.update(ksbs=[], segments=[], sources=[], historical_components=[])
+        payload['completed'] = counts_as_completed(payload)
         records_by_learner.setdefault(owner_id, []).append(payload)
         records_by_progress[int(payload['id'])] = payload
 
@@ -787,7 +811,7 @@ def metrics_bulk(learner_ids):
             c.source_course_title AS course_title,a.id AS catalogue_id,
             coalesce(nullif(s.curriculum_component_ref,''),a.curriculum_component_ref) AS component_ref,
             c.curriculum_module_ref AS module_ref,c.curriculum_group_ref AS group_ref,
-            a.source_activity_kind
+            a.source_activity_kind,s.activity_status,s.completed
             FROM "Learner".learner_activity_sources s
             LEFT JOIN curriculum.source_activities a
               ON a.id=s.source_catalog_activity_id AND a.deleted_at IS NULL
@@ -882,7 +906,7 @@ def overlay_subjects(payload, records, summarize):
             accepted = [r for r in matches if counts_as_actual(r)]
             recorded = [r for r in accepted if any(part.get('actual_seconds') is not None for part in allocations(r))]
             at = local_instant(latest.get('reporting_started_at') or latest.get('reporting_ended_at'))
-            item.update(completed=any(r.get('completed', r.get('accepted')) is True for r in matches),
+            item.update(completed=any(counts_as_completed(r) for r in matches),
                         historical_completed=bool(accepted),
                         actual=sum(recorded_seconds(r) for r in recorded) / 3600,
                         hours_mapped=bool(recorded), status=latest.get('activity_status'),

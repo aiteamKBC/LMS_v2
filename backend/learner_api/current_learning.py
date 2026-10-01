@@ -1,6 +1,7 @@
 """Read current LMS saves alongside consolidated records; never write or sync."""
 from datetime import datetime
 import json
+from math import isfinite
 from zoneinfo import ZoneInfo
 
 from old_otjh.repository import query
@@ -12,6 +13,35 @@ def instant(value):
     if isinstance(value, str):
         value = datetime.fromisoformat(value.replace('Z', '+00:00'))
     return value.astimezone(ZoneInfo('Europe/London')) if value else None
+
+
+def actual_time_seconds(value):
+    """Return saved reflection time as seconds without changing its source value.
+
+    Native reflection saves use decimal hours, while marking-queue and imported
+    records can contain an ``HH:MM`` or ``HH:MM:SS`` duration.  Both forms are
+    authoritative recorded time; invalid or empty values remain unavailable.
+    """
+    if value in (None, ''):
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        if ':' not in text:
+            hours = float(text)
+            return hours * 3600 if isfinite(hours) and hours >= 0 else None
+        parts = text.split(':')
+        if len(parts) not in {2, 3} or not parts[0].isdigit() or not parts[1].isdigit():
+            return None
+        hours = int(parts[0])
+        minutes = int(parts[1])
+        seconds = float(parts[2]) if len(parts) == 3 else 0
+        if not 0 <= minutes < 60 or not isfinite(seconds) or not 0 <= seconds < 60:
+            return None
+        return hours * 3600 + minutes * 60 + seconds
+    except (TypeError, ValueError):
+        return None
 
 
 def project_current(records, markings):
@@ -41,8 +71,9 @@ def project_current(records, markings):
         marking = markings.get(str(component))
         if p.get('component_type') == 'assignment':
             accepted = bool(marking and marking.get('status') in {'accepted', 'partial'})
-            if marking and marking.get('actual_time_hours') is not None:
-                seconds = float(marking['actual_time_hours']) * 3600
+            marked_seconds = actual_time_seconds(marking.get('actual_time_hours')) if marking else None
+            if marked_seconds is not None:
+                seconds = marked_seconds
         p.update(accepted=accepted, completed=accepted, actual_seconds=seconds,
                  reporting_month=at.strftime('%Y-%m'), reporting_started_at=at,
                  reporting_ended_at=at, activity_status='Completed' if accepted else 'Submitted')
@@ -118,7 +149,7 @@ def merge_submissions(records, submissions):
         result.append({'id': f"reflection:{s['id']}", 'component_title': s.get('activity_title'),
             'component_ref': s.get('component_ref'), 'module_title': s.get('module_title'),
             'kind': s['activity_type'], 'accepted': accepted, 'completed': accepted,
-            'actual_seconds': float(s['actual_time_hours']) * 3600 if s.get('actual_time_hours') is not None else None,
+            'actual_seconds': actual_time_seconds(s.get('actual_time_hours')),
             'reporting_month': at.strftime('%Y-%m'), 'reporting_started_at': at,
             'activity_status': s.get('status'), 'ksbs': codes, 'sources': [], 'segments': [],
             'source_payload': {'original_source_ref': f"reflection:{s['id']}"}})

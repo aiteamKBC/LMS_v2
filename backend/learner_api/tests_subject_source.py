@@ -127,6 +127,10 @@ class SubjectSourceTests(SimpleTestCase):
         self.assertEqual(len(live['groups']), 1)
         result = source.overlay_subjects(self.empty, live, {})
         self.assertTrue(all(row['completed'] for row in result['activities']))
+        identity_sql = cursor.execute.call_args.args[0]
+        self.assertIn('"Learner".source_lms_learner_aliases', identity_sql)
+        self.assertIn('enrolment."Created_users"', identity_sql)
+        self.assertNotIn('"Last_audit"', identity_sql)
 
     def test_missing_or_conflicting_alias_email_is_not_guessed(self):
         cursor = MagicMock()
