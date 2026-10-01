@@ -8,7 +8,7 @@ import styles from '../attendance.module.css';
 export type CatchupBookAction = () => Promise<LearnerCalendarEvent | null>;
 
 export default function CatchupBooking({ lecture, selectedKey, onSelect, onBooked, onBusyChange, disabled = false, standalone = false,
-  bookRef, onDraftChange }: {
+  bookRef, onDraftChange, reportId }: {
   lecture: MissedAttendanceSession;
   selectedKey: string;
   onSelect: (event: LearnerCalendarEvent | null) => void;
@@ -20,6 +20,8 @@ export default function CatchupBooking({ lecture, selectedKey, onSelect, onBooke
   bookRef?: MutableRefObject<CatchupBookAction | null>;
   /** Whether a bookable time is chosen, so the parent can enable its button. */
   onDraftChange?: (ready: boolean) => void;
+  /** The absence report being made up; a catch-up linked to another report is not offered. */
+  reportId?: number;
 }) {
   const learner = useMyLearner();
   const [events, setEvents] = useState<LearnerCalendarEvent[]>([]);
@@ -46,6 +48,8 @@ export default function CatchupBooking({ lecture, selectedKey, onSelect, onBooke
         : selectedHoliday ? `Catch-up sessions cannot be booked on ${selectedHoliday.title}.`
           : rules && !rules.coveredYears.includes(selectedDay.getFullYear()) ? 'Booking is not available for this year.' : '';
   const available = events.filter(event => event.source === 'catch-up'
+    // One catch-up makes up one lecture: hide bookings already linked to another absence.
+    && (!event.linkedReportId || event.linkedReportId === reportId)
     && ['scheduled', 'not-scheduled', 'in-progress'].includes(event.status)
     && event.scheduledDate && event.scheduledDate >= earliestDate && event.scheduledTime
     && new Date(`${event.scheduledDate}T${event.scheduledTime}`).getTime() > Date.now());
@@ -129,7 +133,7 @@ export default function CatchupBooking({ lecture, selectedKey, onSelect, onBooke
         {available.map(event => <option key={event.eventKey} value={event.eventKey}>{event.scheduledDate} at {event.scheduledTime} · {event.coachName || 'Your coach'}{event.status === 'not-scheduled' ? ' (Legacy pending request)' : ''}</option>)}
       </select>
     </label>}
-    {selected ? <p className={styles.bookingConfirmation}>{selected.scheduledDate} at {selected.scheduledTime} · {selected.durationMinutes} minutes{selected.status === 'not-scheduled' ? ' · Existing pending request' : ' · Booked'}</p> : <>
+    {loading ? null : selected ? <p className={styles.bookingConfirmation}>{selected.scheduledDate} at {selected.scheduledTime} · {selected.durationMinutes} minutes{selected.status === 'not-scheduled' ? ' · Existing pending request' : ' · Booked'}</p> : <>
       <p>Choose a date and one of your coach’s available times. The booking is confirmed immediately.</p>
       <div className={styles.bookingFields}>
         <label>Date<input aria-label="Catch-up date" aria-invalid={Boolean(dateRestriction)} type="date" min={earliestDate} value={date} disabled={busy || disabled} onChange={event => { setDate(event.target.value); setError(''); }} /></label>
