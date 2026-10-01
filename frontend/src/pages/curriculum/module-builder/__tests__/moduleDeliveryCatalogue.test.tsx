@@ -1,6 +1,6 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { createMemoryRouter, MemoryRouter, RouterProvider, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { CurriculumCohort, CurriculumGroup, CurriculumModule, CurriculumProgramme } from '@/lib/curriculumApi';
@@ -224,6 +224,11 @@ function deliveryRowFor(title: string, deliveryLabel: string) {
   return within(row);
 }
 
+function HistoryProbe() {
+  const location = useLocation();
+  return <output data-testid="history-location">{location.pathname}{location.search}</output>;
+}
+
 describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
   beforeEach(() => {
     updateCurriculumModule.mockClear();
@@ -365,6 +370,29 @@ describe('Module Builder delivery catalogue', { timeout: 15000 }, () => {
 
     expect(await screen.findByTitle('Back to week overview')).toBeInTheDocument();
     expect(screen.queryByText('Select a part on the rail to edit it.')).not.toBeInTheDocument();
+  });
+
+  it('returns to the module catalogue when the browser goes back from the builder', async () => {
+    const user = userEvent.setup();
+    window.history.replaceState({}, '', '/curriculum/module-builder');
+    const { default: ModuleBuilder } = await import('../page');
+    const router = createMemoryRouter([{
+      path: '*',
+      element: <><ModuleBuilder /><HistoryProbe /></>,
+    }], {
+      initialEntries: ['/curriculum/delivery', '/curriculum/module-builder'],
+      initialIndex: 1,
+    });
+    render(<RouterProvider router={router} />);
+
+    await screen.findByText('Data Foundations');
+    await user.click(cardFor('Data Foundations').getByRole('button', { name: /Edit components/ }));
+    await screen.findByText('Course structure');
+    expect(screen.getByTestId('history-location')).toHaveTextContent('/curriculum/module-builder');
+
+    await act(async () => { await router.navigate(-1); });
+    await waitFor(() => expect(screen.getByTestId('history-location')).toHaveTextContent('/curriculum/module-builder'));
+    expect(screen.getByTestId('history-location')).not.toHaveTextContent('/curriculum/delivery');
   });
 
   it('waits for a component added by the week rail before opening its settings', async () => {

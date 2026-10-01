@@ -104,6 +104,7 @@ from audit_api.last_audit_ledger_views import _connection as audit_connection
 from learner_api.student_activity_access import student_activity_available
 from learner_api import canonical_learning
 from learner_api.student_activity_data import read_audit_hour_totals_bulk, read_evidenced_ksb_counts_bulk
+from old_otjh.service import ServiceError
 from learner_api.attendance import (
     _summarize_attendance,
     combined_attendance_rows,
@@ -2687,7 +2688,7 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
                         'finalKsbTotal': ksb.get('total'),
                         'finalKsbPercent': ksb.get('percent'),
                     })
-            except (DatabaseError, ValueError) as exc:
+            except (DatabaseError, ValueError, ServiceError) as exc:
                 logger.warning("Could not read canonical coach metrics for learner %s: %s", profile_id, exc)
                 # Preserve partial-success semantics: one bad learner does not
                 # discard metrics already loaded for the rest of the caseload.
