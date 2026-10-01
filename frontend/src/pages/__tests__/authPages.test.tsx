@@ -183,6 +183,20 @@ describe('ForgotPasswordPage', () => {
     expect(await screen.findByText(message)).toBeInTheDocument();
   });
 
+  it('explains both links after sending and lets the person try another address', async () => {
+    apiForgotPassword.mockResolvedValue('If that address is registered, we have emailed it a link to reset or set your password.');
+    const user = userEvent.setup();
+    renderAt(<ForgotPasswordPage />, '/forgot-password');
+
+    await user.type(screen.getByLabelText(/email address/i), 'new.learner@kbc.test');
+    await user.click(screen.getByRole('button', { name: /send reset link/i }));
+
+    expect(await screen.findByRole('heading', { name: 'Check your email' })).toBeInTheDocument();
+    expect(screen.getByText(/New learner\? The set-password link opens your account/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Use a different email address' }));
+    expect(screen.getByRole('button', { name: /send reset link/i })).toBeInTheDocument();
+  });
+
   it('does not send a malformed address to the API', async () => {
     // The input is type="email" + required, so the browser's own constraint
     // validation blocks submit and the handler never runs. That is the desired
