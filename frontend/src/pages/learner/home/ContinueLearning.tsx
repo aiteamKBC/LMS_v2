@@ -8,9 +8,11 @@ import { learningHref, learningToday } from '../my-learning/subjectLearning';
 import { ReferenceIcon } from './ReferenceIcon';
 import styles from './studentHome.module.css';
 
-export function ContinueLearning({ kind, learnerId, enabled, week, loading, error, onRetry }: {
+export function ContinueLearning({ kind, learnerId, enabled, week, loading, error, onRetry, linkIdentity = true }: {
   kind: LearnerKind; learnerId: string; enabled: boolean; week: OverviewWeek | null;
   loading: boolean; error: string; onRetry: () => void;
+  /** Name the learner in the links (staff preview); false for a learner's own, id-free links. */
+  linkIdentity?: boolean;
 }) {
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
@@ -18,10 +20,12 @@ export function ContinueLearning({ kind, learnerId, enabled, week, loading, erro
   const today = learningToday();
   const current = !!week && week.weekStart <= today && week.weekEnd >= today;
   const modules = current && !error ? week.modules : [];
-  const catalogueHref = learningHref('catalogue', kind, learnerId);
+  const linkKind = linkIdentity ? kind : undefined;
+  const linkId = linkIdentity ? learnerId : undefined;
+  const catalogueHref = learningHref('catalogue', linkKind, linkId);
   // An explicit week prevents the learning workspace falling back to an older
   // unfinished week. The overview already groups this learner's scheduled subjects.
-  const moduleHref = (subject: string) => learningHref('catalogue', kind, learnerId, subject, week!.weekStart);
+  const moduleHref = (subject: string) => learningHref('catalogue', linkKind, linkId, subject, week!.weekStart);
   const content = <><ReferenceIcon name="graduate"/><span>Continue<br/>Learning</span><ArrowRight aria-hidden="true"/></>;
 
   // The destination retains the existing enrolment and start-date checks.

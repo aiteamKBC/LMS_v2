@@ -8,8 +8,10 @@ const numeric = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 2 });
 const hours = (value: number | null | undefined) => value == null ? '—' : `${numeric.format(value)} h`;
 const day = (value: string) => new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${value}T12:00:00Z`));
 
-export function ProgressCard({ data, loading, error, refresh, dashboardHref }: {
+export function ProgressCard({ data, loading, error, refresh, dashboardHref, link = href => href }: {
   data?: HomeProgress; loading: boolean; error: string; refresh: () => void; dashboardHref: string;
+  /** Names the learner in each row's URL (see homeData.withLearner). */
+  link?: (href: string) => string;
 }) {
   const progress = error ? undefined : data;
   const otjh = progress?.otjh;
@@ -45,7 +47,7 @@ export function ProgressCard({ data, loading, error, refresh, dashboardHref }: {
           ? progress.period.start > progress.period.end ? <>Starts {day(progress.period.start)}</> : <>{day(progress.period.start)} – {day(progress.period.end)}</>
           : progress ? 'Start date unavailable' : 'Start date to this week'}</p>
         <ul>{rows.map((row, index) => <li key={row.label}>
-          <Link to={row.href}><span className={styles.progressIcon}><row.icon aria-hidden="true"/></span>
+          <Link to={link(row.href)}><span className={styles.progressIcon}><row.icon aria-hidden="true"/></span>
             <span><strong>{count(row.value)}</strong> {row.label}{index === 3 && <> <small>Whole programme</small></>}</span>
           </Link>
         </li>)}</ul>
