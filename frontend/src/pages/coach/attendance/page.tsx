@@ -5,6 +5,7 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
+import { fetchCurriculumGroups, type CurriculumGroup } from '@/lib/curriculumApi';
 import { useListQueryState } from '@/hooks/useListQueryState';
 import { roleNavMap } from '@/mocks/navigation';
 import styles from './attendanceOverview.module.css';
@@ -44,6 +45,25 @@ export default function CoachAttendance() {
   const [days, setDays] = useState<DayDraft[]>([]);
   const page = Number(query.page);
   const [notice, setNotice] = useState<string | null>(null);
+  const [curriculumGroups, setCurriculumGroups] = useState<CurriculumGroup[]>([]);
+  const [groupsLoading, setGroupsLoading] = useState(true);
+  const [groupsError, setGroupsError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!coach.isInitialized || !coach.email) return;
+    const controller = new AbortController();
+    setGroupsLoading(true);
+    setGroupsError(null);
+    setCurriculumGroups([]);
+    fetchCurriculumGroups(controller.signal).then(rows => {
+      if (!controller.signal.aborted) setCurriculumGroups(rows);
+    }).catch(reason => {
+      if (!controller.signal.aborted) setGroupsError(reason instanceof Error ? reason.message : 'Unable to load programme groups.');
+    }).finally(() => {
+      if (!controller.signal.aborted) setGroupsLoading(false);
+    });
+    return () => controller.abort();
+  }, [coach.isInitialized, coach.email]);
 
   useEffect(() => {
     setGroupId(String(query.group));
@@ -51,7 +71,13 @@ export default function CoachAttendance() {
   }, [query.group, query.programme]);
 
   const programmes = useMemo(() => [...new Map(learners.filter(row => row.programmeId).map(row => [String(row.programmeId), row.programme])).entries()].sort((a, b) => a[1].localeCompare(b[1])), [learners]);
-  const groups = useMemo(() => [...new Map(learners.filter(row => String(row.programmeId) === programmeId && row.groupId).map(row => [String(row.groupId), display(row.groupName || row.group)])).entries()].sort((a, b) => a[1].localeCompare(b[1])), [learners, programmeId]);
+  const groups = useMemo(() => {
+    const options = new Map(learners.filter(row => String(row.programmeId) === programmeId && row.groupId).map(row => [String(row.groupId), display(row.groupName || row.group)]));
+    for (const row of curriculumGroups) {
+      if (String(row.programmeId) === programmeId && row.id && !['archived', 'deleted'].includes(row.status?.toLowerCase())) options.set(String(row.id), display(row.name));
+    }
+    return [...options.entries()].sort((a, b) => a[1].localeCompare(b[1]));
+  }, [learners, curriculumGroups, programmeId]);
   const statuses = useMemo(() => [...new Set(learners.map(row => display(row.programStatus)).filter(value => value !== '--'))].sort(), [learners]);
   const loadedLearners = useMemo(() => loaded ? learners.filter(row => String(row.groupId) === loaded.groupId && (!loaded.programmeId || String(row.programmeId) === loaded.programmeId)) : [], [learners, loaded]);
   const visible = useMemo(() => loadedLearners.filter(row => programStatus === 'all' || (programStatus === 'active' ? display(row.programStatus).toLowerCase() === 'active' : display(row.programStatus) === programStatus)), [loadedLearners, programStatus]);
@@ -63,6 +89,8 @@ export default function CoachAttendance() {
 
   return <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Attendance" pageSubtitle="Bulk and individual attendance" userName={coach.name} userRole="Progress Coach"><main className={styles.page}>
     <section className={styles.card} aria-labelledby="bulk-title"><CardHeading id="bulk-title" icon="ri-group-line" title="Bulk attendance" copy="Load learners by their assigned group and programme." />
+      {groupsLoading && <p role="status">Loading programme groups…</p>}
+      {groupsError && <p role="alert">Unable to load programme groups: {groupsError}</p>}
       <div className={styles.formRow}><Field label="Programme"><select aria-label="Programme" value={programmeId} onChange={event => { setProgrammeId(event.target.value); setGroupId(''); }} disabled={loading}><option value="">Select programme</option>{programmes.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></Field><Field label="Group"><select aria-label="Group" value={groupId} onChange={event => setGroupId(event.target.value)} disabled={!programmeId}><option value="">Select group</option>{groups.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></Field><button className={styles.primary} type="button" onClick={loadStudents} disabled={!programmeId || !groupId}>Load students</button></div>
     </section>
     <section className={styles.card} aria-labelledby="edit-title"><CardHeading id="edit-title" icon="ri-calendar-edit-line" title="Attendance edit" copy="Prepare one or more days for the selected learners." />
