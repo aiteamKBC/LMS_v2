@@ -258,7 +258,8 @@ export default function AttendancePage() {
         <p className={styles.catchupLectureTitle}>{catchup.title} · {catchup.date}</p>
         <CatchupBooking key={catchup.id} lecture={{ ...catchup, status: 'absent', dateIso: catchup.date,
           sessionType: 'live_session', coach: catchup.coach || '' }} selectedKey={catchupBooking?.eventKey || ''}
-          onSelect={selectCatchupBooking} onBooked={booking => saveCatchup(booking)} onBusyChange={setBookingBusy} standalone />
+          onSelect={selectCatchupBooking} onBooked={booking => saveCatchup(booking)} onBusyChange={setBookingBusy} standalone
+          reportId={catchup.absenceReport.id} />
         {attendError && <p role="alert">{attendError}</p>}
         <button type="button" className={styles.catchupDone} disabled={bookingBusy || !catchupBooking} onClick={() => void saveCatchup()}>Link catch-up to this absence</button>
         <button type="button" className={styles.catchupDone} disabled={bookingBusy} onClick={() => { setCatchup(null); read.refresh(); }}>Close</button>

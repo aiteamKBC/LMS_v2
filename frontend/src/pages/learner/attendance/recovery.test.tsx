@@ -232,6 +232,14 @@ describe('absence recovery choice', () => {
     expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
   });
 
+  it('does not offer a catch-up that already makes up another lecture', async () => {
+    const spare = { ...booking, id: 'catch-up:12:2', eventKey: 'catch-up:12:2', scheduledTime: '12:00' };
+    vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue(calendar([{ ...booking, linkedReportId: 40 }, spare]));
+    await openForm(); await chooseCatchup();
+    const options = [...(screen.getByLabelText('Catch-up booking') as HTMLSelectElement).options].map(option => option.value);
+    expect(options).toEqual(['', spare.eventKey]);
+  });
+
   it('clears the chosen recovery plan when a different lecture is selected', async () => {
     vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue(calendar([booking]));
     await openForm(); await chooseCatchup();
