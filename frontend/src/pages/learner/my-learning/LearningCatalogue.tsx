@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowRight, BookOpen, CalendarDays, CheckCircle2, ClipboardList, Clock3, Headphones, LayoutGrid, List, Map, Search, Trophy } from 'lucide-react';
 import type { Subject, UnifiedLearningSummary } from './SubjectWorkspace';
@@ -111,7 +111,7 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
           { label: 'Learning activities', value: total, caption: 'Activities and resources', icon: ClipboardList, tone: 'purple' },
           { label: 'Completed activities', value: done, caption: 'Keep going!', icon: CheckCircle2, tone: 'green' }].map(({ label, value, caption, icon: Icon, tone }) =>
           <div className={styles.stat} key={label}><span className={styles.statIcon} data-tone={tone}><Icon size={22} strokeWidth={1.9} /></span><div><strong>{value}</strong><p>{label}</p><small>{caption}</small></div></div>)}
-        <div className={styles.stat}><div className={styles.progressRing} role="progressbar" aria-label="Overall learning progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent ?? undefined} aria-valuetext={percent == null ? 'Unavailable' : `${percent}%`} style={{ background: `conic-gradient(var(--learner-purple, #673ab7) ${percent ?? 0}%, #edf0f5 0)` }}><span /></div><div><strong>{percent == null ? '—' : `${Math.round(percent)}%`}</strong><p>Overall progress</p><small>{done} of {total} activities completed</small></div></div>
+        <div className={styles.stat}><div key={percent ?? 0} className={`${styles.progressRing} kbc-animated-conic-ring`} role="progressbar" aria-label="Overall learning progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent ?? undefined} aria-valuetext={percent == null ? 'Unavailable' : `${percent}%`} style={{ '--kbc-ring-target': `${percent ?? 0}%` } as CSSProperties}><span /></div><div><strong>{percent == null ? '—' : `${Math.round(percent)}%`}</strong><p>Overall progress</p><small>{done} of {total} activities completed</small></div></div>
       </div>
       <div className={styles.toolbar}>
         <div className={styles.sourceTabs} role="tablist" aria-label="Module source">

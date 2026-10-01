@@ -359,7 +359,7 @@
 .statIcon { display: grid; flex: 0 0 auto; place-items: center; width: 48px; height: 52px; border-radius: 13px; background: #edf1f6; color: var(--learner-navy, #182d48); }
 .statIcon[data-tone='purple'] { background: #f0eaf8; color: var(--learner-purple, #673ab7); }
 .statIcon[data-tone='green'] { background: #e5f1eb; color: #167853; }
-.stat .progressRing { display: grid; flex: 0 0 auto; place-items: center; width: 65px; height: 65px; border-radius: 50%; }
+.stat .progressRing { display: grid; flex: 0 0 auto; place-items: center; width: 65px; height: 65px; border-radius: 50%; background: conic-gradient(var(--learner-purple, #673ab7) var(--kbc-ring-progress), #edf0f5 0); }
 .progressRing span { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 50%; background: #fff; color: var(--learner-navy, #182d48); font-size: 15px; font-weight: 750; }
 .toolbar { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(145px, .65fr) minmax(145px, .65fr) auto; align-items: end; gap: 12px; margin: 0 0 22px; }
 .sourceTabs { grid-column: 1 / -1; display: inline-flex; width: fit-content; padding: 3px; border: 1px solid #ded7ef; border-radius: 10px; background: #f5f1fc; }

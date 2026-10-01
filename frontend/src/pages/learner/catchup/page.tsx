@@ -1,4 +1,5 @@
 import { WorkspaceMetricContent } from '@/components/ui/WorkspaceMetricContent';
+import { AnimatedProgressCircle } from '@/components/ui/AnimatedProgressCircle';
 import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -64,7 +65,7 @@ export default function CatchUpPage() {
                 <div className="relative w-[88px] h-[88px] shrink-0 hidden sm:block">
                   <svg width="88" height="88" viewBox="0 0 100 100" className="-rotate-90">
                     <circle cx="50" cy="50" r="42" fill="none" stroke="oklch(var(--primary-700) / 0.5)" strokeWidth="8" />
-                    <circle cx="50" cy="50" r="42" fill="none"
+                    <AnimatedProgressCircle cx="50" cy="50" r="42" fill="none"
                       stroke={catchUpPct >= 75 ? 'oklch(var(--accent-400))' : catchUpPct >= 50 ? 'var(--learner-warning, #fbbf24)' : 'var(--learner-danger, #f87171)'}
                       strokeWidth="8" strokeLinecap="round"
                       strokeDasharray={donutCircumference} strokeDashoffset={donutOffset}

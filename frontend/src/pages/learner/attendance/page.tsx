@@ -272,8 +272,8 @@ export default function AttendancePage() {
 }
 
 function Stat({ label, value, total, icon, tone }: { label: string; value: number; total: number; icon: string; tone: 'total' | 'attended' | 'absent' | 'covered' }) {
-  return <div className={styles.metric} data-tone={tone} style={{ '--metric-progress': `${total ? value / total * 100 : 0}%` } as CSSProperties}>
-    <span className={styles.metricRing} aria-hidden="true"><span><AppIcon className={icon} /></span></span>
+  return <div className={styles.metric} data-tone={tone}>
+    <span key={`${value}:${total}`} className={`${styles.metricRing} kbc-animated-conic-ring`} aria-hidden="true" style={{ '--kbc-ring-target': `${total ? value / total * 100 : 0}%` } as CSSProperties}><span><AppIcon className={icon} /></span></span>
     <div><p className={styles.value}>{value}</p><p className={styles.metricLabel}>{label}</p></div>
   </div>;
 }

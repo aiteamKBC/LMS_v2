@@ -321,7 +321,7 @@
   flex: 0 0 6.25rem;
   border-radius: 50%;
   place-items: center;
-  background: conic-gradient(from -90deg, var(--metric-fill) var(--metric-progress), var(--metric-track) 0);
+  background: conic-gradient(from -90deg, var(--metric-fill) var(--kbc-ring-progress), var(--metric-track) 0);
 }
 
 .metricRing::after {

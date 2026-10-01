@@ -29,7 +29,7 @@ export function ProgressCard({ data, loading, error, refresh, dashboardHref, lin
     <div className={styles.cardHeading}><h2 id="home-progress-heading"><BarChart3 aria-hidden="true"/>My Progress</h2><Link to={dashboardHref} aria-label="View all progress">View all</Link></div>
     <div className={styles.progressBody}>
       <div className={styles.progressSummary}>
-        <div className={styles.ring} style={{ '--progress': `${actualArc}%`, '--submitted': `${actualArc + submittedArc}%` } as CSSProperties}
+        <div key={`${actualArc}:${submittedArc}`} className={`${styles.ring} kbc-animated-conic-ring`} style={{ '--kbc-ring-target': `${actualArc}%`, '--kbc-ring-submitted-target': `${actualArc + submittedArc}%` } as CSSProperties}
           role={percent == null ? undefined : 'progressbar'} aria-label="OTJ progress"
           aria-valuenow={percent == null ? undefined : Math.min(100, percent)} aria-valuemin={0} aria-valuemax={100}
           aria-valuetext={`Completed (Actual): ${hours(otjh?.actual)}; Submitted: ${hours(otjh?.submitted)}; Total Planned: ${hours(otjh?.planned)}`}>
