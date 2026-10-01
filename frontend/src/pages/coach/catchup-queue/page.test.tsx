@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { CoachCalendarEvent } from '../shared/calendarEvents';
@@ -38,6 +38,9 @@ function catchup(id: string, overrides: Partial<CoachCalendarEvent> = {}): Coach
 }
 
 beforeEach(() => {
+  // The queue now opens on the current month; pin it to the fixtures' month.
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(new Date('2026-09-14T10:00:00'));
   fetchEvents.mockReset();
   coachFetchMock.mockReset();
   fetchEvents.mockResolvedValue({ events: [
@@ -47,6 +50,7 @@ beforeEach(() => {
     catchup('cancelled', { status: 'cancelled' }),
     catchup('template', { status: 'not-scheduled' }),
     catchup('review', { source: 'progress-review' }),
+    catchup('october', { status: 'completed', scheduledDate: '2026-10-05' }),
   ] });
   coachFetchMock.mockResolvedValue(new Response(JSON.stringify({ items: [{
     id: 'absence-1',
@@ -57,7 +61,7 @@ beforeEach(() => {
   }] }), { status: 200, headers: { 'Content-Type': 'application/json' } }));
 });
 
-afterEach(cleanup);
+afterEach(() => { cleanup(); vi.useRealTimers(); });
 
 describe('coach catch-up queue', () => {
   it('shows booked calendar catch-ups, enriches linked lectures, and excludes cancelled or unbooked events', async () => {
@@ -85,5 +89,28 @@ describe('coach catch-up queue', () => {
 
     expect(await screen.findByText('Learner scheduled')).toBeVisible();
     expect(screen.getByRole('status')).toHaveTextContent('Calendar bookings are still shown.');
+  });
+
+  it('filters the queue by month and status with MCM tabs, calendar and stats', async () => {
+    render(<CoachCatchupQueue />);
+    expect(await screen.findByText('Learner scheduled')).toBeVisible();
+    expect(screen.queryByText('Learner october')).toBeNull();
+
+    const tabs = within(screen.getByRole('navigation', { name: 'Filter catch-up sessions by status' }));
+    expect(tabs.getAllByRole('button').map(button => button.textContent)).toEqual(['All3', 'Scheduled1', 'In Progress1', 'Completed1']);
+    const stats = within(screen.getByRole('region', { name: 'This month' }));
+    expect(stats.getAllByRole('meter').map(meter => meter.getAttribute('aria-label'))).toEqual(['Scheduled share', 'In progress share', 'Completed share']);
+    expect(stats.getByRole('meter', { name: 'Scheduled share' })).toHaveAttribute('aria-valuenow', '33');
+    expect(screen.getByRole('region', { name: 'Meeting calendar for September 2026' })).toBeInTheDocument();
+
+    fireEvent.click(tabs.getByRole('button', { name: 'Completed1' }));
+    expect(screen.getByText('Learner completed')).toBeVisible();
+    expect(screen.queryByText('Learner scheduled')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
+    expect(screen.getByText('Learner october')).toBeVisible();
+    expect(screen.queryByText('Learner completed')).toBeNull();
+    expect(tabs.getByRole('button', { name: 'All1' })).toHaveAttribute('aria-pressed', 'true');
+    expect(fetchEvents).toHaveBeenCalledTimes(1);
   });
 });

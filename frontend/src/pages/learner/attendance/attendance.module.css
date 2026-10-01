@@ -100,7 +100,7 @@
 .metric[data-tone="absent"] { --metric-accent: #b93737; }
 .metric[data-tone="covered"] { --metric-accent: #673ab7; }
 .metric > div { min-width: 0; }
-.metricRing { display: grid; place-items: center; flex: 0 0 auto; width: clamp(30px, 4.6cqi, 48px); aspect-ratio: 1; padding: 5px; border-radius: 50%; background: conic-gradient(var(--metric-accent) var(--metric-progress), color-mix(in srgb, var(--metric-accent) 18%, var(--metric-base)) 0); }
+.metricRing { display: grid; place-items: center; flex: 0 0 auto; width: clamp(30px, 4.6cqi, 48px); aspect-ratio: 1; padding: 5px; border-radius: 50%; background: conic-gradient(var(--metric-accent) var(--kbc-ring-progress), color-mix(in srgb, var(--metric-accent) 18%, var(--metric-base)) 0); }
 .metricRing > span { display: grid; place-items: center; width: 100%; height: 100%; border-radius: 50%; background: var(--metric-base); color: var(--metric-accent); }
 .metricRing svg { width: 17px; height: 17px; }
 .value { color: var(--metric-accent); font-size: 22px; font-weight: 650; line-height: 1.1; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }

@@ -15,6 +15,7 @@
 // ============================================================================
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { useAuth } from '@/hooks/useAuth';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { useListQueryState } from '@/hooks/useListQueryState';
@@ -456,10 +457,13 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
   return (
     <>
       <section className={`${styles.page} ${embedded ? styles.embedded : ''}`} aria-label="Coach learner caseload">
-        <header className="flex flex-wrap items-center justify-between gap-4">
-          <div className={styles.title}>
-            <h1>{embedded ? 'All Learners' : 'My Learners'}</h1>
-            {!embedded ? <p>Monitor learner progress and engagement</p> : null}
+        <header className={`${styles.pageHeader} flex flex-wrap items-center justify-between gap-4`}>
+          <div className={styles.titleGroup}>
+            {embedded ? <span className={styles.titleIcon} aria-hidden="true"><AppIcon name="ri-group-line" /></span> : null}
+            <div className={styles.title}>
+              <h1>{embedded ? 'All Learners' : 'My Learners'}</h1>
+              <p>{embedded ? "Manage and monitor your learners' progress" : 'Monitor learner progress and engagement'}</p>
+            </div>
           </div>
           <LearnersHeaderActions
             selectionMode={selectionMode}

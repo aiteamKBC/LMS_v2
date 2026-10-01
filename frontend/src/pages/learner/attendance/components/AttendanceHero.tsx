@@ -1,4 +1,5 @@
 import { ATTENDANCE_STATS } from '@/mocks/attendance';
+import { AnimatedProgressCircle } from '@/components/ui/AnimatedProgressCircle';
 import { Link } from 'react-router-dom';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
 
@@ -68,7 +69,7 @@ export default function AttendanceHero({ missedCount, attendedCount, onReportAbs
           <div className="relative">
             <svg width="100" height="100" className="-rotate-90">
               <circle cx="50" cy="50" r={r} fill="none" stroke="rgba(255,255,255,0.1)" strokeWidth="8" />
-              <circle cx="50" cy="50" r={r} fill="none" stroke={donutColor} strokeWidth="8" strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={offset} className="transition-all duration-700 ease-out" />
+              <AnimatedProgressCircle cx="50" cy="50" r={r} fill="none" stroke={donutColor} strokeWidth="8" strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={offset} />
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center">
               <span className="text-xl font-heading font-bold text-primary-800">{s.currentRate}%</span>

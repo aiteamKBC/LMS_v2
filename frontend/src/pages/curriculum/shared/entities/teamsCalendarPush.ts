@@ -15,10 +15,11 @@
 // other screen shows.
 // ============================================================================
 
-import { fetchModuleSessionPlan, updateTeamsMeetingSchedule, zonedNaiveToUtcIso } from '../../module-builder/moduleAuthoringData';
+import { fetchModuleSessionPlan, loadModuleStructure, updateTeamsMeetingSchedule, zonedNaiveToUtcIso } from '../../module-builder/moduleAuthoringData';
 import type { TeamsUpdateOutcome, UpdatedCalendar } from '../../teams-meetings/creationResult';
 import { fetchCurriculumTeamsMeetingSummaries } from '@/lib/curriculumApi';
 import { normalizedClock } from '../../teams-meetings/calendarTime';
+import { liveSessionPlan } from './liveSessionMeetingScope';
 
 /** The group's own hour, when a series has none of its own to keep. */
 const FALLBACK_START_TIME = '09:00';
@@ -70,12 +71,17 @@ export async function pushModulePlanToTeams({
   const catalogueId = String(moduleCatalogueId || '').trim();
   if (!catalogueId) throw new Error('This module has no catalogue id to plan from.');
 
-  const [plan, summaries] = await Promise.all([
+  // The module's weeks are read with the plan, and a failure to read them
+  // stops the push: they are what says which weeks the module calendar runs.
+  // Without them every planned date would be sent -- including a week delivered
+  // by its own additional meeting, whose link the series would then overwrite.
+  const [plan, summaries, module] = await Promise.all([
     fetchModuleSessionPlan(catalogueId, weeks),
     fetchCurriculumTeamsMeetingSummaries(undefined, { moduleCatalogueIds: [catalogueId], skipCache: true }),
+    loadModuleStructure(catalogueId, { skipCache: true }),
   ]);
 
-  const planned = (plan?.sessions || []).filter(session => String(session?.date || '').trim());
+  const planned = (plan ? liveSessionPlan(module, plan) : []).filter(session => String(session?.date || '').trim());
   if (!planned.length) throw new Error('This module has no planned session dates to send.');
 
   const summary = summaries.find(item => String(item.moduleCatalogueId || '').trim() === catalogueId);

@@ -120,12 +120,15 @@ export function useCoachLearnerCaseFileData(args: {
       let aptemActivity: StudentActivityResponse | null = null;
       if (resolvedEnrolmentId) {
         try {
-          const detailResult = await fetchAnyLearnerDetail(resolvedEnrolmentId, resolvedKind);
+          // Detail and canonical metrics are independent reads. Loading them
+          // together prevents a slow historical-activity request from holding
+          // the profile's Overall/OTJH/KSB figures behind unrelated work.
+          const [detailResult, metricsResult] = await Promise.all([
+            fetchAnyLearnerDetail(resolvedEnrolmentId, resolvedKind),
+            fetchCaseFileMetrics(resolvedKind, resolvedEnrolmentId),
+          ]);
           detail = detailResult.detail;
-          if (detail.studentActivityAvailable) {
-            aptemActivity = await fetchCaseFileStudentActivity(resolvedKind, resolvedEnrolmentId).catch(() => null);
-          }
-          learnerMetrics = await fetchCaseFileMetrics(resolvedKind, resolvedEnrolmentId);
+          learnerMetrics = metricsResult;
           const initialData = buildCaseFileData({
             learnerId: shell.identity.learnerId,
             enrolmentId: resolvedEnrolmentId,
@@ -144,6 +147,9 @@ export function useCoachLearnerCaseFileData(args: {
           if (!cancelled && initialData) {
             setData(initialData);
             setLoading(false);
+          }
+          if (detail.studentActivityAvailable) {
+            aptemActivity = await fetchCaseFileStudentActivity(resolvedKind, resolvedEnrolmentId).catch(() => null);
           }
         } catch (loadErr) {
           detailError = loadErr instanceof Error ? loadErr.message : 'Could not load learner details.';

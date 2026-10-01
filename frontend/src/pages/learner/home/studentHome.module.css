@@ -129,7 +129,7 @@
 .cardHeading>a { font-size: clamp(12px, .85vw, 16px); text-decoration: underline; white-space: nowrap; padding: 6px 8px; border-radius: 6px; }
 .progressBody { display: grid; grid-template-columns: 46% 54%; margin-top: 16px; }
 .progressSummary { text-align: center; padding-right: 15px; border-right: 1px solid #eee8ee; }
-.ring { width: clamp(80px, 7vw, 134px); aspect-ratio: 1; margin: 0 auto 8px; background: conic-gradient(#c7a451 0 var(--progress), #825482 var(--progress) var(--submitted), #e9e7e8 var(--submitted) 100%); border-radius: 50%; display: grid; place-items: center; }
+.ring { width: clamp(80px, 7vw, 134px); aspect-ratio: 1; margin: 0 auto 8px; background: conic-gradient(#c7a451 0 var(--kbc-ring-progress), #825482 var(--kbc-ring-progress) var(--kbc-ring-submitted), #e9e7e8 var(--kbc-ring-submitted) 100%); border-radius: 50%; display: grid; place-items: center; }
 .ring>span { display: grid; place-items: center; width: 83%; aspect-ratio: 1; border-radius: 50%; background: #fff; font: 600 clamp(20px, 1.55vw, 28px)/1 Arial, sans-serif; font-variant-numeric: lining-nums tabular-nums; letter-spacing: -.03em; white-space: nowrap; }
 .ring small { margin-left: .08em; font-size: .55em; font-weight: 500; letter-spacing: 0; }
 .progressSummary strong { font-size: clamp(12px, .9vw, 17px); }

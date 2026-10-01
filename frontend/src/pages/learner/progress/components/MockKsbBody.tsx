@@ -1,6 +1,7 @@
 import { useState, useMemo, useRef, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { AnimatedProgressCircle } from '@/components/ui/AnimatedProgressCircle';
 import { LEARNER_PROFILE } from '@/mocks/learner-profile';
 
 type KSBStatus = 'Validated' | 'Evidenced' | 'Applied' | 'Not Started' | 'Pending';
@@ -103,7 +104,7 @@ function DonutRing({ pct, size = 64, stroke = 6, color, trackClass = 'text-backg
   return (
     <svg width={size} height={size} className="shrink-0 -rotate-90">
       <circle cx={size / 2} cy={size / 2} r={r} fill="none" className={trackClass} strokeWidth={stroke} />
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" className={`${colorMap[color] || colorMap.primary} transition-all duration-700 ease-out`} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={offset} />
+      <AnimatedProgressCircle cx={size / 2} cy={size / 2} r={r} fill="none" className={colorMap[color] || colorMap.primary} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={offset} />
     </svg>
   );
 }

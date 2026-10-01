@@ -52,10 +52,12 @@ class AttachmentTests(unittest.TestCase):
             curriculum_read_scope=lambda **kwargs: nullcontext(),
             cached_curriculum_value=lambda _key, factory, **kwargs: factory(),
             request_bypasses_curriculum_cache=lambda _request: False,
-            JsonResponse=lambda data: data, json_error=lambda message, **kwargs: {'error': message, **kwargs})
+            JsonResponse=lambda data: data, json_error=lambda message, **kwargs: {'error': message, **kwargs},
+            LIVE_SESSION_MEETING_SCOPE_KEY='teamsMeetingScope', LIVE_SESSION_MEETING_SCOPES=('main', 'additional'))
         names = {'clean_str', 'parse_int', 'parse_graph_datetime', 'utc_iso_value',
                  'live_session_row_to_component_settings', 'live_occurrence_component_settings',
                  'occurrence_local_start', 'occurrence_local_date',
+                 'live_session_booked_on_module_calendar', 'module_has_booked_series', 'live_session_meeting_scope',
                  'attach_teams_meeting_to_module_weeks', 'curriculum_module_teams_meeting_restore'}
         tree = ast.parse(Path(__file__).with_name('views.py').read_text(encoding='utf-8-sig'))
         nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
@@ -196,6 +198,42 @@ class AttachmentTests(unittest.TestCase):
         # The second falls through to the date its own week is planned for.
         self.assertEqual(settings['COMP-1']['teamsOccurrenceId'], 'OCC-1')
         self.assertEqual(settings['COMP-1']['sessionDate'], '2026-10-30')
+
+    def attach(self):
+        self.n['attach_teams_meeting_to_module_weeks'](
+            'MOD-1', self.series, {'sessionTimeZone': 'Africa/Cairo'}, self.occurrences,
+        )
+        return {component_id: write['settings_json'] for component_id, write in self.writes}
+
+    def test_a_week_added_after_the_calendar_exists_is_not_booked_until_it_is_chosen(self):
+        """The series must not take a week nobody gave it, or an additional meeting there loses its link."""
+        self.components[0]['settings_json'].update(teamsOccurrenceId='OCC-0', teamsSessionNumber=1,
+                                                   teamsLiveSessionId='LIVE-1')
+        settings = self.attach()
+        self.assertEqual(settings['COMP-0']['teamsOccurrenceId'], 'OCC-0')
+        self.assertNotIn('COMP-1', settings)
+
+    def test_a_week_chosen_for_the_module_calendar_is_booked(self):
+        self.components[0]['settings_json'].update(teamsOccurrenceId='OCC-0', teamsSessionNumber=1,
+                                                   teamsLiveSessionId='LIVE-1')
+        self.components[1]['settings_json']['teamsMeetingScope'] = 'main'
+        settings = self.attach()
+        self.assertEqual(settings['COMP-1']['teamsOccurrenceId'], 'OCC-1')
+
+    def test_a_week_reserved_for_an_additional_meeting_is_never_handed_the_series(self):
+        """Even on the very first Create, before the additional meeting itself is booked."""
+        self.components[1]['settings_json']['teamsMeetingScope'] = 'additional'
+        settings = self.attach()
+        self.assertEqual(settings['COMP-0']['teamsOccurrenceId'], 'OCC-0')
+        self.assertNotIn('COMP-1', settings)
+
+    def test_a_held_additional_meeting_keeps_its_own_link(self):
+        extra = 'https://teams.microsoft.com/meet/extra'
+        self.components[1]['settings_json'].update(extraTeamsMeetingUrl=extra, teamsMeetingScope='additional')
+        settings = self.attach()
+        self.assertEqual(settings['COMP-1']['liveSessionUrl'], extra)
+        self.assertEqual(settings['COMP-1']['teamsMeetingUrl'], extra)
+        self.assertNotIn('teamsOccurrenceId', settings['COMP-1'])
 
     def test_moved_occurrence_carries_its_new_date_not_only_its_new_instant(self):
         """A rescheduled session's date follows the occurrence Microsoft holds.

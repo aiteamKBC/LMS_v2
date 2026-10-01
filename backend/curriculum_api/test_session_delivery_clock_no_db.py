@@ -38,6 +38,7 @@ class SessionDeliveryClockTests(unittest.TestCase):
             'apply_module_session_plan_to_weeks', 'build_sessions_from_authoring_modules',
             'module_expected_teams_occurrence_keys', 'authoring_session_links_by_catalogue',
             'curriculum_module_session_plan',
+            'live_session_booked_on_module_calendar', 'module_has_booked_series', 'live_session_meeting_scope',
         }
         tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8-sig'))
         nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
@@ -81,6 +82,7 @@ class SessionDeliveryClockTests(unittest.TestCase):
             'module_stored_week_count': lambda module: 2,
             'fetch_group_row': Mock(return_value={'session_start_time': '09:00', 'session_end_time': '11:00'}),
             'LIVE_SESSION_TYPE_SQL': "type = 'live_session'", 'authoring_fetch_all': self.fetch,
+            'LIVE_SESSION_MEETING_SCOPE_KEY': 'teamsMeetingScope', 'LIVE_SESSION_MEETING_SCOPES': ('main', 'additional'),
         }
         exec(self.code, self.n)
 
@@ -170,10 +172,22 @@ class SessionDeliveryClockTests(unittest.TestCase):
 
     def test_session_list_and_verdict_keep_the_confirmed_booking(self):
         self.weeks[0]['components'][0]['settings'].update(teamsLiveSessionId='LIVE-1', teamsSessionNumber=1)
+        # Taken by the series but not (yet) held by Microsoft: the attach walk
+        # records every week it takes as the module calendar's.
+        self.weeks[1]['components'][0]['settings']['teamsMeetingScope'] = 'main'
         sessions = self.n['build_sessions_from_authoring_modules']([self.module])
         keys, _ = self.n['module_expected_teams_occurrence_keys'](self.module, holidays=[])
         self.assertEqual((sessions[0]['startTime'], sessions[0]['endTime']), ('12:00', '13:00'))
         self.assertEqual(keys, ['2026-10-23T11:00', '2026-10-30T09:00'])
+
+    def test_verdict_leaves_out_a_week_given_to_no_calendar_or_to_an_additional_meeting(self):
+        """A week added after the calendar exists is not expected on it until someone gives it to it."""
+        self.weeks[0]['components'][0]['settings'].update(teamsLiveSessionId='LIVE-1', teamsSessionNumber=1)
+        keys, _ = self.n['module_expected_teams_occurrence_keys'](self.module, holidays=[])
+        self.assertEqual(keys, ['2026-10-23T11:00'])
+        self.weeks[1]['components'][0]['settings']['teamsMeetingScope'] = 'additional'
+        keys, _ = self.n['module_expected_teams_occurrence_keys'](self.module, holidays=[])
+        self.assertEqual(keys, ['2026-10-23T11:00'])
 
     def test_cairo_booking_keeps_its_zone_in_the_session_list_and_sync_verdict(self):
         for index, week in enumerate(self.weeks):

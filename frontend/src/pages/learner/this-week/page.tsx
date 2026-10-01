@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
+import { AnimatedProgressCircle } from '@/components/ui/AnimatedProgressCircle';
 import { formatHoursMinutes } from '@/lib/format';
 import { RealThisWeekView } from '@/components/feature/RealThisWeekView';
 import { useLearnerDetailParam } from '@/hooks/useLearnerDetailParam';
@@ -77,7 +78,7 @@ function DonutRing({ progress, color, size = 44, stroke = 4.5 }: { progress: num
   return (
     <svg width={size} height={size} className="shrink-0 -rotate-90">
       <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="currentColor" strokeWidth={stroke} className="text-foreground-200" />
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={strokeColor} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={offset} className="transition-all duration-700 ease-out" />
+      <AnimatedProgressCircle cx={size / 2} cy={size / 2} r={r} fill="none" stroke={strokeColor} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={circumference} strokeDashoffset={offset} />
     </svg>
   );
 }

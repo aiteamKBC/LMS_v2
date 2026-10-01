@@ -9,6 +9,7 @@ import {
 } from '../teams-meetings/createCalendarForm';
 import { emailList } from './EmailChipsInput';
 import { cleanText, formatDateLabel } from '../shared/entities/model';
+import { bookedOnModuleSeries, reservedForModuleCalendar } from '../shared/entities/liveSessionMeetingScope';
 import {
   FormField,
   InlineError,
@@ -114,7 +115,7 @@ export function heldAdditionalMeeting(settings: ComponentSettings | undefined): 
  * are invited to. The server refuses it too.
  */
 export function bookedOnModuleCalendar(settings: ComponentSettings | undefined): boolean {
-  return Boolean(cleanText(settings?.teamsOccurrenceId) || Number(settings?.teamsSessionNumber || 0) > 0);
+  return bookedOnModuleSeries(settings);
 }
 
 /**
@@ -169,7 +170,7 @@ export function weekMeetingBlock(week: ModuleWeek | undefined): { reason: string
     };
   }
   const free = liveSessions.find(component => !heldAdditionalMeeting(component.settings)
-    && !bookedOnModuleCalendar(component.settings));
+    && !bookedOnModuleCalendar(component.settings) && !reservedForModuleCalendar(component.settings));
   if (!free) {
     const spare = liveSessions.filter(component => !heldAdditionalMeeting(component.settings));
     if (!spare.length) {
@@ -180,6 +181,14 @@ export function weekMeetingBlock(week: ModuleWeek | undefined): { reason: string
         componentId: '',
         reason: `${held} A live session can hold one, so that no additional meeting is ever replaced. Choose another `
           + 'week, or add another live session to this one. This module’s own Teams calendar is unaffected either way.',
+      };
+    }
+    if (!spare.every(component => bookedOnModuleCalendar(component.settings))) {
+      return {
+        componentId: '',
+        reason: `${label} is set to run on this module’s own Teams calendar. A week is delivered by one calendar `
+          + 'only, so it cannot also take an additional meeting. Move it to “Additional meeting” under “Which calendar '
+          + 'runs each week” first, or choose another week.',
       };
     }
     const booked = spare.length === 1
@@ -221,7 +230,10 @@ function weekOptionLabel(week: ModuleWeek): string {
       : liveSessions.every(component => heldAdditionalMeeting(component.settings)
         || bookedOnModuleCalendar(component.settings))
         ? ' · already on the module calendar'
-        : '';
+        : liveSessions.every(component => heldAdditionalMeeting(component.settings)
+          || bookedOnModuleCalendar(component.settings) || reservedForModuleCalendar(component.settings))
+          ? ' · set to the module calendar'
+          : '';
   return `Week ${week.weekNumber}${name ? ` — ${name}` : ''}${when}${state}`;
 }
 
