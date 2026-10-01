@@ -274,7 +274,7 @@ def send_mail(*, to, subject, html_body, text_body=None, sender_name=None, save_
 _BRAND = "Kent Business College"
 
 
-def _shell(heading, intro, button_label, link, footer):
+def _shell(heading, intro, button_label, link, footer, extra=""):
     return f"""\
 <!doctype html>
 <html>
@@ -292,7 +292,7 @@ def _shell(heading, intro, button_label, link, footer):
           </p>
           <p style="margin:0 0 8px;font-size:13px;color:#616e7c;">If the button does not work, copy this link into your browser:</p>
           <p style="margin:0 0 24px;font-size:12px;word-break:break-all;color:#0b3d6b;">{link}</p>
-          <p style="margin:0;font-size:13px;color:#616e7c;line-height:1.5;">{footer}</p>
+          <p style="margin:0;font-size:13px;color:#616e7c;line-height:1.5;">{footer}</p>{extra}
         </td>
       </tr>
       <tr>
@@ -305,9 +305,30 @@ def _shell(heading, intro, button_label, link, footer):
 </html>"""
 
 
-def invitation_message(*, display_name, link, expires_days):
+def _one_to_one_block(owner, link):
+    """The optional "book a one-to-one with your case owner" section.
+
+    Kept below the password footer so that footer's "this link can be used once"
+    still reads as being about the password link -- the booking page is public
+    and reusable.
+    """
+    owner, link = escape(owner), escape(link, quote=True)
+    return f"""
+          <div style="margin:24px 0 0;padding:18px 20px;border:1px solid #e4e7eb;border-radius:8px;background:#f9fafb;">
+            <p style="margin:0 0 6px;font-size:15px;font-weight:600;color:#0b3d6b;">Book a one-to-one session</p>
+            <p style="margin:0 0 16px;font-size:14px;line-height:1.5;">Your case owner, {owner}, would like to meet you. Choose a time that suits you.</p>
+            <a href="{link}" style="display:inline-block;background:#ffffff;color:#0b3d6b;border:1px solid #0b3d6b;text-decoration:none;padding:10px 20px;border-radius:6px;font-size:14px;font-weight:600;">Book a one-to-one with {owner}</a>
+            <p style="margin:12px 0 0;font-size:12px;word-break:break-all;color:#616e7c;">{link}</p>
+          </div>"""
+
+
+def invitation_message(*, display_name, link, expires_days, booking_owner=None, booking_link=None):
+    """The account invitation. ``booking_owner``/``booking_link`` add the
+    one-to-one booking section; both are needed, so a half-known case owner
+    simply leaves it out."""
     greeting = f"Hello {display_name}," if display_name else "Hello,"
     subject = f"Your {_BRAND} account — set your password"
+    booking = bool(booking_owner and booking_link)
     html = _shell(
         heading="Welcome to the platform",
         intro=(
@@ -321,12 +342,18 @@ def invitation_message(*, display_name, link, expires_days):
             "If you were not expecting this email, you can ignore it — no account "
             "is active until a password is set."
         ),
+        extra=_one_to_one_block(booking_owner, booking_link) if booking else "",
     )
     text = (
         f"{greeting}\n\nAn account has been created for you on the {_BRAND} "
         f"learning platform.\n\nSet your password:\n{link}\n\n"
         f"This link can be used once and expires in {expires_days} days.\n"
     )
+    if booking:
+        text += (
+            f"\nBook a one-to-one session with your case owner, {booking_owner}:\n"
+            f"{booking_link}\n"
+        )
     return subject, html, text
 
 

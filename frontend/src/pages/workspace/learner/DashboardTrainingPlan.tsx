@@ -14,11 +14,13 @@ import styles from '@/pages/learner/training-plan-timeline/TrainingPlanDetails.m
 
 /** Independent loading keeps the existing dashboard visible while plan sources resolve. */
 export function DashboardTrainingPlan({ kind, learnerId, plan, canOpenActivities = true, programmeStartDate, programmeEndDate,
-  canOpenRewards = true, showRewards = true, activityOverviewOnly = false, timelineOnly = false, programmeSnapshot,
+  canOpenRewards = true, showRewards = true, activityOverviewOnly = false, timelineOnly = false,
+  monthlyOnly = false, trainingOnly = false, overviewOnly = false, programmeSnapshot,
   pageError, learningActivity, learnerDetail }: {
   kind: LearnerKind; learnerId: string; plan: DashboardPlanState; canOpenActivities?: boolean;
   programmeStartDate?: string | null; programmeEndDate?: string | null; canOpenRewards?: boolean;
   showRewards?: boolean; activityOverviewOnly?: boolean; timelineOnly?: boolean;
+  monthlyOnly?: boolean; trainingOnly?: boolean; overviewOnly?: boolean;
   programmeSnapshot?: ProgrammeProgressSnapshot; pageError?: string | null;
   learningActivity?: StudentActivityResponse | null; learnerDetail?: LearnerDetail | null;
 }) {
@@ -45,7 +47,8 @@ export function DashboardTrainingPlan({ kind, learnerId, plan, canOpenActivities
   // error banner is the terminal state. Do not leave a sibling weekly-plan
   // skeleton spinning indefinitely while its own retry settles.
   const terminalError = error || pageError;
-  const weeklyFocus = canOpenActivities && (hasSnapshot || !terminalError) ? <WeeklyLearningPlan kind={kind} learnerId={learnerId}
+  const weeklyFocus = canOpenActivities && !monthlyOnly && !trainingOnly && (hasSnapshot || !terminalError)
+    ? <WeeklyLearningPlan kind={kind} learnerId={learnerId}
     schedule={schedule.data} scheduleLoading={schedule.loading} scheduleError={schedule.error || undefined} /> : undefined;
   useEffect(() => {
     if (!hasSnapshot || (!initialSubjectId && hash !== '#module-timeline') || scrolled.current === scrollDestination) return;
@@ -57,7 +60,7 @@ export function DashboardTrainingPlan({ kind, learnerId, plan, canOpenActivities
   return <div ref={anchor} className={`${styles.root} ${activityOverviewOnly || timelineOnly ? styles.embeddedLearnerTheme : ''}`}>
     {error && <div role="alert" className={styles.error}><span>Your monthly learning could not refresh. {error}</span><button onClick={refresh}>Retry monthly learning</button></div>}
     {hasSnapshot && data ? <TrainingPlanDetails key={destination} data={data} subjects={subjects} kind={kind} learnerId={learnerId}
-      weeklyFocus={weeklyFocus} programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate} canOpenActivities={canOpenActivities} onRefresh={refresh} refreshing={loading} onRetryContract={retryContract} initialSubjectId={initialSubjectId} initialMonth={initialMonth} activityOverviewOnly={activityOverviewOnly} timelineOnly={timelineOnly} programmeSnapshot={programmeSnapshot} />
+      weeklyFocus={weeklyFocus} programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate} canOpenActivities={canOpenActivities} onRefresh={refresh} refreshing={loading} onRetryContract={retryContract} initialSubjectId={initialSubjectId} initialMonth={initialMonth} activityOverviewOnly={activityOverviewOnly} timelineOnly={timelineOnly} monthlyOnly={monthlyOnly} trainingOnly={trainingOnly} overviewOnly={overviewOnly} programmeSnapshot={programmeSnapshot} />
       : <>
         <div className={`${styles.topRow} ${weeklyFocus && !timelineOnly ? styles.withWeeklyFocus : ''}`}>
           {!timelineOnly && weeklyFocus}

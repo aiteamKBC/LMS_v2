@@ -460,7 +460,11 @@ def source_material_file(request, kind, pk, group_id, activity_id):
         row = stored['_source']
         if not row.get('_material_blob_ready'):
             return _error('This file has not been copied to the LMS yet.', 404)
-        response = HttpResponseRedirect(read_url(row, settings))
+        if row.get('material_blob_content_type') == 'application/pdf':
+            from .material_storage import pdf_response
+            response = pdf_response(row, settings, request)
+        else:
+            response = HttpResponseRedirect(read_url(row, settings))
         response['Cache-Control'] = 'private, no-store'
         response['Referrer-Policy'] = 'no-referrer'
         return response
