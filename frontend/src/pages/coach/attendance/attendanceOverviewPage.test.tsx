@@ -3,9 +3,11 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { coachFetch } from '@/lib/coachFetch';
+import { fetchCurriculumGroups, type CurriculumGroup } from '@/lib/curriculumApi';
 import CoachAttendance from './page';
 vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => ({ isInitialized: true, email: 'coach@example.com', name: 'Coach Sara' }) }));
 vi.mock('@/lib/coachFetch', () => ({ coachFetch: vi.fn() }));
+vi.mock('@/lib/curriculumApi', () => ({ fetchCurriculumGroups: vi.fn() }));
 vi.mock('@/components/feature/WorkspaceShell', () => ({ WorkspaceShell: ({ children }: { children: ReactNode }) => <>{children}</> }));
 const learners = [
   { id: '42', learner: 'Aya Khater', email: 'same@example.com', group: '--', groupName: 'Cairo A', groupId: 'group-1', programme: 'Data', programmeId: 'programme-1', programStatus: 'Active' },
@@ -22,7 +24,32 @@ const attendanceRecords = [
 ];
 function Location() { return <output>{useLocation().pathname}</output>; }
 describe('coach attendance overview', () => {
-  beforeEach(() => vi.mocked(coachFetch).mockResolvedValue(new Response(JSON.stringify({ learners, attendanceRecords }))));
+  beforeEach(() => {
+    vi.mocked(coachFetch).mockResolvedValue(new Response(JSON.stringify({ learners, attendanceRecords })));
+    vi.mocked(fetchCurriculumGroups).mockResolvedValue([]);
+  });
+  it('lists programme groups without caseload learners and keeps other programmes separate', async () => {
+    vi.mocked(fetchCurriculumGroups).mockResolvedValue([
+      { id: 'empty-group', name: 'Empty group', programmeId: 'programme-1', status: 'active' },
+      { id: 'other-group', name: 'Other programme group', programmeId: 'programme-2', status: 'active' },
+      { id: 'archived-group', name: 'Archived group', programmeId: 'programme-1', status: 'archived' },
+    ] as CurriculumGroup[]);
+    render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
+    const group = screen.getByRole('combobox', { name: 'Group' });
+    expect(await within(group).findByRole('option', { name: 'Empty group' })).toHaveValue('empty-group');
+    expect(within(group).queryByRole('option', { name: 'Other programme group' })).not.toBeInTheDocument();
+    expect(within(group).queryByRole('option', { name: 'Archived group' })).not.toBeInTheDocument();
+    fireEvent.change(group, { target: { value: 'empty-group' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Load students' }));
+    expect(screen.getByText('No learners found for this group.')).toBeInTheDocument();
+    expect(screen.queryByText('Aya Khater')).not.toBeInTheDocument();
+  });
+  it('reports a programme group request failure', async () => {
+    vi.mocked(fetchCurriculumGroups).mockRejectedValue(new Error('Service unavailable'));
+    render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Unable to load programme groups: Service unavailable');
+  });
   it('filters by stable ids and shows recent status chips', async () => {
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
     const programme = await screen.findByRole('combobox', { name: 'Programme' });

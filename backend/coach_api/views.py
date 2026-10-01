@@ -138,6 +138,7 @@ from curriculum_api.views import (
     get_training_rows,
     england_non_delivery_reason,
     group_authoring_detail_rows,
+    GROUPS_TABLE,
     is_operational_training_row,
     LIVE_SESSION_OCCURRENCES_TABLE,
     LIVE_SESSIONS_TABLE,
@@ -1087,6 +1088,63 @@ def normalize_program_status(raw_status: str | None) -> str:
     if normalized in {"active", "delivery"}:
         return "active"
     return "unknown"
+
+
+def apply_curriculum_attendance_placements(learners: list[dict], rows) -> None:
+    """Resolve non-Aptem caseload placements without changing learner ownership.
+
+    Curriculum and attendance share LearnerProfile identities. Legacy placements
+    may carry names alone; resolve those only within their programme and cohort,
+    and only when exactly one curriculum group matches. Existing ids take priority.
+    This enriches the overview response only, without rewriting stored placements.
+    """
+    rows = list(rows)
+    rows_by_id = {str(row.id): row for row in rows}
+    aptem_ids, conflicts = resolve_effective_aptem_ids(rows)
+    eligible = [learner for learner in learners
+                if int(learner['id']) not in aptem_ids
+                and int(learner['id']) not in conflicts]
+    if not eligible:
+        return
+    groups = authoring_fetch_all(GROUPS_TABLE, ensure_tables=False)
+    for learner in eligible:
+        row = rows_by_id.get(str(learner['id']))
+        if row is None:
+            continue
+        matches = []
+        for group in groups:
+            if clean_text(group.get('status')).casefold() in {'archived', 'deleted'}:
+                continue
+            group_id = clean_text(learner.get('groupId'))
+            programme_id = clean_text(learner.get('programmeId'))
+            cohort_id = clean_text(getattr(row, 'cohort_id', None))
+            if group_id:
+                if group_id != clean_text(group.get('group_id')):
+                    continue
+            elif clean_text(learner.get('groupName')).casefold() != clean_text(group.get('group_name')).casefold():
+                continue
+            if programme_id:
+                if programme_id != clean_text(group.get('programme_id')):
+                    continue
+            elif clean_text(learner.get('programmeName')).casefold() != clean_text(group.get('programme_name')).casefold():
+                continue
+            if cohort_id:
+                if cohort_id != clean_text(group.get('cohort_id')):
+                    continue
+            elif not group_id and clean_text(learner.get('cohortName')).casefold() != clean_text(group.get('cohort_name')).casefold():
+                continue
+            if clean_text(group.get('group_id')) and clean_text(group.get('programme_id')):
+                matches.append(group)
+        if len(matches) != 1:
+            continue
+        group = matches[0]
+        learner.update({
+            'programmeId': clean_text(group.get('programme_id')),
+            'programmeName': clean_text(group.get('programme_name')),
+            'groupId': clean_text(group.get('group_id')),
+            'groupName': clean_text(group.get('group_name')),
+            'group': clean_text(group.get('group_name')),
+        })
 
 
 def should_include_in_attendance_page(learner: dict) -> bool:
@@ -12726,6 +12784,7 @@ def coach_attendance(request):
             ]
             if should_include_in_attendance_page(learner)
         ]
+        apply_curriculum_attendance_placements(caseload_learners, caseload_rows)
         active_learners = [
             learner for learner in caseload_learners if should_include_in_attendance_metrics(learner)
         ]
