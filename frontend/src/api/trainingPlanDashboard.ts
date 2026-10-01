@@ -48,7 +48,7 @@ export type PlanModule = { id: string; title: string; description: string; start
   effectiveEndDate?: string;
   /** Where the run would have ended with nothing closed. */
   originalEndDate?: string };
-export type PlanReview = Pick<LearnerCalendarEvent, 'id' | 'eventKey' | 'title' | 'source' | 'sequence' | 'status' | 'date' | 'targetDate' | 'scheduledDate' | 'scheduledTime' | 'durationMinutes' | 'coachName' | 'invited'> & { meetingLink?: string | null };
+export type PlanReview = Pick<LearnerCalendarEvent, 'id' | 'eventKey' | 'title' | 'source' | 'sequence' | 'status' | 'date' | 'targetDate' | 'scheduledDate' | 'scheduledTime' | 'durationMinutes' | 'coachName' | 'invited' | 'reviewTemplateId' | 'reviewInstanceId'> & { meetingLink?: string | null };
 export type PlanModuleSummary = {
   id: string;
   moduleIds: string[];

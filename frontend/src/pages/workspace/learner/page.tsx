@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo, type CSSProperties } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useState, useEffect, useMemo } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { ClipboardList, FileText, Monitor } from 'lucide-react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
@@ -16,14 +16,12 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { PageSkeleton } from '@/components/feature/Skeletons';
 import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { PageContainer } from '@/components/ui/PageContainer';
-import { ProgressBar } from '@/components/ui/ProgressMetric';
 import { LearnerProfilePhoto } from '@/components/feature/LearnerProfilePhoto';
 import { LearnerDashboardHero } from './LearnerDashboardHero';
 import { canViewAssignedProgramme, waitingCopy } from '@/utils/learnerAccessGate';
 import { displayValue, EMPTY_VALUE } from '@/lib/format';
 import overviewStyles from './Overview.module.css';
-import { DashboardTrainingPlan } from './DashboardTrainingPlan';
-import { DashboardActivities } from './DashboardActivities';
+import { DashboardTabs } from './DashboardTabs';
 import { learnerHeaderPlan, learnerModuleHref } from './learnerHeaderPlan';
 import { useDashboardPlan } from './useDashboardPlan';
 import { useLearnerMetrics } from '@/hooks/useLearnerMetrics';
@@ -472,80 +470,12 @@ export default function LearnerOverview() {
           Attendance could not refresh. {attendanceRead.error}
           <button className="ml-2 font-semibold underline" onClick={attendanceRead.refresh}>Retry attendance</button>
         </div>}
-        <div className={`${overviewStyles.metrics} ${overviewStyles.metricsInline}`}>
-          <ProgressStat href={programmeProgressHref} label="Programme Progress" value={programmeProgressValue} summary={programmeProgressSummary} targetValue="100%" percent={programmeProgressPercent} accent="purple" />
-          <ProgressStat href="/learner/attendance" label="Attendance" value={attendanceValue} summary={attendanceSummary} valueLabel="Attended" targetValue={attendanceTotalValue} targetLabel="Sessions to date" percent={attendancePercent} accent="green" />
-          <ProgressStat
-            href={otjhProgressHref}
-            label="OTJ Hours"
-            value={otjActualValue}
-            summary={`${otjActualHours?.toFixed(2) ?? EMPTY_VALUE} / ${otjPlannedHours?.toFixed(2) ?? EMPTY_VALUE} h`}
-            valueLabel="Actual"
-            targetValue={otjPlannedValue}
-            targetLabel="Planned hours"
-            percent={otjPercent}
-            accent="yellow"
-          />
-          <ProgressStat href={ksbProgressHref} label="KSB Progress" value={ksbValue} summary={ksbSummary} percent={ksbPercent} accent="purple" />
-        </div>
-
-        {real && <DashboardActivities kind={learnerKind} programmeStatus={real.programmeStatus} canSeeNavItem={canSeeNavItem} />}
-        <DashboardTrainingPlan key={`plan:${learnerKind}:${id}`} kind={learnerKind} learnerId={id} plan={dashboardPlan} canOpenActivities
-          programmeStartDate={programmeStartDate}
-          programmeEndDate={programmeEndDate}
-          canOpenRewards={!reviewingLearner} />
+        <DashboardTabs kind={learnerKind} learnerId={id} plan={dashboardPlan} programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate}
+          canOpenRewards={!reviewingLearner} real={real || undefined} canSeeNavItem={canSeeNavItem}
+          metrics={{ programmeValue: programmeProgressValue, programmeSummary: programmeProgressSummary, programmePercent: programmeProgressPercent,
+            attendanceValue, attendanceSummary, attendanceTotalValue, attendancePercent, otjActualValue, otjSummary: `${otjActualHours?.toFixed(2) ?? EMPTY_VALUE} / ${otjPlannedHours?.toFixed(2) ?? EMPTY_VALUE} h`,
+            otjPlannedValue, otjPercent, ksbValue, ksbSummary, ksbPercent }} />
       </PageContainer>
     </WorkspaceShell>
-  );
-}
-
-/* ─────────────────────────────────────────────
-   SUB-COMPONENTS
-   ───────────────────────────────────────────── */
-
-/** Shared linked summary cards; presentation does not change the metric sources. */
-function ProgressStat({ href, label, value, summary, valueLabel = 'Current', targetValue, targetLabel = 'Target', percent, accent }: {
-  href: string;
-  label: string;
-  value: string;
-  summary: string;
-  valueLabel?: string;
-  targetValue?: string;
-  targetLabel?: string;
-  percent: number | null;
-  accent: 'purple' | 'green' | 'yellow';
-}) {
-  const ringPercent = percent == null ? 0 : Math.min(100, Math.max(0, percent));
-  const ringLabel = percent == null ? EMPTY_VALUE : `${Number.isInteger(percent) ? percent : Number(percent.toFixed(1))}%`;
-  return (
-    <Link
-      to={href}
-      aria-label={`Open ${label}`}
-      data-accent={accent}
-      className={`group ${overviewStyles.metric}`}
-    >
-      <div className={overviewStyles.metricTop}>
-        <span
-          className={overviewStyles.metricRing}
-          role="img"
-          aria-label={`${label}: ${ringLabel}`}
-          style={{ '--metric-progress': `${ringPercent}%` } as CSSProperties}
-        >
-          <span className={overviewStyles.metricRingValue}>{ringLabel}</span>
-        </span>
-        <div className={overviewStyles.metricBody}>
-          <div className={overviewStyles.metricHeading}>
-            <p className={overviewStyles.metricLabel}>{label}</p>
-          </div>
-          <p className={overviewStyles.metricDetail}>{summary}</p>
-          <dl className={overviewStyles.metricA11yData}>
-            <div><dt>{valueLabel}</dt><dd>{value}</dd></div>
-            {targetValue != null && <div><dt>{targetLabel}</dt><dd>{targetValue}</dd></div>}
-          </dl>
-          <ProgressBar percent={percent} tone={overviewStyles.metricFill} className={overviewStyles.metricA11yProgress} />
-        </div>
-        <AppIcon aria-hidden="true" className={`ri-arrow-right-s-line ${overviewStyles.metricArrow}`} />
-      </div>
-    </Link>
   );
 }
