@@ -7,15 +7,16 @@ import logging
 from math import isfinite
 
 import psycopg
+from . import journal_sources
 from django.db import DatabaseError, connections
 
 from .active_users import completed_hours_value_from_progress
 from .apprenticeship_agreement import _group_dates
 from .attendance_lectures import lecture_register
 from .subject_dates import as_date
-from .student_activity_access import student_activity_available
 from .training_plan_dashboard import rows
 from .otjh_totals import completed_otjh
+from . import canonical_learning
 
 log = logging.getLogger(__name__)
 ACCEPTED = {'accepted', 'partial'}
@@ -152,7 +153,10 @@ def summarise_home(activities, native, progress, submissions, assigned, start, e
     }
 
 
-def read_home_progress(source, kind, activities, native, progress, assigned, end, *, canonical_metrics=None):
+def read_home_progress(
+    source, kind, activities, native, progress, assigned, end, *,
+    attendance_module_ids=None, canonical_metrics=None,
+):
     start, _, _ = _group_dates(source)
     with connections['enrolment'].cursor() as cur:
         cur.execute('''SELECT activity_id, component_ref, status, actual_time_hours,
@@ -162,16 +166,18 @@ def read_home_progress(source, kind, activities, native, progress, assigned, end
             ORDER BY submitted_at NULLS FIRST,id''', [kind, str(source.pk)])
         submissions = rows(cur)
         historical_hours = 0
-        if student_activity_available(source.aptem_id):
-            # read_week has already verified the Aptem/email identity.
-            cur.execute('''SELECT coalesce(sum(actual_hours),0)
-                FROM structured_manual_activities.manual_learner_activities
-                WHERE aptem_id=%s AND accepted IS TRUE AND deleted_at IS NULL''', [source.aptem_id])
-            historical_hours = cur.fetchone()[0]
     try:
-        lectures = lecture_register(source)
+        lectures = lecture_register(source, module_ids=attendance_module_ids)
     except (DatabaseError, psycopg.Error):
         log.warning('Home attendance unavailable for enrolment %s', source.pk, exc_info=True)
         lectures = None
-    home = summarise_home(activities, native, progress, submissions, assigned, start, end, lectures, historical_hours)
-    return apply_canonical_home_metrics(home, canonical_metrics)
+    home = summarise_home(
+        activities, native, progress, submissions, assigned, start, end, lectures, historical_hours,
+    )
+    # Actual and Planned are one programme-wide SSOT pair. Missing consolidated
+    # identity fails closed instead of switching to another data source.
+    metrics = canonical_metrics if canonical_metrics is not None else canonical_learning.metrics(source.pk)
+    result = apply_canonical_home_metrics(home, metrics)
+    planned = (metrics.get('otjh') or {}).get('planned') if metrics else None
+    result['otjh']['missingPlannedActivities'] = 0 if planned is not None else None
+    return result

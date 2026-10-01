@@ -66,6 +66,7 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
   deadlines?: OverviewWeek['deadlines']; covers?: Record<string, string>; upcomingSessions?: PlanSession[];
 }) {
   const [filter, setFilter] = useState('all');
+  const [sourceFilter, setSourceFilter] = useState<'all' | Subject['source']>('all');
   const [sort, setSort] = useState('start');
   const [layout, setLayout] = useState('list');
   const [showAllUpcoming, setShowAllUpcoming] = useState(false);
@@ -73,6 +74,7 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
   const visible = summary.subjects.filter(subject => {
     const progress = subjectPercent(subject);
     return (!term || subject.title.toLocaleLowerCase().includes(term) || subject.activities.some(a => a.title.toLocaleLowerCase().includes(term)))
+      && (sourceFilter === 'all' || subject.source === sourceFilter)
       && (filter === 'all' || (filter === 'complete' ? progress === 100 : filter === 'new' ? progress === 0 : progress > 0 && progress < 100));
   }).sort((a, b) => {
     if (sort === 'name') return a.title.localeCompare(b.title);
@@ -112,6 +114,11 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
         <div className={styles.stat}><div className={styles.progressRing} role="progressbar" aria-label="Overall learning progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent ?? undefined} aria-valuetext={percent == null ? 'Unavailable' : `${percent}%`} style={{ background: `conic-gradient(var(--learner-purple, #673ab7) ${percent ?? 0}%, #edf0f5 0)` }}><span /></div><div><strong>{percent == null ? '—' : `${Math.round(percent)}%`}</strong><p>Overall progress</p><small>{done} of {total} activities completed</small></div></div>
       </div>
       <div className={styles.toolbar}>
+        <div className={styles.sourceTabs} role="tablist" aria-label="Module source">
+          <button type="button" role="tab" aria-selected={sourceFilter === 'all'} onClick={() => setSourceFilter('all')}>All modules</button>
+          <button type="button" role="tab" aria-selected={sourceFilter === 'current'} onClick={() => setSourceFilter('current')}>New LMS</button>
+          <button type="button" role="tab" aria-selected={sourceFilter === 'legacy'} onClick={() => setSourceFilter('legacy')}>Old LMS</button>
+        </div>
         <label className={styles.search}><Search size={18} aria-hidden="true" /><input aria-label="Search modules or activities" placeholder="Search subjects or activities…" value={search} onChange={e => onSearch(e.target.value)} /></label>
         <label className={styles.selectLabel}>Status<select value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All modules</option><option value="started">In progress</option><option value="new">Not started</option><option value="complete">Completed</option></select></label>
         <label className={styles.selectLabel}>Sort by<select value={sort} onChange={e => setSort(e.target.value)}><option value="start">Module start date</option><option value="name">Subject name</option><option value="progress">Highest progress</option></select></label>
@@ -119,7 +126,7 @@ export function LearningCatalogue({ summary, search, onSearch, current, renderCa
       </div>
       <div className={styles.subjectHeading}><h2>Your subjects</h2><span>{summary.subjectCount} subjects · {total} activities{visible.length !== summary.subjectCount ? ` · ${visible.length} shown` : ''}</span></div>
       {visible.length ? <div className={layout === 'grid' ? styles.grid : styles.list}>{visible.map(renderCard)}</div>
-        : <div className={styles.empty}><BookOpen size={30} /><p>{summary.subjectCount ? 'No subjects or activities match your filters.' : 'Your subjects will appear here when they are assigned.'}</p>{summary.subjectCount > 0 && <button onClick={() => { onSearch(''); setFilter('all'); }}>Clear filters</button>}</div>}
+        : <div className={styles.empty}><BookOpen size={30} /><p>{summary.subjectCount ? 'No subjects or activities match your filters.' : 'Your subjects will appear here when they are assigned.'}</p>{summary.subjectCount > 0 && <button onClick={() => { onSearch(''); setSourceFilter('all'); setFilter('all'); }}>Clear filters</button>}</div>}
     </div>
     <aside className={styles.catalogueAside} aria-label="Learning shortcuts">
       {continueSubject && <section className={styles.asidePanel}><div className={styles.asideHeading}><h2><BookOpen size={19} />Continue learning</h2><button type="button" className={styles.asideTextButton} onClick={() => onContinue(continueSubject)}>Open<ArrowRight size={14} /></button></div><div className={styles.continueSubject}><img src={covers[continueSubject.id] || DEFAULT_MODULE_COVER} alt="" loading="lazy" className={covers[continueSubject.id] ? undefined : styles.defaultCoverImage} /><div><strong>{continueSubject.title}</strong><p>{continueSubject.activities.filter(item => item.completed).length} of {continueSubject.activities.length} activities</p><div className={styles.miniTrack}><span style={{ width: `${subjectPercent(continueSubject)}%` }} /></div></div><b>{subjectPercent(continueSubject)}%</b></div><button type="button" className={styles.primaryButton} onClick={() => onContinue(continueSubject)}>Continue learning<ArrowRight size={17} /></button></section>}

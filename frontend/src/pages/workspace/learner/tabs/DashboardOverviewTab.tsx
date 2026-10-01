@@ -5,7 +5,7 @@ import { DashboardActivities } from '../DashboardActivities';
 import { programmeReviewProgress } from '@/pages/learner/training-plan-timeline/progress';
 import styles from '../Overview.module.css';
 
-export default function DashboardOverviewTab({ kind, learnerId, plan, programmeStartDate, programmeEndDate, metrics, real, canSeeNavItem, overviewExtra }: DashboardTabsProps) {
+export default function DashboardOverviewTab({ kind, learnerId, plan, programmeStartDate, programmeEndDate, metrics, real, canSeeNavItem, overviewExtra, pageError }: DashboardTabsProps) {
   const reviews = plan.data ? programmeReviewProgress(plan.data.reviews) : null;
   return <div className={styles.dashboardTabContent}>
     <div className={`${styles.metrics} ${styles.metricsInline}`}>
@@ -19,6 +19,6 @@ export default function DashboardOverviewTab({ kind, learnerId, plan, programmeS
     </div>
     {overviewExtra}
     {real && <DashboardActivities kind={kind} programmeStatus={real.programmeStatus} canSeeNavItem={canSeeNavItem} />}
-    <DashboardTrainingPlan kind={kind} learnerId={learnerId} plan={plan} canOpenActivities={false} showRewards={false} activityOverviewOnly overviewOnly programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate} />
+    <DashboardTrainingPlan kind={kind} learnerId={learnerId} plan={plan} canOpenActivities={false} showRewards={false} activityOverviewOnly overviewOnly programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate} pageError={pageError} />
   </div>;
 }

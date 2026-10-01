@@ -5,7 +5,8 @@ import type { ReactNode } from 'react';
 import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
 import { submitComponentProgress, type ComponentProgressResponse } from '@/api/components';
 import { startTimeTracking } from '@/api/timeTracking';
-import ComponentViewPage from './page';
+import { fetchEvidence } from '@/api/evidence';
+import ComponentViewPage, { ComponentBody } from './page';
 
 (globalThis as Record<string, unknown>).AppIcon = ({ className }: { className?: string }) => <i className={className} />;
 
@@ -20,6 +21,9 @@ const session = vi.hoisted(() => ({
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: vi.fn() }));
 vi.mock('@/api/components', () => ({ submitComponentProgress: vi.fn() }));
 vi.mock('@/api/timeTracking', () => ({ startTimeTracking: vi.fn() }));
+vi.mock('@/api/evidence', () => ({
+  fetchEvidence: vi.fn(), uploadEvidence: vi.fn(), getEvidenceDownloadUrl: vi.fn(), deleteEvidence: vi.fn(),
+}));
 vi.mock('@/hooks/useMyLearner', () => ({ rememberLearner: vi.fn() }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { account: session.account }, isInitialized: session.isInitialized }) }));
 vi.mock('@/hooks/useComponentAccessWindow', () => ({ useComponentAccessWindow: () => ({ open: true, outsideWorkingHours: session.outsideWorkingHours, holidays: session.holidays, holidayCalendarReady: session.holidayCalendarReady, currentTimeLabel: 'Sunday, 14:02 BST' }) }));
@@ -68,8 +72,47 @@ beforeEach(() => {
     sessionId: 'S1', trackingToken: 'token', startedAt: new Date().toISOString(), countingMode: 'visible_page',
   });
   vi.mocked(submitComponentProgress).mockResolvedValue({ record: progress } as unknown as ComponentProgressResponse);
+  vi.mocked(fetchEvidence).mockResolvedValue([]);
 });
 afterEach(cleanup);
+
+it('keeps direct audio tied to real playback events', () => {
+  const onPlayingChange = vi.fn();
+  const onEnded = vi.fn();
+  render(<ComponentBody
+    component={{ ...first, type: 'audio', audioUrl: 'https://example.test/podcast.mp3' } as never}
+    contentKind="audio"
+    parsed={null}
+    title="Podcast"
+    onDuration={vi.fn()}
+    onProgress={vi.fn()}
+    onPlayingChange={onPlayingChange}
+    onEnded={onEnded}
+    onUnsupported={vi.fn()}
+  />);
+
+  const audio = document.querySelector('audio')!;
+  fireEvent.play(audio);
+  expect(onPlayingChange).toHaveBeenLastCalledWith(true);
+  fireEvent.pause(audio);
+  expect(onPlayingChange).toHaveBeenLastCalledWith(false);
+  fireEvent.ended(audio);
+  expect(onPlayingChange).toHaveBeenLastCalledWith(false);
+  expect(onEnded).toHaveBeenCalledOnce();
+});
+
+it('connects the content Upload evidence control to a mounted file input', async () => {
+  const reading = { ...first, type: 'reading', component: 'Reading', content: '<p>Learning material</p>', description: 'Learning material' };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading] } as unknown as LearnerDetail);
+
+  mount();
+
+  const trigger = await screen.findByText('Upload evidence');
+  const inputId = trigger.closest('label')?.htmlFor;
+  expect(inputId).toBeTruthy();
+  expect(document.getElementById(inputId!)).toBeInstanceOf(HTMLInputElement);
+  expect(document.getElementById(inputId!)).not.toBeDisabled();
+});
 
 it('studies out of hours with no warning, no checkbox and no blocked Finish', async () => {
   session.outsideWorkingHours = true;

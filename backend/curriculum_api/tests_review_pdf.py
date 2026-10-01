@@ -3,6 +3,7 @@ from io import BytesIO
 from inspect import unwrap
 from unittest.mock import patch
 import base64
+import json
 
 from django.http import JsonResponse
 from django.test import SimpleTestCase, RequestFactory
@@ -43,6 +44,14 @@ SAMPLE_INFORMATION = {'name': 'Sample learner', 'programme': 'Sample programme',
 
 
 class SignatureAvailabilityTests(SimpleTestCase):
+    def test_completed_imported_aptem_mcm_uses_the_same_pdf_availability(self):
+        definition = sample_definition()
+        definition['template']['reviewTypeCode'] = 'aptem_mcm'
+        for role in definition['signatures']:
+            definition['signatures'][role] = {'required': False, 'signed': False}
+
+        self.assertEqual(pdf_availability(definition), {'available': True, 'reason': ''})
+
     def test_canonical_resolver_accepts_frozen_snapshot_and_serialized_shapes(self):
         self.assertEqual(
             required_signature_roles({
@@ -123,6 +132,50 @@ class SignatureAvailabilityTests(SimpleTestCase):
 
 
 class SignedMcmPdfTests(SimpleTestCase):
+    def test_imported_table_is_rendered_as_pdf_cells_instead_of_raw_json(self):
+        definition = sample_definition()
+        definition['template']['reviewTypeCode'] = 'aptem_mcm'
+        definition['sections'] = [{
+            'id': 'actions', 'title': 'Actions', 'enabled': True, 'displayOrder': 0,
+            'fields': [{
+                'id': 'aptem-table:actions:0', 'title': 'Imported table',
+                'fieldType': 'title_description',
+                'configuration': {'imported': True, 'description': json.dumps([
+                    ['Action', 'Responsible', 'Deadline'],
+                    ['Submit outstanding assignments', 'Laura Baxter', '9 October 2026'],
+                ])},
+            }],
+        }]
+
+        pdf = PdfReader(BytesIO(build_mcm_pdf(definition, SAMPLE_INFORMATION)))
+        text = '\n'.join(page.extract_text() for page in pdf.pages)
+
+        self.assertIn('Action', text)
+        self.assertIn('Responsible', text)
+        self.assertIn('Submit outstanding assignments', text)
+        self.assertNotIn('[["Action"', text)
+
+    def test_imported_aptem_mcm_uses_the_mcm_pdf_layout(self):
+        definition = sample_definition()
+        definition['template']['reviewTypeCode'] = 'aptem_mcm'
+        definition['sections'] = [{
+            'id': 'imported-summary',
+            'title': 'Previous Meeting Summary',
+            'enabled': True,
+            'displayOrder': 0,
+            'fields': [{
+                'id': 'imported-text',
+                'title': 'Imported text',
+                'fieldType': 'title_description',
+                'configuration': {'description': 'Historical Aptem meeting summary.'},
+            }],
+        }]
+
+        pdf = PdfReader(BytesIO(build_mcm_pdf(definition, SAMPLE_INFORMATION)))
+        text = '\n'.join(page.extract_text() for page in pdf.pages)
+        self.assertIn('Previous Meeting Summary', text)
+        self.assertIn('Historical Aptem meeting summary.', text)
+
     def test_meeting_summary_resolver_is_recursive_and_never_matches_labels(self):
         definition = sample_definition()
         mapped = definition['sections'][0]['fields'].pop(1)

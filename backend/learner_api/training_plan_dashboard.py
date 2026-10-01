@@ -4,22 +4,45 @@ from datetime import datetime, timezone
 import logging
 import math
 
+from . import journal_sources
 from django.db import DatabaseError, connections
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 
 from login.permissions import learner_self_or_staff
 from old_otjh.coach_booking import booking_url
+from old_otjh.service import ServiceError
 from .learner_detail import SOURCE_MODELS
 from .models import LearnerProfile, StaffUser
-from .learning_plan import _aptem_subject_modules, _effective_plan_ids, stored_training_plan
+from .learning_plan import _aptem_subject_modules, _effective_plan_ids
 from .coach_assignment import current_coach, source_coach
 from .student_activity import _builder_subject_metadata
 from .subject_content import as_list, clean_text, safe_url
 from .training_plan_contract import read_contract, contract_extract_metadata, selected_contract
 from .projection_performance import measure_projection
+from . import canonical_learning
 
 log = logging.getLogger(__name__)
+
+
+# Keep the projection identity reads narrow. ``Created_users`` contains many
+# large JSON/text columns and the dashboard previously selected every one of
+# them before issuing its real projection queries.
+TRAINING_PLAN_SOURCE_FIELDS = (
+    'id', 'aptem_id', 'email', 'status', 'programme_status',
+    'programme', 'cohort', 'group',
+    'learning_plan', 'training_plan', 'modules', 'weeks', 'components',
+    'case_owner', 'coach_name', 'coach_email',
+    'start_date', 'end_date', 'learner_start_date',
+    'practical_period_end_date', 'apprenticeship_end_date',
+)
+
+TRAINING_PLAN_PROFILE_FIELDS = (
+    'id', 'full_name', 'email', 'lifecycle_status',
+    'programme', 'programme_id', 'programme_status',
+    'cohort', 'cohort_id', 'group_name', 'group_id',
+    'coach_name', 'coach_email', 'start_date', 'end_date',
+)
 
 
 def number(value):
@@ -218,38 +241,63 @@ def contract_plan(source, contract):
         except Exception:
             log.warning('Training-plan contract could not be read for enrolment %s', source.pk)
             status = 'unavailable'
-    return {'months': months, 'contractStatus': status,
+    journal = {}
+    if journal_sources.enabled():
+        from . import canonical_learning
+        if canonical_learning.enabled(source.pk):
+            journal['journalTargets'] = canonical_learning.targets(source.pk)
+    return {**journal, 'months': months, 'contractStatus': status,
             'programmeStartDate': date_only(contract.get('program_start_date')) if contract else None,
             'programmeEndDate': date_only(contract.get('planned_end_date')) if contract else None}
 
 
+def _canonical_actual_rows(owner):
+    totals = defaultdict(lambda: {'hours': 0, 'count': 0})
+    for record in canonical_learning.entries_for(owner):
+        if not canonical_learning.counts_as_actual(record):
+            continue
+        for allocation in canonical_learning.allocations(record):
+            month = allocation.get('reporting_month')
+            if not month:
+                continue
+            group_id = str(record.get('module_ref') or '').strip() or None
+            key = (month, group_id)
+            totals[key]['hours'] += canonical_learning.number(allocation.get('actual_seconds')) / 3600
+            totals[key]['count'] += 1
+    return [
+        {'month': month, 'groupId': group_id, 'hours': round(value['hours'], 4), 'count': value['count']}
+        for (month, group_id), value in sorted(
+            totals.items(), key=lambda item: (item[0][0], item[0][1] or '')
+        )
+    ]
+
+
 def read_dashboard(source, section=None):
-    aptem_id = valid_aptem_id(source.aptem_id)
+    owner = getattr(source, '_canonical_profile', None)
     email = str(source.email or '').strip().casefold()
     actual, modules, sessions = [], [], []
     historical = None
-    contract = None
-    profile = LearnerProfile.objects.filter(enrolment_id=source.pk).first() if section not in ('contract', 'learning') else None
+    targets = canonical_learning.targets_for(owner) if owner is not None else {}
+    contract_data = {
+        'months': {
+            month: {'label': month, 'topics': [], 'planned': hours, 'source': 'ssot'}
+            for month, hours in targets.items()
+        },
+        'contractStatus': 'ready' if targets else 'not-available',
+        'programmeStartDate': date_only(owner.get('start_date')) if owner else None,
+        'programmeEndDate': date_only(owner.get('end_date')) if owner else None,
+    }
+    profile = (
+        LearnerProfile.objects.filter(enrolment_id=source.pk)
+        .only(*TRAINING_PLAN_PROFILE_FIELDS)
+        .first()
+        if section not in ('contract', 'learning') else None
+    )
     with connections['enrolment'].cursor() as cur:
-        if aptem_id and section != 'learning':
-            cur.execute('''SELECT l.learner_email,l.coach_name,l.coach_email
-                FROM "Last_audit".learners l
-                WHERE l.aptem_id=%s''', [aptem_id])
-            candidates = rows(cur)
-            if len(candidates) > 1 or (candidates and (not email or email != str(candidates[0]['learner_email'] or '').strip().casefold())):
-                raise LookupError('The training plan is not linked to this learner.')
-            historical = candidates[0] if candidates else None
-            if section not in ('overview', 'learning'):
-                contract = find_contract(cur, aptem_id)
         if section == 'contract':
-            return contract_plan(source, contract)
-        if aptem_id and section != 'learning':
-            cur.execute('''SELECT month,group_id,sum(actual_hours) AS hours,count(*) AS activity_count
-                FROM structured_manual_activities.manual_learner_activities
-                WHERE aptem_id=%s AND accepted IS TRUE AND deleted_at IS NULL
-                GROUP BY month,group_id ORDER BY month,group_id''', [aptem_id])
-            actual = [{'month': row['month'], 'groupId': str(row['group_id']) if row['group_id'] is not None else None,
-                       'hours': number(row['hours']) or 0, 'count': row['activity_count']} for row in rows(cur)]
+            return contract_data
+        if section != 'learning' and owner is not None:
+            actual = _canonical_actual_rows(owner)
         # Effective current assignments are authoritative for the schedule.
         # Builder metadata enriches those assignments (and supplies legacy
         # links), but a missing builder row must not hide an assigned module.
@@ -258,16 +306,10 @@ def read_dashboard(source, section=None):
         # mirror without those ids ever being written to the native learning
         # plan. Include those subjects in the same dashboard projection unless
         # staff explicitly limited the learner to a native assignment set.
-        saved_plan = stored_training_plan(source) or []
-        has_explicit_plan = any(entry.get('assignmentMode') == 'explicit' for entry in saved_plan)
-        if aptem_id and not has_explicit_plan:
-            current_module_ids.extend(_aptem_subject_modules(source).keys())
+        if owner is not None:
+            current_module_ids.extend(canonical_learning.curriculum_module_ids_for(owner))
         current_module_ids = list(dict.fromkeys(current_module_ids))
         refs = [f'current:{module_id}' for module_id in current_module_ids]
-        if aptem_id and historical:
-            cur.execute('''SELECT gl.group_id FROM "Last_audit".group_learners gl
-                JOIN "Last_audit".learners l ON l.learner_id=gl.learner_id WHERE l.aptem_id=%s''', [aptem_id])
-            refs.extend(f'legacy:{row[0]}' for row in cur.fetchall())
         _, links = _builder_subject_metadata(cur, refs)
         builder_ids = {
             item['id'] for item in links.values() if item.get('id')
@@ -342,9 +384,6 @@ def read_dashboard(source, section=None):
         }
     # The overview must never wait for an Azure PDF download. Older clients
     # still receive the complete response when no section was requested.
-    contract_data = ({'months': {}, 'contractStatus': 'loading',
-                      'programmeStartDate': None, 'programmeEndDate': None} if section == 'overview'
-                     else contract_plan(source, contract))
     contact = current_coach(source, profile, historical)
     coach_name, coach_email = contact['coach_name'], contact['coach_email']
     if not coach_name and not coach_email and source_coach(source) is None:
@@ -365,13 +404,14 @@ def read_dashboard(source, section=None):
     phone = coach_phone(coach_email)
     if phone:
         coach['phone'] = phone
-    return {**contract_data, 'actual': actual, 'actualAvailable': bool(aptem_id), 'modules': modules, 'moduleLinks': links,
+    return {**contract_data, 'actual': actual, 'actualAvailable': owner is not None, 'modules': modules, 'moduleLinks': links,
             'sessions': sessions, 'reviews': reviews, 'coach': coach,
             'generatedAt': datetime.now(timezone.utc).isoformat()}
 
 
 @require_GET
 @learner_self_or_staff(kwarg='pk')
+@journal_sources.learner_journal_view
 def training_plan_dashboard(request, kind, pk):
     model = SOURCE_MODELS.get(kind)
     if model is None:
@@ -380,7 +420,8 @@ def training_plan_dashboard(request, kind, pk):
     measurement = None
     try:
         with measure_projection('training-plan-dashboard', kind=kind, learner_id=pk, section=section) as measurement:
-            source = model.all_learners.get(pk=pk)
+            source = model.all_learners.only(*TRAINING_PLAN_SOURCE_FIELDS).get(pk=pk)
+            source._canonical_profile = canonical_learning.require_profile(pk)
         # ``learning`` is the detailed weekly dashboard projection.  Keep it
         # on the same read path as overview so clients can request the weekly
         # modules/sessions without being rejected by the section guard.
@@ -392,6 +433,8 @@ def training_plan_dashboard(request, kind, pk):
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     except LookupError as error:
         return JsonResponse({'error': str(error)}, status=404)
+    except ServiceError as error:
+        return JsonResponse({'error': str(error)}, status=error.status)
     except DatabaseError as error:
         cause = getattr(error, '__cause__', None)
         sqlstate = getattr(error, 'sqlstate', None) or getattr(cause, 'sqlstate', None)

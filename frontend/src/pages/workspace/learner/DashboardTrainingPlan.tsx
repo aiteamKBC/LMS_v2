@@ -7,16 +7,22 @@ import { TrainingPlanDetails } from '@/pages/learner/training-plan-timeline/Trai
 import { WeeklyLearningPlan } from './WeeklyLearningPlan';
 import { DashboardRewards } from './DashboardRewards';
 import type { ProgrammeProgressSnapshot } from '@/pages/learner/training-plan-timeline/ProgressCharts';
+import type { LearnerDetail } from '@/api/learnerDetail';
+import type { StudentActivityResponse } from '@/api/studentActivity';
+import { subjectsFrom } from '@/pages/learner/my-learning/SubjectWorkspace';
 import styles from '@/pages/learner/training-plan-timeline/TrainingPlanDetails.module.css';
 
 /** Independent loading keeps the existing dashboard visible while plan sources resolve. */
 export function DashboardTrainingPlan({ kind, learnerId, plan, canOpenActivities = true, programmeStartDate, programmeEndDate,
-  canOpenRewards = true, showRewards = true, activityOverviewOnly = false, timelineOnly = false, monthlyOnly = false, trainingOnly = false, overviewOnly = false, programmeSnapshot }: {
+  canOpenRewards = true, showRewards = true, activityOverviewOnly = false, timelineOnly = false,
+  monthlyOnly = false, trainingOnly = false, overviewOnly = false, programmeSnapshot,
+  pageError, learningActivity, learnerDetail }: {
   kind: LearnerKind; learnerId: string; plan: DashboardPlanState; canOpenActivities?: boolean;
   programmeStartDate?: string | null; programmeEndDate?: string | null; canOpenRewards?: boolean;
   showRewards?: boolean; activityOverviewOnly?: boolean; timelineOnly?: boolean;
   monthlyOnly?: boolean; trainingOnly?: boolean; overviewOnly?: boolean;
-  programmeSnapshot?: ProgrammeProgressSnapshot;
+  programmeSnapshot?: ProgrammeProgressSnapshot; pageError?: string | null;
+  learningActivity?: StudentActivityResponse | null; learnerDetail?: LearnerDetail | null;
 }) {
   const { data, subjects: summaries, loading, error, refresh, retryContract, schedule } = plan;
   const [params] = useSearchParams();
@@ -27,9 +33,22 @@ export function DashboardTrainingPlan({ kind, learnerId, plan, canOpenActivities
   const scrollDestination = `${destination}:${hash}`;
   const anchor = useRef<HTMLDivElement>(null);
   const scrolled = useRef('');
-  const hasSnapshot = !!data && !!summaries;
-  const subjects = useMemo(() => data && summaries ? dashboardPlanSubjects(summaries, data) : [], [data, summaries]);
-  const weeklyFocus = canOpenActivities && !monthlyOnly && !trainingOnly ? <WeeklyLearningPlan kind={kind} learnerId={learnerId}
+  const hasSnapshot = !!data && (!!summaries || learningActivity?.progress_basis === 'recorded_activities');
+  const subjects = useMemo(() => {
+    if (!data) return [];
+    // Coach profiles must use the same recorded-learning projection as My Learning.
+    // The overview summaries remain the fallback for learners without that source.
+    if (learningActivity?.progress_basis === 'recorded_activities') {
+      return subjectsFrom(learningActivity, learnerDetail || null);
+    }
+    return summaries ? dashboardPlanSubjects(summaries, data) : [];
+  }, [data, summaries, learningActivity, learnerDetail]);
+  // Once one plan dependency has failed and no complete snapshot exists, the
+  // error banner is the terminal state. Do not leave a sibling weekly-plan
+  // skeleton spinning indefinitely while its own retry settles.
+  const terminalError = error || pageError;
+  const weeklyFocus = canOpenActivities && !monthlyOnly && !trainingOnly && (hasSnapshot || !terminalError)
+    ? <WeeklyLearningPlan kind={kind} learnerId={learnerId}
     schedule={schedule.data} scheduleLoading={schedule.loading} scheduleError={schedule.error || undefined} /> : undefined;
   useEffect(() => {
     if (!hasSnapshot || (!initialSubjectId && hash !== '#module-timeline') || scrolled.current === scrollDestination) return;
@@ -45,7 +64,7 @@ export function DashboardTrainingPlan({ kind, learnerId, plan, canOpenActivities
       : <>
         <div className={`${styles.topRow} ${weeklyFocus && !timelineOnly ? styles.withWeeklyFocus : ''}`}>
           {!timelineOnly && weeklyFocus}
-          {!error && <div role="status" aria-label="Loading monthly learning and coaching" className={styles.loading}>
+          {!terminalError && <div role="status" aria-label="Loading monthly learning and coaching" className={styles.loading}>
             <div aria-hidden="true"><span /><span /><span /></div>
           </div>}
         </div>

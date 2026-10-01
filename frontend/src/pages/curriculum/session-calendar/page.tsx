@@ -7,7 +7,7 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { useCurriculumSessions } from '@/hooks/useCurriculumSessions';
-import { fetchCurriculumHolidays, tutorConflictMessage, updateCurriculumSession, type CurriculumHoliday, type CurriculumSession } from '@/lib/curriculumApi';
+import { curriculumErrorMessage, fetchCurriculumHolidays, tutorConflictMessage, updateCurriculumSession, type CurriculumHoliday, type CurriculumSession } from '@/lib/curriculumApi';
 
 interface CalSession {
   id: string;
@@ -370,7 +370,8 @@ export default function SessionCalendarPage() {
       // double-booked; that refusal names the module already in the slot.
       setNotification({
         type: 'error',
-        message: tutorConflictMessage(err) || (err instanceof Error ? err.message : 'Unable to update session.'),
+        message: tutorConflictMessage(err)
+          || curriculumErrorMessage(err, err instanceof Error ? err.message : 'Unable to update session.'),
       });
     } finally {
       setSavingSession(false);

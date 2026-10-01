@@ -20,14 +20,28 @@ const questionHtml = (text: string) => DOMPurify.sanitize(text, {
 });
 const CORRECT_ICON = '<svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle"><path d="M21.801 10A10 10 0 1 1 17 3.335"/><path d="m9 11 3 3L22 4"/></svg>';
 
+function quizOptions(value: unknown): { option_text: string; is_selected?: boolean }[] | null {
+  let options = value;
+  if (typeof options === 'string') {
+    try { options = JSON.parse(options); } catch { return null; }
+  }
+  if (options == null) return [];
+  if (!Array.isArray(options) || options.some(option => !option || typeof option !== 'object' || typeof option.option_text !== 'string')) return null;
+  return options;
+}
+
 export function QuizPreview({ quiz, title }: { quiz: NonNullable<ActivityContent['parts'][number]['quiz']>; title: string }) {
   const attempt = quiz.attempt;
-  const questions = attempt?.quiz_body.questions ?? [];
-  if ((!attempt || !questions.length || quiz.answers_available === false) && quiz.definition?.questions.length) {
+  const questions = (attempt?.quiz_body.questions ?? []).map(question => ({ ...question, answer_options: quizOptions(question.answer_options) }));
+  const definitionQuestions = (quiz.definition?.questions ?? []).map(question => ({ ...question, answer_options: quizOptions(question.answer_options) }));
+  if ([...questions, ...definitionQuestions].some(question => question.answer_options === null)) {
+    return <p role="alert" className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900">The quiz answer options could not be read. Close this activity and try again.</p>;
+  }
+  if ((!attempt || !questions.length || quiz.answers_available === false) && definitionQuestions.length) {
     const definition = quiz.definition;
-    const html = `<h1>${escapeHtml(title)}</h1><p>Original quiz questions</p>${questionHtml(definition.description || '')}<ol>${definition.questions.map(question =>
+    const html = `<h1>${escapeHtml(title)}</h1><p>Original quiz questions</p>${questionHtml(definition.description || '')}<ol>${definitionQuestions.map(question =>
       `<li><div>${questionHtml(question.question_text)}</div>${question.answer_options.length ? `<ul>${question.answer_options.map(option => `<li>${escapeHtml(option.option_text)}</li>`).join('')}</ul>` : ''}</li>`).join('')}</ol>`;
-    return <div className="space-y-3"><p role="alert" className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900">You can review the original quiz questions below. A saved learner attempt with answers is unavailable; these questions do not replace the missing attempt.</p>
+    return <div className="space-y-3"><p role="alert" className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900">Learner answers are unavailable. This view shows the original quiz questions only.</p>
       <HtmlPreview html={html} title={`Original quiz questions: ${title}`} /></div>;
   }
   if (!attempt || !questions.length) return <p role="alert" className="rounded-xl bg-amber-50 p-4 text-sm text-amber-900">The quiz result is recorded, but its questions and answers are unavailable. The source record needs to be restored before signing.</p>;
@@ -39,20 +53,36 @@ export function QuizPreview({ quiz, title }: { quiz: NonNullable<ActivityContent
   return <HtmlPreview html={html} title={`Saved quiz attempt: ${title}`} />;
 }
 
+function VideoPreview({ url, title }: { url: string; title: string }) {
+  const [failed, setFailed] = useState(false);
+  const [retry, setRetry] = useState(0);
+  return <div className="space-y-3">
+    <video key={`${url}:${retry}`} title={title} src={url} controls playsInline preload="metadata"
+      className="aspect-video max-h-[65vh] w-full rounded-xl bg-black object-contain"
+      onError={() => setFailed(true)} onLoadedMetadata={() => setFailed(false)} />
+    {failed && <div role="alert" className="flex flex-wrap items-center gap-3 text-sm">
+      <span>The video could not be loaded. Try again or open it in a new tab.</span>
+      <button className={btnSecondary} onClick={() => { setFailed(false); setRetry(value => value + 1); }}>Retry video</button>
+    </div>}
+  </div>;
+}
+
 export function SourcePreview({ url: value, html, title, contentType }: { url: string | null; html: string | null; title: string; contentType?: string | null }) {
-  const url = contentUrl(value);
+  const localMaterial = /^\/learner_api\/monthly-logs\/\d+\/\d{4}-\d{2}\/activities\/\d+\/materials\/\d+\/$/.test(value ?? '');
+  const url = contentUrl(localMaterial ? new URL(value!, window.location.origin).href : value);
   if (!url) return html ? <HtmlPreview html={html} title={title} /> : <p className="p-4 text-sm text-foreground-500">No embedded content is available for this activity.</p>;
   const path = new URL(url).pathname;
   const embed = previewUrl(url);
   const source = new URL(url);
+  const video = (contentType ?? '').toLowerCase().split(';')[0].trim().startsWith('video/') || /\.(mp4|webm|mov|m4v)$/i.test(path);
   const pdf = contentType === 'application/pdf' || /\.pdf$/i.test(path);
   // Office starts its document renderer with a form POST inside the frame.
   const office = new URL(embed).origin === 'https://view.officeapps.live.com';
   return <div className="space-y-3">
-    <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-foreground-500"><span>If the source does not allow embedded viewing, open it in a new tab.</span>
+    <div className="flex flex-wrap items-center justify-between gap-2 text-[12px] text-foreground-500"><span>{video ? 'Video recording' : 'If the source does not allow embedded viewing, open it in a new tab.'}</span>
       <a className="font-medium text-primary-700 hover:underline" href={url} target="_blank" rel="noreferrer">Open in new tab</a></div>
     {/\.(png|jpe?g|webp|gif)$/i.test(path) ? <img src={url} alt={title} className="mx-auto max-h-[65vh] max-w-full rounded-xl object-contain" />
-      : /\.(mp4|webm|mov|m4v)$/i.test(path) ? <video title={title} src={url} controls preload="metadata" className="max-h-[65vh] w-full rounded-xl bg-black" />
+      : video ? <VideoPreview key={url} url={url} title={title} />
       : /\.(mp3|wav|m4a|ogg|aac)$/i.test(path) ? <audio title={title} src={url} controls preload="metadata" className="w-full" />
       : <iframe title={title} src={embed} className="h-[65vh] min-h-[260px] w-full rounded-xl border border-foreground-200 bg-white"
         sandbox={pdf ? undefined : source.origin === window.location.origin ? 'allow-scripts allow-presentation' : `allow-scripts allow-same-origin allow-presentation allow-popups${office ? ' allow-forms' : ''}`}
