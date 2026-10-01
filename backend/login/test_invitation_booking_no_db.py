@@ -2,8 +2,8 @@
 import sys
 import unittest
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
-from unittest.mock import MagicMock, Mock, patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from django.conf import settings
@@ -13,7 +13,7 @@ import django
 django.setup()
 from login import email_azure, invitations
 
-LINK = 'https://lms.example.net/coach-booking/example-coach?session=one_to_one'
+LINK = 'https://lms.example.net/lms-introduction?token=SIGNED'
 
 
 def learner_account(**overrides):
@@ -31,7 +31,8 @@ class InvitationEmailTests(unittest.TestCase):
             self.assertIn('Example Coach', body)
             self.assertIn('one-to-one', body)
         self.assertIn(LINK, text)
-        self.assertIn('href="https://lms.example.net/coach-booking/example-coach?session=one_to_one"', html)
+        self.assertIn('href="https://lms.example.net/lms-introduction?token=SIGNED"', html)
+        self.assertIn('Book my LMS introduction', html)
         self.assertNotIn('<style', html.lower())
 
     def test_without_a_complete_booking_the_invitation_is_unchanged(self):
@@ -49,39 +50,28 @@ class InvitationEmailTests(unittest.TestCase):
 
 
 class OneToOneBookingTests(unittest.TestCase):
-    def lookup(self, account, case_owner='Example Coach', page=None, error=None):
-        models = ModuleType('learner_api.models')
-        query = MagicMock()
-        query.filter.return_value.only.return_value.first.return_value = (
-            None if case_owner is None else SimpleNamespace(case_owner=case_owner))
-        models.EnrolmentUser = SimpleNamespace(all_learners=query)
-        package = ModuleType('learner_api')
-        package.models = models
-        finder = Mock(side_effect=error, return_value=page)
-        with patch.dict(sys.modules, {'learner_api': package, 'learner_api.models': models}), \
-                patch('login.coach_directory.one_to_one_page', finder), \
-                patch.dict('os.environ', {'FRONTEND_URL': 'https://lms.example.net/'}):
-            return invitations.one_to_one_booking(account), query, finder
+    def lookup(self, account, found=(SimpleNamespace(pk=132), 'coach@example.test', 'Example Coach'), error=None):
+        finder = Mock(side_effect=error, return_value=found)
+        with patch('login.lms_introduction.learner_and_owner', finder),                 patch('login.lms_introduction.make_token', return_value='SIGNED'),                 patch.dict('os.environ', {'FRONTEND_URL': 'https://lms.example.net/'}):
+            return invitations.one_to_one_booking(account), finder
 
-    def test_learner_gets_their_own_case_owners_page(self):
-        result, query, finder = self.lookup(learner_account(), page={'name': 'Example Coach', 'slug': 'example-coach'})
+    def test_learner_gets_a_link_to_book_their_lms_introduction(self):
+        result, finder = self.lookup(learner_account())
         self.assertEqual(result, ('Example Coach', LINK))
-        query.filter.assert_called_once_with(pk=132)
-        finder.assert_called_once_with('Example Coach')
+        finder.assert_called_once()
 
     def test_staff_invitations_never_look_up_a_booking(self):
-        result, query, finder = self.lookup(learner_account(subject_type='staff'))
+        result, finder = self.lookup(learner_account(subject_type='staff'))
         self.assertIsNone(result)
-        query.filter.assert_not_called()
         finder.assert_not_called()
 
-    def test_missing_learner_or_page_offers_nothing(self):
-        self.assertIsNone(self.lookup(learner_account(), case_owner=None)[0])
-        self.assertIsNone(self.lookup(learner_account(), page=None)[0])
+    def test_missing_learner_or_unresolved_case_owner_offers_nothing(self):
+        self.assertIsNone(self.lookup(learner_account(), found=(None, '', ''))[0])
+        self.assertIsNone(self.lookup(learner_account(), found=(SimpleNamespace(pk=132), '', 'Unknown Owner'))[0])
 
     def test_lookup_failure_does_not_block_the_invitation(self):
         with self.assertLogs('login', level='ERROR'):
-            result, _, _ = self.lookup(learner_account(), error=RuntimeError('database unavailable'))
+            result, _ = self.lookup(learner_account(), error=RuntimeError('database unavailable'))
         self.assertIsNone(result)
 
     def test_send_invitation_passes_the_booking_to_the_email(self):
