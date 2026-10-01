@@ -111,3 +111,54 @@ export function activityKsbCodes(component: JourneyComponent): string[] {
     : mapping?.code || mapping?.ksbCode || mapping?.ksb_code);
   return [...new Set([...mappingCodes, ...directCodes].map(code => String(code || '').trim().toUpperCase()).filter(Boolean))];
 }
+
+/**
+ * Minutes behind an activity's "Expected time" label, using the same order:
+ * quiz duration, then activity duration, then authored OTJ hours. Null when
+ * the label shows no time.
+ */
+export function activityExpectedMinutes(component: JourneyComponent): number | null {
+  if (component.isQuiz && component.quizMeta?.duration) {
+    const { duration, timeUnit } = component.quizMeta;
+    const unit = (timeUnit || 'mins').trim().toLowerCase();
+    if (/^(min|mins|minute|minutes)$/.test(unit)) return duration;
+    if (/^(h|hr|hrs|hour|hours)$/.test(unit)) return duration * 60;
+    if (/^(s|sec|secs|second|seconds)$/.test(unit)) return duration / 60;
+    return null;
+  }
+  if (component.durationMinutes) return component.durationMinutes;
+  if (component.expectedOtjh != null) return component.expectedOtjh * 60;
+  return null;
+}
+
+/** KSBs mapped to a week's activities; achieved when a completed activity maps them. */
+export function weekKsbProgress(components: JourneyComponent[], completedIds: Set<string>) {
+  const all = new Set<string>();
+  const achieved = new Set<string>();
+  for (const component of components) {
+    const codes = activityKsbCodes(component);
+    codes.forEach(code => all.add(code));
+    if (isComponentComplete(component, completedIds)) codes.forEach(code => achieved.add(code));
+  }
+  const total = all.size;
+  return { achieved: achieved.size, total, codes: [...all].sort(), percent: total ? Math.round((achieved.size / total) * 10000) / 100 : 0 };
+}
+
+/** Expected hours of a week's activities and the share already completed. */
+export function weekExpectedHours(components: JourneyComponent[], completedIds: Set<string>) {
+  let plannedMinutes = 0;
+  let completedMinutes = 0;
+  let untimed = 0;
+  for (const component of components) {
+    const minutes = activityExpectedMinutes(component);
+    if (minutes == null) { untimed += 1; continue; }
+    plannedMinutes += minutes;
+    if (isComponentComplete(component, completedIds)) completedMinutes += minutes;
+  }
+  return {
+    plannedHours: plannedMinutes / 60,
+    completedHours: completedMinutes / 60,
+    untimed,
+    percent: plannedMinutes ? Math.round((completedMinutes / plannedMinutes) * 10000) / 100 : 0,
+  };
+}

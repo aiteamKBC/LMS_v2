@@ -15,6 +15,19 @@ export const learningToday = () => new Date().toLocaleDateString('en-CA', { time
 export const learningDate = (date: string) => new Date(`${date.slice(0, 10)}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
 export const subjectPercent = (subject: Subject) => subject.activities.length ? Math.round(subject.activities.filter(a => a.completed).length / subject.activities.length * 10000) / 100 : 0;
 
+/** Enrolment remains visible before any learning has started. */
+export function subjectLearningStatus(subject: Subject): 'Completed' | 'In progress' | 'Upcoming' {
+  if (subject.activities.length && subject.activities.every(activity => activity.completed)) return 'Completed';
+  const started = subject.activities.some(activity => {
+    const legacy = activity.legacy;
+    const status = legacy?.status?.trim().toLowerCase().replace(/[\s-]+/g, '_');
+    return activity.completed || legacy?.video_started || legacy?.reading_viewed || legacy?.quiz_attempted
+      || (legacy?.new_attempt_count ?? 0) > 0 || (activity.native?.quizAttempts?.length ?? 0) > 0
+      || ['started', 'in_progress', 'submitted', 'failed', 'completed', 'passed'].includes(status || '');
+  });
+  return started ? 'In progress' : 'Upcoming';
+}
+
 export function certificateEligible(subject: Subject, template: CertificateTemplateSummary | null) {
   const total = subject.activities.length;
   const completed = subject.activities.filter(activity => activity.completed).length;

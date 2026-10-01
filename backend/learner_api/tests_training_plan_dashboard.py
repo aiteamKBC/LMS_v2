@@ -242,6 +242,33 @@ class TrainingPlanDashboardTests(SimpleTestCase):
         self.assertEqual(result['sessions'], [])
         self.assertEqual(result['coach'], {'name': 'Group coach', 'bookingUrl': None})
 
+    def test_overview_exposes_review_form_links_from_learner_calendar(self):
+        source = SimpleNamespace(pk=125, aptem_id=None, email='learner@example.com',
+                                 coach_name='', coach_email='')
+        connection = MagicMock()
+        events = [
+            {'id': 'mcm-event', 'eventKey': 'mcm-event', 'source': 'mcr',
+             'reviewTemplateId': 'mcm-template', 'reviewInstanceId': None},
+            {'id': 'pr-event', 'eventKey': 'pr-event', 'source': 'progress-review',
+             'reviewTemplateId': None, 'reviewInstanceId': 'pr-instance'},
+            {'id': 'legacy-event', 'eventKey': 'legacy-event', 'source': 'mcr'},
+        ]
+        self.effective_plan.return_value = []
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard.LearnerProfile') as profiles, \
+             patch('learner_api.training_plan_dashboard.stored_training_plan', return_value=[]), \
+             patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
+             patch('learner_api.calendar.coaching_events_for_learner', return_value=events), \
+             patch('learner_api.training_plan_dashboard.coach_phone', return_value=''):
+            profiles.objects.filter.return_value.first.return_value = None
+            reviews = read_dashboard(source, section='overview')['reviews']
+
+        self.assertEqual([(row['eventKey'], row['reviewTemplateId'], row['reviewInstanceId']) for row in reviews], [
+            ('mcm-event', 'mcm-template', None),
+            ('pr-event', None, 'pr-instance'),
+            ('legacy-event', None, None),
+        ])
+
     def test_overview_reads_current_calendar_targets_and_stored_booking_changes(self):
         from coach_api.models import CoachCalendarEvent
 

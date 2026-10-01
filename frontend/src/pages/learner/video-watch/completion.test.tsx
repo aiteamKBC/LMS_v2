@@ -114,6 +114,34 @@ it('connects the content Upload evidence control to a mounted file input', async
   expect(document.getElementById(inputId!)).not.toBeDisabled();
 });
 
+it.each([false, undefined])('offers reading downloads when downloadAllowed is %s', async (downloadAllowed) => {
+  const reading = { ...first, type: 'reading', component: 'Reading',
+    resourceUrl: '/learner_api/materials/reading.png', fileName: 'Reading material.png', downloadAllowed };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading] } as unknown as LearnerDetail);
+  mount();
+  const download = await screen.findByRole('link', { name: 'Download' });
+  expect(download).toHaveAttribute('href', reading.resourceUrl);
+  expect(download).toHaveAttribute('download', reading.fileName);
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+});
+
+it('does not offer a reading file download without an attachment', async () => {
+  const reading = { ...first, type: 'reading', component: 'Reading', contentHtml: '<p>Reading text without an attachment.</p>' };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading] } as unknown as LearnerDetail);
+  mount();
+  await screen.findByText('Read the material, then finish and reflect below.');
+  expect(screen.queryByRole('link', { name: 'Download' })).not.toBeInTheDocument();
+});
+
+it('keeps slide deck downloads subject to the author setting', async () => {
+  const slides = { ...first, type: 'powerpoint', component: 'Slides',
+    resourceUrl: '/learner_api/materials/slide.png', fileName: 'Slide.png', downloadAllowed: false };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [slides] } as unknown as LearnerDetail);
+  mount();
+  await screen.findByText('Review the slide deck, then finish and reflect below.');
+  expect(screen.queryByRole('link', { name: 'Download deck' })).not.toBeInTheDocument();
+});
+
 it('studies out of hours with no warning, no checkbox and no blocked Finish', async () => {
   session.outsideWorkingHours = true;
   session.holidayCalendarReady = false;   // the calendar no longer gates learning
