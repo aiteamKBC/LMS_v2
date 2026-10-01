@@ -109,10 +109,18 @@ def booked_on_module_calendar(settings, v):
     Microsoft still holds or cancel a meeting people are already invited to.
     Only a live session the module calendar has not booked can take one.
     """
-    return bool(
-        v.clean_str(settings.get('teamsOccurrenceId'))
-        or v.parse_int(settings.get('teamsSessionNumber'), 0) > 0
-    )
+    return v.live_session_booked_on_module_calendar(settings)
+
+
+def reserved_for_module_calendar(settings, v):
+    """Whether the author has already given this live session to the module calendar.
+
+    Not yet booked there -- that is `booked_on_module_calendar` -- but chosen
+    for it, which is just as final: the next Update books it, and an additional
+    meeting on the same week would then be overwritten by the series' link.
+    """
+    return (not booked_on_module_calendar(settings, v)
+            and v.clean_str(settings.get(v.LIVE_SESSION_MEETING_SCOPE_KEY)).lower() == 'main')
 
 
 @csrf_exempt
@@ -175,7 +183,8 @@ def curriculum_week_teams_meeting(request, module_catalogue_id):
         # has a free live session beside a booked one.
         def free(row):
             settings = component_extra_meeting_settings(row, v)
-            return not existing_additional_meeting(settings, v) and not booked_on_module_calendar(settings, v)
+            return (not existing_additional_meeting(settings, v) and not booked_on_module_calendar(settings, v)
+                    and not reserved_for_module_calendar(settings, v))
 
         component_row = next((row for row in live_rows if free(row)), live_rows[0])
     if component_row is None:
@@ -205,6 +214,16 @@ def curriculum_week_teams_meeting(request, module_catalogue_id):
             'alongside it, so it can only be added to a live session that has not been sent to Teams yet. Cancel '
             'that session on the Module Teams calendar tab first, or choose another week.',
             status=409, code='live_session_already_booked',
+        )
+
+    # Block 4: nor one the author has already given to the module calendar --
+    # see `reserved_for_module_calendar`. Each week goes to one calendar only.
+    if reserved_for_module_calendar(settings, v):
+        return v.json_error(
+            f'“{v.clean_str(component_row.get("title")) or "This live session"}” is set to run on this module’s own '
+            'Teams calendar. A week is delivered by one calendar only, so it cannot also take an additional meeting. '
+            'Move it to “Additional meeting” first, or choose another week.',
+            status=409, code='live_session_reserved_for_module_calendar',
         )
 
     graph_settings = get_graph_settings()
@@ -387,6 +406,9 @@ def curriculum_week_teams_meeting(request, module_catalogue_id):
         'extraTeamsStartDateTimeUtc': utc_start.isoformat(),
         'extraTeamsDurationMinutes': duration,
         'extraTeamsSubject': subject,
+        # The choice this booking makes, so the week stays out of the module
+        # series even if a later read misses the link above.
+        v.LIVE_SESSION_MEETING_SCOPE_KEY: 'additional',
     }
     try:
         v.update_authoring_rows(v.AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id], {
@@ -682,14 +704,15 @@ def curriculum_week_teams_meeting_detail(request, module_catalogue_id, live_sess
 
 
 def cancel_week_meeting(v, graph_request, component_row, settings, owner_key, event_key, live_id, now):
-    """Cancel one additional meeting and give its week back to the module.
+    """Cancel one additional meeting and leave its week for the author to assign again.
 
     Microsoft cancels the event and tells the people invited -- that is what a
     cancellation IS, so it is never sent silently. Afterwards the component's
-    ``extraTeams*`` keys are cleared, and that is what puts the live session
-    back into the module's own series: ``liveSessionPlan`` stops skipping it and
-    ``attach_teams_meeting_to_module_weeks`` starts writing the module's link
-    onto it again from the next save.
+    ``extraTeams*`` keys and its main/additional choice are cleared. On a module
+    whose calendar exists that makes the live session 'pending' (see
+    ``live_session_meeting_scope``): it is not handed back to the module series
+    until someone chooses it for that calendar, so a cancel never books a
+    session nobody asked for.
     """
     warnings = []
     try:
@@ -710,7 +733,8 @@ def cancel_week_meeting(v, graph_request, component_row, settings, owner_key, ev
     })
     if component_row is not None:
         cleared = {key: value for key, value in settings.items()
-                   if key not in v.ADDITIONAL_MEETING_SETTING_KEYS}
+                   if key not in v.ADDITIONAL_MEETING_SETTING_KEYS
+                   and key != v.LIVE_SESSION_MEETING_SCOPE_KEY}
         # The mirrors go too: this live session has no meeting of its own now,
         # and leaving them would point the week at a cancelled event until the
         # module's own calendar happened to overwrite them.
@@ -728,3 +752,67 @@ def cancel_week_meeting(v, graph_request, component_row, settings, owner_key, ev
         'componentId': v.clean_str((component_row or {}).get('id')),
         'warnings': warnings,
     })
+
+
+@csrf_exempt
+def curriculum_live_session_meeting_scope(request, module_catalogue_id):
+    """Choose which calendar delivers one live session: the module's own, or an additional meeting.
+
+    POST ``{componentId, scope}`` with ``scope`` 'main' or 'additional'. This
+    only records the choice -- nothing is sent to Microsoft. It is what keeps the
+    two calendars apart before either has booked the week: one chosen for the
+    module calendar is refused an additional meeting, and one chosen for an
+    additional meeting is left out of every date the module calendar sends.
+
+    A booking is final and cannot be re-chosen here: a live session holding an
+    additional meeting is cancelled from that meeting first, and one the module
+    series has booked is cancelled on the module calendar first.
+    """
+    from . import views as v
+
+    if request.method != 'POST':
+        return v.json_error('Method not allowed.', status=405)
+    payload = v.json_body(request)
+    if not isinstance(payload, dict):
+        return v.json_error('A valid JSON body is required.')
+    scope = v.clean_str(payload.get('scope')).lower()
+    if scope not in v.LIVE_SESSION_MEETING_SCOPES:
+        return v.json_error('Choose the module calendar or an additional meeting.', status=400)
+    component_id = v.clean_str(payload.get('componentId'))
+    if not component_id:
+        return v.json_error('Choose the live session this is for.', status=400)
+
+    v.ensure_module_authoring_tables()
+    requested_id = v.clean_str(module_catalogue_id)
+    resolved_id = v.resolve_stored_module_catalogue_id(requested_id) or requested_id
+    if not resolved_id or not v.authoring_module_exists(resolved_id):
+        return v.json_error('Module authoring structure not found.', status=404)
+    rows = v.active_component_rows(v.authoring_fetch_all(
+        v.AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s and id = %s', [resolved_id, component_id],
+    ))
+    component_row = next((row for row in rows if v.frontend_component_type(row.get('type')) == 'live-session'), None)
+    if component_row is None:
+        return v.json_error('That live session is not part of this module. Reopen the module and choose again.', status=404)
+
+    settings = component_extra_meeting_settings(component_row, v)
+    title = v.clean_str(component_row.get('title')) or 'This live session'
+    if existing_additional_meeting(settings, v) and scope != 'additional':
+        return v.json_error(
+            f'“{title}” already has an additional meeting. Cancel that meeting first; it will not be overwritten.',
+            status=409, code='live_session_already_has_additional_meeting',
+        )
+    if booked_on_module_calendar(settings, v) and scope != 'main':
+        return v.json_error(
+            f'“{title}” is already booked on this module’s own Teams calendar. Cancel that session on the Module '
+            'Teams calendar tab first, or choose another week.',
+            status=409, code='live_session_already_booked',
+        )
+
+    now = datetime.utcnow()
+    if v.clean_str(settings.get(v.LIVE_SESSION_MEETING_SCOPE_KEY)).lower() != scope:
+        v.update_authoring_rows(v.AUTHORING_COMPONENTS_TABLE, 'id = %s', [component_id], {
+            'settings_json': v.json_db_value({**settings, v.LIVE_SESSION_MEETING_SCOPE_KEY: scope}),
+            'updated_at': now,
+        })
+        v.invalidate_curriculum_cache()
+    return JsonResponse({'componentId': component_id, 'scope': scope})

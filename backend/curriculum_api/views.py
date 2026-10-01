@@ -9641,12 +9641,14 @@ def authoring_session_links_by_catalogue(module_catalogue_ids):
             live_components_by_week[week_id].append(row)
 
     links_by_catalogue = defaultdict(list)
+    settings_by_catalogue = defaultdict(list)
     for week_row in week_rows:
         week_id = clean_str(week_row.get('id'))
         catalogue_id = clean_str(week_row.get('module_catalogue_id'))
         for component in live_components_by_week.get(week_id) or []:
             settings = component_builder_settings(component)
             settings = settings if isinstance(settings, dict) else {}
+            settings_by_catalogue[catalogue_id].append(settings)
             links_by_catalogue[catalogue_id].append({
                 'weekId': week_id,
                 'componentId': clean_str(component.get('id')),
@@ -9670,6 +9672,14 @@ def authoring_session_links_by_catalogue(module_catalogue_ids):
                     and parse_int(settings.get('teamsSessionNumber'), 0) > 0
                 ),
             })
+    # Which calendar delivers each one. Only 'main' belongs to the module's own
+    # series; an 'additional' or still 'pending' live session is listed like any
+    # other but never booked, counted or judged by it.
+    for catalogue_id, links in links_by_catalogue.items():
+        all_settings = settings_by_catalogue[catalogue_id]
+        has_series = module_has_booked_series(all_settings)
+        for link, settings in zip(links, all_settings):
+            link['meetingScope'] = live_session_meeting_scope(settings, has_series)
     return dict(links_by_catalogue)
 
 
@@ -16921,17 +16931,79 @@ ADDITIONAL_MEETING_SETTING_KEYS = (
 )
 
 
+#: Which calendar delivers a live session, as its author chose it: 'main' is
+#: the module's own Teams series, 'additional' a one-off meeting of its own.
+#: Stored on the live-session component -- see `live_session_meeting_scope`.
+LIVE_SESSION_MEETING_SCOPE_KEY = 'teamsMeetingScope'
+LIVE_SESSION_MEETING_SCOPES = ('main', 'additional')
+
+
+def live_session_booked_on_module_calendar(settings):
+    """Whether the module series already holds a booked occurrence for this live session.
+
+    ``teamsOccurrenceId``/``teamsSessionNumber`` are written only when a real
+    Graph occurrence was paired to the component, unlike ``liveSessionUrl``,
+    which the series stamps on every live session regardless.
+    """
+    settings = settings if isinstance(settings, dict) else {}
+    return bool(clean_str(settings.get('teamsOccurrenceId')) or parse_int(settings.get('teamsSessionNumber'), 0) > 0)
+
+
+def module_has_booked_series(settings_list):
+    """Whether any live session of a module is already booked on its own calendar."""
+    return any(live_session_booked_on_module_calendar(settings) for settings in settings_list or [])
+
+
+def live_session_meeting_scope(settings, module_has_series=True):
+    """Which calendar delivers this live session: 'main', 'additional' or 'pending'.
+
+    A booking is the fact and outranks any stored choice: a live session that
+    holds an additional meeting is 'additional', one the module series has
+    booked is 'main'. Otherwise the author's stored choice decides.
+
+    With neither, it depends on whether the module already has a calendar.
+    Before it has one every live session is the module's -- there is nothing to
+    overwrite. After, a live session nobody has assigned (a week added later)
+    is 'pending': the module calendar must not book it until someone decides,
+    because the series and an additional meeting on the same week would deliver
+    it twice, and the next Update would put the series' link over the other's.
+
+    The frontend reads the same rule in `liveSessionMeetingScope`.
+    """
+    settings = settings if isinstance(settings, dict) else {}
+    if clean_str(settings.get('extraTeamsMeetingUrl')):
+        return 'additional'
+    if live_session_booked_on_module_calendar(settings):
+        return 'main'
+    chosen = clean_str(settings.get(LIVE_SESSION_MEETING_SCOPE_KEY)).lower()
+    if chosen in LIVE_SESSION_MEETING_SCOPES:
+        return chosen
+    return 'pending' if module_has_series else 'main'
+
+
 def preserve_additional_meeting_settings(payload_settings, stored_row):
     """Keep a component's booked additional meeting across a full structure save.
 
     Returns the settings to store: the payload's, with the stored additional
     meeting put back on top when there is one. A component that has never had
     one is returned untouched, so this costs nothing for every other component.
+
+    The author's main/additional choice is the stored row's too: it is set from
+    the Teams dialog and by booking, never by the builder, so a builder tab
+    opened before it was made can neither erase it nor put an old one back, and
+    a copied component starts undecided rather than inheriting its source's.
     """
+    payload_settings = {key: value for key, value in (payload_settings or {}).items()
+                        if key != LIVE_SESSION_MEETING_SCOPE_KEY}
     if not stored_row:
         return payload_settings
     stored = component_builder_settings(stored_row)
-    if not isinstance(stored, dict) or not clean_str(stored.get('extraTeamsMeetingUrl')):
+    if not isinstance(stored, dict):
+        return payload_settings
+    stored_scope = clean_str(stored.get(LIVE_SESSION_MEETING_SCOPE_KEY))
+    if stored_scope:
+        payload_settings[LIVE_SESSION_MEETING_SCOPE_KEY] = stored_scope
+    if not clean_str(stored.get('extraTeamsMeetingUrl')):
         return payload_settings
     kept = {key: stored[key] for key in ADDITIONAL_MEETING_SETTING_KEYS if key in stored}
     join_url = clean_str(stored.get('extraTeamsMeetingUrl'))
@@ -16978,6 +17050,13 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
     components_by_week = defaultdict(list)
     for row in component_rows:
         components_by_week[clean_str(row.get('week_id'))].append(row)
+    # Read before anything below writes: whether the module's series had booked
+    # any session yet decides whether an unassigned live session is the
+    # module's (a first Create) or still 'pending' (a week added since).
+    series_already_booked = module_has_booked_series([
+        component_builder_settings(row) for row in component_rows
+        if frontend_component_type(row.get('type')) == 'live-session'
+    ])
 
     structure_rows = [{**week, 'components': components_by_week.get(clean_str(week.get('id')), [])} for week in week_rows]
     session_rows = module_structure_uses_session_rows(structure_rows, module_stored_session_count(module_row), delivery_days_per_week(module_row))
@@ -17123,6 +17202,16 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
             # sessions after it would otherwise all shift a week early.
             # See teams_week_meeting.py.
             additional_link = clean_str(existing_settings.get('extraTeamsMeetingUrl'))
+            meeting_scope = live_session_meeting_scope(existing_settings, series_already_booked)
+            if not additional_link and meeting_scope != 'main':
+                # Reserved for an additional meeting not booked yet, or not yet
+                # assigned to either calendar. Neither may be handed one of the
+                # series' occurrences or its link -- that is how a week ends up
+                # delivered twice. Left exactly as it is; the slot still advances
+                # for the same reason as the branch below.
+                session_index += 1
+                handled_component_ids.add(clean_str(row.get('id')))
+                continue
             if additional_link:
                 session_index += 1
                 handled_component_ids.add(clean_str(row.get('id')))
@@ -17145,8 +17234,13 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
             session_index += 1
             handled_component_ids.add(clean_str(row.get('id')))
             if not dry_run:
+                # Recorded as the module calendar's whether or not Microsoft
+                # booked it this time: a session the series took but Graph
+                # failed to hold is retried by the next Update, rather than read
+                # as a week nobody has assigned yet.
                 update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [row.get('id')], {
-                    'settings_json': json_db_value({**existing_settings, **settings_for_week}),
+                    'settings_json': json_db_value({**existing_settings, **settings_for_week,
+                                                    LIVE_SESSION_MEETING_SCOPE_KEY: 'main'}),
                     'live_sessions_link': clean_str(settings_for_week.get('liveSessionUrl') or settings_for_week.get('teamsMeetingUrl')),
                     'updated_at': now,
                 })
@@ -17195,6 +17289,7 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                     'attendanceRequired': True,
                     'recordingExpected': True,
                     **settings_for_week,
+                    LIVE_SESSION_MEETING_SCOPE_KEY: 'main',
                 }),
                 'live_sessions_link': join_url,
                 'deleted_at': None,
@@ -17214,8 +17309,9 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
             continue
         orphan_settings = component_builder_settings(row)
         # Its own additional meeting, for the same reason as above: losing its
-        # week must not hand it the series' link.
-        if clean_str(orphan_settings.get('extraTeamsMeetingUrl')):
+        # week must not hand it the series' link. Nor one reserved for one.
+        if (clean_str(orphan_settings.get('extraTeamsMeetingUrl'))
+                or live_session_meeting_scope(orphan_settings, series_already_booked) == 'additional'):
             continue
         if not dry_run:
             update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [row.get('id')], {
@@ -17406,12 +17502,15 @@ def module_expected_teams_occurrence_keys(module_row, holidays=None, group_row=N
     catalogue_id = clean_str((module_row or {}).get('module_catalogue_id'))
     if live_sessions is None and catalogue_id:
         live_sessions = authoring_session_links_by_catalogue([catalogue_id]).get(catalogue_id) or []
-    # A session delivered by its own additional meeting is not part of this
-    # series: the module calendar never books it, so judging the calendar
-    # against it would report a difference that pressing Update could never
-    # resolve. See teams_week_meeting.py.
+    # A session delivered by its own additional meeting -- or not yet assigned
+    # to either calendar -- is not part of this series: the module calendar
+    # never books it, so judging the calendar against it would report a
+    # difference that pressing Update could never resolve. See
+    # `live_session_meeting_scope` and teams_week_meeting.py.
     dated = [link for link in (live_sessions or [])
-             if format_date(link.get('date')) and not link.get('additionalMeeting')]
+             if format_date(link.get('date'))
+             and not link.get('additionalMeeting')
+             and link.get('meetingScope', 'main') == 'main']
     plan = module_session_plan_for_count(
         module_row,
         len(dated),

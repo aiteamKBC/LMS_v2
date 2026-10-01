@@ -10,6 +10,7 @@ import { EntraPeopleInput } from './EntraPeopleInput';
 import { CalendarActionDialog } from './CalendarActionDialog';
 import { CreateProgressPanel } from './CreateProgressPanel';
 import { AttendeeComparisonPanel } from './AttendeeComparisonPanel';
+import { MeetingScopePanel } from './MeetingScopePanel';
 import { pendingInvitations } from './attendeeComparison';
 import { emailList } from '../module-builder/EmailChipsInput';
 import { updateProgressSteps } from './updateProgress';
@@ -360,6 +361,14 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
 }) {
   const [activeTab, setActiveTab] = useState<'calendar' | 'second'>('calendar');
   const onSecondTab = Boolean(secondTab) && activeTab === 'second';
+  // Coming back from the additional-meeting tab: a week may have been booked or
+  // cancelled there, which changes which calendar runs it.
+  const { refreshMeetingScopes: refreshScopes } = workspace;
+  const leftSecondTab = useRef(false);
+  useEffect(() => {
+    if (activeTab === 'second') { leftSecondTab.current = true; return; }
+    if (leftSecondTab.current) { leftSecondTab.current = false; refreshScopes(); }
+  }, [activeTab, refreshScopes]);
   const {
     calendarActionTarget, loadTeamsState, notifyChanged, setSelectedId, setCalendarActionTarget, selected,
     requestCloseSelected, notice, openCalendarAction, busy, detailLoading, detail, graphConfigured,
@@ -369,7 +378,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
     detailOccurrenceFor, now, setPreview, setTranscriptPreview, invitedPrefilling, prefillNotice, prefillInvitees, preview,
     transcriptPreview, settingsDrawer, drawerTarget, saveSettings, blockedReason,
     teamsLoaded, teamsError, createProgress, updateProgress, saveInvitations, updateDrawer, pushDates, resendSchedule,
-    sendUpdateEmails, setSendUpdateEmails,
+    sendUpdateEmails, setSendUpdateEmails, selectedScopeRows, chooseMeetingScope,
     comparison, comparing, comparisonError, compareAttendees, publishedInvitees,
   } = workspace;
   // Who the author has typed in but not saved. Named under the comparison so a
@@ -584,6 +593,13 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                 <p className="text-[11px] font-semibold leading-relaxed text-amber-900">{blockedReason}</p>
               </div>
             )}
+
+            <MeetingScopePanel
+              rows={selectedScopeRows}
+              busy={busy}
+              disabled={Boolean(blockedReason) || Boolean(updateProgress) || createDrawer.saving || updateDrawer.saving}
+              onChoose={(componentId, scope) => void chooseMeetingScope(componentId, scope)}
+            />
 
             {selected.summary ? updateProgress ? (
               <CreateProgressPanel
