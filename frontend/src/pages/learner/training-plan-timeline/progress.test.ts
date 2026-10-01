@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TrainingPlanDashboard, PlanReview } from '@/api/trainingPlanDashboard';
 import { barPosition, buildPlanModules, timelineMonthKeys, timelinePeriodYear } from './model';
-import { moduleProgress } from './progress';
+import { moduleProgress, programmeReviewProgress } from './progress';
 import { dashboardPlanSubjects } from '@/pages/workspace/learner/dashboardPlan';
 
 const data: TrainingPlanDashboard = { months: {}, actual: [], actualAvailable: false, modules: [{ id: 'M1', title: 'Marketing', description: '',
@@ -18,18 +18,16 @@ const subject = { id: 'current:M1', title: 'Marketing', source: 'current' as con
   directHours: 2, ksbProgress: { completed: 3, total: 4 } };
 
 describe('dashboard module progress', () => {
-  it('uses activity completion for module progress and counts only reviews within module dates', () => {
+  it('uses activity completion for module progress without programme reviews', () => {
     const result = moduleProgress(buildPlanModules([subject], data)[0], data, Date.parse('2026-09-20T12:00:00Z'));
-    expect(result.measures.map(measure => measure.value)).toEqual([33.33, 40, 20, 75, 50]);
+    expect(result.measures.map(measure => measure.value)).toEqual([33.33, 40, 20, 75]);
     expect(result.measures[0].detail).toBe('1 / 3 ended sessions attended · 1 pending');
     expect(result.value).toBe(40);
-    expect(result.available).toBe(5);
+    expect(result.available).toBe(4);
   });
-  it('uses rescheduled review dates', () => {
-    const changed = { ...data, reviews: data.reviews.map(review => review.eventKey === 'pending' ? { ...review, scheduledDate: '2026-11-01' } : review) };
-    const result = moduleProgress(buildPlanModules([subject], changed)[0], changed, Date.parse('2026-09-20T12:00:00Z'));
-    expect(result.measures[0].value).toBe(33.33);
-    expect(result.measures[4].value).toBe(100);
+  it('counts completed reviews across the programme once per event', () => {
+    expect(programmeReviewProgress([...data.reviews, { ...data.reviews[1] }])).toEqual({ completed: 1, total: 3, percent: 33.33 });
+    expect(programmeReviewProgress([])).toEqual({ completed: 0, total: 0, percent: null });
   });
   it('excludes future sessions and counts ended sessions without attendance as pending', () => {
     const sessions = [
@@ -46,7 +44,7 @@ describe('dashboard module progress', () => {
   it('distinguishes missing measures from zero and caps over-target hours', () => {
     const module = buildPlanModules([{ ...subject, directHours: 20, ksbProgress: null }], { ...data, sessions: [], reviews: [] })[0];
     const result = moduleProgress(module, { ...data, reviews: [] });
-    expect(result.measures.map(measure => measure.value)).toEqual([null, 40, 100, null, null]);
+    expect(result.measures.map(measure => measure.value)).toEqual([null, 40, 100, null]);
     expect(result.value).toBe(40);
     expect(result.available).toBe(2);
     expect(result.measures[2].detail).toBe('20 / 10 hours');

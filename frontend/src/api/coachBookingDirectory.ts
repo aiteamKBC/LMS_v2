@@ -3,11 +3,12 @@ export const bookingTypes = [
   { key: 'support_session', label: 'Support sessions', description: 'Targeted support when you need it.' },
   { key: 'coaching_session', label: 'Coaching sessions', description: 'Book at least once a month to keep your learning on track.' },
   { key: 'progress_review', label: 'Progress review', description: 'Review your progress and next actions every 10 weeks.' },
+  { key: 'one_to_one', label: 'One to one', description: 'A private one-to-one conversation with your coach.' },
 ] as const;
 export type BookingLinks = Record<typeof bookingTypes[number]['key'], string>;
 export interface PublicCoach { name: string; slug: string; links: BookingLinks }
 export interface DirectoryCoach extends PublicCoach { id: number; version: number }
-export const emptyLinks = (): BookingLinks => ({ first_session: '', support_session: '', coaching_session: '', progress_review: '' });
+export const emptyLinks = (): BookingLinks => ({ first_session: '', support_session: '', coaching_session: '', progress_review: '', one_to_one: '' });
 export const coachPagePath = (slug: string) => `/coach-booking/${encodeURIComponent(slug)}`;
 async function request<T>(url: string, init?: globalThis.RequestInit): Promise<T> {
   const response = await fetch(url, { credentials: url.includes('/public/') ? 'omit' : 'include', ...init,

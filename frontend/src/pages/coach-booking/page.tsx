@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
-import { ArrowRight, CalendarDays, CheckCircle2, ExternalLink, LifeBuoy, MessagesSquare, TrendingUp } from 'lucide-react';
+import { useParams, useSearchParams } from 'react-router-dom';
+import { ArrowRight, CalendarDays, CheckCircle2, ExternalLink, LifeBuoy, MessagesSquare, TrendingUp, UserRound } from 'lucide-react';
 import styles from './booking.module.css';
 
-const icons = [CalendarDays, LifeBuoy, MessagesSquare, TrendingUp];
+const icons = [CalendarDays, LifeBuoy, MessagesSquare, TrendingUp, UserRound];
 import { bookingTypes, getPublicCoach, type PublicCoach } from '@/api/coachBookingDirectory';
 
 export default function CoachBookingPage() {
   const { slug = '' } = useParams();
+  // Links in emails (e.g. the learner invitation) can open a booking type directly.
+  const requested = useSearchParams()[0].get('session') ?? '';
   const [coach, setCoach] = useState<PublicCoach | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -15,10 +17,14 @@ export default function CoachBookingPage() {
   const [reload, setReload] = useState(0);
   useEffect(() => {
     const controller = new AbortController(); setCoach(null); setSelected(''); setError(''); setLoading(true);
-    getPublicCoach(slug, controller.signal).then(setCoach).catch(reason => { if (!controller.signal.aborted) setError(reason.message); })
+    getPublicCoach(slug, controller.signal).then(found => {
+      setCoach(found);
+      const wanted = bookingTypes.find(type => type.key === requested);
+      if (wanted && found.links[wanted.key]) setSelected(wanted.key);
+    }).catch(reason => { if (!controller.signal.aborted) setError(reason.message); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [slug, reload]);
+  }, [slug, reload, requested]);
   const safe = (url: string) => { try { const parsed = new URL(url); return ['https:', 'http:'].includes(parsed.protocol) && !parsed.username && !parsed.password; } catch { return false; } };
   const active = bookingTypes.find(type => type.key === selected);
   const url = active && coach ? coach.links[active.key] : '';

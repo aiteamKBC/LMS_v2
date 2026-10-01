@@ -9,7 +9,8 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET
 from .permissions import require_access
 
-LINK_FIELDS = ('first_session', 'support_session', 'coaching_session', 'progress_review')
+ONE_TO_ONE = 'one_to_one'
+LINK_FIELDS = ('first_session', 'support_session', 'coaching_session', 'progress_review', ONE_TO_ONE)
 TABLE = 'login.coach_directory'
 
 
@@ -43,8 +44,33 @@ def rows(cursor):
     result = []
     for row in cursor.fetchall():
         links = row[3] if isinstance(row[3], dict) else json.loads(row[3])
+        # Rows saved before a booking type existed simply lack its key; report it
+        # as blank so every client sees the same set of options.
+        links = {**{key: '' for key in LINK_FIELDS}, **links}
         result.append({'id': row[0], 'name': row[1], 'slug': row[2], 'links': links, 'version': row[4]})
     return result
+
+
+def one_to_one_page(owner_name):
+    """The directory page offering a one-to-one with this case owner, or None.
+
+    ``Case_owner`` holds the staff member's name, and the directory is keyed by
+    name too, so the match is on the name (or the slug it produced). Ambiguous
+    matches return None rather than risk sending a learner to another coach, and
+    a page without a one-to-one link is not offered at all.
+    """
+    owner_name = str(owner_name or '').strip()
+    if not owner_name:
+        return None
+    with connections['enrolment'].cursor() as cursor:
+        cursor.execute(
+            f'SELECT id,name,slug,links,version FROM {TABLE} WHERE lower(btrim(name))=lower(%s) OR slug=%s',
+            [owner_name, slugify(owner_name)],
+        )
+        found = rows(cursor)
+    if len(found) != 1 or not found[0]['links'].get(ONE_TO_ONE):
+        return None
+    return {'name': found[0]['name'], 'slug': found[0]['slug']}
 
 
 @require_GET

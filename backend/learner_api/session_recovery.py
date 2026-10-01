@@ -116,7 +116,7 @@ def link_catchup(request, kind, learner_id):
                     and learner_attended_catchup(report.catchup_event_key)):
                 return JsonResponse({'error': 'A completed catch-up cannot be replaced.'}, status=409)
             mirror = LearnerProfile.objects.filter(enrolment_id=learner_id).first()
-            _catchup_booking(learner, mirror, event_key, report.session_date, lock=True)
+            _catchup_booking(learner, mirror, event_key, report.session_date, lock=True, for_report_id=report.pk)
             report.catchup_event_key = event_key
             report.recovery_method = 'catch-up'
             # A learner's recovery choice needs no coach approval, as when reporting.

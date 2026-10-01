@@ -1,7 +1,7 @@
 from unittest import TestCase
 from unittest.mock import patch
 
-from learner_api import canonical_learning
+from learner_api import canonical_learning, current_learning
 
 
 class CanonicalMetricsBulkTests(TestCase):
@@ -40,7 +40,8 @@ class CanonicalMetricsBulkTests(TestCase):
                 return targets
             raise AssertionError(sql)
 
-        with patch.object(canonical_learning, "query", side_effect=load) as query:
+        with patch.object(canonical_learning, "query", side_effect=load) as query, \
+             patch.object(current_learning, "query", query):
             result = canonical_learning.metrics_bulk(enrolment_ids)
         return result, query.call_count
 
@@ -52,7 +53,7 @@ class CanonicalMetricsBulkTests(TestCase):
             {"2026-09": 10},
         )
         self.assertEqual(result[10], expected)
-        self.assertEqual(count, 7)
+        self.assertEqual(count, 9)
 
     def test_list_source_payload_does_not_break_caseload_metrics(self):
         result, _ = self.run_bulk([10], ["synthetic-evidence-a", "synthetic-evidence-b"])
@@ -61,7 +62,7 @@ class CanonicalMetricsBulkTests(TestCase):
     def test_query_count_is_constant_for_a_representative_caseload(self):
         one, one_count = self.run_bulk([10])
         many, many_count = self.run_bulk(list(range(10, 35)))
-        self.assertEqual(one_count, 7)
-        self.assertEqual(many_count, 7)
+        self.assertEqual(one_count, 9)
+        self.assertEqual(many_count, 9)
         self.assertEqual(len(one), 1)
         self.assertEqual(len(many), 25)

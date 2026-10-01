@@ -153,6 +153,25 @@ describe('weekly live session attendance', () => {
     expect(screen.getByRole('progressbar', { name: 'Plan week 1 activity progress' }))
       .toHaveAttribute('aria-valuenow', '50');
   });
+
+  it('adds KSB and expected OTJH cards for the selected week', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-07T10:01:00Z'));
+    learnerDetail.real.components = [
+      { componentId: 'C1', moduleId: 'M1', weekId: 'W1', component: 'First reading', type: 'reading', durationMinutes: 60, ksbCodes: ['K1', 'S2'] },
+      { componentId: 'C2', moduleId: 'M1', weekId: 'W1', component: 'Second reading', type: 'reading', durationMinutes: 30, ksbCodes: ['S2', 'B1'] },
+    ] as unknown as typeof learnerDetail.real.components;
+    learnerDetail.real.componentProgress = [{ componentId: 'C1' }];
+    render(<MemoryRouter><WeeklyLearningPlan kind="commercial" learnerId="125"
+      schedule={sessionSchedule(true)} scheduleLoading={false} /></MemoryRouter>);
+
+    const ksbCard = screen.getByText('KSBs this week').closest('div')!.parentElement!;
+    expect(ksbCard).toHaveTextContent('66.67%');
+    expect(ksbCard).toHaveTextContent('2 of 3 KSBs');
+    const otjhCard = screen.getByText('OTJH this week').closest('div')!.parentElement!;
+    expect(otjhCard).toHaveTextContent('66.67%');
+    expect(otjhCard).toHaveTextContent('1h of 1h 30m hours');
+  });
 });
 
 describe('activity KSB mapping', () => {
