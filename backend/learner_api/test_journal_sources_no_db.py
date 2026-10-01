@@ -96,7 +96,7 @@ class JournalSourceTests(unittest.TestCase):
         finally:
             sources._current.reset(token)
 
-    def test_home_card_uses_new_hours_but_coach_keeps_previous_calculation(self):
+    def test_home_card_uses_supplied_canonical_metrics_for_every_source(self):
         from datetime import date
         tree = ast.parse((Path(__file__).parent / 'home_progress.py').read_text())
         functions = [n for n in tree.body if isinstance(n, ast.FunctionDef)
@@ -106,7 +106,8 @@ class JournalSourceTests(unittest.TestCase):
             'connections': {'enrolment': connection}, 'rows': lambda cursor: [],
             '_group_dates': lambda source: (date(2026, 1, 1), None, None),
             'student_activity_available': lambda _: False,
-            'lecture_register': lambda source: [], 'SUBMITTED': {'submitted'},
+            'canonical_learning': SimpleNamespace(metrics=lambda _: None),
+            'lecture_register': lambda source, **kwargs: [], 'SUBMITTED': {'submitted'},
             'summarise_home': lambda *args: {'otjh': {'actual': 999, 'planned': 999}, 'activities': {'total': 7}}}
         exec(compile(ast.Module(body=functions, type_ignores=[]), 'home_progress.py', 'exec'), scope)
         canonical = SimpleNamespace(enabled=lambda _: True, entries=lambda _: [
@@ -127,8 +128,8 @@ class JournalSourceTests(unittest.TestCase):
                 import learner_api
                 with patch.object(learner_api, 'canonical_learning', canonical, create=True):
                     result = scope['read_home_progress'](*args, canonical_metrics=metrics)
-            self.assertEqual(result['otjh'], {'actual': 2, 'submitted': .5, 'planned': 5,
-                'percent': 40, 'missingPlannedActivities': 0})
+            self.assertEqual(result['otjh'], {'actual': 8, 'planned': 10,
+                'percent': 80, 'missingPlannedActivities': 0})
             self.assertEqual(result['activities'], {'completed': 3, 'total': 7})
         finally:
             sources._current.reset(token)

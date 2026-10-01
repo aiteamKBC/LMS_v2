@@ -569,13 +569,33 @@ def coaching_events_for_learner(learner, mirror):
     from curriculum_api import reviews, review_instances
     generated = _generated_cycle_events(learner, mirror, set())
     matched = review_instances.reconcile_review_event_keys(generated, records)
-    templates = {}
+    # Generated occurrences already carry the current template title and Review
+    # Type metadata. Reuse it for stored rows from the same templates instead
+    # of reading review_templates and review_types again.
+    templates = {
+        _s(event.get('reviewTemplateId')): {
+            'id': _s(event.get('reviewTemplateId')),
+            'name': event.get('title') or '',
+        }
+        for event in generated if _s(event.get('reviewTemplateId'))
+    }
+    types = {
+        _s(event.get('reviewTemplateId')): {
+            'id': event.get('reviewTypeId'),
+            'code': event.get('reviewTypeCode'),
+            'name': event.get('reviewTypeName'),
+            'is_system': event.get('reviewTypeIsSystem'),
+        }
+        for event in generated if _s(event.get('reviewTemplateId'))
+    }
     template_ids = sorted({_s(getattr(record, 'review_template_id', '')) for record in records} - {''})
-    if template_ids:
-        templates = {row['id']: row for row in reviews.get_review_template_rows(
-            f"id in ({', '.join(['%s'] * len(template_ids))})", template_ids, include_deleted=True,
-        )}
-    types = review_type_rows_by_template(template_ids)
+    unresolved_template_ids = [template_id for template_id in template_ids if template_id not in templates]
+    if unresolved_template_ids:
+        templates.update({row['id']: row for row in reviews.get_review_template_rows(
+            f"id in ({', '.join(['%s'] * len(unresolved_template_ids))})",
+            unresolved_template_ids, include_deleted=True,
+        )})
+        types.update(review_type_rows_by_template(unresolved_template_ids))
     events = []
     for event in generated:
         record = matched.get(event['eventKey'])

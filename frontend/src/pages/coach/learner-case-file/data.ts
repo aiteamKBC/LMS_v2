@@ -709,6 +709,7 @@ function buildCaseFileData(args: {
     attendance: args.attendance,
     evidence: args.evidence,
     detail: args.detail,
+    learningActivity: args.aptemActivity || null,
     journey,
     activityStates,
     peers,

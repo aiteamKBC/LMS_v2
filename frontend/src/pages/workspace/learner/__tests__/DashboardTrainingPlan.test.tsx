@@ -5,6 +5,8 @@ import { clearAllCachedResources } from '@/api/cachedRequest';
 import { invalidateLearnerReads } from '@/api/learnerRead';
 import type { OverviewWeek } from '@/api/learnerOverview';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
+import type { LearnerDetail } from '@/api/learnerDetail';
+import type { StudentActivityResponse } from '@/api/studentActivity';
 import { DashboardTrainingPlan } from '../DashboardTrainingPlan';
 import { useDashboardPlan } from '../useDashboardPlan';
 
@@ -25,7 +27,7 @@ const schedule = (): TrainingPlanDashboard => ({
     targetDate: '2026-09-25', scheduledDate: null, scheduledTime: null, durationMinutes: 60, status: 'not-scheduled', coachName: 'Assigned Coach', invited: false }],
   coach: { name: 'Assigned Coach', bookingUrl: null }, contractStatus: 'ready', generatedAt: '',
 });
-function setup(calendar = schedule(), failed = '', overview = week()) {
+function setup(calendar = schedule(), failed = '', overview = week(), recorded?: StudentActivityResponse) {
   const fetch = vi.fn(async (input: Parameters<typeof globalThis.fetch>[0]) => {
     const url = String(input);
     if (failed && url.includes(failed)) return new Response(JSON.stringify({ error: 'Offline' }), { status: 503 });
@@ -39,7 +41,8 @@ function setup(calendar = schedule(), failed = '', overview = week()) {
   vi.stubGlobal('fetch', fetch);
   function Subject() {
     const plan = useDashboardPlan('commercial', '125');
-    return <DashboardTrainingPlan kind="commercial" learnerId="125" plan={plan} />;
+    return <DashboardTrainingPlan kind="commercial" learnerId="125" plan={plan}
+      learningActivity={recorded} learnerDetail={{ studentActivityAvailable: true } as LearnerDetail} />;
   }
   render(<MemoryRouter><Subject /></MemoryRouter>);
   return fetch;
@@ -48,6 +51,17 @@ beforeEach(() => { vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new 
 afterEach(() => { cleanup(); clearAllCachedResources(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('dashboard learning layout', () => {
+  it('uses the learner My Learning recorded-activity source in the coach profile', async () => {
+    setup(schedule(), '', week(), {
+      progress_basis: 'recorded_activities',
+      subjects: [{ id: 50, name: 'Marketing', module_id: 'M1', catalogue_count: 5, accepted_hours: 2 }],
+      activities: [{ activity_id: 'record:50:1', source_activity_id: 1, group_id: 50, group_name: 'Marketing',
+        activity: 'Recorded lesson', category: 'reading', completed: true, position: 1 }],
+    } as unknown as StudentActivityResponse);
+
+    expect(await screen.findByRole('button', { name: 'Marketing: 100% overall progress' })).toBeVisible();
+  });
+
   it('fills the monthly summary from authored hours and current learner progress without Aptem history', async () => {
     const overview = { ...week(), monthlyOtjh: {
       '2026-09': { planned: 5, actual: 2, missingPlannedActivities: 0 },

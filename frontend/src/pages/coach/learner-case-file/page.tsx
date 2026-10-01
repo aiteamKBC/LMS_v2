@@ -119,6 +119,8 @@ export default function LearnerCaseFile() {
           plan={dashboardPlan}
           programmeStartDate={data.detail?.programmeStartDate}
           programmeEndDate={data.detail?.programmeEndDate}
+          learningActivity={data.learningActivity}
+          learnerDetail={data.detail}
           canOpenActivities
           showRewards={false}
           activityOverviewOnly
@@ -159,6 +161,8 @@ export default function LearnerCaseFile() {
             plan={dashboardPlan}
             programmeStartDate={data.detail?.programmeStartDate}
             programmeEndDate={data.detail?.programmeEndDate}
+            learningActivity={data.learningActivity}
+            learnerDetail={data.detail}
             canOpenActivities
             showRewards={false}
             timelineOnly

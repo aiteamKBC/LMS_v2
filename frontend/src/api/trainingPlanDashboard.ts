@@ -73,10 +73,8 @@ export type TrainingPlanDashboard = {
   programmeEndDate?: string | null;
   /** Monthly OTJH; assignment submissions use marking status, other activity types keep their existing semantics. */
   monthlyOtjh?: Record<string, { planned: number | null; submitted?: number; actual: number; includesHistorical?: boolean; missingPlannedActivities: number }>;
-  /** Authoritative Monthly Logs totals: retained Audit history, then LMS months. */
+  /** Authoritative SSOT Monthly Logs totals. */
   monthlyLogOtjh?: Record<string, { target: number | null; submitted: number; completed: number }>;
-  /** Last YYYY-MM month whose OTJH figures must come from Audit rather than live LMS calculations. */
-  auditOtjhCutoffMonth?: string;
   /** Whole-programme OTJH requirement from the shared dashboard metrics. */
   requiredOtjh?: number | null;
   actual: { month: string; groupId: string | null; hours: number; count: number }[];

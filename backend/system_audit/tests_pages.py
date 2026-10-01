@@ -49,10 +49,32 @@ class ResolveTests(SimpleTestCase):
         self.assertEqual(pages.resolve('/workspace/safeguarding')['workspace'], 'safeguarding')
         self.assertEqual(pages.resolve('/workspace/auditor')['workspace'], 'audit')
 
+    def test_learner_home_aliases_are_known_diagnostic_routes(self):
+        for path in ('/learner/home', '/workspace/learner'):
+            with self.subTest(path=path):
+                resolved = pages.resolve(path)
+                self.assertTrue(resolved['known'])
+                self.assertEqual(resolved['workspace'], 'learner')
+                self.assertTrue(resolved['routePattern'])
+
     def test_aliased_roots_reach_their_workspace(self):
         self.assertEqual(pages.resolve('/users/7/wizard/step-1')['workspace'], 'enrolment')
         self.assertEqual(pages.resolve('/employers/12')['workspace'], 'employer')
         self.assertEqual(pages.resolve('/activity-categories')['workspace'], 'audit')
+
+    def test_record_monitor_routes_have_a_sanitized_pattern(self):
+        dashboard = pages.resolve('/old-otjh/monitor')
+        learner_month = pages.resolve('/old-otjh/coach/123/months/2026-09')
+
+        self.assertEqual(dashboard['workspace'], 'record-monitor')
+        self.assertEqual(dashboard['routePattern'], '/old-otjh/monitor')
+        self.assertEqual(learner_month['workspace'], 'record-monitor')
+        self.assertEqual(
+            learner_month['routePattern'],
+            '/old-otjh/coach/{aptemId}/months/{month}',
+        )
+        self.assertNotIn('123', learner_month['routePattern'])
+        self.assertNotIn('2026-09', learner_month['routePattern'])
 
     def test_an_unknown_page_is_still_recorded(self):
         # A page that ships tomorrow appears in the trail tomorrow, not on the

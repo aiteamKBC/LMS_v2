@@ -452,7 +452,9 @@ def submit_component_progress(request, component_id):
                 "moduleTitle": module_title or "",
                 "weekTitle": week_title or "",
                 "plannedOtjh": reported_time,
-                "actualTimeHours": time_taken,
+                # The marking schema stores decimal hours. ``timeTaken`` above
+                # remains the learner-facing MM:SS clock value.
+                "actualTimeHours": tracking["verifiedSeconds"] / 3600,
                 "progressEntryId": None,
             },
         )

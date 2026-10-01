@@ -6,6 +6,7 @@ export type LogMonth = MonthState & { source: 'legacy' | 'lms'; is_open?: boolea
 export type LogDetail = MonthDetail & { source: 'legacy' | 'lms'; is_open?: boolean; target_warning?: string | null; demo_only?: boolean };
 export type LogSummary = Omit<JournalSummary, 'months'> & {
   months: LogMonth[]; total_months: number; completed_months: number; read_only: boolean; csrf_token: string;
+  training_plan_totals?: { accepted_hours: number; planned_hours: number | null };
 };
 export type LogLearner = { id: number; name: string; programme: string };
 export type LogPerspective = 'learner' | 'coach';

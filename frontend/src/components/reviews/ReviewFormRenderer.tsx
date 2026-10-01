@@ -369,13 +369,22 @@ function ReviewFieldControl({
 
   if (field.fieldType === 'title_description') {
     const description = String(field.configuration?.description || '');
+    const tableRows = importedTableRows(field.configuration);
     return (
       <div className="rounded-lg border border-background-200 bg-background-100/70 px-4 py-3">
         <div className="flex items-start gap-3">
           <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary-100 text-[12px] font-bold text-primary-700">{index + 1}</span>
-          <div>
+          <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold leading-5 text-foreground-900">{field.title}</p>
-            {description ? <p className="mt-1 text-sm leading-5 text-foreground-500">{description}</p> : null}
+            {tableRows ? <div className="mt-3 max-w-full overflow-x-auto rounded-lg border border-background-200 bg-background-50">
+              <table className="min-w-full border-collapse text-left text-sm">
+                <thead className="bg-primary-50 text-foreground-900"><tr>{tableRows[0].map((cell, column) =>
+                  <th key={column} scope="col" className="whitespace-nowrap border-b border-background-200 px-3 py-2 font-semibold">{cell}</th>)}</tr></thead>
+                <tbody>{tableRows.slice(1).map((row, rowIndex) => <tr key={rowIndex} className="border-b border-background-100 last:border-b-0">
+                  {row.map((cell, column) => <td key={column} className="min-w-36 align-top px-3 py-2 leading-5 text-foreground-600">{cell}</td>)}
+                </tr>)}</tbody>
+              </table>
+            </div> : description ? <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-foreground-500">{description}</p> : null}
           </div>
         </div>
       </div>
@@ -428,6 +437,17 @@ function ReviewFieldControl({
       ) : null}
     </div>
   );
+}
+
+export function importedTableRows(configuration: Record<string, unknown>): string[][] | null {
+  let value = configuration.importedTable;
+  if (value == null && configuration.imported === true && typeof configuration.description === 'string') {
+    try { value = JSON.parse(configuration.description); } catch { return null; }
+  }
+  if (!Array.isArray(value) || value.length < 2 || !value.every(Array.isArray)) return null;
+  const width = value[0].length;
+  if (!width || !value.every(row => row.length === width)) return null;
+  return value.map(row => row.map(cell => cell == null ? '' : String(cell)));
 }
 
 function ReviewFieldInput({

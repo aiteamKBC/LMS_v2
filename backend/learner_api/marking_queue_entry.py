@@ -37,6 +37,26 @@ logger = logging.getLogger(__name__)
 TERMINAL_STATUSES = ("accepted",)
 
 
+def _actual_time_hours(value):
+    """Normalise decimal hours and the legacy component ``MM:SS`` clock."""
+    if value in (None, ""):
+        return ""
+    if isinstance(value, str) and ":" in value:
+        parts = value.split(":")
+        if len(parts) == 2:
+            try:
+                minutes, seconds = (int(part) for part in parts)
+            except ValueError:
+                return ""
+            if minutes >= 0 and 0 <= seconds < 60:
+                return (minutes * 60 + seconds) / 3600
+            return ""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return ""
+
+
 def requires_tutor_validation(component_id):
     """Whether the author said this activity must be validated by a coach."""
     try:
@@ -142,7 +162,7 @@ def queue_for_marking(*, component_id, kind, learner_id, context):
                     "Submitted for marking from the activity. No written "
                     "reflection was requested for this component.",
                     json.dumps(evidence),
-                    context.get("actualTimeHours") or "",
+                    _actual_time_hours(context.get("actualTimeHours")),
                     100,
                     context.get("progressEntryId"),
                     component_id,
