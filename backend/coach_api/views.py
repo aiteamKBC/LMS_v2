@@ -810,7 +810,13 @@ BOOKED_EVENT_TITLES = {
     "workspace": "RPL And Experience",
     "training-plan": "Workplace Health & Safety Declaration",
     "uln-privacy": "ULN Privacy Notice & Learner Acknowledgement",
+    "lms-introduction": "LMS Introduction",
 }
+
+# A newly invited learner's request for a one-to-one platform walkthrough with
+# their case owner (login.lms_introduction). Saved as not-scheduled; the case
+# owner places it from the timetable like a student-support request.
+LMS_INTRODUCTION_EVENT_TYPE = "lms-introduction"
 
 # Types whose copy should still say the learner booked the slot. Graph ownership
 # is deliberately separate: coach-calendar meetings are always created on the
@@ -824,6 +830,7 @@ LEARNER_BOOKED_EVENT_TYPES = {
     "workspace",
     "training-plan",
     "uln-privacy",
+    LMS_INTRODUCTION_EVENT_TYPE,
 }
 
 # Session types the coach can book from their own timetable page.
@@ -9978,6 +9985,11 @@ def collect_generated_timetable(
             for event in events
             if event["source"] == "student-support" and event["status"] == CoachCalendarEvent.STATUS_NOT_SCHEDULED
         ),
+        LMS_INTRODUCTION_EVENT_TYPE: sum(
+            1
+            for event in events
+            if event["source"] == LMS_INTRODUCTION_EVENT_TYPE and event["status"] == CoachCalendarEvent.STATUS_NOT_SCHEDULED
+        ),
     }
     needs_scheduling = sum(source_needs_scheduling.values())
     events = assign_timetable_slots(events)
@@ -10608,7 +10620,7 @@ def find_catchup_calendar_record(owner_email: str, event_key: str) -> tuple[Coac
     record = CoachCalendarEvent.objects.filter(
         owner_email__iexact=owner_email,
         event_key=event_key,
-        event_type__in=[CATCH_UP_EVENT_TYPE, "student-support"],
+        event_type__in=[CATCH_UP_EVENT_TYPE, "student-support", LMS_INTRODUCTION_EVENT_TYPE],
     ).first()
     owner_name = fetch_owner_name(owner_email, fallback=clean_text(record.owner_name) or "Med Maher") if record else fetch_owner_name(owner_email)
     return record, owner_name

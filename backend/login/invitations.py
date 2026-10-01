@@ -14,7 +14,6 @@ somebody who had already signed in with the old password would stay signed in.
 from __future__ import annotations
 
 import os
-from urllib.parse import quote
 
 from django.db import transaction
 from django.utils import timezone
@@ -61,31 +60,28 @@ def reset_link(token):
 def one_to_one_booking(account):
     """``(case owner name, booking link)`` for a learner's invitation, or None.
 
-    The link opens the case owner's public booking page with the one-to-one
-    option already chosen. Best effort: the invitation is the point of the email,
-    so a learner with no case owner, a case owner with no booking page, or a
+    The link opens the LMS introduction request page (``lms_introduction``),
+    where the learner picks a preferred time for a one-to-one with their case
+    owner. Best effort: the invitation is the point of the email, so a learner
+    with no case owner, a case owner who does not resolve to a staff email, or a
     lookup failure leaves the option out instead of stopping the invitation.
     """
     if account.subject_type != "learner":
         return None
     try:
-        from learner_api.models import EnrolmentUser
+        from . import lms_introduction
 
-        from .coach_directory import ONE_TO_ONE, one_to_one_page
-
-        learner = EnrolmentUser.all_learners.filter(pk=account.subject_id).only("case_owner").first()
-        page = one_to_one_page(getattr(learner, "case_owner", "")) if learner is not None else None
+        learner, owner_email, owner_name = lms_introduction.learner_and_owner(account)
     except Exception:  # noqa: BLE001 - an optional extra must not block the invitation
         import logging
 
         logging.getLogger("login").exception(
-            "Could not look up the one-to-one booking page for account %s", account.id
+            "Could not look up the case owner for account %s's LMS introduction", account.id
         )
         return None
-    if page is None:
+    if learner is None or not owner_email:
         return None
-    link = f"{frontend_base_url()}/coach-booking/{quote(page['slug'], safe='')}?session={ONE_TO_ONE}"
-    return page["name"], link
+    return owner_name, lms_introduction.booking_link(account, frontend_base_url())
 
 
 def record(event, *, email=None, account_id=None, succeeded=False, reason=None,

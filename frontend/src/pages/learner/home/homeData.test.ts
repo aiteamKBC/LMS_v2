@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import type { OverviewWeek } from '@/api/learnerOverview';
-import { greeting, homeActions, upcomingEvents, upcomingReviewOrMcm } from './homeData';
+import { greeting, homeActions, upcomingEvents, upcomingReviewOrMcm, withLearner } from './homeData';
 describe('student home data', () => {
   it('maps the four secondary actions to existing destinations', () => {
     expect(homeActions.map(item => item.href)).toEqual(['/learner/monthly-submission', '/workspace/learner/dashboard', '/learner/attendance', '/learner/monthly-coaching']);
@@ -102,5 +102,17 @@ describe('student home data', () => {
   it('uses the college time zone for the greeting', () => {
     expect(greeting(new Date('2026-09-13T08:00:00Z'))).toBe('Good morning,');
     expect(greeting(new Date('2026-09-13T19:00:00Z'))).toBe('Good evening,');
+  });
+});
+
+describe('withLearner', () => {
+  it('names the learner in every Student Home link, keeping any query', () => {
+    expect(withLearner('/learner/attendance', 'apprenticeship', '71')).toBe('/learner/attendance/apprenticeship/71');
+    expect(withLearner('/workspace/learner/dashboard', 'commercial', '502')).toBe('/workspace/learner/dashboard/commercial/502');
+    expect(withLearner('/learner/my-learning?subject=M1', 'apprenticeship', '71')).toBe('/learner/my-learning/apprenticeship/71?subject=M1');
+  });
+  it('leaves other links, and links without a learner, unchanged', () => {
+    expect(withLearner('/learner/profile', 'apprenticeship', '71')).toBe('/learner/profile');
+    expect(withLearner('/learner/calendar')).toBe('/learner/calendar');
   });
 });

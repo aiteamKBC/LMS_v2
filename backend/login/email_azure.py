@@ -305,55 +305,264 @@ def _shell(heading, intro, button_label, link, footer, extra=""):
 </html>"""
 
 
-def _one_to_one_block(owner, link):
-    """The optional "book a one-to-one with your case owner" section.
+# The invitation uses the learner workspace palette (frontend index.css --kbc-*),
+# so the first thing a new learner sees matches the platform they are joining.
+_LEARNER_DEEP = "#4B168C"
+_LEARNER_PRIMARY = "#5B21B6"
+_LEARNER_ACCENT = "#8B5CF6"
+_LEARNER_SOFT = "#F3EEFF"
+_LEARNER_WASH = "#F7F5FF"
+_LEARNER_BORDER = "#E5DDF1"
+_LEARNER_TEXT = "#241638"
+_LEARNER_MUTED = "#72657F"
 
-    Kept below the password footer so that footer's "this link can be used once"
-    still reads as being about the password link -- the booking page is public
-    and reusable.
-    """
-    owner, link = escape(owner), escape(link, quote=True)
+# Invitation copy, as approved for the move to the new LMS. Kept as data so the
+# HTML and plain-text bodies cannot drift apart.
+_INVITE_READY = "Your account is ready on the new Kent Business College learning platform."
+_INVITE_START_WITH_BOOKING = (
+    "Getting started is simple: set your password, log in, and book a short "
+    "introduction with your case owner."
+)
+# Without a reachable case owner there is no booking step to mention.
+_INVITE_START = "Getting started is simple: set your password and log in."
+_INVITE_PURPOSE = "The new platform is designed to make your learning easier and reduce unnecessary admin."
+_PLATFORM_BENEFITS_TITLE = "Why you’ll love the new LMS"
+_PLATFORM_BENEFITS = (
+    ("No more double work.",
+     "You won’t need to complete your learning on the LMS and then upload the same "
+     "progress separately to Aptem. With the new system, you complete your work "
+     "once, in one place."),
+    ("Everything in one place.",
+     "Your learning activities, live sessions and progress are all available "
+     "directly inside the new LMS, so it’s much easier to know what you need to do "
+     "and where to find it."),
+    ("Simple to get started.",
+     "We know moving to a new system can feel like a big change, so we’ve made the "
+     "process as straightforward as possible. Your case owner will also be there to "
+     "help you get comfortable with the platform."),
+)
+_OPTIONAL_MOVE_TITLE = "Give it a try — there’s no pressure."
+_OPTIONAL_MOVE = (
+    "Moving to the new LMS is optional. You can continue using your current LMS and "
+    "Aptem while you get familiar with the new platform, then switch when you feel ready."
+)
+
+
+def _email_button(label, link, *, primary=True):
+    """A table-built button: Outlook ignores padding on a bare <a>."""
+    background, colour = (_LEARNER_PRIMARY, "#ffffff") if primary else ("#ffffff", _LEARNER_PRIMARY)
+    return f"""<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:separate;">
+                    <tr>
+                      <td bgcolor="{background}" style="background:{background};border:2px solid {_LEARNER_PRIMARY};border-radius:10px;">
+                        <a href="{link}" style="display:inline-block;padding:12px 24px;font-size:15px;font-weight:600;color:{colour};text-decoration:none;border-radius:10px;">{label}</a>
+                      </td>
+                    </tr>
+                  </table>"""
+
+
+def _invitation_step(number, title, body, button):
+    """One numbered card; ``number=None`` for a lone step, which needs no numbering."""
+    badge = f"""
+                  <td width="44" valign="top" style="padding:22px 0 22px 22px;">
+                    <div style="width:32px;height:32px;line-height:32px;border-radius:16px;background:{_LEARNER_SOFT};color:{_LEARNER_PRIMARY};font-size:15px;font-weight:700;text-align:center;">{number}</div>
+                  </td>""" if number else ""
     return f"""
-          <div style="margin:24px 0 0;padding:18px 20px;border:1px solid #e4e7eb;border-radius:8px;background:#f9fafb;">
-            <p style="margin:0 0 6px;font-size:15px;font-weight:600;color:#0b3d6b;">Book a one-to-one session</p>
-            <p style="margin:0 0 16px;font-size:14px;line-height:1.5;">Your case owner, {owner}, would like to meet you. Choose a time that suits you.</p>
-            <a href="{link}" style="display:inline-block;background:#ffffff;color:#0b3d6b;border:1px solid #0b3d6b;text-decoration:none;padding:10px 20px;border-radius:6px;font-size:14px;font-weight:600;">Book a one-to-one with {owner}</a>
-            <p style="margin:12px 0 0;font-size:12px;word-break:break-all;color:#616e7c;">{link}</p>
-          </div>"""
+          <tr>
+            <td style="padding:0 32px 16px;">
+              <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border:1px solid {_LEARNER_BORDER};border-radius:14px;background:#ffffff;">
+                <tr>{badge}
+                  <td valign="top" style="padding:22px 22px 22px {"14px" if number else "22px"};">
+                    <p style="margin:2px 0 6px;font-size:17px;font-weight:700;color:{_LEARNER_TEXT};">{title}</p>
+                    {body}
+                    {button}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>"""
+
+
+def _initials(name):
+    parts = [part for part in str(name).split() if part[:1].isalpha()]
+    return "".join(part[0] for part in parts[:2]).upper() or "?"
+
+
+def _benefits_box():
+    items = "".join(
+        f'<tr><td valign="top" style="padding:8px 10px 8px 0;font-size:15px;font-weight:700;color:{_LEARNER_ACCENT};">&#10003;</td>'
+        f'<td style="padding:8px 0;font-size:14px;line-height:1.55;color:{_LEARNER_TEXT};">'
+        f'<strong style="display:block;margin-bottom:2px;color:{_LEARNER_DEEP};">{escape(title)}</strong>{escape(detail)}</td></tr>'
+        for title, detail in _PLATFORM_BENEFITS
+    )
+    return f"""<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:16px 0 0;">
+                      <tr>
+                        <td style="padding:14px 16px;background:{_LEARNER_WASH};border-left:3px solid {_LEARNER_ACCENT};border-radius:8px;">
+                          <p style="margin:0 0 4px;font-size:13px;font-weight:700;letter-spacing:.5px;text-transform:uppercase;color:{_LEARNER_PRIMARY};">{escape(_PLATFORM_BENEFITS_TITLE)}</p>
+                          <table role="presentation" cellpadding="0" cellspacing="0">{items}</table>
+                        </td>
+                      </tr>
+                    </table>"""
+
+
+def _optional_move_box():
+    return f"""<table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="margin:18px 0 0;">
+                      <tr>
+                        <td style="padding:14px 16px;border:1px solid {_LEARNER_BORDER};border-radius:8px;background:#ffffff;">
+                          <p style="margin:0 0 4px;font-size:15px;font-weight:700;color:{_LEARNER_DEEP};">{escape(_OPTIONAL_MOVE_TITLE)}</p>
+                          <p style="margin:0;font-size:14px;line-height:1.55;color:{_LEARNER_TEXT};">{escape(_OPTIONAL_MOVE)}</p>
+                        </td>
+                      </tr>
+                    </table>"""
 
 
 def invitation_message(*, display_name, link, expires_days, booking_owner=None, booking_link=None):
     """The account invitation. ``booking_owner``/``booking_link`` add the
-    one-to-one booking section; both are needed, so a half-known case owner
-    simply leaves it out."""
+    one-to-one LMS introduction as a second step; both are needed, so a
+    half-known case owner simply leaves it out.
+
+    The booking link is separate from the password link and reusable (see
+    ``login.lms_introduction``), so the once-only expiry note sits with step 1.
+    """
     greeting = f"Hello {display_name}," if display_name else "Hello,"
     subject = f"Your {_BRAND} account — set your password"
     booking = bool(booking_owner and booking_link)
-    html = _shell(
-        heading="Welcome to the platform",
-        intro=(
-            f"{greeting}<br><br>An account has been created for you on the "
-            f"{_BRAND} learning platform. Choose a password to activate it and sign in."
-        ),
-        button_label="Set your password",
-        link=link,
-        footer=(
-            f"This link can be used once and expires in {expires_days} days. "
-            "If you were not expecting this email, you can ignore it — no account "
-            "is active until a password is set."
-        ),
-        extra=_one_to_one_block(booking_owner, booking_link) if booking else "",
+    start = _INVITE_START_WITH_BOOKING if booking else _INVITE_START
+    paragraph = f'<p style="margin:0 0 10px;font-size:15px;line-height:1.6;color:{_LEARNER_TEXT};">'
+    safe_link = escape(link, quote=True)
+    steps = _invitation_step(
+        1 if booking else None, "Set your password",
+        f'<p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:{_LEARNER_MUTED};">Activate your account '
+        f"and sign in. This link works once and expires in {expires_days} days.</p>",
+        _email_button("Set your password", safe_link),
     )
+    fallback_links = (
+        f'<p style="margin:0 0 4px;font-size:12px;color:{_LEARNER_MUTED};">Set your password:</p>'
+        f'<p style="margin:0 0 12px;font-size:12px;word-break:break-all;"><a href="{safe_link}" style="color:{_LEARNER_PRIMARY};">{safe_link}</a></p>'
+    )
+    if booking:
+        owner, safe_booking = escape(booking_owner), escape(booking_link, quote=True)
+        steps += _invitation_step(
+            2, "Book your LMS introduction",
+            f"""<table role="presentation" cellpadding="0" cellspacing="0" style="margin:4px 0 14px;">
+                      <tr>
+                        <td valign="middle" style="width:40px;height:40px;border-radius:20px;background:{_LEARNER_PRIMARY};color:#ffffff;font-size:14px;font-weight:700;text-align:center;">{escape(_initials(booking_owner))}</td>
+                        <td valign="middle" style="padding-left:12px;">
+                          <p style="margin:0;font-size:14px;font-weight:700;color:{_LEARNER_TEXT};">{owner}</p>
+                          <p style="margin:2px 0 0;font-size:12px;color:{_LEARNER_MUTED};">Your case owner</p>
+                        </td>
+                      </tr>
+                    </table>
+                    <p style="margin:0 0 16px;font-size:14px;line-height:1.6;color:{_LEARNER_MUTED};">A short one-to-one on Microsoft Teams where {owner} shows you around the platform. Pick a time that suits you and you will get a Teams invitation by email.</p>""",
+            _email_button("Book my LMS introduction", safe_booking, primary=False),
+        )
+        fallback_links += (
+            f'<p style="margin:0 0 4px;font-size:12px;color:{_LEARNER_MUTED};">Book your one-to-one LMS introduction:</p>'
+            f'<p style="margin:0;font-size:12px;word-break:break-all;"><a href="{safe_booking}" style="color:{_LEARNER_PRIMARY};">{safe_booking}</a></p>'
+        )
+    preheader = (
+        "Set your password and book your one-to-one LMS introduction." if booking
+        else "Set your password to activate your learning account."
+    )
+    html = f"""\
+<!doctype html>
+<html>
+  <body style="margin:0;padding:0;background:{_LEARNER_WASH};font-family:Segoe UI,Arial,sans-serif;color:{_LEARNER_TEXT};">
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:{_LEARNER_WASH};">{preheader}</div>
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background:{_LEARNER_WASH};">
+      <tr>
+        <td align="center" style="padding:28px 12px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:600px;background:#ffffff;border-radius:18px;overflow:hidden;border:1px solid {_LEARNER_BORDER};">
+            <tr>
+              <td bgcolor="{_LEARNER_DEEP}" style="background:{_LEARNER_DEEP};background-image:linear-gradient(108deg,{_LEARNER_DEEP} 0%,{_LEARNER_PRIMARY} 60%,{_LEARNER_ACCENT} 100%);padding:30px 32px;">
+                <p style="margin:0 0 18px;font-size:13px;font-weight:700;letter-spacing:1px;text-transform:uppercase;color:#E2C8FF;">{_BRAND}</p>
+                <h1 style="margin:0;font-size:26px;line-height:1.25;color:#ffffff;">Welcome to the new LMS</h1>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:28px 32px 20px;">
+                {paragraph}{escape(greeting)}</p>
+                {paragraph}{escape(_INVITE_READY)}</p>
+                {paragraph}{escape(start)}</p>
+                {paragraph}{escape(_INVITE_PURPOSE)}</p>
+                {_optional_move_box()}
+                {_benefits_box()}
+              </td>
+            </tr>{steps}
+            <tr>
+              <td style="padding:8px 32px 28px;">
+                <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-top:1px solid {_LEARNER_BORDER};">
+                  <tr>
+                    <td style="padding-top:18px;">
+                      <p style="margin:0 0 10px;font-size:13px;font-weight:700;color:{_LEARNER_MUTED};">Button not working? Copy a link into your browser.</p>
+                      {fallback_links}
+                      <p style="margin:16px 0 0;font-size:12px;line-height:1.6;color:{_LEARNER_MUTED};">If you were not expecting this email, you can ignore it — no account is active until a password is set.</p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:16px 32px;background:{_LEARNER_SOFT};font-size:12px;color:{_LEARNER_MUTED};">
+                This is an automated message from the {_BRAND} learning platform. Please do not reply.
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>"""
     text = (
-        f"{greeting}\n\nAn account has been created for you on the {_BRAND} "
-        f"learning platform.\n\nSet your password:\n{link}\n\n"
+        f"{greeting}\n{_INVITE_READY}\n{start}\n{_INVITE_PURPOSE}\n"
+        f"{_OPTIONAL_MOVE_TITLE}\n{_OPTIONAL_MOVE}\n"
+        f"{_PLATFORM_BENEFITS_TITLE.upper()}\n"
+        + "".join(f"✓ {title}\n{detail}\n" for title, detail in _PLATFORM_BENEFITS)
+        + f"\n{'Step 1 - ' if booking else ''}Set your password:\n{link}\n"
         f"This link can be used once and expires in {expires_days} days.\n"
     )
     if booking:
         text += (
-            f"\nBook a one-to-one session with your case owner, {booking_owner}:\n"
+            f"\nStep 2 - Book a one-to-one LMS introduction with your case owner, {booking_owner}:\n"
             f"{booking_link}\n"
         )
+    return subject, html, text
+
+
+def lms_introduction_request_message(*, owner_name, learner_name, learner_email,
+                                     when_label, note, timetable_link, updated=False,
+                                     invite_sent=True):
+    """Tell a case owner a learner booked their one-to-one LMS introduction.
+
+    The booking already sits on the case owner's timetable and, when
+    ``invite_sent``, in their Teams calendar. No token, nothing secret: the
+    button only opens the timetable, where the meeting can be moved or resent.
+    """
+    learner = learner_name or learner_email
+    subject = f"LMS introduction booked — {learner}"
+    verb = "moved" if updated else "booked"
+    where = (
+        "It is in your Teams calendar, and they have been sent the Teams invitation."
+        if invite_sent else
+        "Microsoft did not accept the Teams invitation, so it is not in your Teams "
+        "calendar yet. Open it on your timetable to send it again."
+    )
+    html = _shell(
+        heading="LMS introduction booked",
+        intro=(
+            f"<strong>{escape(learner)}</strong> has {verb} a one-to-one LMS "
+            f"introduction with you. {where}"
+            f'<br><br>{_detail_table([("Learner", learner_name), ("Email", learner_email), ("Time", when_label), ("Note", note)])}'
+        ),
+        button_label="Open my timetable",
+        link=escape(timetable_link, quote=True),
+        footer="You can reschedule or cancel it from your timetable like any other booking.",
+    )
+    text = (
+        f"{learner} has {verb} a one-to-one LMS introduction with you. {where}\n\n"
+        f"Learner: {learner_name}\nEmail: {learner_email}\nTime: {when_label}\n"
+        + (f"Note: {note}\n" if note else "")
+        + f"\nOpen your timetable:\n{timetable_link}\n"
+    )
     return subject, html, text
 
 
