@@ -24,11 +24,10 @@ class CoachDashboardService:
     def __init__(self, owner_email: str, *, today: date | None = None):
         self.context = CoachDashboardContext(owner_email, today or date.today())
 
-    # v4 makes Aptem programme/OTJ/KSB values come from the same canonical
-    # migrated selector as the learner workspace and standalone caseload.
-    # Persisted v3 rows may still contain audit/component metrics, so they must
-    # never be served under this contract.
-    SCHEMA_VERSION = 4
+    # v12 carries the Case File header's source OTJH plan and KSB coverage
+    # in the aggregate response, so the embedded table stays exact without a
+    # second browser request.
+    SCHEMA_VERSION = 12
 
     def build(self) -> dict:
         """Read the persistent projection; build once only if it is absent."""
@@ -79,8 +78,14 @@ class CoachDashboardService:
 
         payload = deepcopy(previous_payload)
         learners = payload.get("learners") or []
-        rows = domain.fetch_caseload_dashboard_profiles(self.context.owner_email)
+        rows = domain.fetch_caseload_learner_profiles(self.context.owner_email)
         rows_by_id = {int(row.id): row for row in rows}
+        case_file_metrics = {
+            int(row.id): domain.case_file_table_metrics_snapshot(
+                row, domain.serialize_caseload_learner(row, refresh_live_snapshots=False),
+            )
+            for row in rows
+        }
         canonical_metrics = domain.caseload_canonical_metrics(rows)
         aptem_by_profile = domain.caseload_aptem_ids(rows)
         attendance_rows = domain.dashboard_attendance_rows(
@@ -97,6 +102,7 @@ class CoachDashboardService:
             domain.apply_canonical_learner_metrics(learner, canonical_metrics.get(profile_id))
             domain.apply_aptem_variance_status(learner, aptem_by_profile.get(profile_id))
             domain.apply_attendance_summary(learner, attendance_by_id.get(profile_id))
+            domain.restore_case_file_table_metrics(learner, case_file_metrics[profile_id])
             learner["attendanceAvailable"] = bool(learner.get("attendanceRateAvailable"))
         compatibility.CoachDashboardSnapshot.objects.update_or_create(
             owner_email=self.context.owner_email,
@@ -137,8 +143,15 @@ class CoachDashboardService:
         from coach_api import views as domain
 
         context = self.context
-        context.rows = domain.fetch_caseload_dashboard_profiles(context.owner_email)
-        context.learners = [domain.serialize_caseload_dashboard_learner(row) for row in context.rows]
+        context.rows = domain.fetch_caseload_learner_profiles(context.owner_email)
+        context.learners = [
+            domain.serialize_caseload_learner(row, refresh_live_snapshots=False)
+            for row in context.rows
+        ]
+        case_file_metrics = {
+            int(row.id): domain.case_file_table_metrics_snapshot(row, learner)
+            for row, learner in zip(context.rows, context.learners)
+        }
 
         canonical_metrics = domain.caseload_canonical_metrics(context.rows)
         ksb_fallback_rows = [
@@ -254,6 +267,7 @@ class CoachDashboardService:
             domain.apply_canonical_learner_metrics(learner, canonical_metrics.get(int(row.id)))
             domain.apply_aptem_variance_status(learner, aptem_by_profile.get(int(row.id)))
             domain.apply_attendance_summary(learner, attendance_by_id.get(int(row.id)))
+            domain.restore_case_file_table_metrics(learner, case_file_metrics[int(row.id)])
             learner["attendanceAvailable"] = bool(learner.get("attendanceRateAvailable"))
 
         marking = dashboard_marking_projection(context)

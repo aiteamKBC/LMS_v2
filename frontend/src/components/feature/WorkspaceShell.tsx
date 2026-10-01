@@ -15,7 +15,7 @@ import { ArrowLeft } from 'lucide-react';
 import design from './WorkspaceDesign.module.css';
 import { activePersonalLearning } from '@/lib/personalLearning';
 import { PersonalLearningBanner } from './PersonalLearningBanner';
-import { learnerHref, learnerIdentityFromPath, type LearnerRoutePage } from '@/lib/learnerRoutes';
+import { bareLearnerPath, learnerHref, learnerIdentityFromPath, type LearnerRoutePage } from '@/lib/learnerRoutes';
 
 interface WorkspaceShellProps {
   children: ReactNode;
@@ -53,7 +53,7 @@ const SIDEBAR_PINNED_KEY = 'kbc_sidebar_pinned';
 const COACH_SIDEBAR_COLLAPSED_KEY = 'kbc_coach_sidebar_collapsed';
 const LEARNER_SIDEBAR_COLLAPSED_KEY = 'kbc_learner_sidebar_collapsed';
 const COACH_SIDEBAR_WIDTH = 240;
-const COACH_SIDEBAR_COLLAPSED_WIDTH = 76;
+const COACH_SIDEBAR_COLLAPSED_WIDTH = LEARNER_SIDEBAR_COLLAPSED_WIDTH;
 
 /**
  * Whether the sidebar's secondary navigation is open.
@@ -296,6 +296,20 @@ export function WorkspaceShell({
     setMobileSidebarOpen(false);
   }, [location.pathname]);
 
+  // A learner on their own sign-in never sees their type or id in the address
+  // bar: the page already resolves them from the session (useMyLearner), so a
+  // link naming them is swapped for its bare route. Staff and admin previews
+  // keep the ids -- for them the URL is what says which learner is shown.
+  const ownAccount = auth.account?.role === 'learner' ? auth.account : null;
+  const ownBarePath = ownAccount && routeLearner
+    && routeLearner.id === String(ownAccount.subjectId)
+    && routeLearner.kind === (ownAccount.learnerType === 'commercial' ? 'commercial' : 'apprenticeship')
+    ? bareLearnerPath(location.pathname, routeLearner.kind, routeLearner.id)
+    : null;
+  useEffect(() => {
+    if (ownBarePath) navigate(`${ownBarePath}${location.search}${location.hash}`, { replace: true, state: location.state });
+  }, [ownBarePath, location.search, location.hash, location.state, navigate]);
+
   useEffect(() => {
     if (role !== 'learner') return;
     if (mobileSidebarOpen) {
@@ -478,7 +492,7 @@ export function WorkspaceShell({
               title={!canGoBack ? 'You are on the first page' : previousRoute ? 'Back to the previous page' : 'Back'}>
               <ArrowLeft size={16} aria-hidden="true" /><span>Back</span>
             </button>}
-            {!hideBreadcrumbs && <nav className={`flex min-w-0 items-center gap-1.5 overflow-x-auto text-xs [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${role === 'learner' ? 'learner-step-breadcrumb' : ''}`} aria-label="Breadcrumb">
+            {!hideBreadcrumbs && <nav className={`flex min-w-0 items-center gap-1.5 overflow-x-auto text-xs [scrollbar-width:none] [&::-webkit-scrollbar]:hidden ${role === 'learner' || role === 'coach' ? 'learner-step-breadcrumb' : ''}`} aria-label="Breadcrumb">
               {roleLabel !== 'Super Admin' && (
                 <>
                   <Link to="/" className="workspace-breadcrumb-home text-foreground-300 hover:text-foreground-500 transition-smooth">

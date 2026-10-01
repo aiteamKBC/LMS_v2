@@ -8,10 +8,9 @@ from django.core.cache import cache
 from coach_api.auth import normalize_email
 
 
-# v4 invalidates rows cached before the canonical learner-metrics projection
-# was made fast enough for the caseload request. Those fallback rows could show
-# stored hours/activity counts that disagreed with the learner Case File.
-CASELOAD_CACHE_VERSION = 4
+# v12 uses the source learner's Case File planned OTJH denominator and KSB
+# evidence coverage in the detailed caseload table.
+CASELOAD_CACHE_VERSION = 12
 logger = logging.getLogger(__name__)
 
 

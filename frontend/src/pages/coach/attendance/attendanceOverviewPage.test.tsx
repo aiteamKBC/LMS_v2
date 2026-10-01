@@ -25,11 +25,16 @@ describe('coach attendance overview', () => {
   beforeEach(() => vi.mocked(coachFetch).mockResolvedValue(new Response(JSON.stringify({ learners, attendanceRecords }))));
   it('filters by stable ids and shows recent status chips', async () => {
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
-    fireEvent.change(await screen.findByRole('combobox', { name: 'Group' }), { target: { value: 'group-1' } });
-    expect(within(screen.getByRole('combobox', { name: 'Group' })).getByRole('option', { name: 'Cairo A' })).toHaveValue('group-1');
-    const programme = screen.getByRole('combobox', { name: 'Programme' });
+    const programme = await screen.findByRole('combobox', { name: 'Programme' });
+    const group = screen.getByRole('combobox', { name: 'Group' });
+    expect(programme.compareDocumentPosition(group) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(group).toBeDisabled();
     expect(within(programme).getByRole('option', { name: 'Data' })).toHaveValue('programme-1');
     fireEvent.change(programme, { target: { value: 'programme-1' } });
+    expect(group).toBeEnabled();
+    expect(within(group).getByRole('option', { name: 'Cairo A' })).toHaveValue('group-1');
+    expect(within(group).getByRole('option', { name: 'Cairo B' })).toHaveValue('group-2');
+    fireEvent.change(group, { target: { value: 'group-1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Load students' }));
     expect(screen.getByText('Aya Khater')).toBeInTheDocument();
     expect(screen.queryByText('Ayman Learner')).not.toBeInTheDocument();
@@ -42,18 +47,19 @@ describe('coach attendance overview', () => {
   });
   it('shows paused attendance instead of historical chips', async () => {
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
-    fireEvent.change(await screen.findByRole('combobox', { name: 'Group' }), { target: { value: 'group-1' } });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-2' } });
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-2' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Group' }), { target: { value: 'group-1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Load students' }));
     expect(screen.getByText('Attendance paused')).toBeInTheDocument();
     expect(screen.queryByText('Present · 16 Sept 2026')).not.toBeInTheDocument();
   });
   it('supports selection, clear, and prepared days', async () => {
     render(<MemoryRouter><CoachAttendance /></MemoryRouter>);
-    fireEvent.change(await screen.findByRole('combobox', { name: 'Group' }), { target: { value: 'group-1' } });
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Group' }), { target: { value: 'group-1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Load students' }));
     fireEvent.click(screen.getByRole('button', { name: 'Select all' }));
-    expect(screen.getByText('Selected students: 2')).toBeInTheDocument();
+    expect(screen.getByText('Selected students: 1')).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Date'), { target: { value: '2026-09-24' } });
     fireEvent.click(screen.getByRole('button', { name: 'Add day' }));
     expect(screen.getByRole('button', { name: 'Apply bulk update' })).toBeEnabled();
@@ -62,8 +68,8 @@ describe('coach attendance overview', () => {
   });
   it('navigates with the stable learner id', async () => {
     render(<MemoryRouter><Routes><Route path="*" element={<><CoachAttendance /><Location /></>} /></Routes></MemoryRouter>);
-    fireEvent.change(await screen.findByRole('combobox', { name: 'Group' }), { target: { value: 'group-1' } });
-    fireEvent.change(screen.getByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Programme' }), { target: { value: 'programme-1' } });
+    fireEvent.change(screen.getByRole('combobox', { name: 'Group' }), { target: { value: 'group-1' } });
     fireEvent.click(screen.getByRole('button', { name: 'Load students' }));
     fireEvent.click(screen.getByRole('button', { name: 'View details' }));
     expect(screen.getByText('/coach/attendance/42')).toBeInTheDocument();

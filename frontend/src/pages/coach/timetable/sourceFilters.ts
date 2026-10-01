@@ -62,6 +62,7 @@ export const EVENT_SOURCE_LABELS: Record<string, string> = {
   review: 'Reviews',
   'catch-up': 'Catch-up',
   'student-support': 'Support',
+  'lms-introduction': 'LMS Introduction',
   other: 'Other',
 };
 
