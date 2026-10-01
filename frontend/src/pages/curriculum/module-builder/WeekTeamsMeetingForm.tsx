@@ -20,6 +20,7 @@ import {
   cancelWeekTeamsMeeting,
   createWeekTeamsMeeting,
   updateWeekTeamsMeeting,
+  type WeekTeamsMeetingResult,
   utcIsoToCalendarParts,
   zonedNaiveToUtcIso,
   type ComponentSettings,
@@ -335,6 +336,37 @@ function SavedWeekMeeting({
 }
 
 /**
+ * What our own schedule email did, beside Microsoft's invitation.
+ *
+ * Two emails reach each guest: Microsoft's calendar invitation, and this — the
+ * readable schedule with the date, time and join button. Reported rather than
+ * assumed: mail that did not go out is the kind of failure nobody notices until
+ * somebody misses a session.
+ */
+function ScheduleEmailNote({ email }: { email: NonNullable<WeekTeamsMeetingResult['scheduleEmail']> }) {
+  if (email.error) {
+    return (
+      <p role="alert" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[12px] font-semibold text-amber-800">
+        Microsoft sent its calendar invitation, but our own schedule email did not go out: {email.error}
+      </p>
+    );
+  }
+  const accepted = Number(email.accepted || 0);
+  const total = Number(email.total || 0);
+  if (!total) return null;
+  const pending = total - accepted;
+  return (
+    <p role="status" className={`rounded-lg border p-3 text-[12px] font-semibold ${
+      pending ? 'border-amber-200 bg-amber-50 text-amber-800' : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+    }`}>
+      {pending
+        ? `Our schedule email reached ${accepted} of ${total}; ${pending} still pending or failed. Microsoft’s calendar invitation was sent separately.`
+        : `Our schedule email was sent to all ${total}, alongside Microsoft’s calendar invitation — two emails each.`}
+    </p>
+  );
+}
+
+/**
  * The tab itself.
  *
  * It owns its own state and its own Create button rather than borrowing the
@@ -366,7 +398,7 @@ export function WeekTeamsMeetingPanel({
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const [created, setCreated] = useState<{ joinUrl: string; invited: string[]; warnings: string[]; edited?: boolean } | null>(null);
+  const [created, setCreated] = useState<{ joinUrl: string; invited: string[]; warnings: string[]; edited?: boolean; email?: WeekTeamsMeetingResult['scheduleEmail'] } | null>(null);
   // Editing the meeting a week already has, rather than booking a new one. The
   // form is the same one: an author changes a meeting where they created it.
   const [editing, setEditing] = useState('');
@@ -493,7 +525,12 @@ export function WeekTeamsMeetingPanel({
         // Makes a double-click idempotent at Graph, as the module create's does.
         transactionId: `TEAMS-WEEK-${form.weekId}-${naive}`.slice(0, 255),
       });
-      setCreated({ joinUrl: result.meeting.joinUrl, invited: result.invited || [], warnings: result.warnings || [] });
+      setCreated({
+        joinUrl: result.meeting.joinUrl,
+        invited: result.invited || [],
+        warnings: result.warnings || [],
+        email: result.scheduleEmail,
+      });
       onCreated?.(result.meeting.joinUrl);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'The additional Teams meeting could not be created.');
@@ -538,6 +575,7 @@ export function WeekTeamsMeetingPanel({
             )}
           </div>
         </div>
+        {created.email && <ScheduleEmailNote email={created.email} />}
         {created.warnings.map(warning => (
           <p key={warning} role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-[12px] font-semibold text-amber-800">{warning}</p>
         ))}

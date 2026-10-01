@@ -3,6 +3,7 @@ from io import BytesIO
 from inspect import unwrap
 from unittest.mock import patch
 import base64
+import json
 
 from django.http import JsonResponse
 from django.test import SimpleTestCase, RequestFactory
@@ -131,6 +132,29 @@ class SignatureAvailabilityTests(SimpleTestCase):
 
 
 class SignedMcmPdfTests(SimpleTestCase):
+    def test_imported_table_is_rendered_as_pdf_cells_instead_of_raw_json(self):
+        definition = sample_definition()
+        definition['template']['reviewTypeCode'] = 'aptem_mcm'
+        definition['sections'] = [{
+            'id': 'actions', 'title': 'Actions', 'enabled': True, 'displayOrder': 0,
+            'fields': [{
+                'id': 'aptem-table:actions:0', 'title': 'Imported table',
+                'fieldType': 'title_description',
+                'configuration': {'imported': True, 'description': json.dumps([
+                    ['Action', 'Responsible', 'Deadline'],
+                    ['Submit outstanding assignments', 'Laura Baxter', '9 October 2026'],
+                ])},
+            }],
+        }]
+
+        pdf = PdfReader(BytesIO(build_mcm_pdf(definition, SAMPLE_INFORMATION)))
+        text = '\n'.join(page.extract_text() for page in pdf.pages)
+
+        self.assertIn('Action', text)
+        self.assertIn('Responsible', text)
+        self.assertIn('Submit outstanding assignments', text)
+        self.assertNotIn('[["Action"', text)
+
     def test_imported_aptem_mcm_uses_the_mcm_pdf_layout(self):
         definition = sample_definition()
         definition['template']['reviewTypeCode'] = 'aptem_mcm'

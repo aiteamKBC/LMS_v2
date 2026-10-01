@@ -15,18 +15,19 @@ import {
 //
 // Nothing about studying is restricted: this opens only after a Finish click
 // the server refused, and the refusal wrote nothing — no completion, no
-// percentage, no history entry. The learner picks the working date and time the
-// work was actually done at, and Final Submit sends that instant to be
-// re-validated and written.
+// percentage, no history entry. The learner picks the date and time the work
+// was actually done at, and Final Submit sends that instant to be written.
 //
-// The live checking below is UX. The server decides.
+// A selection outside the working rules is only warned about, never blocked:
+// the learner can still Final Submit it. The server refuses only an unusable
+// (unreadable or future) instant.
 // ============================================================================
 
 interface CompletionTimeDialogProps {
   /** Why the learner's real Finish click was refused. */
   reason: WorkingRuleReason | '';
   holidayName: string;
-  /** Closed dates for THIS learner's cohort, named where the server named them. */
+  /** Bank holidays for THIS learner's cohort, one entry per date, named where the server named them. */
   holidays: WorkingHoursHoliday[];
   submitting: boolean;
   /** A server refusal of the declared instant, shown in place of the local one. */
@@ -65,7 +66,7 @@ export function CompletionTimeDialog({
     [day, time, holidays],
   );
   const complete = Boolean(day && time);
-  const canSubmit = complete && failure === null && !submitting;
+  const canSubmit = complete && !submitting;
 
   useEffect(() => {
     const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -149,7 +150,7 @@ export function CompletionTimeDialog({
             <p className="font-bold">The selected completion time is outside official working rules.</p>
             <p className="mt-1 text-xs font-semibold">Reason: {reasonHeadline(reason, holidayName)}</p>
             <p className="mt-2 text-xs leading-5 text-amber-900/80">
-              Your activity has not been completed yet. Select the working date and time you
+              Your activity has not been completed yet. Select the date and time you
               actually did this work, then choose Final Submit.
             </p>
           </div>
@@ -184,7 +185,7 @@ export function CompletionTimeDialog({
 
           <p className="text-xs leading-5 text-foreground-500">
             Official working hours are Monday to Friday, 07:00-19:00 UK time, excluding
-            bank holidays and your college holidays.
+            bank holidays.
           </p>
 
           {serverError ? (
@@ -192,9 +193,9 @@ export function CompletionTimeDialog({
               {serverError}
             </p>
           ) : touched && complete && failure ? (
-            <p role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-900">
-              This date/time cannot be selected because it is outside official working rules.
-              {' '}{failure.message}
+            <p role="status" className="rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-950">
+              This date/time is outside official working rules.
+              {' '}{failure.message}{' '}You can still submit it.
             </p>
           ) : null}
         </div>
@@ -212,7 +213,7 @@ export function CompletionTimeDialog({
             onClick={submit}
             disabled={!canSubmit}
             aria-disabled={!canSubmit}
-            title={!complete ? 'Select a completion date and time.' : failure ? failure.message : undefined}
+            title={!complete ? 'Select a completion date and time.' : undefined}
             className="inline-flex items-center gap-2 rounded-xl bg-primary-600 px-5 py-2.5 text-sm font-bold text-white transition hover:bg-primary-700 disabled:cursor-not-allowed disabled:bg-foreground-300 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary-500"
           >
             <AppIcon className={canSubmit ? 'ri-check-line' : 'ri-lock-line'} />

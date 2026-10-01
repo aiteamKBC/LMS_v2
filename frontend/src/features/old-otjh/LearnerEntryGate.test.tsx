@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Link, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { StrictMode } from 'react';
 import { LearnerEntryGate } from './LearnerEntryGate';
 import { fetchLearnerEntry } from './entry';
 
@@ -10,16 +11,17 @@ vi.mock('@/hooks/useAuth', () => ({ useAuth: () => session }));
 vi.mock('./entry', () => ({ fetchLearnerEntry: vi.fn() }));
 const pending = { classification: 'existing' as const, enabled: true, required: true, canAccess: false, totalMonths: 2, completedMonths: 0 };
 const allowed = { ...pending, required: false, canAccess: true };
-function mount(path = '/learner/home') {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
-  return render(<QueryClientProvider client={client}><MemoryRouter initialEntries={[path]}>
+function mount(path = '/learner/home', strict = false) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: strict ? 120_000 : 0 } } });
+  const content = <QueryClientProvider client={client}><MemoryRouter initialEntries={[path]}>
     <LearnerEntryGate><Routes>
       <Route path="/learner/home" element={<p>Personalised student home</p>} />
       <Route path="/learner/my-learning" element={<p>Learning content</p>} />
       <Route path="/old-otjh/months" element={<div>Complete monthly document<Link to="/learner/home">Cancel and return</Link></div>} />
       <Route path="/messages" element={<p>Contact the support team</p>} />
     </Routes></LearnerEntryGate>
-  </MemoryRouter></QueryClientProvider>);
+  </MemoryRouter></QueryClientProvider>;
+  return render(strict ? <StrictMode>{content}</StrictMode> : content);
 }
 beforeEach(() => { session.auth.account.role = 'learner'; vi.mocked(fetchLearnerEntry).mockResolvedValue(pending); });
 afterEach(() => { cleanup(); vi.clearAllMocks(); vi.useRealTimers(); });
@@ -84,6 +86,16 @@ describe('mandatory student entry', () => {
     fireEvent(window, new Event('previous-record-updated'));
     await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     expect(fetchLearnerEntry).toHaveBeenCalledTimes(2);
+  });
+  it('keeps one verification request alive through a StrictMode remount', async () => {
+    let resolve!: (value: typeof allowed) => void;
+    vi.mocked(fetchLearnerEntry).mockReturnValue(new Promise(done => { resolve = done; }));
+    mount('/learner/home', true);
+    await waitFor(() => expect(fetchLearnerEntry).toHaveBeenCalledOnce());
+    resolve(allowed);
+    expect(await screen.findByText('Personalised student home')).toBeInTheDocument();
+    expect(fetchLearnerEntry).toHaveBeenCalledOnce();
+    expect(fetchLearnerEntry).toHaveBeenCalledWith();
   });
   it('keeps support and sign-out available during the block', async () => {
     mount();

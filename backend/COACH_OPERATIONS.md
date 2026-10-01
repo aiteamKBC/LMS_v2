@@ -18,16 +18,16 @@ existing log collector; they are not a claim that dashboards or alerts exist.
 
 ## Async Graph deployment blocker
 
-The repository currently has no durable task-queue framework, worker entrypoint,
-process supervisor configuration, or documented production worker lifecycle.
-Redis is configured for Channels and caching only; that does not make a reliable
-background job processor. Calendar Graph calls therefore remain synchronous.
+The repository now has a PostgreSQL-outbox worker for shared read models (documented
+in `PERFORMANCE_READ_MODELS_OPERATIONS.md`), but it is intentionally not a general
+Graph task queue. Redis is configured for Channels and caching only; that does not
+make a reliable background job processor. Calendar Graph calls therefore remain
+synchronous.
 
-Before implementing the transactional outbox, operations must approve and provide
-a continuously supervised worker process (for example, a chosen queue framework or
-a dedicated PostgreSQL-outbox worker service), including startup, health checks,
-restart policy, and deployment ownership. The HTTP `202` contract must not be
-enabled until that worker is deployed and verified.
+Before moving Graph work off-request, operations must approve and provide a
+continuously supervised Graph-capable worker process, including startup, health
+checks, restart policy, and deployment ownership. The HTTP `202` contract must not
+be enabled until that worker is deployed and verified.
 
 ## Scheduled Teams artifact sync
 

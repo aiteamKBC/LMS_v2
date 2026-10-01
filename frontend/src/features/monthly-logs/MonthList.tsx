@@ -4,12 +4,10 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SkeletonBlock } from '@/components/feature/Skeletons';
 import { duration, hours, monthLabel, monthStatus } from '@/features/old-otjh/report';
-import { monthlyTargetHours } from '@/pages/learner/training-plan-timeline/monthlyHours';
-import type { TrainingPlanContract } from '@/api/trainingPlanDashboard';
 import type { LogMonth, LogPerspective, LogSummary } from './api';
 import styles from './monthlyLogs.module.css';
 
-export function MonthList({ summary, base, perspective, contract }: { summary: LogSummary; base: string; perspective: LogPerspective; contract?: TrainingPlanContract }) {
+export function MonthList({ summary, base, perspective }: { summary: LogSummary; base: string; perspective: LogPerspective }) {
   const [year, setYear] = useState('all');
   const [pendingOnly, setPendingOnly] = useState(false);
   const signature = perspective === 'learner' ? 'student_signature' : 'coach_signature';
@@ -28,10 +26,10 @@ export function MonthList({ summary, base, perspective, contract }: { summary: L
   const total = closed.length;
   const recordedTotal = summary.months.length;
   const percent = total ? Math.round(signed / total * 100) : 0;
-  const targetFor = (item: LogMonth) => monthlyTargetHours(item.training_plan_target,
-    contract?.contractStatus === 'ready' ? contract.months[item.month]?.planned : null);
+  const targetFor = (item: LogMonth) => item.training_plan_target;
   const targetWarnings = [...new Set(summary.months.filter(item => targetFor(item) == null).map(item => item.target_warning).filter(Boolean))];
   const signer = perspective === 'learner' ? 'Learner' : 'Coach';
+  const planTotals = summary.training_plan_totals;
 
   return <div className={styles.index}>
     <header className={`${styles.indexHeader} ${perspective === 'learner' ? styles.learnerIndexHeader : ''}`}>
@@ -49,6 +47,11 @@ export function MonthList({ summary, base, perspective, contract }: { summary: L
         </div>
       </div>
     </header>
+    {planTotals && <section className={styles.planTotal} aria-label="Training Plan OTJ hours">
+      <span className={styles.planTotalIcon} aria-hidden="true"><AppIcon className="ri-time-line" /></span>
+      <div><p>Total OTJ hours</p><strong>{hours(planTotals.accepted_hours)} h</strong><span>Accepted</span></div>
+      <div><p>Training Plan</p><strong>{planTotals.planned_hours == null ? 'Unavailable' : `${hours(planTotals.planned_hours)} h`}</strong><span>Planned</span></div>
+    </section>}
     {targetWarnings.map(warning => <p key={warning} role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">{warning}</p>)}
     {!recordedTotal ? <EmptyState title="No monthly logs yet" description="Your recorded activities will appear here as you complete them." /> : <>
       <div className={styles.toolbar}>

@@ -116,10 +116,14 @@ export const calendarLabel = (value: string, timeZone = getCalendarTimeZone()) =
 
 export function teamsGapNote(plannedUtc: string, teamsUtc: string, hasCalendar: boolean): { matches: boolean; note: string } {
   if (!plannedUtc) return { matches: true, note: '' };
-  // Before the calendar exists there is nothing to reconcile: every date is
-  // new, which the create panel says once rather than per session.
-  if (!hasCalendar) return { matches: true, note: '' };
-  if (!teamsUtc) return { matches: false, note: 'Not on the Teams calendar yet — sending adds it.' };
+  // Before the calendar exists there is nothing to RECONCILE — every date is
+  // new — but each row still says where it stands, and names the button that
+  // will put it there. `matches` stays true: nothing has drifted from anything,
+  // so the row must not be styled as a difference.
+  if (!hasCalendar) {
+    return { matches: true, note: 'Not on the Teams calendar yet — Create Teams calendar adds it.' };
+  }
+  if (!teamsUtc) return { matches: false, note: 'Not on the Teams calendar yet — Update Teams calendar adds it.' };
   if (minuteKey(plannedUtc) === minuteKey(teamsUtc)) return { matches: true, note: '' };
   const planned = calendarLabel(plannedUtc);
   const held = calendarLabel(teamsUtc);
@@ -731,7 +735,7 @@ export function TeamsPeopleFields({ form, patch, prefilling, prefillNotice, onPr
             className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-700 hover:underline disabled:opacity-50"
           >
             <AppIcon className="ri-refresh-line text-sm"></AppIcon>
-            {prefilling ? 'Loading…' : "Prefill from the module's assigned learners"}
+            {prefilling ? 'Loading…' : 'Prefill from the learners who have this module on their plan'}
           </button>
           {/* What the prefill actually did. Without it, a request that failed
               and one that found nobody were both a button that did nothing. */}

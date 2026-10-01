@@ -57,6 +57,22 @@ logger = logging.getLogger(__name__)
 WEEK_MEETING_STATUS = 'week-meeting'
 
 
+def may_send_schedule_email(request):
+    """Whether this caller may have the server send the LMS schedule email.
+
+    Exactly the roles `teams_create_guard.with_creation_emails` admits for the
+    module calendar, read the same way, so booking an additional meeting never
+    widens who can make the LMS mail people.
+    """
+    from .teams_create_guard import EMAIL_ROLES
+    try:
+        from login.sessions import authenticate_request
+        account = authenticate_request(request)
+    except Exception:
+        return False
+    return account is not None and getattr(account, 'role', None) in EMAIL_ROLES
+
+
 def component_extra_meeting_settings(row, v):
     """The extra meeting already stored on a component, if any."""
     settings = v.component_builder_settings(row)
@@ -400,8 +416,21 @@ def curriculum_week_teams_meeting(request, module_catalogue_id):
             meetingCreated=True, liveSessionId=live_session_id, joinUrl=join_url, warnings=warnings,
         )
 
+    # Our own schedule email, beside Microsoft's invitation -- the same pair the
+    # module's calendar sends. Microsoft's is a calendar item; this is the
+    # readable schedule with the date, the time and the join button. Sent only
+    # once Microsoft has confirmed the meeting and its invitations, and only by
+    # a caller who may send mail, which is exactly the rule `with_creation_emails`
+    # applies to the module calendar. Never fatal: the meeting is booked and
+    # saved by now, so a mail problem is reported beside it, not in place of it.
+    schedule_email = None
+    if may_send_schedule_email(request):
+        from .teams_schedule_delivery import send_week_meeting_emails
+        schedule_email = send_week_meeting_emails(live_session_id)
+
     return JsonResponse({
         'created': True,
+        'scheduleEmail': schedule_email,
         'invitationsSent': invitations_sent,
         'invited': [
             v.clean_str((person.get('emailAddress') or {}).get('address'))

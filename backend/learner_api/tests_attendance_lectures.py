@@ -87,6 +87,21 @@ class AttendanceLectureTests(SimpleTestCase):
         self.assertNotIn('jsonb_array_elements_text', schedule_sql)
         self.assertNotIn('live_session_join_launches', schedule_sql)
 
+    def test_schedule_reuses_already_loaded_home_assignment(self):
+        conn = MagicMock()
+        cur = conn.cursor.return_value.__enter__.return_value
+        with patch('learner_api.attendance_lectures.connections', {'enrolment': conn}), \
+             patch('learner_api.attendance_lectures.dict_rows', return_value=[]):
+            read_native_occurrences(
+                SimpleNamespace(id=12, email='learner@example.test'),
+                module_ids=['assigned-module', 'assigned-module', ''],
+            )
+
+        cur.execute.assert_called_once()
+        schedule_sql, schedule_params = cur.execute.call_args.args
+        self.assertIn('s.module_catalogue_id=ANY(%s)', schedule_sql)
+        self.assertEqual(schedule_params, ['learner@example.test', ['assigned-module']])
+
     def test_empty_json_plan_still_uses_normalized_module_assignments(self):
         conn = MagicMock()
         cur = conn.cursor.return_value.__enter__.return_value
@@ -573,10 +588,14 @@ class AttendanceAbsenceTests(SimpleTestCase):
         read.return_value = [register_row(), register_row(source='microsoft-teams', session_id='upcoming', attendance_status='upcoming'),
                              register_row(session_id='present', attendance_status='present'), register_row(attendance_status='pending')]
         source = SimpleNamespace(id=12)
-        with patch('learner_api.absence_reports.eligible_alternative_occurrences', return_value=[]):
+        with patch('learner_api.absence_reports.eligible_alternatives_by_occurrence',
+                   return_value={'upcoming': [{'id': 'OCC-ALT'}]}) as alternatives:
             result = _fetch_missed_sessions(source, 12)
         self.assertEqual(len(result), 2)
         self.assertEqual(result[1]['sessionId'], 'teams:upcoming')
+        # One batched lookup for every Teams lecture, not one per lecture.
+        alternatives.assert_called_once_with(['upcoming'])
+        self.assertEqual(result[1]['alternativeSessions'], [{'id': 'OCC-ALT'}])
         self.assertIsNotNone(_resolve_absent_attendance(source, 12, 'teams:upcoming', 'Business introduction', date(2026, 9, 1), None))
         self.assertIsNone(_resolve_absent_attendance(source, 12, 'present', 'Business introduction', date(2026, 9, 1), None))
         self.assertIsNone(_resolve_absent_attendance(source, 12, 'teams:other', 'Business introduction', date(2026, 9, 1), None))

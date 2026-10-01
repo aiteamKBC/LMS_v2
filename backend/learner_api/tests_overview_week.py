@@ -264,7 +264,7 @@ class OverviewWeekTests(SimpleTestCase):
         self.assertEqual(result['otjh']['actual'], 1)
         self.assertEqual(result['expectedHours'], 2)
         self.assertEqual(result['monthlyOtjh']['2026-09'], {
-            'planned': 2, 'actual': 3, 'missingPlannedActivities': 0,
+            'planned': 2, 'submitted': 3, 'actual': 3, 'missingPlannedActivities': 0,
         })
         self.assertEqual(result['modules'][0]['completed'], 1)
         self.assertNotIn('latestModuleId', result)
@@ -298,7 +298,7 @@ class OverviewWeekTests(SimpleTestCase):
         model.all_learners.only.return_value.get.return_value = source
         with patch.dict('learner_api.overview_week.SOURCE_MODELS', {'commercial': model}), patch('learner_api.overview_week.read_week', return_value={'modules': []}) as reader:
             response = overview_week.__wrapped__.__wrapped__(RequestFactory().get('/?aptem_id=999'), 'commercial', 125)
-        reader.assert_called_once_with(source)
+        reader.assert_called_once_with(source, dashboard_kind=None)
         model.all_learners.only.return_value.get.assert_called_once_with(pk=125)
         self.assertEqual(response['Cache-Control'], 'private, no-store')
 

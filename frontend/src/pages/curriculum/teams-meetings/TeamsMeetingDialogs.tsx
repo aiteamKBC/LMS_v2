@@ -9,6 +9,9 @@ import {
 import { EntraPeopleInput } from './EntraPeopleInput';
 import { CalendarActionDialog } from './CalendarActionDialog';
 import { CreateProgressPanel } from './CreateProgressPanel';
+import { AttendeeComparisonPanel } from './AttendeeComparisonPanel';
+import { pendingInvitations } from './attendeeComparison';
+import { emailList } from '../module-builder/EmailChipsInput';
 import { updateProgressSteps } from './updateProgress';
 import { createPortal } from 'react-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -367,7 +370,14 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
     transcriptPreview, settingsDrawer, drawerTarget, saveSettings, blockedReason,
     teamsLoaded, teamsError, createProgress, updateProgress, saveInvitations, updateDrawer, pushDates, resendSchedule,
     sendUpdateEmails, setSendUpdateEmails,
+    comparison, comparing, comparisonError, compareAttendees, publishedInvitees,
   } = workspace;
+  // Who the author has typed in but not saved. Named under the comparison so a
+  // reader can see why Microsoft does not have them.
+  const pendingInvitees = selected
+    ? pendingInvitations([...emailList(updateDrawer.form.attendees), ...emailList(updateDrawer.form.presenters),
+      ...emailList(updateDrawer.form.coOrganizers)], publishedInvitees(selected))
+    : [];
   return (
     <>
         {calendarActionTarget && <CalendarActionDialog target={calendarActionTarget}
@@ -820,6 +830,17 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                       onPrefill={() => void prefillInvitees(selected, updateDrawer.patch)}
                     />
                   </div>
+                  {/* Beside the fields it reports on, and above Save rather
+                      than in its row: pressing it is not a step towards
+                      saving, and it stays available when Save is not. */}
+                  <AttendeeComparisonPanel
+                    comparison={comparison}
+                    comparing={comparing}
+                    error={comparisonError}
+                    pending={pendingInvitees}
+                    disabled={Boolean(blockedReason) || !graphConfigured}
+                    onCompare={() => void compareAttendees(selected)}
+                  />
                   {updateDrawer.error && <InlineError message={updateDrawer.error} />}
                   <div className="flex flex-wrap items-center justify-end gap-3">
                     {updateDrawer.dirty && <span className="text-[11px] font-semibold text-amber-700">Changes not sent yet</span>}

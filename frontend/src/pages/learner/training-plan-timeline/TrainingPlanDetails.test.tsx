@@ -476,14 +476,13 @@ describe('Dashboard training plan controls', () => {
       .getByRole('progressbar', { name: 'Overall off-the-job hours progress' })).toHaveAttribute('aria-valuenow', '100');
   });
 
-  it('uses Audit OTJH through August 2026 and LMS calculations from September', () => {
+  it('uses SSOT monthly logs for every programme month', () => {
     const data = fixture();
     data.months = {
       '2026-07': { label: '', topics: [], planned: 70, source: 'contract' },
       '2026-08': { label: '', topics: [], planned: 80, source: 'contract' },
       '2026-09': { label: '', topics: [], planned: 18, source: 'contract' },
     };
-    data.auditOtjhCutoffMonth = '2026-08';
     data.monthlyLogOtjh = {
       '2026-07': { target: 10, submitted: 1, completed: 8 },
       '2026-08': { target: 44, submitted: 2, completed: 15 },
@@ -514,7 +513,6 @@ describe('Dashboard training plan controls', () => {
       '2026-02': { label: '', topics: [], planned: 20, source: 'contract' },
       '2026-03': { label: '', topics: [], planned: 20, source: 'contract' },
     };
-    data.auditOtjhCutoffMonth = '2026-08';
     data.monthlyLogOtjh = {
       '2026-01': { target: 12, submitted: 1, completed: 9 },
     };

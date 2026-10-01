@@ -82,7 +82,9 @@ def _invalidate_dashboard_after_mutation(view, request, response, coach_identity
         and getattr(response, "status_code", 500) < 400
     ):
         from .dashboard_cache import invalidate_coach_dashboard_cache
+        from .dashboard_refresh import schedule_coach_dashboard_refresh
         invalidate_coach_dashboard_cache(coach_identity)
+        schedule_coach_dashboard_refresh(coach_identity, reason="coach-mutation")
     return response
 
 
