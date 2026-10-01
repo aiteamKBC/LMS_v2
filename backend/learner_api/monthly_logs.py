@@ -206,6 +206,42 @@ def lock_state(learner_id, month):
     }
 
 
+def lock_states(learner_id, months, *, canonical_owner=None):
+    """Read summary lock state in one round trip instead of once per month."""
+    month_keys = sorted(set(months or []))
+    def empty():
+        return {'locked': False, 'locked_at': None, 'unlocked_at': None, 'unlocked_by': None}
+    result = {month: empty() for month in month_keys}
+    if not month_keys:
+        return result
+    if canonical_owner is not None:
+        records = old_repo.query('''SELECT report_month,locked_at,unlocked_at,unlocked_by
+            FROM "Learner".learner_monthly_locks
+            WHERE learner_id=%s AND report_month=ANY(%s)''', [canonical_owner['id'], month_keys])
+    elif canonical.enabled(learner_id):
+        owner = canonical.profile(learner_id)
+        records = old_repo.query('''SELECT report_month,locked_at,unlocked_at,unlocked_by
+            FROM "Learner".learner_monthly_locks
+            WHERE learner_id=%s AND report_month=ANY(%s)''', [owner['id'], month_keys])
+    else:
+        try:
+            records = old_repo.query(f'''SELECT report_month,locked_at,unlocked_at,unlocked_by
+                FROM {MONTH_LOCKS} WHERE learner_id=%s AND report_month=ANY(%s)''',
+                [str(learner_id), month_keys])
+        except DatabaseError:
+            return result
+    for record in records:
+        month = record.get('report_month')
+        if month in result:
+            result[month] = {
+                'locked': bool(record.get('locked_at') and not record.get('unlocked_at')),
+                'locked_at': record['locked_at'].isoformat() if record.get('locked_at') else None,
+                'unlocked_at': record['unlocked_at'].isoformat() if record.get('unlocked_at') else None,
+                'unlocked_by': record.get('unlocked_by'),
+            }
+    return result
+
+
 def lock_if_fully_signed(learner_id, month):
     """Lock only after both independent signatures exist; never overwrite either."""
     if canonical.enabled(learner_id):
@@ -237,7 +273,7 @@ def lock_if_fully_signed(learner_id, month):
         logger.warning('Monthly log lock table is unavailable; signatures remain valid.')
 
 
-def month_state(month, rows, signs, training_plan_target=None, *, learner_id=None):
+def month_state(month, rows, signs, training_plan_target=None, *, learner_id=None, lock=None):
     # ``source_system`` is a read-only classification added to canonical rows
     # for the unified Actual predicate.  It is not learner-entered content and
     # must not invalidate an existing signed month's snapshot hash.
@@ -252,7 +288,10 @@ def month_state(month, rows, signs, training_plan_target=None, *, learner_id=Non
         return next(({k: s[k] for k in ('signed_at', 'signer_name', 'url')}
                      for s in matching if s['signer_role'] == role), None)
     student, coach = sign('learner'), sign('coach')
-    lock = lock_state(learner_id, month) if learner_id is not None else {'locked': False, 'locked_at': None, 'unlocked_at': None, 'unlocked_by': None}
+    lock = lock if lock is not None else (
+        lock_state(learner_id, month) if learner_id is not None
+        else {'locked': False, 'locked_at': None, 'unlocked_at': None, 'unlocked_by': None}
+    )
     return {'month': month, 'source': 'lms', 'is_required': False,
             'is_open': month == timezone.localdate().strftime('%Y-%m'),
             'status': 'complete' if student else 'awaiting_signature',
@@ -338,7 +377,9 @@ def summary_data(learner, *, include_open=False, include_future=False, ensure_mo
                 grouped.setdefault(month, [])
         if ensure_month and allowed_month(ensure_month):
             grouped.setdefault(ensure_month, [])
-        months = [month_state(month, rows, signs, targets.get(month), learner_id=learner['id'])
+        locks = lock_states(learner['id'], grouped, canonical_owner=canonical_owner)
+        months = [month_state(month, rows, signs, targets.get(month), learner_id=learner['id'],
+                              lock=locks[month])
                   for month, rows in grouped.items()]
         programme_metrics = canonical.metrics_from_records(records, targets)['otjh']
         training_plan_totals = {
@@ -349,11 +390,12 @@ def summary_data(learner, *, include_open=False, include_future=False, ensure_mo
         retained = legacy_summary(learner)
         signs = signatures(learner)
         months = [{**m, 'source': 'legacy'} for m in retained['months']]
-        months.extend(month_state(month, rows, signs, sources.monthly_target(learner, month), learner_id=learner['id'])
-                      for month, rows in current_months(
-                          learner, signs, include_open=include_open,
-                          include_future=include_future, ensure_month=ensure_month,
-                      ).items())
+        current = current_months(learner, signs, include_open=include_open,
+                                 include_future=include_future, ensure_month=ensure_month)
+        locks = lock_states(learner['id'], current)
+        months.extend(month_state(month, rows, signs, sources.monthly_target(learner, month),
+                                  learner_id=learner['id'], lock=locks[month])
+                      for month, rows in current.items())
         training_plan_totals = {
             'accepted_hours': round(sum(float(month.get('actual_hours') or 0) for month in months), 4),
             'planned_hours': round(sum(float(month.get('training_plan_target') or 0) for month in months), 4),
