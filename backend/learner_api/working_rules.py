@@ -10,8 +10,10 @@ things:
 
 ``submitted_at``   the real moment the learner pressed Finish. Immutable audit
                    evidence, never validated away, never overwritten.
-``declared_at``    the working instant the learner states the work was actually
-                   done at, supplied only after the first instant failed.
+``declared_at``    the instant the learner states the work was actually done at,
+                   supplied only after the first instant failed. It is not
+                   required to be a working instant: the dialog warns, but a
+                   declared time outside the rules is still accepted.
 
 The holidays are the learner's OWN holidays. They are resolved through the
 component's module to its cohort and handed to
@@ -98,13 +100,19 @@ def _module_cohort_for_quiz(quiz_id):
 
 
 def learner_holiday_details(component_id=None, *, quiz_id=None):
-    """Closed dates -> the holidays closing them, for this activity's cohort.
+    """Closed dates -> the bank holidays closing them, for this activity's cohort.
+
+    Only GOV.UK bank holidays count for the working rules, each on its own
+    date. Authored closure periods (a workshop week, a training day) still
+    shape session plans and Teams series, but they are not holidays for a
+    completion: a workshop week must not flag every day of that week.
 
     Returns ``{}`` when the activity has no cohort: work outside a cohort's
-    delivery (personal learning, a free course) has no college closure to sit
+    delivery (personal learning, a free course) has no cohort calendar to sit
     on, so nothing is a holiday for it.
     """
     from curriculum_api.views import (
+        HOLIDAY_SOURCE_GOVUK,
         cohort_selected_holidays_by_cohort,
         holiday_details_by_date,
     )
@@ -116,7 +124,11 @@ def learner_holiday_details(component_id=None, *, quiz_id=None):
     if not cohort_id:
         return {}
     holidays = cohort_selected_holidays_by_cohort([cohort_id]).get(cohort_id) or []
-    return holiday_details_by_date(holidays)
+    bank_holidays = [
+        item for item in holidays
+        if (item or {}).get("source") == HOLIDAY_SOURCE_GOVUK
+    ]
+    return holiday_details_by_date(bank_holidays)
 
 
 def _as_uk(instant):
@@ -185,7 +197,7 @@ def working_rule_failure(instant, *, component_id=None, quiz_id=None, holiday_de
             "reason": REASON_HOLIDAY,
             "holidayName": name,
             "message": (
-                f"College holiday: {name}." if name else "This date is a college holiday."
+                f"Bank holiday: {name}." if name else "This date is a bank holiday."
             ),
         }
 
@@ -257,19 +269,9 @@ def resolve_completion_instants(payload, submitted_at, *, component_id=None, qui
             holiday_name=actual_failure["holidayName"],
         )
 
-    # A declared instant is re-validated here and not trusted from the browser:
-    # the dialog's own checking is UX, this is the rule.
-    declared_failure = working_rule_failure(
-        declared_at, holiday_details=holiday_details,
-    )
-    if declared_failure is not None:
-        raise DeclaredCompletionError(
-            "This date and time cannot be selected because it is outside official "
-            "working rules. " + declared_failure["message"],
-            reason=declared_failure["reason"],
-            holiday_name=declared_failure["holidayName"],
-        )
-
+    # A declared instant outside the working rules is accepted: the dialog warns
+    # the learner, but the time they actually did the work is theirs to state.
+    # Only an impossible (future) instant is refused.
     if declared_at > judged_at:
         raise DeclaredCompletionError(
             "The completion date and time cannot be in the future.",

@@ -21,7 +21,11 @@ function StudentEntry({ children }: { children: ReactNode }) {
   const client = useQueryClient();
   const wasBlocked = useRef(false);
   const query = useQuery({ queryKey: ['learner-entry', auth.account?.id, pathname],
-    queryFn: ({ signal }) => fetchLearnerEntry(signal), retry: false, staleTime: Infinity,
+    // Keep the verification in flight through React StrictMode's immediate
+    // unmount/remount. The account and pathname remain in the query key, so a
+    // response cannot cross identities or routes; saved records still trigger
+    // the explicit invalidation below.
+    queryFn: () => fetchLearnerEntry(), retry: false, staleTime: Infinity,
     refetchOnMount: 'always', refetchOnWindowFocus: false });
   useEffect(() => { if (query.data?.required) wasBlocked.current = true; }, [query.data]);
   useEffect(() => {

@@ -473,6 +473,17 @@ export function ModuleFormDrawer({
     const storedTutor = normaliseKey(directTutor) === UNASSIGNED
       ? cleanText(storedDelivery?.tutor)
       : directTutor || cleanText(storedDelivery?.tutor);
+    // The group owns its delivery days. One that has been given a slot naming no
+    // day delivers on no day, and a day the module kept from whatever it was
+    // created or copied from cannot fill that in — the group's own screens show
+    // the delivery as empty, so a module quietly running on the copy is a
+    // timetable nobody can see, and it books its tutor there. A group that has
+    // never been given a slot at all is the other case, and still leaves the
+    // module its own pattern.
+    const parentGroupPattern = groupDeliveryPattern(parentGroup);
+    const initialWeekDays = parentGroupPattern && !parentGroupPattern.days
+      ? ''
+      : canonicalDeliveryDays(record?.weekDays || storedDelivery?.weekDays || parentGroup?.weekDays || '');
     const initial = {
       name: cleanText(record?.name),
       programmeId: resolvedProgrammeId,
@@ -487,8 +498,8 @@ export function ModuleFormDrawer({
       // (or the delivery's `sessions`) put a delivery-day-multiplied number in the
       // Weeks box, which then saved back multiplied again on every round-trip.
       sessionsNumber: String(record?.deliveryWeeks || record?.weeks || record?.sessionsNumber || storedDelivery?.sessions || 1),
-      sessionsPerWeek: String(Math.max(1, deliveryDayIndexes(canonicalDeliveryDays(record?.weekDays || storedDelivery?.weekDays || parentGroup?.weekDays || '')).length)),
-      weekDays: canonicalDeliveryDays(record?.weekDays || storedDelivery?.weekDays || parentGroup?.weekDays || ''),
+      sessionsPerWeek: String(Math.max(1, deliveryDayIndexes(initialWeekDays).length)),
+      weekDays: initialWeekDays,
       weeklyTimes: Object.fromEntries((record?.weeklySchedule || storedDelivery?.weeklySchedule || []).map(slot => [slot.day, { startTime: slot.startTime, endTime: slot.endTime }])),
       groupStartTime: cleanText(record?.startTime || storedDelivery?.startTime)
         || groupDeliveryPattern(parentGroup)?.startTime
@@ -849,11 +860,26 @@ export function ModuleFormDrawer({
   // The field says what it knows: which slot the names were checked against, or
   // what is still missing before anything can be checked. "Checked before it
   // saves" was the old promise, and it is now kept before the save, not by it.
+  // The group holds a clock but no weekday, so there is no day for its sessions
+  // to fall on: nothing can be dated, nobody can be checked, and a tutor put
+  // against it would be teaching on a timetable no screen shows. The day belongs
+  // to the group, so this names the group rather than pointing at the Delivery
+  // days control above -- that control is the module's answer for a group that
+  // states no slot at all, and a grouped module does not save through it.
+  const groupDeliveryDayMissing = Boolean(selectedGroup && groupPattern && !groupPattern.days);
+  // Whether this drawer is putting a name against the module rather than
+  // leaving the one it already had. A create always is.
+  const assigningTutor = Boolean(cleanText(tutor)) && (!module || cleanText(tutor) !== cleanText(baseline.current?.tutor ?? ''));
+  const groupDeliveryDayMessage = groupDeliveryDayMissing
+    ? `${cleanText(selectedGroup?.name) || 'This module’s group'} has no delivery day, so this module has no sessions to place a tutor on. Set the delivery day on the group, then come back and choose the tutor.`
+    : '';
   const tutorHint = checkingTutors
     ? 'Checking who is already teaching in this slot...'
     : bookable
       ? `Checked against ${sessionDates.length} session${sessionDates.length === 1 ? '' : 's'} using each day's scheduled time.`
-      : 'Select a Group and set the weeks to check who is free.';
+      : groupDeliveryDayMissing
+        ? `${cleanText(selectedGroup?.name) || 'The group'} has no delivery day yet.`
+        : 'Select a Group and set the weeks to check who is free.';
 
   const changeProgramme = (value: string) => {
     setProgrammeId(value);
@@ -987,6 +1013,12 @@ export function ModuleFormDrawer({
       if (!startDate) { setError('Choose the module start date.'); return; }
       if (!endDate) { setError('Choose the module end date.'); return; }
       if (!tutor) { setError('Choose the tutor who delivers this module.'); return; }
+      // Pre-empted rather than sent, for the same reason the clash below is: the
+      // save refuses this and the sentence is already on screen under Tutor.
+      // Only when this drawer is actually assigning the tutor — a module that
+      // already carries one is not frozen out of being renamed or re-dated,
+      // which is the line the save draws too.
+      if (groupDeliveryDayMissing && assigningTutor) { setError(groupDeliveryDayMessage); return; }
       // Pre-empted rather than sent: the save enforces this and would refuse, so
       // firing it only trades an instant answer for a round-trip and the same
       // refusal. The clash itself is spelled out under the Tutor field, so this is
@@ -1524,6 +1556,16 @@ export function ModuleFormDrawer({
               placeholder="Select a tutor"
             />
           </FormField>
+          {groupDeliveryDayMissing && (
+            <p className={`rounded-xl border px-3.5 py-3 text-[12px] leading-5 ${
+              assigningTutor
+                ? 'border-red-200 bg-red-50 text-red-700'
+                : 'border-amber-200 bg-amber-50 text-amber-800'
+            }`}
+            >
+              {groupDeliveryDayMessage}
+            </p>
+          )}
           {tutorClash && (
             <TutorClashNotice
               verdict={tutorClash}

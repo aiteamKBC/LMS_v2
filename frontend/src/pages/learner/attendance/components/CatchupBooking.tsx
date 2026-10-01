@@ -1,10 +1,14 @@
-import { useEffect, useState } from 'react';
-import { bookLearnerCalendarSession, fetchLearnerCalendarEvents, type BookingCalendarRules, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { useEffect, useState, type MutableRefObject } from 'react';
+import { bookLearnerCalendarSession, fetchCatchupSlots, fetchLearnerCalendarEvents, ukOffsetForDate, type BookingCalendarRules, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import type { MissedAttendanceSession } from '@/api/absenceReports';
 import { useMyLearner } from '@/hooks/useMyLearner';
 import styles from '../attendance.module.css';
 
-export default function CatchupBooking({ lecture, selectedKey, onSelect, onBooked, onBusyChange, disabled = false, standalone = false }: {
+/** Books the chosen time for a parent that submits the booking with its own button. */
+export type CatchupBookAction = () => Promise<LearnerCalendarEvent | null>;
+
+export default function CatchupBooking({ lecture, selectedKey, onSelect, onBooked, onBusyChange, disabled = false, standalone = false,
+  bookRef, onDraftChange }: {
   lecture: MissedAttendanceSession;
   selectedKey: string;
   onSelect: (event: LearnerCalendarEvent | null) => void;
@@ -12,6 +16,10 @@ export default function CatchupBooking({ lecture, selectedKey, onSelect, onBooke
   onBusyChange: (busy: boolean) => void;
   disabled?: boolean;
   standalone?: boolean;
+  /** Set when a parent form books and submits in one step; hides this component's own Book button. */
+  bookRef?: MutableRefObject<CatchupBookAction | null>;
+  /** Whether a bookable time is chosen, so the parent can enable its button. */
+  onDraftChange?: (ready: boolean) => void;
 }) {
   const learner = useMyLearner();
   const [events, setEvents] = useState<LearnerCalendarEvent[]>([]);
@@ -22,6 +30,9 @@ export default function CatchupBooking({ lecture, selectedKey, onSelect, onBooke
   const [date, setDate] = useState('');
   const [time, setTime] = useState('');
   const [duration, setDuration] = useState('30');
+  const [slots, setSlots] = useState<string[]>([]);
+  const [slotsLoading, setSlotsLoading] = useState(false);
+  const [slotsError, setSlotsError] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -39,6 +50,7 @@ export default function CatchupBooking({ lecture, selectedKey, onSelect, onBooke
     && event.scheduledDate && event.scheduledDate >= earliestDate && event.scheduledTime
     && new Date(`${event.scheduledDate}T${event.scheduledTime}`).getTime() > Date.now());
   const selected = available.find(event => event.eventKey === selectedKey);
+  const draftReady = Boolean(!selected && date && time && !dateRestriction && slots.includes(time));
 
   useEffect(() => {
     let cancelled = false;
@@ -58,20 +70,34 @@ export default function CatchupBooking({ lecture, selectedKey, onSelect, onBooke
     if (!loading && !loadError && selectedKey && !selected) onSelect(null);
   }, [loading, loadError, selectedKey, selected, onSelect]);
 
-  const book = async () => {
-    if (busy || disabled) return;
+  // Only times the coach is free: their Outlook working hours and calendar, and their other bookings.
+  useEffect(() => {
+    setTime('');
+    setSlots([]);
+    setSlotsError('');
+    if (!date || dateRestriction) return;
+    const controller = new AbortController();
+    setSlotsLoading(true);
+    fetchCatchupSlots(learner.kind, learner.id, date, Number(duration), controller.signal)
+      .then(times => setSlots(times))
+      .catch(reason => { if (!controller.signal.aborted) setSlotsError(reason instanceof Error ? reason.message : 'Could not check your coach’s calendar.'); })
+      .finally(() => { if (!controller.signal.aborted) setSlotsLoading(false); });
+    return () => controller.abort();
+  }, [learner.kind, learner.id, date, duration, dateRestriction, revision]);
+
+  useEffect(() => { onDraftChange?.(draftReady); }, [draftReady, onDraftChange]);
+
+  const book: CatchupBookAction = async () => {
+    if (busy || disabled) return null;
     setError('');
     setNotice('');
-    const start = new Date(`${date}T${time}`);
-    if (!date || !time || !Number.isFinite(start.getTime()) || date < earliestDate || start.getTime() <= Date.now()) {
-      setError('Choose a future date and time on or after the lecture date.'); return;
-    }
-    if (dateRestriction) { setError(dateRestriction); return; }
+    if (!draftReady) { setError('Choose a date and one of your coach’s available times.'); return null; }
     setBusy(true); onBusyChange(true);
     try {
       const result = await bookLearnerCalendarSession(learner.kind, learner.id, {
         sessionType: 'catch-up', scheduledDate: date, scheduledTime: time, durationMinutes: Number(duration),
-        timezoneOffsetMinutes: start.getTimezoneOffset(),
+        // Coach bookings are stored in UK time, which is what the available times are listed in.
+        timezoneOffsetMinutes: ukOffsetForDate(date),
         notes: `Catch-up for lecture: ${lecture.title}\nLecture date: ${lecture.dateIso}`,
       });
       if (!result.event?.eventKey || result.event.source !== 'catch-up'
@@ -82,10 +108,16 @@ export default function CatchupBooking({ lecture, selectedKey, onSelect, onBooke
       const reportLinked = onBooked ? await onBooked(result.event) : false;
       setNotice(result.warning || (reportLinked
         ? 'Catch-up session booked and linked to your absence report.'
-        : `Catch-up session booked.${standalone ? '' : ' Submit your absence report to link it to this lecture.'}`));
-    } catch (reason) { setError(reason instanceof Error ? reason.message : 'Could not book the catch-up session.'); }
-    finally { setBusy(false); onBusyChange(false); }
+        : `Catch-up session booked.${standalone || bookRef ? '' : ' Submit your absence report to link it to this lecture.'}`));
+      return result.event;
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Could not book the catch-up session.');
+      // A time taken meanwhile: show the coach's current free times.
+      setRevision(value => value + 1);
+      return null;
+    } finally { setBusy(false); onBusyChange(false); }
   };
+  if (bookRef) bookRef.current = book;
 
   return <div className={styles.catchupBooking} aria-busy={busy || loading}>
     <div className={styles.bookingHeading}><strong>Your catch-up session</strong><button type="button" disabled={busy || loading || disabled} onClick={() => setRevision(value => value + 1)}>Refresh bookings</button></div>
@@ -98,14 +130,20 @@ export default function CatchupBooking({ lecture, selectedKey, onSelect, onBooke
       </select>
     </label>}
     {selected ? <p className={styles.bookingConfirmation}>{selected.scheduledDate} at {selected.scheduledTime} · {selected.durationMinutes} minutes{selected.status === 'not-scheduled' ? ' · Existing pending request' : ' · Booked'}</p> : <>
-      <p>{standalone ? 'Choose a date and time to catch up on this lecture.' : 'Book a session before submitting.'} The booking is confirmed immediately.</p>
+      <p>Choose a date and one of your coach’s available times. The booking is confirmed immediately.</p>
       <div className={styles.bookingFields}>
         <label>Date<input aria-label="Catch-up date" aria-invalid={Boolean(dateRestriction)} type="date" min={earliestDate} value={date} disabled={busy || disabled} onChange={event => { setDate(event.target.value); setError(''); }} /></label>
-        <label>Time<input aria-label="Catch-up time" type="time" value={time} disabled={busy || disabled} onChange={event => setTime(event.target.value)} /></label>
+        <label>Time (UK)<select aria-label="Catch-up time" value={time} disabled={busy || disabled || !date || Boolean(dateRestriction) || slotsLoading || !slots.length} onChange={event => { setTime(event.target.value); setError(''); }}>
+          <option value="">{!date ? 'Choose a date first' : slotsLoading ? 'Checking…' : slots.length ? 'Choose a time' : 'No free times'}</option>
+          {slots.map(slot => <option key={slot} value={slot}>{slot}</option>)}
+        </select></label>
         <label>Duration<select aria-label="Catch-up duration" value={duration} disabled={busy || disabled} onChange={event => setDuration(event.target.value)}><option value="30">30 minutes</option><option value="60">60 minutes</option></select></label>
       </div>
       {dateRestriction && <p role="alert">{dateRestriction}</p>}
-      <button type="button" className={`primary-action ${styles.bookCatchupButton}`} disabled={busy || loading || disabled || !date || !time || Boolean(dateRestriction)} onClick={book}>{busy ? 'Booking…' : 'Book Catch-up Session'}</button>
+      {slotsLoading && <p role="status">Checking your coach’s calendar…</p>}
+      {slotsError && <p role="alert">{slotsError}</p>}
+      {date && !dateRestriction && !slotsLoading && !slotsError && !slots.length && <p role="status">Your coach has no free time on this day. Choose another date.</p>}
+      {!bookRef && <button type="button" className={`primary-action ${styles.bookCatchupButton}`} disabled={busy || loading || disabled || !draftReady} onClick={() => { void book(); }}>{busy ? 'Booking…' : 'Book Catch-up Session'}</button>}
     </>}
     {notice && <p role="status">{notice}</p>}
     {error && <p role="alert">{error}</p>}

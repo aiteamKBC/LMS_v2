@@ -569,13 +569,33 @@ def coaching_events_for_learner(learner, mirror):
     from curriculum_api import reviews, review_instances
     generated = _generated_cycle_events(learner, mirror, set())
     matched = review_instances.reconcile_review_event_keys(generated, records)
-    templates = {}
+    # Generated occurrences already carry the current template title and Review
+    # Type metadata. Reuse it for stored rows from the same templates instead
+    # of reading review_templates and review_types again.
+    templates = {
+        _s(event.get('reviewTemplateId')): {
+            'id': _s(event.get('reviewTemplateId')),
+            'name': event.get('title') or '',
+        }
+        for event in generated if _s(event.get('reviewTemplateId'))
+    }
+    types = {
+        _s(event.get('reviewTemplateId')): {
+            'id': event.get('reviewTypeId'),
+            'code': event.get('reviewTypeCode'),
+            'name': event.get('reviewTypeName'),
+            'is_system': event.get('reviewTypeIsSystem'),
+        }
+        for event in generated if _s(event.get('reviewTemplateId'))
+    }
     template_ids = sorted({_s(getattr(record, 'review_template_id', '')) for record in records} - {''})
-    if template_ids:
-        templates = {row['id']: row for row in reviews.get_review_template_rows(
-            f"id in ({', '.join(['%s'] * len(template_ids))})", template_ids, include_deleted=True,
-        )}
-    types = review_type_rows_by_template(template_ids)
+    unresolved_template_ids = [template_id for template_id in template_ids if template_id not in templates]
+    if unresolved_template_ids:
+        templates.update({row['id']: row for row in reviews.get_review_template_rows(
+            f"id in ({', '.join(['%s'] * len(unresolved_template_ids))})",
+            unresolved_template_ids, include_deleted=True,
+        )})
+        types.update(review_type_rows_by_template(unresolved_template_ids))
     events = []
     for event in generated:
         record = matched.get(event['eventKey'])
@@ -1272,6 +1292,18 @@ def _serialize_live_session_event(event):
     }
 
 
+def _catchup_time_error(owner_email, scheduled_date, scheduled_time, duration_minutes, *, exclude_event_key=""):
+    """Refuse a catch-up outside the coach's free working time (the picker's own rule)."""
+    from .coach_availability import AvailabilityUnavailable, catchup_slot_is_free
+    try:
+        if catchup_slot_is_free(owner_email, scheduled_date, scheduled_time, duration_minutes,
+                                exclude_event_key=exclude_event_key):
+            return None
+    except AvailabilityUnavailable as exc:
+        return _error(str(exc), 503)
+    return _error("Your coach is not available at that time. Choose one of the available times.", 409)
+
+
 @learner_self_or_staff(kwarg="pk")
 def learner_calendar(request, kind, pk):
     if request.method != "GET":
@@ -1551,6 +1583,10 @@ def learner_calendar_book(request, kind, pk):
     date_restriction = booking_date_restriction(scheduled_date)
     if date_restriction is not None:
         return _error(date_restriction.message, 400)
+    if session_type == "catch-up":
+        busy_error = _catchup_time_error(owner_email, scheduled_date, scheduled_time, duration_minutes)
+        if busy_error:
+            return busy_error
 
     notes = _s(payload.get("notes"))[:500]
     # An onboarding learner has no mirror row yet, so fall back to the source.
@@ -2034,6 +2070,11 @@ def learner_calendar_reschedule(request, kind, pk):
         )
         if date_restriction is not None:
             return _error(date_restriction.message, 400)
+        if _s(record.event_type).lower() == "catch-up":
+            busy_error = _catchup_time_error(record.owner_email, scheduled_date, scheduled_time,
+                                             duration_minutes, exclude_event_key=record.event_key)
+            if busy_error:
+                return busy_error
         if (
             record.scheduled_date == scheduled_date
             and record.scheduled_time == scheduled_time

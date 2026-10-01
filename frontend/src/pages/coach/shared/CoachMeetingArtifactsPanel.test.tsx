@@ -35,6 +35,25 @@ function renderSummary(meetingSummary: CoachMeetingSummary) {
   return fetchArtifacts;
 }
 
+function renderArtifacts(artifacts: CoachMeetingArtifactsResponse['artifacts']) {
+  const response: CoachMeetingArtifactsResponse = {
+    artifacts,
+    attendance: undefined,
+    meetingSummary: null,
+    errors: [],
+  };
+  const fetchArtifacts = vi.fn().mockResolvedValue(response);
+
+  render(
+    <CoachMeetingArtifactsPanel
+      event={event}
+      fetchArtifacts={fetchArtifacts}
+      showAttendance={false}
+      canEditSummary={false}
+    />,
+  );
+}
+
 function summary(status: string, overview: string, error = ''): CoachMeetingSummary {
   return {
     summary: {
@@ -80,5 +99,43 @@ describe('MeetingSummaryCard status handling', () => {
     expect(screen.queryByText('AI generated')).not.toBeInTheDocument();
     expect(screen.queryByText('No overview is available yet.')).not.toBeInTheDocument();
     expect(screen.queryByText("name 'source' is not defined")).not.toBeInTheDocument();
+  });
+});
+
+describe('Meeting artifact display', () => {
+  it('combines transcript segments into one downloadable card while keeping recordings separate', async () => {
+    renderArtifacts([
+      {
+        id: 'transcript-1',
+        artifact_type: 'transcript',
+        graph_artifact_id: 'transcript-1',
+        created_datetime: '2026-09-19T10:00:00Z',
+      },
+      {
+        id: 'transcript-2',
+        artifact_type: 'transcript',
+        graph_artifact_id: 'transcript-2',
+        created_datetime: '2026-09-19T10:30:00Z',
+      },
+      {
+        id: 'recording-1',
+        artifact_type: 'recording',
+        graph_artifact_id: 'recording-1',
+      },
+      {
+        id: 'recording-2',
+        artifact_type: 'recording',
+        graph_artifact_id: 'recording-2',
+      },
+    ]);
+
+    expect((await screen.findAllByText('Transcript'))).toHaveLength(1);
+    expect(screen.getAllByText('Recording')).toHaveLength(2);
+    const downloadLinks = screen.getAllByRole('link', { name: 'Download' });
+    expect(downloadLinks).toHaveLength(3);
+    expect(downloadLinks[0]).toHaveAttribute(
+      'href',
+      expect.stringContaining('/artifacts/transcript/combined/content'),
+    );
   });
 });

@@ -7,7 +7,7 @@ import json
 import pymupdf as fitz
 from django.test import SimpleTestCase, RequestFactory
 from .training_plan_contract import parse_contract, read_verified_extract, contract_extract_metadata, read_contract, verified_planned_hours
-from .training_plan_dashboard import training_plan_dashboard, number, selected_contract, plan_session, read_dashboard, assigned_group_coach, contract_plan, valid_aptem_id
+from .training_plan_dashboard import training_plan_dashboard, number, selected_contract, plan_session, read_dashboard, assigned_group_coach, contract_plan, valid_aptem_id, _canonical_actual_rows
 
 
 def contract_pdf(total=30, review_on_same_page=False, joined_provider=False, split_header=False, split_total=False):
@@ -49,6 +49,35 @@ class TrainingPlanDashboardTests(SimpleTestCase):
         self.effective_plan = self.enterContext(
             patch('learner_api.training_plan_dashboard._effective_plan_ids', return_value=['M1']),
         )
+
+    def test_ssot_contract_uses_monthly_targets_without_legacy_queries(self):
+        owner = {'id': 70, 'start_date': date(2026, 9, 1), 'end_date': date(2027, 9, 1)}
+        source = SimpleNamespace(pk=125, aptem_id=987, email='learner@example.com', _canonical_profile=owner)
+        connection = MagicMock()
+        with patch('learner_api.training_plan_dashboard.connections', {'enrolment': connection}), \
+             patch('learner_api.training_plan_dashboard.canonical_learning.targets_for',
+                   return_value={'2026-09': 20, '2026-10': 30}):
+            result = read_dashboard(source, section='contract')
+
+        self.assertEqual(result['contractStatus'], 'ready')
+        self.assertEqual(result['months']['2026-09']['planned'], 20)
+        self.assertEqual(result['months']['2026-09']['source'], 'ssot')
+        connection.cursor.return_value.__enter__.return_value.execute.assert_not_called()
+
+    def test_ssot_actuals_allow_grouped_and_ungrouped_entries_in_same_month(self):
+        records = [
+            {'accepted': True, 'reporting_month': '2026-09', 'actual_seconds': 3600,
+             'module_ref': None, 'segments': []},
+            {'accepted': True, 'reporting_month': '2026-09', 'actual_seconds': 7200,
+             'module_ref': 'module-1', 'segments': []},
+        ]
+        with patch('learner_api.training_plan_dashboard.canonical_learning.entries_for', return_value=records):
+            result = _canonical_actual_rows({'id': 70})
+
+        self.assertEqual(result, [
+            {'month': '2026-09', 'groupId': None, 'hours': 1.0, 'count': 1},
+            {'month': '2026-09', 'groupId': 'module-1', 'hours': 2.0, 'count': 1},
+        ])
 
     def test_learning_section_returns_only_module_selection_data(self):
         source = SimpleNamespace(pk=125, aptem_id=987, email='learner@example.com')
@@ -201,7 +230,7 @@ class TrainingPlanDashboardTests(SimpleTestCase):
                   'holiday_note_enabled': False, 'holiday_note': ''},
              ], []]), \
              patch('learner_api.calendar.coaching_events_for_learner', return_value=[]):
-            profiles.objects.filter.return_value.first.return_value = None
+            profiles.objects.filter.return_value.only.return_value.first.return_value = None
             result = read_dashboard(source, section='overview')
         detail = result['modules'][0]
         self.assertEqual((detail['title'], detail['description']), ('Marketing', 'Learn & apply'))
@@ -229,7 +258,7 @@ class TrainingPlanDashboardTests(SimpleTestCase):
              patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
              patch('learner_api.training_plan_dashboard.coach_phone', return_value=''), \
              patch('learner_api.calendar.CoachCalendarEvent.objects.filter') as stored:
-            profiles.objects.filter.return_value.first.return_value = profile
+            profiles.objects.filter.return_value.only.return_value.first.return_value = profile
             stored.return_value.order_by.return_value = records
 
             def current():
@@ -300,9 +329,9 @@ class TrainingPlanDashboardTests(SimpleTestCase):
              patch('learner_api.training_plan_dashboard._builder_subject_metadata', return_value=({}, {})), \
              patch('learner_api.calendar.coaching_events_for_learner', return_value=[]), \
              patch('learner_api.training_plan_dashboard.contract_plan') as extract:
-            profiles.objects.filter.return_value.first.return_value = None
+            profiles.objects.filter.return_value.only.return_value.first.return_value = None
             result = read_dashboard(source, section='overview')
-        self.assertEqual(result['contractStatus'], 'loading')
+        self.assertEqual(result['contractStatus'], 'not-available')
         self.assertEqual(result['months'], {})
         extract.assert_not_called()
 

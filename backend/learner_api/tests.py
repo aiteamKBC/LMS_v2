@@ -1833,16 +1833,18 @@ class ComponentWriteEndpointRejectionTests(SimpleTestCase):
         self.assertTrue(record["declaredCompletedAt"].startswith("2026-01-16T14:30"))
         self.assertEqual(record["submissionValidationReason"], "weekend")
 
-    def test_declared_instant_is_revalidated_server_side(self):
+    def test_declared_instant_outside_the_rules_is_accepted(self):
+        # The dialog only warns: a declared Saturday is written as declared.
         save = Mock()
         response = self._run(
             save,
             access_time=datetime(2026, 1, 18, 22, 0, tzinfo=timezone.utc),
-            payload={"declaredCompletedAt": "2026-01-17T14:30:00"},   # still a Saturday
+            payload={"timeTakenSeconds": 10, "declaredCompletedAt": "2026-01-17T14:30:00"},
         )
-        self.assertEqual(response.status_code, 409)
-        self.assertEqual(json.loads(response.content)["validation"]["reason"], "weekend")
-        save.assert_not_called()
+        self.assertEqual(response.status_code, 200)
+        record = save.call_args.args[1]
+        self.assertTrue(record["declaredCompletedAt"].startswith("2026-01-17T14:30"))
+        self.assertEqual(record["submissionValidationReason"], "weekend")
 
     def test_declared_instant_cannot_be_in_the_future(self):
         save = Mock()
@@ -2055,16 +2057,18 @@ class QuizSubmitWorkingRulesTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(save.call_args.args[1]["submissionValidationReason"], "")
 
-    def test_a_declared_instant_is_revalidated_server_side(self):
+    def test_a_declared_instant_outside_the_rules_is_accepted(self):
+        # The dialog only warns: a declared Saturday is written as declared.
         save = Mock()
         response, audit = self._post(
             save,
             access_time=datetime(2026, 1, 18, 22, 0, tzinfo=timezone.utc),
-            payload={"declaredCompletedAt": "2026-01-17T14:30:00"},   # still a Saturday
+            payload={"declaredCompletedAt": "2026-01-17T14:30:00"},
         )
-        self.assertEqual(response.status_code, 409)
-        save.assert_not_called()
-        audit.assert_not_called()
+        self.assertEqual(response.status_code, 200)
+        record = save.call_args.args[1]
+        self.assertTrue(record["declaredCompletedAt"].startswith("2026-01-17T14:30"))
+        audit.assert_called_once()
 
     def test_a_declared_instant_cannot_be_in_the_future(self):
         save = Mock()

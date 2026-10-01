@@ -96,24 +96,24 @@ class ResolveCompletionInstantsTests(SimpleTestCase):
         self.assertEqual(declared.hour, 14)
         self.assertEqual(reason, "weekend")
 
-    def test_an_invalid_declaration_is_refused_however_it_arrived(self):
-        with self.assertRaises(DeclaredCompletionError) as caught:
-            self.resolve(
-                {"declaredCompletedAt": "2026-01-17T14:30:00"},
-                datetime(2026, 1, 18, 22, 0, tzinfo=UK),
-            )
-        self.assertEqual(caught.exception.reason, "weekend")
+    def test_a_declaration_outside_the_rules_is_accepted_not_refused(self):
+        # The dialog only warns; a declared weekend instant is still written.
+        declared, reason = self.resolve(
+            {"declaredCompletedAt": "2026-01-17T14:30:00"},
+            datetime(2026, 1, 18, 22, 0, tzinfo=UK),
+        )
+        self.assertEqual((declared.day, declared.hour), (17, 14))
+        self.assertEqual(reason, "weekend")
 
-    def test_a_declaration_on_the_learners_own_holiday_is_refused(self):
-        holidays = {date(2026, 1, 16): [{"label": "Reading week"}]}
-        with self.assertRaises(DeclaredCompletionError) as caught:
-            self.resolve(
-                {"declaredCompletedAt": "2026-01-16T14:30:00"},
-                datetime(2026, 1, 18, 22, 0, tzinfo=UK),
-                holidays,
-            )
-        self.assertEqual(caught.exception.reason, "holiday")
-        self.assertEqual(caught.exception.holiday_name, "Reading week")
+    def test_a_declaration_on_a_bank_holiday_is_accepted_not_refused(self):
+        holidays = {date(2026, 1, 16): [{"label": "Bank holiday"}]}
+        declared, reason = self.resolve(
+            {"declaredCompletedAt": "2026-01-16T14:30:00"},
+            datetime(2026, 1, 18, 22, 0, tzinfo=UK),
+            holidays,
+        )
+        self.assertEqual((declared.day, declared.hour), (16, 14))
+        self.assertEqual(reason, "weekend")
 
     def test_a_future_declaration_is_refused(self):
         with self.assertRaises(DeclaredCompletionError):
@@ -191,6 +191,22 @@ class HolidayOwnerResolutionTests(SimpleTestCase):
         with patch("learner_api.working_rules._module_cohort_for_component", return_value=""):
             self.assertEqual(learner_holiday_details(None), {})
 
+    def test_only_bank_holidays_close_a_day_each_on_its_own_date(self):
+        # An authored workshop week must not flag every day of that week; a
+        # bank holiday closes exactly its own date.
+        cohort_holidays = [
+            {"id": 1079, "label": "Workshop Oct", "startDate": "2026-09-27",
+             "endDate": "2026-10-03", "source": "authored"},
+            {"id": 7, "label": "Christmas Day", "startDate": "2026-12-25",
+             "endDate": "2026-12-25", "source": "gov.uk"},
+        ]
+        with patch("learner_api.working_rules._module_cohort_for_component", return_value="CO1"):
+            with patch("curriculum_api.views.cohort_selected_holidays_by_cohort",
+                       return_value={"CO1": cohort_holidays}):
+                details = learner_holiday_details("COMP-1")
+        self.assertEqual(list(details), [date(2026, 12, 25)])
+        self.assertEqual(details[date(2026, 12, 25)][0]["label"], "Christmas Day")
+
 
 class OverviewBucketingTests(SimpleTestCase):
     """The learner's own week/month totals bucket where the coach's do."""
@@ -266,15 +282,15 @@ class SimulatedClockTests(SimpleTestCase):
             self.resolve(on_test_branch=True, now_value="2026-01-15T22:30:00+00:00")
         self.assertEqual(caught.exception.reason, "outside_working_hours")
 
-    def test_a_declaration_is_still_re_validated_against_the_rules(self):
-        # A forced clock does not let an invalid declared instant through.
-        with self.assertRaises(DeclaredCompletionError) as caught:
-            self.resolve(
-                on_test_branch=True,
-                now_value="2026-01-15T22:30:00+00:00",
-                payload={"declaredCompletedAt": "2026-01-17T14:30:00"},
-            )
-        self.assertEqual(caught.exception.reason, "weekend")
+    def test_a_declaration_outside_the_rules_is_accepted_under_a_forced_clock(self):
+        # The reason recorded is why the forced "click" needed correcting.
+        declared, reason = self.resolve(
+            on_test_branch=True,
+            now_value="2026-01-15T22:30:00+00:00",
+            payload={"declaredCompletedAt": "2026-01-10T14:30:00"},
+        )
+        self.assertEqual(declared.day, 10)
+        self.assertEqual(reason, "outside_working_hours")
 
     def test_a_garbled_value_fails_loud_rather_than_using_the_real_clock(self):
         with self.assertRaises(ImproperlyConfigured):

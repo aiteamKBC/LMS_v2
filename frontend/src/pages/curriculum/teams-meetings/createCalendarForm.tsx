@@ -116,10 +116,14 @@ export const calendarLabel = (value: string, timeZone = getCalendarTimeZone()) =
 
 export function teamsGapNote(plannedUtc: string, teamsUtc: string, hasCalendar: boolean): { matches: boolean; note: string } {
   if (!plannedUtc) return { matches: true, note: '' };
-  // Before the calendar exists there is nothing to reconcile: every date is
-  // new, which the create panel says once rather than per session.
-  if (!hasCalendar) return { matches: true, note: '' };
-  if (!teamsUtc) return { matches: false, note: 'Not on the Teams calendar yet — sending adds it.' };
+  // Before the calendar exists there is nothing to RECONCILE — every date is
+  // new — but each row still says where it stands, and names the button that
+  // will put it there. `matches` stays true: nothing has drifted from anything,
+  // so the row must not be styled as a difference.
+  if (!hasCalendar) {
+    return { matches: true, note: 'Not on the Teams calendar yet — Create Teams calendar adds it.' };
+  }
+  if (!teamsUtc) return { matches: false, note: 'Not on the Teams calendar yet — Update Teams calendar adds it.' };
   if (minuteKey(plannedUtc) === minuteKey(teamsUtc)) return { matches: true, note: '' };
   const planned = calendarLabel(plannedUtc);
   const held = calendarLabel(teamsUtc);
@@ -715,14 +719,15 @@ export function TeamsMeetingOptionFields({ form, patch }: TeamsFieldProps) {
 }
 
 /** Presenters, co-organisers and attendees, with the optional roster prefill; grid cells, as above. */
-export function TeamsPeopleFields({ form, patch, prefilling, onPrefill }: TeamsFieldProps & {
+export function TeamsPeopleFields({ form, patch, prefilling, prefillNotice, onPrefill }: TeamsFieldProps & {
   prefilling?: boolean;
+  prefillNotice?: { tone: 'ok' | 'error'; text: string } | null;
   onPrefill?: () => void;
 }) {
   return (
     <>
       {onPrefill && (
-        <div className="sm:col-span-2 -mb-2 flex items-center justify-end">
+        <div className="sm:col-span-2 -mb-2 flex flex-col items-end gap-1">
           <button
             type="button"
             disabled={prefilling}
@@ -730,8 +735,13 @@ export function TeamsPeopleFields({ form, patch, prefilling, onPrefill }: TeamsF
             className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-700 hover:underline disabled:opacity-50"
           >
             <AppIcon className="ri-refresh-line text-sm"></AppIcon>
-            {prefilling ? 'Loading…' : "Prefill from the module's tutor and learner plans"}
+            {prefilling ? 'Loading…' : 'Prefill from the learners who have this module on their plan'}
           </button>
+          {/* What the prefill actually did. Without it, a request that failed
+              and one that found nobody were both a button that did nothing. */}
+          <p aria-live="polite" className={`text-right text-[11px] ${prefillNotice?.tone === 'error' ? 'text-red-700' : 'text-foreground-500'}`}>
+            {prefillNotice?.text || ''}
+          </p>
         </div>
       )}
       <FormField label="Presenters" hint="These people can share and record.">
@@ -772,6 +782,7 @@ export function TeamsCalendarFormBody({
   patch,
   holidayLabelFor,
   prefilling,
+  prefillNotice,
   onPrefill,
   timeZoneLabel,
   existingCalendar = false,
@@ -783,6 +794,8 @@ export function TeamsCalendarFormBody({
   holidayLabelFor?: (date: string) => string;
   /** Loading state of the tutor/learner prefill, when the caller offers it. */
   prefilling?: boolean;
+  /** What the last prefill did, shown beside its button. */
+  prefillNotice?: { tone: 'ok' | 'error'; text: string } | null;
   onPrefill?: () => void;
   timeZoneLabel?: string;
   existingCalendar?: boolean;
@@ -866,7 +879,7 @@ export function TeamsCalendarFormBody({
                 rows={2}
               />
             </FormField>}
-            <TeamsPeopleFields form={form} patch={patch} prefilling={prefilling} onPrefill={onPrefill} />
+            <TeamsPeopleFields form={form} patch={patch} prefilling={prefilling} prefillNotice={prefillNotice} onPrefill={onPrefill} />
           </div>
           {(form.scheduleTimeZone || timeZoneLabel) && (
             <p className="text-[10px] font-semibold text-foreground-400">
