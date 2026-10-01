@@ -47,3 +47,15 @@ it('explains removal and sends no delete until the administrator confirms', asyn
   await waitFor(() => expect(deleteCoach).toHaveBeenCalledWith(coach));
   await screen.findByText('No coaches found.');
 });
+it('edits a coach saved before the one-to-one link existed', async () => {
+  const { one_to_one: _unused, ...olderLinks } = { ...emptyLinks(), first_session: 'https://example.org/book' };
+  const coach = { id: 4, version: 2, name: 'Example Coach', slug: 'example-coach', links: olderLinks as ReturnType<typeof emptyLinks> };
+  vi.mocked(listCoaches).mockResolvedValue({ coaches: [coach] });
+  vi.mocked(saveCoach).mockResolvedValue({ ...coach, links: { ...emptyLinks(), ...olderLinks, one_to_one: 'https://example.org/1to1' }, version: 3 });
+  render(<MemoryRouter><Page /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+  expect(screen.getByLabelText('One to one URL')).toHaveValue('');
+  fireEvent.change(screen.getByLabelText('One to one URL'), { target: { value: 'https://example.org/1to1' } });
+  fireEvent.submit(screen.getByRole('form', { name: 'Coach editor' }));
+  await waitFor(() => expect(saveCoach).toHaveBeenCalledWith(expect.objectContaining({ id: 4, version: 2, links: { ...emptyLinks(), first_session: 'https://example.org/book', one_to_one: 'https://example.org/1to1' } })));
+});
