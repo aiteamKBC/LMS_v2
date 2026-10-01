@@ -25,3 +25,15 @@ it('rejects unsafe booking URLs and displays load errors', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
   expect(await screen.findByRole('button', { name: /First session/ })).toBeDisabled();
 });
+it('opens the one-to-one booking directly from an emailed link', async () => {
+  vi.mocked(getPublicCoach).mockResolvedValue({ name: 'Example Coach', slug: 'example', links: { ...emptyLinks(), one_to_one: 'https://example.org/one-to-one' } });
+  render(<MemoryRouter initialEntries={['/coach-booking/example?session=one_to_one']}><Routes><Route path="/coach-booking/:slug" element={<Page />} /></Routes></MemoryRouter>);
+  expect(await screen.findByTitle('One to one booking with Example Coach')).toHaveAttribute('src', 'https://example.org/one-to-one');
+  expect(screen.getByRole('button', { name: /One to one/ })).toHaveAttribute('aria-pressed', 'true');
+});
+it('ignores an emailed session the coach does not offer', async () => {
+  vi.mocked(getPublicCoach).mockResolvedValue({ name: 'Example Coach', slug: 'example', links: { ...emptyLinks(), first_session: 'https://example.org/book' } });
+  render(<MemoryRouter initialEntries={['/coach-booking/example?session=one_to_one']}><Routes><Route path="/coach-booking/:slug" element={<Page />} /></Routes></MemoryRouter>);
+  expect(await screen.findByRole('button', { name: /One to one/ })).toBeDisabled();
+  expect(screen.queryByTitle(/booking with/)).not.toBeInTheDocument();
+});
