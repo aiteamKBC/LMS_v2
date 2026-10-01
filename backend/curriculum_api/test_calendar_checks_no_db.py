@@ -90,6 +90,9 @@ class CalendarChecksTests(unittest.TestCase):
                  'teams_shifted_occurrence_targets', 'teams_expanded_instances',
                  'teams_standalone_occurrence_meeting',
                  'apply_teams_occurrence_shifts', 'curriculum_teams_meeting', 'curriculum_teams_meeting_schedule',
+                 # The occurrence-deletion rule and the sentence a refusal is reported with.
+                 'parse_int', 'vacated_occurrence_keys', 'tracked_occurrence_keys', 'execute_teams_occurrence_deletions',
+                 'teams_warning_sentence',
                  'verify_teams_calendar_with_standalones', 'publish_teams_calendar_attendees',
                  'teams_newly_invited', 'forward_teams_invitation',
                  'reschedule_single_live_session_occurrence', 'saved_live_session_occurrences',
@@ -296,6 +299,32 @@ class CalendarChecksTests(unittest.TestCase):
         self.options_ok = False
         self.assertEqual(self.create().status_code, 502)
         self.assertFalse(self.events['event-1']['attendees'])
+
+    def test_an_update_refused_after_preparation_has_cancelled_nothing(self):
+        """A later validation failure must not find occurrences already deleted.
+
+        The deletes used to run inside the schedule shift, several Graph calls
+        before the meeting-option check could reject the whole update -- so an
+        author whose update was refused had already had Exchange tell the cohort
+        a session was cancelled. They are issued last now, after everything that
+        can still refuse has run.
+        """
+        self.assertEqual(self.create().status_code, 201)
+        shifted = []
+        for index, item in enumerate(self.payload['scheduledOccurrences']):
+            start = datetime.fromisoformat(item['startDateTimeUtc'])
+            # Move one session a day on -- genuine cleanup to hold back, and no
+            # collision with the session that follows it.
+            shifted.append({**item, 'startDateTimeUtc': (start + timedelta(days=1)).isoformat()} if index == 2 else item)
+        self.payload.update(scheduledOccurrences=shifted, notifyAttendees=False)
+        self.options_ok = False
+        self.calls.clear()
+
+        result = self.v.curriculum_teams_meeting_schedule(types.SimpleNamespace(method='PATCH'), 'LIVE-SYNTHETIC')
+
+        self.assertEqual(result.status_code, 502, result)
+        self.assertFalse([item for item in self.calls if item[0] == 'DELETE'],
+                         'a refused update deleted a Microsoft occurrence anyway')
 
     def test_overlapping_sessions_rejected_before_graph(self):
         self.payload['scheduledOccurrences'][1]['startDateTimeUtc'] = self.payload['startDateTimeUtc']

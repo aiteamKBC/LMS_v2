@@ -216,7 +216,17 @@ def save_weekday_calendar(payload, graph_settings, series=None):
             warnings.extend(option_warnings)
             if day_payload['repeat'] != 'none':
                 if not combined.get('peopleOnly') and not dates_already_verified:
-                    shift_warnings, _ = v.apply_teams_occurrence_shifts(owner, quote(event_id, safe=''), body['subject'], targets, invited_people)
+                    # The third value is the occurrences the shift PROVED removable:
+                    # here, with no stored rows handed in, only the recurrence's own
+                    # weekly filler. A week this calendar actually owns is never in
+                    # it -- see `vacated_occurrence_keys` / `tracked_occurrence_keys`.
+                    shift_warnings, _, stale = v.apply_teams_occurrence_shifts(owner, quote(event_id, safe=''), body['subject'], targets, invited_people)
+                    shift_warnings.extend(v.execute_teams_occurrence_deletions(
+                        microsoft_graph_request, owner, stale,
+                        live_session_id=v.clean_str(body.get('liveSessionId')),
+                        module_catalogue_id=v.clean_str(combined.get('moduleCatalogueId')),
+                        source='weekday_series_cleanup',
+                    ))
                     warnings.extend(shift_warnings)
                 query = urlencode({'startDateTime': (min(item['start'] for item in targets) - timedelta(days=7)).isoformat(),
                                    'endDateTime': (max(item['end'] for item in targets) + timedelta(days=7)).isoformat(), '$top': 200})

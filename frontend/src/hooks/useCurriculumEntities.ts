@@ -78,11 +78,31 @@ export function useCurriculumEntities(options: CurriculumEntitiesOptions = {}) {
     if (loadOptions.silent) setRefreshing(true);
     else setLoading(true);
     try {
-      const overview = await fetchCurriculumOverview(signal, {
+      // All five reads are started together. Nothing here depends on anything
+      // else here: the compact overview carries programmes, cohorts, groups and
+      // modules, while staff come from the enrolment directory, holidays from
+      // the calendar and Teams state from its own summary endpoint. Awaiting
+      // the overview first -- which is what this used to do -- held the other
+      // four behind the slowest request on the page for no reason.
+      const overviewPending = fetchCurriculumOverview(signal, {
         compact: true,
         skipCache: loadOptions.skipCache,
         revalidate: loadOptions.revalidate,
       });
+      const tutorsPending = includeStaff
+        ? fetchCurriculumTutors(signal, { skipCache: loadOptions.skipCache, revalidate: loadOptions.revalidate }).catch(() => [])
+        : Promise.resolve([]);
+      const coachesPending = includeStaff
+        ? fetchCurriculumCoaches(signal, { skipCache: loadOptions.skipCache, revalidate: loadOptions.revalidate }).catch(() => [])
+        : Promise.resolve([]);
+      const holidaysPending = includeHolidays
+        ? fetchCurriculumHolidays(signal, { skipCache: loadOptions.skipCache, revalidate: loadOptions.revalidate }).catch(() => [])
+        : Promise.resolve([]);
+      const teamsPending = includeTeams
+        ? fetchCurriculumTeamsMeetingSummaries(signal, { skipCache: loadOptions.skipCache, revalidate: loadOptions.revalidate }).catch(() => [])
+        : Promise.resolve([]);
+
+      const overview = await overviewPending;
       if (signal?.aborted || requestId !== requestIdRef.current) return null;
 
       // Paint the structure first; the optional collections are additive and a
@@ -110,10 +130,7 @@ export function useCurriculumEntities(options: CurriculumEntitiesOptions = {}) {
       setRefreshing(false);
 
       const [tutors, coaches, holidays, teamsMeetings] = await Promise.all([
-        includeStaff ? fetchCurriculumTutors(signal, { skipCache: loadOptions.skipCache, revalidate: loadOptions.revalidate }).catch(() => []) : Promise.resolve([]),
-        includeStaff ? fetchCurriculumCoaches(signal, { skipCache: loadOptions.skipCache, revalidate: loadOptions.revalidate }).catch(() => []) : Promise.resolve([]),
-        includeHolidays ? fetchCurriculumHolidays(signal, { skipCache: loadOptions.skipCache, revalidate: loadOptions.revalidate }).catch(() => []) : Promise.resolve([]),
-        includeTeams ? fetchCurriculumTeamsMeetingSummaries(signal, { skipCache: loadOptions.skipCache, revalidate: loadOptions.revalidate }).catch(() => []) : Promise.resolve([]),
+        tutorsPending, coachesPending, holidaysPending, teamsPending,
       ]);
       if (signal?.aborted || requestId !== requestIdRef.current) return null;
 
