@@ -30,7 +30,11 @@ def coach_mcm_pdf(request, instance_id):
             return error
         definition = review_instance_form_definition(instance)
     if instance_id.startswith('imported-review:'):
-        profile = LearnerProfile.objects.filter(pk=instance['learner_id']).first()
+        # Imported definitions use the same camelCase contract returned to
+        # the frontend (``learnerId``). Keep the snake_case fallback for any
+        # older definition shape so PDF downloads remain backwards compatible.
+        profile_id = instance.get('learnerId') or instance.get('learner_id')
+        profile = LearnerProfile.objects.filter(pk=profile_id).first() if profile_id else None
         source = EnrolmentUser.all_learners.filter(pk=profile.enrolment_id).first() if profile and profile.enrolment_id else None
         from learner_api.aptem_review_pdf import original_review_pdf
         historical_review = definition.get('historicalReview') or {}

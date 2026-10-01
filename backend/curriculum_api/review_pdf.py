@@ -621,20 +621,23 @@ def build_historical_review_pdf(review, information):
 
 
 def historical_pdf_response(review, information, *, identifier, original_content=None):
-    """Return an imported review PDF, preserving the source in a response header.
+    """Return the verified original PDF for an imported Aptem review.
 
-    ``original_content`` is deliberately explicit.  The current Aptem import
-    stores a review page URL, not the source PDF bytes, so callers use the
-    regenerated path today.  When a verified stored original is added later,
-    passing its bytes here will return it without changing either endpoint.
+    Aptem reviews are historical records.  The LMS must return the exact PDF
+    stored by Aptem when one is available; it must not silently create a new
+    document that could differ from the source record.
     """
-    from django.http import HttpResponse
+    from django.http import HttpResponse, JsonResponse
 
-    source = 'aptem-original' if original_content else 'aptem-regenerated'
-    content = original_content or build_historical_review_pdf(review, information)
+    if not original_content:
+        return JsonResponse(
+            {'detail': 'The original Aptem PDF is unavailable for this review.'},
+            status=404,
+        )
+    content = original_content
     safe_identifier = re.sub(r'[^A-Za-z0-9_-]', '', str(identifier)) or 'review'
     response = HttpResponse(content, content_type='application/pdf')
     response['Content-Disposition'] = f'attachment; filename="Aptem-Review-{safe_identifier}.pdf"'
-    response['X-Review-PDF-Source'] = source
+    response['X-Review-PDF-Source'] = 'aptem-original'
     response['Cache-Control'] = 'private, no-store'
     return response

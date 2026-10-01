@@ -224,6 +224,38 @@ export default function CoachMonthlyCoaching() {
     [events],
   );
   const selectedScheduleEvent = schedulableEvents.find(event => eventIdentity(event) === scheduleEventKey) || null;
+  // Each learner can have many future MCR occurrences still needing a slot; without
+  // this, the "+Schedule meeting" dropdown lists every one of them and the same
+  // learner name repeats many times, looking like duplicate entries. Collapse to
+  // the one occurrence per learner a coach would pick next (the soonest one still
+  // needing scheduling), while keeping a row's own "Schedule" action -- which can
+  // target a later occurrence directly -- selectable even if it isn't that pick.
+  const scheduleDropdownOptions = useMemo(() => {
+    const byLearner = new Map<string, CoachCalendarEvent>();
+    for (const event of schedulableEvents) {
+      const key = event.learnerId || event.learner || eventIdentity(event);
+      const current = byLearner.get(key);
+      if (!current) {
+        byLearner.set(key, event);
+        continue;
+      }
+      const currentNeeds = needsScheduling(current);
+      const eventNeeds = needsScheduling(event);
+      if (eventNeeds !== currentNeeds) {
+        if (eventNeeds) byLearner.set(key, event);
+        continue;
+      }
+      const currentDate = parseLocalDate(eventDisplayDate(current));
+      const eventDate = parseLocalDate(eventDisplayDate(event));
+      if (eventDate && (!currentDate || eventDate < currentDate)) byLearner.set(key, event);
+    }
+    const options = Array.from(byLearner.values());
+    if (scheduleEventKey && !options.some(event => eventIdentity(event) === scheduleEventKey)) {
+      const selected = schedulableEvents.find(event => eventIdentity(event) === scheduleEventKey);
+      if (selected) options.push(selected);
+    }
+    return options.sort((a, b) => (a.learner || '').localeCompare(b.learner || ''));
+  }, [schedulableEvents, scheduleEventKey]);
 
   const groupFilterOptions = useMemo(() => {
     const seen = new Set<string>();
@@ -452,7 +484,7 @@ export default function CoachMonthlyCoaching() {
               <button type="button" aria-label="Close schedule meeting" disabled={scheduleBusy} onClick={() => setScheduleModalOpen(false)} className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-400 hover:bg-foreground-50"><AppIcon className="ri-close-line text-lg" /></button>
             </div>
             <div className="space-y-4 px-5 py-5">
-              <label className="block text-[12px] font-semibold text-foreground-700">Learner<select value={scheduleEventKey} onChange={(event) => { const next = schedulableEvents.find(item => eventIdentity(item) === event.target.value); setScheduleEventKey(event.target.value); setScheduleDate(next?.scheduledDate || next?.targetDate || isoDate(new Date())); setScheduleTime(next?.scheduledTime?.slice(0, 5) || '09:00'); setScheduleDuration(next?.durationMinutes || 60); }} className="mt-1 h-10 w-full rounded-lg border border-foreground-200 bg-white px-3 text-[13px] font-medium text-foreground-800 outline-none focus:border-primary-400"><option value="" disabled>Select learner</option>{schedulableEvents.map(event => <option key={eventIdentity(event)} value={eventIdentity(event)}>{event.learner || 'Unknown learner'}{event.group ? ` · ${event.group}` : ''}</option>)}</select></label>
+              <label className="block text-[12px] font-semibold text-foreground-700">Learner<select value={scheduleEventKey} onChange={(event) => { const next = schedulableEvents.find(item => eventIdentity(item) === event.target.value); setScheduleEventKey(event.target.value); setScheduleDate(next?.scheduledDate || next?.targetDate || isoDate(new Date())); setScheduleTime(next?.scheduledTime?.slice(0, 5) || '09:00'); setScheduleDuration(next?.durationMinutes || 60); }} className="mt-1 h-10 w-full rounded-lg border border-foreground-200 bg-white px-3 text-[13px] font-medium text-foreground-800 outline-none focus:border-primary-400"><option value="" disabled>Select learner</option>{scheduleDropdownOptions.map(event => <option key={eventIdentity(event)} value={eventIdentity(event)}>{event.learner || 'Unknown learner'}{event.group ? ` · ${event.group}` : ''}</option>)}</select></label>
               {selectedScheduleEvent ? <div className="rounded-lg border border-primary-100 bg-primary-50/60 px-3 py-2 text-[12px] text-primary-900"><span className="font-semibold">Meeting:</span> {selectedScheduleEvent.title || 'Monthly coaching meeting'}<span className="mx-2 text-primary-300">•</span><span>{selectedScheduleEvent.programme || 'Monthly coaching'}</span></div> : null}
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3"><label className="text-[12px] font-semibold text-foreground-700">Date<input type="date" value={scheduleDate} onChange={(event) => setScheduleDate(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-foreground-200 px-3 text-[13px] font-medium outline-none focus:border-primary-400" /></label><label className="text-[12px] font-semibold text-foreground-700">Start time<input type="time" value={scheduleTime} onChange={(event) => setScheduleTime(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-foreground-200 px-3 text-[13px] font-medium outline-none focus:border-primary-400" /></label><label className="text-[12px] font-semibold text-foreground-700">Duration<select value={scheduleDuration} onChange={(event) => setScheduleDuration(Number(event.target.value))} className="mt-1 h-10 w-full rounded-lg border border-foreground-200 bg-white px-3 text-[13px] font-medium outline-none focus:border-primary-400"><option value={30}>30 minutes</option><option value={45}>45 minutes</option><option value={60}>60 minutes</option><option value={90}>90 minutes</option><option value={120}>120 minutes</option></select></label></div>
               {scheduleError ? <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-semibold text-red-700">{scheduleError}</p> : null}

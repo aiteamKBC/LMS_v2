@@ -75,7 +75,7 @@ def original_review_pdf(review):
             cursor.execute(
                 '''
                 SELECT DISTINCT link->>'url'
-                FROM "Learner".aptem_cv_contracts_probe probe
+                FROM fetching_evidence.aptem_cv_contracts_probe probe
                 CROSS JOIN LATERAL jsonb_array_elements(
                     COALESCE(probe.progress_review_links, '[]'::jsonb)
                     || COALESCE(probe.monthly_coaching_review_links, '[]'::jsonb)
@@ -101,5 +101,5 @@ def original_review_pdf(review):
         content = download_blob_bytes(*location, max_bytes=25 * 1024 * 1024)
         return content if content.startswith(b'%PDF-') else None
     except Exception:
-        logger.warning('Could not read an imported Aptem PDF blob; using regenerated content.', exc_info=True)
+        logger.warning('Could not read the original imported Aptem PDF blob.', exc_info=True)
         return None

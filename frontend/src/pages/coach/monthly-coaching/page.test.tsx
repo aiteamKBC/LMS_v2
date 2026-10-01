@@ -407,4 +407,36 @@ describe('restored monthly coaching list', () => {
     expect(screen.getByText('Coach access is required to load coaching meetings.')).toBeVisible();
     expect(fetchEvents).not.toHaveBeenCalled();
   });
+
+  it('collapses a learner\'s many pending MCR occurrences into a single option in the generic Schedule-meeting dropdown', async () => {
+    fetchEvents.mockResolvedValue({ events: [
+      meeting(30, { learner: 'Repeat Learner', learnerId: '30', targetDate: '2026-09-20', status: 'not-scheduled' }),
+      meeting(31, { learner: 'Repeat Learner', learnerId: '30', targetDate: '2026-11-05', status: 'not-scheduled', eventKey: 'mcr:31', id: 'meeting-31' }),
+      meeting(32, { learner: 'Repeat Learner', learnerId: '30', targetDate: '2026-08-05', status: 'scheduled', scheduledDate: '2026-08-05', scheduledTime: '10:00', eventKey: 'mcr:32', id: 'meeting-32' }),
+    ] });
+    mount();
+    await screen.findByText('Repeat Learner');
+    fireEvent.click(screen.getByRole('button', { name: 'Schedule meeting' }));
+    const dialog = screen.getByRole('dialog', { name: 'Schedule meeting' });
+    const options = Array.from(within(dialog).getByRole('combobox', { name: 'Learner' }).querySelectorAll('option'))
+      .filter(option => option.textContent?.includes('Repeat Learner'));
+    expect(options).toHaveLength(1);
+    expect(options[0]).toHaveValue('mcr:30');
+  });
+
+  it.each([
+    ['the later occurrence', /05\s*Nov\s*2026/, 'mcr:31'],
+    ['the sooner occurrence', /20\s*Sept?\s*2026/, 'mcr:30'],
+  ])('still lets %s be scheduled individually from its own row even though the generic dropdown collapses them', async (_label, dateMatcher, expectedValue) => {
+    fetchEvents.mockResolvedValue({ events: [
+      meeting(30, { learner: 'Repeat Learner', learnerId: '30', targetDate: '2026-09-20', status: 'not-scheduled' }),
+      meeting(31, { learner: 'Repeat Learner', learnerId: '30', targetDate: '2026-11-05', status: 'not-scheduled', eventKey: 'mcr:31', id: 'meeting-31' }),
+    ] });
+    mount('/coach/monthly-coaching?filter=all&months=all');
+    await screen.findAllByText('Repeat Learner');
+
+    const row = screen.getByText(dateMatcher).closest('tr')!;
+    fireEvent.click(within(row).getByRole('button', { name: 'Schedule' }));
+    expect(within(screen.getByRole('dialog', { name: 'Schedule meeting' })).getByRole('combobox', { name: 'Learner' })).toHaveValue(expectedValue);
+  });
 });
