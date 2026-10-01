@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { AnimatedProgressCircle } from '@/components/ui/AnimatedProgressCircle';
 import { createPortal } from 'react-dom';
 import type { QuizData } from '@/mocks/learner-profile';
 
@@ -634,7 +635,7 @@ function ResultsScreen({
           <div className="relative w-32 h-32 mx-auto mb-5">
             <svg viewBox="0 0 36 36" className="w-full h-full -rotate-90">
               <circle cx="18" cy="18" r="15.5" fill="none" stroke={passed ? 'oklch(var(--emerald-200))' : 'oklch(var(--amber-200))'} strokeWidth="2.5" />
-              <circle cx="18" cy="18" r="15.5" fill="none" stroke={passed ? 'oklch(var(--emerald-500))' : 'oklch(var(--amber-500))'} strokeWidth="2.5" strokeDasharray={`${Math.round((score / 100) * 97.4)} 97.4`} strokeLinecap="round" />
+              <AnimatedProgressCircle cx="18" cy="18" r="15.5" fill="none" stroke={passed ? 'oklch(var(--emerald-500))' : 'oklch(var(--amber-500))'} strokeWidth="2.5" strokeDasharray={`${Math.round((score / 100) * 97.4)} 97.4`} strokeLinecap="round" />
             </svg>
             <div className="absolute inset-0 flex flex-col items-center justify-center">
               <span className={`text-2xl font-heading font-bold ${passed ? 'text-emerald-700' : 'text-amber-700'}`}>{score}%</span>
