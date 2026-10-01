@@ -27,6 +27,7 @@ const AdminRolesPage = lazyRoute(() => import("../pages/admin/roles/page"));
 const AdminSystemSettingsPage = lazyRoute(() => import("../pages/admin/system/page"));
 const CoachDirectoryPage = lazyRoute(() => import("../pages/admin/coach-directory/page"));
 const CoachBookingPage = lazyRoute(() => import("../pages/coach-booking/page"));
+const LmsIntroductionPage = lazyRoute(() => import("../pages/lms-introduction/page"));
 const AdminUsersPage = lazyRoute(() => import("../pages/admin/users/page"));
 const PlatformReportPage = lazyRoute(() => import("../pages/admin/platform-report/page"));
 const AttendancePage = lazyRoute(() => import("../pages/learner/attendance/page"));
@@ -170,6 +171,7 @@ const LearnerLearningPlanModulesPage = lazyRoute(() => import("../pages/learner/
 const LearnerOnboardingPage = lazyRoute(() => import("../pages/learner/onboarding/page"));
 const LearnerWelcomePage = lazyRoute(() => import("../pages/learner/welcome/page"));
 const LearnerCompliancePage = lazyRoute(() => import("../pages/learner/compliance/page"));
+const LearnerFirstSessionPage = lazyRoute(() => import("../pages/learner/first-session/page"));
 const LearnerOnboardingReviewsPage = lazyRoute(() => import("../pages/learner/onboarding/reviews/page"));
 const LearnerReviewFormPage = lazyRoute(() => import("../pages/learner/onboarding/reviews/form"));
 const LearnerProfilePage = lazyRoute(() => import("../pages/learner/profile/page"));
@@ -365,6 +367,12 @@ const routes: RouteObject[] = [
     // signed by them and their employer.
     path: "/learner/compliance-documents",
     element: <LearnerCompliancePage />,
+  },
+  {
+    // A Delivery apprentice books their first learning session here, once
+    // they have signed all four compliance documents.
+    path: "/learner/first-session",
+    element: <LearnerFirstSessionPage />,
   },
   {
     // Declared before the :stepSlug pattern below, which would otherwise
@@ -936,6 +944,11 @@ const routes: RouteObject[] = [
   {
     path: "/coach-booking/:slug",
     element: <CoachBookingPage />,
+  },
+  {
+    // Opened from the account invitation, before the learner has a password.
+    path: "/lms-introduction",
+    element: <LmsIntroductionPage />,
   },
   {
     path: "/admin/system",
@@ -1675,6 +1688,7 @@ const routes: RouteObject[] = [
  */
 const PUBLIC_PATHS = new Set([
   "/coach-booking/:slug",
+  "/lms-introduction",
   "/",
   "/login",
   "/access-required",

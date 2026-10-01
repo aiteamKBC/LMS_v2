@@ -401,6 +401,12 @@
   .facts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
+@container learnerOverview (min-width: 44rem) {
+  .dashboardTabContent > .metricsInline {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 @container learnerOverview (min-width: 66rem) {
   .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
@@ -546,4 +552,81 @@
   background: #403224 !important;
   border-color: #a88048 !important;
   color: #f5d3a0 !important;
+}
+
+/* Keep the overview summary and chart cards together in the first viewport. */
+.dashboardTabContent {
+  display: grid;
+  gap: .75rem;
+  min-width: 0;
+}
+
+.dashboardTabContent > .metrics {
+  gap: .65rem;
+}
+
+.dashboardTabContent > .metricsInline .metricRingValue {
+  font-size: 1.1rem;
+}
+
+.dashboardTabContent > .metricsInline .metricDetail {
+  font-size: 1.05rem;
+}
+
+@container learnerOverview (min-width: 68rem) {
+  .dashboardTabContent > .metricsInline .metric {
+    min-height: 8rem;
+    padding: .6rem;
+  }
+
+  .dashboardTabContent > .metricsInline .metricRing {
+    width: 3.85rem;
+    height: 3.85rem;
+    flex-basis: 3.85rem;
+  }
+
+  .dashboardTabContent > .metricsInline .metricRing::after {
+    inset: .45rem;
+  }
+
+  .dashboardTabContent > .metricsInline .metricLabel {
+    font-size: .74rem;
+  }
+
+  .dashboardTabContent > .metricsInline .metricRingValue {
+    font-size: .75rem;
+  }
+
+  .dashboardTabContent > .metricsInline .metricDetail {
+    font-size: .8rem;
+  }
+}
+
+/* Compact KPI cards so the overview charts fit in the first viewport. */
+.dashboardTabContent > .metricsInline .metric {
+  min-height: 0;
+  padding: .7rem .85rem;
+}
+
+@container learnerOverview (min-width: 68rem) {
+  .dashboardTabContent > .metricsInline .metric {
+    min-height: 0;
+    padding: .6rem .75rem;
+  }
+
+  .dashboardTabContent > .metricsInline .metricRing {
+    width: 3.4rem;
+    height: 3.4rem;
+    flex-basis: 3.4rem;
+  }
+
+  .dashboardTabContent > .metricsInline .metricRing::after {
+    inset: .4rem;
+  }
+}
+
+@container learnerOverview (min-width: 66rem) {
+  .dashboardTabContent > .metricsInline {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
 }

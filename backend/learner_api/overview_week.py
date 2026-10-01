@@ -3,7 +3,9 @@ from datetime import datetime, timedelta, timezone
 import logging
 from zoneinfo import ZoneInfo
 
+from . import journal_sources
 from django.db import DatabaseError, connections
+from django.conf import settings
 from django.http import JsonResponse
 from django.views.decorators.http import require_GET
 
@@ -14,8 +16,40 @@ from .dashboard_metrics import metrics_from_loaded, point_codes, ratio
 from .progress_rules import progress_counts_as_achieved
 from old_otjh.service import ServiceError
 from .learner_detail import SOURCE_MODELS
+from . import canonical_learning
 from .student_activity import CURRENT_SUBJECTS_SQL, _direct_progress_records, _direct_progress_otjh
-from .student_activity_access import student_activity_available
+
+
+# Home needs both assignment interpretations: My Learning treats an explicit
+# JSON plan as authoritative, while Attendance intentionally also includes the
+# normalised mirror. Returning both scopes from one query avoids reading the
+# same learner plan twice without changing either rule.
+HOME_SUBJECTS_SQL = '''
+    WITH source AS (
+        SELECT id, CASE WHEN jsonb_typeof("Training_plan"::jsonb)='array'
+            THEN "Training_plan"::jsonb ELSE "Learning_plan"::jsonb END AS plan
+        FROM enrolment."Created_users" WHERE id=%s
+    ), assigned AS (
+        SELECT entry->>'moduleId' AS module_id, true AS current_plan FROM source
+        CROSS JOIN LATERAL jsonb_array_elements(
+            CASE WHEN jsonb_typeof(plan)='array' THEN plan ELSE '[]'::jsonb END
+        ) entry
+        UNION ALL
+        SELECT coalesce(m.curriculum_module_id,nullif(m.module_ref,'')),
+               jsonb_typeof(source.plan) IS DISTINCT FROM 'array'
+        FROM source
+        JOIN "Learner".learners l ON l.enrolment_id=source.id
+        JOIN "Learner".learner_training_plan_modules m ON m.learner_id=l.id
+    )
+    SELECT cm.module_catalogue_id,cm.title,bool_or(assigned.current_plan)
+    FROM assigned JOIN curriculum.modules cm ON cm.module_catalogue_id=assigned.module_id
+    WHERE (cm.deleted_at IS NULL OR COALESCE(cm.deleted_via_parent, '') <> '')
+    GROUP BY cm.module_catalogue_id,cm.title
+'''
+
+HOME_SOURCE_FIELDS = (
+    'id', 'aptem_id', 'email', 'username',
+)
 from .student_activity_data import read_curriculum_schedules, apply_curriculum_schedules
 from .subject_dates import activity_schedule, as_date
 from .subject_content import clean_text
@@ -39,6 +73,19 @@ def progress_day(value):
         return value.replace(tzinfo=timezone.utc).astimezone(UK).date() if value.tzinfo is None else value.astimezone(UK).date()
     except (ValueError, TypeError):
         return None
+
+
+def completion_day(row):
+    """The day a progress row's hours count on.
+
+    The declared working instant when the learner's Finish click fell outside
+    the working rules and had to be corrected, otherwise the click itself. This
+    is the same order ``coach_api.entry_activity_date`` uses, so the learner's
+    own week and month totals bucket exactly where the coach's do; the real
+    click stays readable at ``submittedAt`` for audit.
+    """
+    row = row if isinstance(row, dict) else {}
+    return progress_day(row.get('declaredCompletedAt') or row.get('submittedAt'))
 
 
 def merged_activities(historical, native, progress, attempts, links):
@@ -122,7 +169,7 @@ def monthly_otjh_summary(activities, progress):
 
     progress_by_month = {}
     for row in progress:
-        day = progress_day(row.get('submittedAt'))
+        day = completion_day(row)
         if day:
             progress_by_month.setdefault(day.strftime('%Y-%m'), []).append(row)
 
@@ -264,13 +311,20 @@ def summarise_week(historical, native, progress, attempts, links, start, end):
 
 def read_week(source, now=None, *, home_kind=None, dashboard_kind=None):
     start, end = week_bounds(now)
-    migrated = student_activity_available(source.aptem_id)
+    # Every active learner route is SSOT-only. Missing SSOT identity fails when
+    # the canonical metrics/home projection is read below.
     historical, attempts, links = [], set(), {}
     old_hours, undated_hours = 0, 0
     progress = _direct_progress_records(source.pk)
+    attendance_module_ids = None
     with connections['enrolment'].cursor() as cur:
-        cur.execute(CURRENT_SUBJECTS_SQL, [source.pk])
-        assigned = cur.fetchall()
+        cur.execute(HOME_SUBJECTS_SQL if home_kind else CURRENT_SUBJECTS_SQL, [source.pk])
+        subject_rows = cur.fetchall()
+        if home_kind:
+            assigned = [(module_id, title) for module_id, title, current in subject_rows if current]
+            attendance_module_ids = [module_id for module_id, _title, _current in subject_rows]
+        else:
+            assigned = subject_rows
         module_ids = [row[0] for row in assigned]
         cur.execute('''SELECT c.id,c.module_catalogue_id AS module_id,m.title AS module_title,c.title,c.type,c.expected_otjh AS expected_hours,
             w.title AS section_title,c.settings_json->>'dueTiming' AS due_timing,
@@ -289,62 +343,7 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None):
         dates = read_builder_activity_dates(cur, module_ids)
         for row in native:
             row.update(dates.get(str(row['id'])) or activity_schedule(row['title'], section_title=row['section_title']))
-        if migrated:
-            aptem_id = int(str(source.aptem_id).strip())
-            cur.execute('SELECT learner_email FROM "Last_audit".learners WHERE aptem_id=%s', [aptem_id])
-            identities = cur.fetchall()
-            if len(identities) != 1 or not source.email or str(identities[0][0] or '').strip().casefold() != source.email.strip().casefold():
-                raise LookupError('Previous learning could not be linked to this learner.')
-            cur.execute('''SELECT gl.group_id,ga.activity_id,g.group_name AS module_title,a.title,
-                coalesce(a.activity_type,r.activity_type) AS type,
-                r.status,r.video_completed,r.reading_viewed,r.quiz_passed,a.quiz_id,a.reading_type,ph.planned_hours AS expected_hours,
-                CASE WHEN nullif(a.reading_iframe_url,'') IS NOT NULL THEN 'present' ELSE '' END AS reading_iframe_url,
-                CASE WHEN jsonb_typeof(a.quiz_questions)='array' AND a.quiz_questions<>'[]'::jsonb THEN '[{}]'::jsonb ELSE '[]'::jsonb END AS quiz_questions,
-                jsonb_path_query_array(CASE WHEN lk.source_preference='learner' THEN lk.ksbs ELSE ak.ksbs END,'$[*].code') AS ksb_mappings
-                FROM "Last_audit".learners l
-                JOIN "Last_audit".group_learners gl ON gl.learner_id=l.learner_id
-                JOIN "Last_audit".groups g ON g.group_id=gl.group_id
-                JOIN "Last_audit".group_activities ga ON ga.group_id=gl.group_id
-                JOIN "Last_audit".activities a ON a.activity_id=ga.activity_id
-                LEFT JOIN "Last_audit".activity_results r ON r.learner_id=l.learner_id AND r.group_id=gl.group_id AND r.activity_id=ga.activity_id
-                LEFT JOIN structured_manual_activities.learner_activity_ksbs lk ON lk.aptem_id=l.aptem_id AND lk.activity_id=ga.activity_id
-                LEFT JOIN structured_manual_activities.activity_ksbs ak ON ak.activity_id=ga.activity_id
-                LEFT JOIN "Last_audit".activity_planned_hours ph ON ph.learner_id=l.learner_id AND ph.aptem_id=l.aptem_id
-                    AND ph.ref=ga.activity_id::text AND ph.kind=CASE lower(coalesce(a.activity_type,r.activity_type))
-                        WHEN 'video' THEN 'video' WHEN 'audio' THEN 'audio' WHEN 'reading+quiz' THEN 'reading_quiz' END
-                WHERE l.aptem_id=%s''', [aptem_id])
-            historical = rows(cur)
-            groups = sorted({row['group_id'] for row in historical})
-            schedules = read_curriculum_schedules(cur, groups)
-            for row in historical:
-                row.update(activity=row['title'], source_activity_id=row['activity_id'])
-                row.update(activity_schedule(row['title']))
-            apply_curriculum_schedules(historical, schedules)
-            cur.execute('''SELECT DISTINCT group_id,activity_id FROM "Learner".subject_activity_attempts
-                WHERE enrolment_id=%s AND aptem_id=%s AND completed=true''', [source.pk, aptem_id])
-            attempts = {(str(group), str(activity)) for group, activity in cur.fetchall()}
-            cur.execute('''WITH exports AS (
-                SELECT course_id,CASE WHEN jsonb_typeof(curriculum)='string'
-                    THEN (curriculum #>> '{}')::jsonb ELSE curriculum END AS payload
-                FROM "MBA".course_curriculum WHERE course_id=ANY(%s))
-                SELECT course_id,material->>'component_id',material->>'source_component_id'
-                FROM exports CROSS JOIN LATERAL jsonb_array_elements(
-                    CASE WHEN jsonb_typeof(payload->'sections')='array' THEN payload->'sections' ELSE '[]'::jsonb END) section
-                CROSS JOIN LATERAL jsonb_array_elements(
-                    CASE WHEN jsonb_typeof(section->'materials')='array' THEN section->'materials' ELSE '[]'::jsonb END) material''', [groups])
-            candidates = {}
-            for group, component, activity in cur.fetchall():
-                if component and activity:
-                    candidates.setdefault(str(component), set()).add((str(group), str(activity)))
-            links = {component: next(iter(keys)) for component, keys in candidates.items() if len(keys) == 1}
-            cur.execute('''SELECT coalesce(sum(actual_hours) FILTER (WHERE activity_date BETWEEN %s AND %s),0),
-                count(*) FILTER (WHERE activity_date IS NULL AND month=ANY(%s))
-                FROM structured_manual_activities.manual_learner_activities
-                WHERE aptem_id=%s AND accepted IS TRUE AND deleted_at IS NULL''',
-                        [start, end, sorted({start.strftime('%Y-%m'), end.strftime('%Y-%m')}), aptem_id])
-            raw_hours, undated_hours = cur.fetchone()
-            old_hours = number(raw_hours)
-    weekly_progress = [row for row in progress if (day := progress_day(row.get('submittedAt'))) and start <= day <= end]
+    weekly_progress = [row for row in progress if (day := completion_day(row)) and start <= day <= end]
     new_hours = _direct_progress_otjh(weekly_progress)
     plan_activities = list(merged_activities(historical, native, progress, attempts, links))
     result = {'weekStart': start.isoformat(), 'weekEnd': end.isoformat(), 'timezone': 'Europe/London',
@@ -354,53 +353,63 @@ def read_week(source, now=None, *, home_kind=None, dashboard_kind=None):
             'monthlyOtjh': monthly_otjh_summary(plan_activities, progress),
             'otjh': {'actual': round(old_hours + new_hours, 4) if old_hours is not None and not undated_hours else None,
                      'historical': old_hours, 'new': round(new_hours, 4), 'undatedHistoricalRows': undated_hours}}
-    metric_kind = dashboard_kind or home_kind
-    canonical_metrics = None
-    if metric_kind:
-        with connections['enrolment'].cursor() as cur:
-            cur.execute('''SELECT p.component_ref AS "componentId",p.quiz_ref AS "quizId",p.kind,p.passed
-                FROM "Learner".learners l JOIN "Learner".learner_progress_entries p ON p.learner_id=l.id
-                WHERE l.enrolment_id=%s AND p.kind<>'activity_event' ''', [source.pk])
-            metric_progress = rows(cur)
-            metric_attempts = attempts
-            if migrated:
-                aptem_id = int(str(source.aptem_id).strip())
-                cur.execute('''SELECT DISTINCT group_id,activity_id FROM "Learner".subject_activity_attempts
-                    WHERE enrolment_id=%s AND aptem_id=%s AND completed=true
-                      AND submitted_at IS NOT NULL''', [source.pk, aptem_id])
-                metric_attempts = {(str(group), str(activity)) for group, activity in cur.fetchall()}
-        canonical_metrics = metrics_from_loaded(source, metric_kind, migrated=migrated, native=native,
-            progress=metric_progress, direct_progress=progress, historical=historical,
-            attempts=metric_attempts, links=links, history_ready=True)
-        if dashboard_kind:
-            result['metrics'] = canonical_metrics
+    canonical_metrics = canonical_learning.metrics(source.pk) if (dashboard_kind or home_kind) else None
+    if canonical_metrics is not None:
+        canonical_otjh = canonical_metrics['otjh']
+        result['otjh'] = {
+            'actual': canonical_otjh.get('completed_actual', canonical_otjh.get('actual')),
+            'historical': canonical_otjh.get(
+                'historical', canonical_otjh.get('completed_actual', canonical_otjh.get('actual')),
+            ),
+            'new': canonical_otjh.get('new', 0),
+            'planned': canonical_otjh.get('planned'),
+            'undatedHistoricalRows': 0,
+        }
+    if dashboard_kind:
+        # The dashboard and dedicated Metrics endpoint expose the same SSOT
+        # total; there is no alternate historical/manual fallback.
+        result['metrics'] = canonical_metrics
     if home_kind:
         from .home_progress import read_home_progress
         result['homeProgress'] = read_home_progress(source, home_kind,
             merged_activities(historical, native, progress, attempts, links), native, progress, assigned, end,
-            canonical_metrics=canonical_metrics)
+            attendance_module_ids=attendance_module_ids, canonical_metrics=canonical_metrics)
     return result
 
 
 @require_GET
 @learner_self_or_staff(kwarg='pk')
+@journal_sources.learner_journal_view
 def overview_week(request, kind, pk):
     model = SOURCE_MODELS.get(kind)
     if model is None:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     section = request.GET.get('section')
+    read_model_status = None
     try:
         with measure_projection('overview-week', kind=kind, learner_id=pk, section=section) as measurement:
             if section not in (None, 'home', 'dashboard'):
                 return JsonResponse({'error': 'Invalid overview section.'}, status=400)
             home = section == 'home'
-            fields = ['id', 'aptem_id', 'email']
-            if home:
-                fields.extend(['username', 'employer_id', 'start_date', 'end_date', 'programme', 'cohort'])
-            source = model.all_learners.only(*fields).get(pk=pk)
-            with measurement.stage(section or 'overview'):
-                payload = read_week(source, home_kind=kind) if home else read_week(
-                    source, dashboard_kind=kind if section == 'dashboard' else None)
+            shared = None
+            if home and getattr(settings, 'LEARNER_HOME_SHARED_READ_MODEL_ENABLED', False):
+                from .read_model import enqueue_learner_home_refresh, get_learner_home
+                shared = get_learner_home(kind, pk)
+                if shared is not None:
+                    payload = dict(shared.payload)
+                    read_model_status = 'STALE' if shared.stale else 'HIT'
+                    if shared.stale:
+                        enqueue_learner_home_refresh(kind, pk, reason='stale-read')
+            if shared is None:
+                fields = HOME_SOURCE_FIELDS if home else ('id', 'aptem_id', 'email')
+                source = model.all_learners.only(*fields).get(pk=pk)
+                with measurement.stage(section or 'overview'):
+                    payload = read_week(source, home_kind=kind) if home else read_week(
+                        source, dashboard_kind=kind if section == 'dashboard' else None)
+                if home and getattr(settings, 'LEARNER_HOME_SHARED_READ_MODEL_ENABLED', False):
+                    from .read_model import enqueue_learner_home_refresh
+                    enqueue_learner_home_refresh(kind, pk, reason='missing-read-model')
+                    read_model_status = 'MISS'
     except model.DoesNotExist:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     except ServiceError as error:
@@ -412,4 +421,6 @@ def overview_week(request, kind, pk):
         return JsonResponse({'error': 'Could not load this week. Please try again.'}, status=503)
     response = JsonResponse(payload)
     response['Cache-Control'] = 'private, no-store'
+    if read_model_status:
+        response['X-LMS-Cache'] = read_model_status
     return response

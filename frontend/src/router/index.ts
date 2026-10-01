@@ -1,4 +1,4 @@
-import { Suspense, createElement, useEffect } from "react";
+import { Suspense, createElement, useEffect, useLayoutEffect } from "react";
 import { useLocation, useNavigate, useRoutes, type NavigateFunction } from "react-router-dom";
 import { RouteErrorBoundary } from "@/components/feature/RouteErrorBoundary";
 import { RouteLoadingSkeleton } from "@/components/feature/RouteLoadingSkeleton";
@@ -7,6 +7,7 @@ import routes from "./config";
 import { installLearnerRoutePreloading } from './preload';
 import { recordPageView } from '@/lib/activityTrail';
 import { installActivityCapture } from '@/lib/activityCapture';
+import { recordPerformanceNavigation } from '@/lib/performanceDiagnostics';
 import { OldOtjhProvider } from '@/features/old-otjh/hooks';
 
 let navigateResolver: (navigate: ReturnType<typeof useNavigate>) => void;
@@ -48,6 +49,13 @@ export function AppRoutes() {
   // quietly missing from the trail. The recorder skips the signed-out pages and
   // the learner content runner, and swallows its own failures, so no navigation
   // can fail because of it.
+  // Start the navigation clock before descendant passive effects issue their
+  // page APIs. A normal effect here can run after a page's own data effect and
+  // silently under-count the initial requests we are trying to measure.
+  useLayoutEffect(() => {
+    recordPerformanceNavigation(pathname);
+  }, [pathname]);
+
   useEffect(() => {
     recordPageView(pathname);
   }, [pathname]);

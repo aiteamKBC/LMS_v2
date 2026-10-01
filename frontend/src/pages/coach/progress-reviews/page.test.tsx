@@ -2,7 +2,6 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
-import { clearCoachSessionCache } from '@/features/coach/shared/coachSessionCache';
 import type { CoachCalendarEvent } from '../shared/calendarEvents';
 import CoachProgressReviews from './page';
 
@@ -73,7 +72,7 @@ describe('progress review list navigation and filters', () => {
     mount();
     await screen.findByText('Scheduled Review');
     expect(fetchEvents).toHaveBeenCalledWith(expect.any(AbortSignal), {
-      start: '2026-09-01', end: '2026-09-30', includeLiveSessions: false, includeSchedulerQueues: false,
+      includeLiveSessions: false, includeSchedulerQueues: false,
     });
     const filters = within(screen.getByRole('navigation', { name: 'Filter progress reviews by status' }));
     expect(filters.getAllByRole('button').map(button => button.textContent)).toEqual([
@@ -84,52 +83,57 @@ describe('progress review list navigation and filters', () => {
     expect(screen.queryByText('Scheduled Review')).toBeNull();
     fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
     expect(await screen.findByText('Next Month Review')).toBeVisible();
-    expect(fetchEvents).toHaveBeenLastCalledWith(expect.any(AbortSignal), {
-      start: '2026-10-01', end: '2026-10-31', includeLiveSessions: false, includeSchedulerQueues: false,
-    });
+    expect(fetchEvents).toHaveBeenCalledTimes(1);
     expect(filters.getByRole('button', { name: 'All1' })).toBeVisible();
   });
 
-  it('shows whole-programme totals while the list stays month-scoped', async () => {
+  it('shows reviews in their booked month across statuses even when the target month differs', async () => {
+    fetchEvents.mockResolvedValue({ events: [
+      review(20, { learner: 'Moved Scheduled', targetDate: '2026-09-20', scheduledDate: '2026-10-04', status: 'scheduled' }),
+      review(21, { learner: 'October Completed', targetDate: '2026-10-12', status: 'completed' }),
+      review(22, { learner: 'October Unscheduled', targetDate: '2026-10-15' }),
+    ] });
+    mount();
+    await screen.findByText('0 progress reviews');
+    fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
+    expect(await screen.findByText('Moved Scheduled')).toBeVisible();
+    const filters = within(screen.getByRole('navigation', { name: 'Filter progress reviews by status' }));
+    expect(filters.getByRole('button', { name: 'All3' })).toBeVisible();
+    expect(filters.getByRole('button', { name: 'Scheduled1' })).toBeVisible();
+    expect(filters.getByRole('button', { name: 'Completed1' })).toBeVisible();
+    expect(filters.getByRole('button', { name: 'Not Scheduled1' })).toBeVisible();
+  });
+
+  it('loads past and upcoming progress reviews across all months', async () => {
     mount();
     await screen.findByText('Scheduled Review');
-    expect(fetchEvents).toHaveBeenCalledWith(expect.any(AbortSignal), { includeLiveSessions: false, includeSchedulerQueues: false });
-    const stats = within(await screen.findByRole('region', { name: 'Whole programme' }));
-    expect(stats.getByText('4')).toBeVisible();
-    expect(stats.getByRole('meter', { name: 'Completed share' })).toHaveAttribute('aria-valuenow', '25');
-    expect(stats.getByRole('meter', { name: 'Scheduled share' })).toHaveAttribute('aria-valuenow', '25');
-    expect(stats.getByRole('meter', { name: 'Not scheduled share' })).toHaveAttribute('aria-valuenow', '50');
-    expect(screen.queryByText('Next Month Review')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'All months' }));
+
     expect(await screen.findByText('Next Month Review')).toBeVisible();
-    expect(within(screen.getByRole('region', { name: 'Whole programme' })).getByText('4')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'All months' })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByTestId('route')).toHaveTextContent('months=all');
+    expect(fetchEvents).toHaveBeenLastCalledWith(expect.any(AbortSignal), {
+      includeLiveSessions: false, includeSchedulerQueues: false,
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Previous month' }));
+    expect(screen.queryByText('Next Month Review')).toBeNull();
+    expect(screen.getByRole('button', { name: 'All months' })).toHaveAttribute('aria-pressed', 'false');
   });
 
-  it('shows every status in the programme card so the rows add up to the total', async () => {
-    clearCoachSessionCache();
-    fetchEvents.mockResolvedValue({ events: [...reviews, review(5, { learner: 'Cancelled Review', status: 'cancelled' })] });
+  it('orders progress reviews from newest to oldest before pagination', async () => {
     mount();
-    await screen.findByRole('meter', { name: 'Not scheduled share' });
-    const stats = within(screen.getByRole('region', { name: 'Whole programme' }));
-    expect(stats.getByText('5')).toBeVisible();
-    // Existing review normalization files cancelled under Not scheduled.
-    const meters = stats.getAllByRole('meter');
-    expect(meters.map(meter => meter.getAttribute('aria-label'))).toEqual([
-      'Not scheduled share', 'Scheduled share', 'In progress share', 'Awaiting signature share', 'Completed share',
+    await screen.findByText('Scheduled Review');
+    fireEvent.click(screen.getByRole('button', { name: 'All months' }));
+
+    const rows = within(await screen.findByRole('table')).getAllByRole('row').slice(1);
+    expect(rows.map(row => row.textContent)).toEqual([
+      expect.stringContaining('Next Month Review'),
+      expect.stringContaining('Scheduled Review'),
+      expect.stringContaining('Needs Schedule'),
+      expect.stringContaining('Completed Review'),
     ]);
-    expect(meters.map(meter => Number(meter.getAttribute('aria-valuenow')))).toEqual([60, 20, 0, 0, 20]);
-    expect(stats.queryByRole('meter', { name: 'Other share' })).toBeNull();
-  });
-
-  it('reports a programme totals failure instead of showing zero counts', async () => {
-    clearCoachSessionCache();
-    fetchEvents.mockImplementation((_signal: AbortSignal, options: { start?: string }) => (
-      options.start ? Promise.resolve({ events: reviews }) : Promise.reject(new Error('Programme totals failed.'))
-    ));
-    mount();
-    const stats = within(await screen.findByRole('region', { name: 'Whole programme' }));
-    expect(await stats.findByRole('alert')).toHaveTextContent('Programme totals failed.');
-    expect(stats.queryByRole('meter')).toBeNull();
   });
 
   it('keeps the last successful month visible when the coach returns to the page', async () => {
@@ -186,9 +190,8 @@ describe('progress review list navigation and filters', () => {
     fireEvent.click(within(screen.getByRole('dialog', { name: 'Reschedule progress review' })).getByRole('button', { name: 'Cancel' }));
 
     const scheduledRow = within(screen.getByText('Imported Scheduled').closest('tr')!);
-    // View is an icon-only button, last on the right.
-    expect(scheduledRow.getAllByRole('button').map(button => button.getAttribute('aria-label') || button.textContent)).toEqual([
-      'Reschedule', 'View Form', 'Create Slides', 'View',
+    expect(scheduledRow.getAllByRole('button').map(button => button.textContent)).toEqual([
+      'Reschedule', 'View', 'View Form', 'Create Slides',
     ]);
     fireEvent.click(scheduledRow.getByRole('button', { name: 'View Form' }));
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A21');

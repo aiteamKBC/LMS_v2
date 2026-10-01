@@ -14,6 +14,26 @@ def instant(value):
     return value.astimezone(ZoneInfo('Europe/London')) if value else None
 
 
+def actual_time_seconds(value):
+    """Return saved hours as seconds, including legacy ``MM:SS`` values."""
+    if value in (None, ''):
+        return None
+    if isinstance(value, str) and ':' in value:
+        parts = value.split(':')
+        if len(parts) == 2:
+            try:
+                minutes, seconds = (int(part) for part in parts)
+            except ValueError:
+                return None
+            if minutes >= 0 and 0 <= seconds < 60:
+                return minutes * 60 + seconds
+            return None
+    try:
+        return float(value) * 3600
+    except (TypeError, ValueError):
+        return None
+
+
 def project_current(records, markings):
     """Project unsynchronised direct saves using the existing time/pass rules.
 
@@ -42,7 +62,9 @@ def project_current(records, markings):
         if p.get('component_type') == 'assignment':
             accepted = bool(marking and marking.get('status') in {'accepted', 'partial'})
             if marking and marking.get('actual_time_hours') is not None:
-                seconds = float(marking['actual_time_hours']) * 3600
+                saved_seconds = actual_time_seconds(marking['actual_time_hours'])
+                if saved_seconds is not None:
+                    seconds = saved_seconds
         p.update(accepted=accepted, completed=accepted, actual_seconds=seconds,
                  reporting_month=at.strftime('%Y-%m'), reporting_started_at=at,
                  reporting_ended_at=at, activity_status='Completed' if accepted else 'Submitted')
@@ -55,11 +77,15 @@ def project_current(records, markings):
     return result + list(native.values())
 
 
+def source_payload_metadata(value):
+    """Read keyed lineage metadata without changing non-object saved payloads."""
+    if isinstance(value, str):
+        value = json.loads(value)
+    return value if isinstance(value, dict) else {}
+
+
 def source_reference(record):
-    payload = record.get('source_payload') or {}
-    if isinstance(payload, str):
-        payload = json.loads(payload)
-    return payload.get('original_source_ref')
+    return source_payload_metadata(record.get('source_payload')).get('original_source_ref')
 
 
 def merge_attempts(records, attempts):
@@ -114,7 +140,7 @@ def merge_submissions(records, submissions):
         result.append({'id': f"reflection:{s['id']}", 'component_title': s.get('activity_title'),
             'component_ref': s.get('component_ref'), 'module_title': s.get('module_title'),
             'kind': s['activity_type'], 'accepted': accepted, 'completed': accepted,
-            'actual_seconds': float(s['actual_time_hours']) * 3600 if s.get('actual_time_hours') is not None else None,
+            'actual_seconds': actual_time_seconds(s.get('actual_time_hours')),
             'reporting_month': at.strftime('%Y-%m'), 'reporting_started_at': at,
             'activity_status': s.get('status'), 'ksbs': codes, 'sources': [], 'segments': [],
             'source_payload': {'original_source_ref': f"reflection:{s['id']}"}})
@@ -140,3 +166,85 @@ def current_records(owner, records):
         WHERE enrolment_id=%s AND aptem_id=%s AND submitted_at IS NOT NULL
         GROUP BY group_id,activity_id''', [owner['enrolment_id'], owner['aptem_id']])
     return merge_attempts(projected, attempts)
+
+
+def current_records_bulk(owners, records_by_learner_id):
+    """Project current saves for many canonical learners in bounded queries.
+
+    ``current_records`` is intentionally convenient for a single learner page,
+    but calling it for a coach caseload repeats submissions, relation and
+    attempt lookups once per learner.  This is the same projection with the
+    shared reads performed once and partitioned by stable enrolment identity.
+    """
+    owners_by_enrolment = {
+        int(owner['enrolment_id']): owner
+        for owner in (owners or [])
+        if owner.get('enrolment_id') is not None
+    }
+    if not owners_by_enrolment:
+        return {}
+
+    identity_pairs = [
+        (str(enrolment_id), str(owner.get('learner_type') or ''))
+        for enrolment_id, owner in owners_by_enrolment.items()
+    ]
+    placeholders = ','.join(['(%s,%s)'] * len(identity_pairs))
+    params = [value for pair in identity_pairs for value in pair]
+    submissions = query(f'''SELECT learner_id,learner_kind,id,component_ref,progress_entry_id,
+        status,actual_time_hours,submitted_at,activity_type,activity_title,module_title,ksb_codes,
+        full_submission->>'submissionOrigin' = 'imported_legacy' AS imported
+        FROM "Learner".learning_reflection_submissions
+        WHERE (learner_id,learner_kind) IN ({placeholders})
+          AND activity_type IN ('assignment','extra_activity')
+        ORDER BY submitted_at NULLS FIRST,id''', params)
+    submissions_by_identity = {pair: [] for pair in identity_pairs}
+    for submission in submissions:
+        key = (str(submission.get('learner_id')), str(submission.get('learner_kind') or ''))
+        submissions_by_identity.setdefault(key, []).append(submission)
+
+    projected = {}
+    for enrolment_id, owner in owners_by_enrolment.items():
+        key = (str(enrolment_id), str(owner.get('learner_type') or ''))
+        learner_submissions = submissions_by_identity.get(key, [])
+        markings = {
+            str(submission['component_ref']): submission
+            for submission in learner_submissions
+            if submission.get('component_ref')
+        }
+        base_records = records_by_learner_id.get(int(owner['id']), [])
+        projected[enrolment_id] = merge_submissions(
+            project_current(base_records, markings), learner_submissions,
+        )
+
+    attempt_pairs = []
+    for enrolment_id, owner in owners_by_enrolment.items():
+        raw_aptem_id = owner.get('aptem_id')
+        try:
+            aptem_id = int(str(raw_aptem_id).strip())
+        except (TypeError, ValueError):
+            continue
+        attempt_pairs.append((enrolment_id, aptem_id))
+    if not attempt_pairs:
+        return projected
+
+    relation = query('SELECT to_regclass(%s) AS name', ['"Learner".subject_activity_attempts'])
+    if not relation or not relation[0].get('name'):
+        return projected
+
+    placeholders = ','.join(['(%s,%s)'] * len(attempt_pairs))
+    params = [value for pair in attempt_pairs for value in pair]
+    attempts = query(f'''SELECT enrolment_id,aptem_id,group_id,activity_id,
+        bool_or(completed) AS completed,max(score_percent) AS best_percent,
+        max(submitted_at) AS submitted_at,max(definition->>'title') AS title
+        FROM "Learner".subject_activity_attempts
+        WHERE (enrolment_id,aptem_id) IN ({placeholders}) AND submitted_at IS NOT NULL
+        GROUP BY enrolment_id,aptem_id,group_id,activity_id''', params)
+    attempts_by_identity = {pair: [] for pair in attempt_pairs}
+    for attempt in attempts:
+        key = (int(attempt['enrolment_id']), int(attempt['aptem_id']))
+        attempts_by_identity.setdefault(key, []).append(attempt)
+    for enrolment_id, aptem_id in attempt_pairs:
+        projected[enrolment_id] = merge_attempts(
+            projected[enrolment_id], attempts_by_identity.get((enrolment_id, aptem_id), []),
+        )
+    return projected

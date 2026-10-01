@@ -1,5 +1,5 @@
-import { useState, useEffect, useMemo, type CSSProperties } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useState, useEffect, useMemo } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { ClipboardList, FileText, Monitor } from 'lucide-react';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
@@ -16,14 +16,12 @@ import { AppIcon } from '@/components/feature/AppIcon';
 import { PageSkeleton } from '@/components/feature/Skeletons';
 import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { PageContainer } from '@/components/ui/PageContainer';
-import { ProgressBar } from '@/components/ui/ProgressMetric';
 import { LearnerProfilePhoto } from '@/components/feature/LearnerProfilePhoto';
 import { LearnerDashboardHero } from './LearnerDashboardHero';
 import { canViewAssignedProgramme, waitingCopy } from '@/utils/learnerAccessGate';
 import { displayValue, EMPTY_VALUE } from '@/lib/format';
 import overviewStyles from './Overview.module.css';
-import { DashboardTrainingPlan } from './DashboardTrainingPlan';
-import { DashboardActivities } from './DashboardActivities';
+import { DashboardTabs } from './DashboardTabs';
 import { learnerHeaderPlan, learnerModuleHref } from './learnerHeaderPlan';
 import { useDashboardPlan } from './useDashboardPlan';
 import { useLearnerMetrics } from '@/hooks/useLearnerMetrics';
@@ -146,12 +144,12 @@ export default function LearnerOverview() {
     ?? real?.learningAccess?.startDate
     ?? dashboardPlan.data?.programmeStartDate
     ?? real?.programmeStartDate;
-  const programmeEndDate = dashboardPlan.auditPlannedEndDate
+  const programmeEndDate = dashboardPlan.plannedEndDate
     ?? real?.programmeEndDate
     ?? dashboardPlan.data?.programmeEndDate
     ?? real?.learnerEndDate;
   const startDateDisplay = formatProgrammeStartDate(programmeStartDate) || (loading ? 'Loading…' : EMPTY_VALUE);
-  const plannedEndDisplay = dashboardPlan.auditLoading
+  const plannedEndDisplay = dashboardPlan.targetsLoading
     ? 'Loading…'
     : formatProgrammeStartDate(programmeEndDate) || (loading ? 'Loading…' : EMPTY_VALUE);
   const plan = learnerHeaderPlan(scheduleRead.data?.modules || [], knownLearner || {},
@@ -267,19 +265,19 @@ export default function LearnerOverview() {
     ? EMPTY_VALUE : `${attendanceValue} / ${attendanceTotalValue}`;
 
   const otjPlannedHours = !metrics.data ? null : metrics.data.migrated
-    ? metrics.data.aptem_planned_total ?? null : dashboardPlan.otjh.planned;
+    ? metrics.data.aptem_planned_total ?? metrics.data.otjh.planned ?? null : dashboardPlan.otjh.planned;
   const otjPlannedLoading = metrics.loading || (!metrics.data?.migrated && dashboardPlan.otjh.plannedLoading);
-  // The dashboard headline follows Monthly Logs. This includes retained
-  // historical months and accepted LMS months, using the same total shown in
-  // the Monthly Logs screen rather than the separate metrics roll-up.
-  const otjActualHours = dashboardPlan.otjh.actual;
+  // Use the same canonical Actual total as the OTJ Hours page. Monthly Logs is
+  // still the per-month view, but it can omit the open month and must not leave
+  // this programme-wide headline showing an older partial total.
+  const otjActualHours = metrics.data?.otjh.actual ?? null;
   const otjPercent = otjActualHours != null && otjPlannedHours != null && otjPlannedHours > 0
     ? Math.round((otjActualHours / otjPlannedHours) * 100)
     : null;
   const otjPlannedValue = otjPlannedHours != null ? `${otjPlannedHours.toFixed(2)} h`
     : otjPlannedLoading ? 'Loading…' : 'Unavailable';
   const otjActualValue = otjActualHours != null ? `${otjActualHours.toFixed(2)} h`
-    : dashboardPlan.otjh.actualLoading ? 'Loading...' : 'Unavailable';
+    : metrics.loading ? 'Loading...' : 'Unavailable';
   const ksb = metrics.data?.ksb;
   const ksbPercent = ksb?.percent ?? null;
   const ksbValue = ksbPercent == null ? EMPTY_VALUE : `${ksbPercent}%`;
@@ -472,81 +470,12 @@ export default function LearnerOverview() {
           Attendance could not refresh. {attendanceRead.error}
           <button className="ml-2 font-semibold underline" onClick={attendanceRead.refresh}>Retry attendance</button>
         </div>}
-        <div className={`${overviewStyles.metrics} ${overviewStyles.metricsInline}`}>
-          <ProgressStat href={programmeProgressHref} label="Programme Progress" value={programmeProgressValue} summary={programmeProgressSummary} targetValue="100%" percent={programmeProgressPercent} accent="purple" />
-          <ProgressStat href="/learner/attendance" label="Attendance" value={attendanceValue} summary={attendanceSummary} valueLabel="Attended" targetValue={attendanceTotalValue} targetLabel="Sessions to date" percent={attendancePercent} accent="green" />
-          <ProgressStat
-            href={otjhProgressHref}
-            label="OTJ Hours"
-            value={otjActualValue}
-            summary={`${otjActualHours?.toFixed(2) ?? EMPTY_VALUE} / ${otjPlannedHours?.toFixed(2) ?? EMPTY_VALUE} h`}
-            valueLabel="Actual"
-            targetValue={otjPlannedValue}
-            targetLabel="Planned hours"
-            percent={otjPercent}
-            accent="yellow"
-          />
-          <ProgressStat href={ksbProgressHref} label="KSB Progress" value={ksbValue} summary={ksbSummary} percent={ksbPercent} accent="purple" />
-        </div>
-
-        {real && <DashboardActivities kind={learnerKind} programmeStatus={real.programmeStatus} canSeeNavItem={canSeeNavItem} />}
-        <DashboardTrainingPlan key={`plan:${learnerKind}:${id}`} kind={learnerKind} learnerId={id} plan={dashboardPlan} canOpenActivities
-          programmeStartDate={programmeStartDate}
-          programmeEndDate={programmeEndDate}
-          canOpenRewards={!reviewingLearner} />
+        <DashboardTabs kind={learnerKind} learnerId={id} plan={dashboardPlan} programmeStartDate={programmeStartDate} programmeEndDate={programmeEndDate}
+          canOpenRewards={!reviewingLearner} real={real || undefined} canSeeNavItem={canSeeNavItem} pageError={loadError}
+          metrics={{ programmeValue: programmeProgressValue, programmeSummary: programmeProgressSummary, programmePercent: programmeProgressPercent,
+            attendanceValue, attendanceSummary, attendanceTotalValue, attendancePercent, otjActualValue, otjSummary: `${otjActualHours?.toFixed(2) ?? EMPTY_VALUE} / ${otjPlannedHours?.toFixed(2) ?? EMPTY_VALUE} h`,
+            otjPlannedValue, otjPercent, ksbValue, ksbSummary, ksbPercent }} />
       </PageContainer>
     </WorkspaceShell>
-  );
-}
-
-/* ─────────────────────────────────────────────
-   SUB-COMPONENTS
-   ───────────────────────────────────────────── */
-
-/** Shared linked summary cards; presentation does not change the metric sources. */
-function ProgressStat({ href, label, value, summary, valueLabel = 'Current', targetValue, targetLabel = 'Target', percent, accent }: {
-  href: string;
-  label: string;
-  value: string;
-  summary: string;
-  valueLabel?: string;
-  targetValue?: string;
-  targetLabel?: string;
-  percent: number | null;
-  accent: 'purple' | 'green' | 'yellow';
-}) {
-  const ringPercent = percent == null ? 0 : Math.min(100, Math.max(0, percent));
-  const ringLabel = percent == null ? EMPTY_VALUE : `${Number.isInteger(percent) ? percent : Number(percent.toFixed(1))}%`;
-  return (
-    <Link
-      to={href}
-      aria-label={`Open ${label}`}
-      data-accent={accent}
-      className={`group ${overviewStyles.metric}`}
-    >
-      <div className={overviewStyles.metricTop}>
-        <span
-          key={ringPercent}
-          className={`${overviewStyles.metricRing} kbc-animated-conic-ring`}
-          role="img"
-          aria-label={`${label}: ${ringLabel}`}
-          style={{ '--kbc-ring-target': `${ringPercent}%` } as CSSProperties}
-        >
-          <span className={overviewStyles.metricRingValue}>{ringLabel}</span>
-        </span>
-        <div className={overviewStyles.metricBody}>
-          <div className={overviewStyles.metricHeading}>
-            <p className={overviewStyles.metricLabel}>{label}</p>
-          </div>
-          <p className={overviewStyles.metricDetail}>{summary}</p>
-          <dl className={overviewStyles.metricA11yData}>
-            <div><dt>{valueLabel}</dt><dd>{value}</dd></div>
-            {targetValue != null && <div><dt>{targetLabel}</dt><dd>{targetValue}</dd></div>}
-          </dl>
-          <ProgressBar percent={percent} tone={overviewStyles.metricFill} className={overviewStyles.metricA11yProgress} />
-        </div>
-        <AppIcon aria-hidden="true" className={`ri-arrow-right-s-line ${overviewStyles.metricArrow}`} />
-      </div>
-    </Link>
   );
 }

@@ -91,6 +91,12 @@ def _pct(value) -> str:
     return f"{value}%" if value not in (None, NOT_AVAILABLE) else NOT_AVAILABLE
 
 
+def _hours(value) -> str:
+    """'{value}h', or NOT_AVAILABLE untouched -- appending the unit straight
+    to _s()'s output would otherwise read as the malformed "Not availableh"."""
+    return f"{value}h" if value not in (None, NOT_AVAILABLE) else NOT_AVAILABLE
+
+
 def _shapes(slide):
     return list(slide.shapes)
 
@@ -110,6 +116,22 @@ def _set(slide, index: int, text: str) -> None:
     shapes = _shapes(slide)
     if index < len(shapes):
         sc.set_all_text(shapes[index], fit.clamp(text, 400))
+
+
+#: Short form for the deck's big-number "stat card" shapes (see _set_stat).
+_STAT_NOT_AVAILABLE = "N/A"
+
+
+def _set_stat(slide, index: int, text: str) -> None:
+    """Like _set(), but for a big-number stat-card shape the template sizes
+    for a short value (e.g. "74%", "195h", "Strong"). These shapes autosize
+    to fit their text by growing taller rather than shrinking the font, so
+    the full review_pack.NOT_AVAILABLE phrase grows the card tall enough to
+    overlap the label sitting directly beneath it. Swap in a short marker
+    instead -- the card's own label/sub-caption underneath already says what
+    is missing."""
+    value = _STAT_NOT_AVAILABLE if text == NOT_AVAILABLE else fit.clamp(text, 16)
+    _set(slide, index, value)
 
 
 def _set_in_group(slide, group_index: int, child_index: int, text: str) -> None:
@@ -228,20 +250,20 @@ def _populate_snapshot(slide, pack):
     )
     _set(slide, 5, headline)
 
-    _set(slide, 8, _pct(attendance.get("attendance_percentage")))
+    _set_stat(slide, 8, _pct(attendance.get("attendance_percentage")))
     _set(slide, 9, f"Attendance across {month_label}")
     catch_ups_needed = attendance.get("catch_ups_needed")
     _set(slide, 10, "Catch-ups used where needed" if not catch_ups_needed else f"{catch_ups_needed} catch-up(s) still needed")
 
-    _set(slide, 13, _pct(progress.get("current_programme_progress_percentage")))
+    _set_stat(slide, 13, _pct(progress.get("current_programme_progress_percentage")))
     _set(slide, 15, f"Target: {_pct(progress.get('target_progress_percentage'))}")
 
-    _set(slide, 18, f"{_s(otj.get('completed_otj_hours'))}h")
-    _set(slide, 20, f"Variance: {_s(otj.get('variance'))}h")
+    _set_stat(slide, 18, _hours(otj.get("completed_otj_hours")))
+    _set(slide, 20, f"Variance: {_hours(otj.get('variance'))}")
 
     ksb_progress_all = ksbs.get("knowledge_evidenced", []) + ksbs.get("skills_evidenced", []) + ksbs.get("behaviours_evidenced", [])
     module_pct = pack["lms_modules"][0]["completion_percentage"] if pack["lms_modules"] else None
-    _set(slide, 23, _pct(module_pct) if module_pct is not None else NOT_AVAILABLE)
+    _set_stat(slide, 23, _pct(module_pct) if module_pct is not None else NOT_AVAILABLE)
     _set(slide, 24, "Key LMS module" if not pack["lms_modules"] else pack["lms_modules"][0]["module"])
     _set(slide, 25, "Keep clicking complete")
 
@@ -251,7 +273,7 @@ def _populate_snapshot(slide, pack):
 
     coach_summary = [
         f"KSB coverage: {len(ksb_progress_all)} KSB(s) fully evidenced to date.",
-        f"OTJ status: {_s(otj.get('risk_status'))}, forecast {_s(otj.get('forecast_hours'))}h.",
+        f"OTJ status: {_s(otj.get('risk_status'))}, forecast {_hours(otj.get('forecast_hours'))}.",
         f"Evidence this period: {len(pack['evidence'])} item(s) uploaded.",
     ]
     _set_bullets(slide, 31, coach_summary, header_count=1)
@@ -338,7 +360,7 @@ def _populate_attendance(slide, pack):
             _set(slide, pct_idx, f"Attendance: {_pct(rate)}")
             _set(slide, note_idx, "Engagement sustained" if entry.get("absent", 0) == 0 else "Catch-up approach used")
         else:
-            _set(slide, month_idx, NOT_AVAILABLE)
+            _set_stat(slide, month_idx, NOT_AVAILABLE)
             _set(slide, pct_idx, NOT_AVAILABLE)
             _set(slide, note_idx, NOT_AVAILABLE)
 
@@ -367,9 +389,9 @@ def _populate_progress_otj_lms(slide, pack):
     current_pct = progress.get("current_programme_progress_percentage")
     target_pct = progress.get("target_progress_percentage")
     _set(slide, 10, f"Current: {_pct(current_pct)}")
-    _set(slide, 11, _pct(current_pct))
+    _set_stat(slide, 11, _pct(current_pct))
     _set(slide, 14, f"Target: {_pct(target_pct)}")
-    _set(slide, 15, _pct(target_pct))
+    _set_stat(slide, 15, _pct(target_pct))
     if isinstance(current_pct, (int, float)):
         sc.set_proportional_fill_width(shapes[9], shapes[8], current_pct / 100)
     if isinstance(target_pct, (int, float)):
@@ -377,8 +399,8 @@ def _populate_progress_otj_lms(slide, pack):
     rag_label, _tone = _rag_label_and_tone(otj.get("risk_status"))
     _set(slide, 16, f"{_s(pack['learner'].get('full_name'))} is {rag_label.lower()} with progress." if rag_label != NOT_AVAILABLE else NOT_AVAILABLE)
 
-    _set(slide, 21, _s(otj.get("completed_otj_hours")))
-    _set(slide, 25, _s(otj.get("variance")))
+    _set_stat(slide, 21, _s(otj.get("completed_otj_hours")))
+    _set_stat(slide, 25, _s(otj.get("variance")))
     _set(slide, 26, "Ahead of track" if isinstance(otj.get("variance"), (int, float)) and otj["variance"] >= 0 else "Behind target")
     _set(slide, 30, "Healthy pace" if rag_label == "Green" else rag_label)
     _set(slide, 31, _s(otj.get("duplicate_or_weak_otj_warning")))
@@ -459,15 +481,15 @@ def _populate_portfolio_review(slide, pack):
     for i, (strength_idx, title_idx, note_idx) in enumerate(slots):
         if i < len(blocks):
             item = blocks[i]
-            _set(slide, strength_idx, item.get("evidence_strength", NOT_AVAILABLE).title())
+            _set_stat(slide, strength_idx, item.get("evidence_strength", NOT_AVAILABLE).title())
             _set(slide, title_idx, fit.clamp(item.get("evidence_title"), 40))
             _set(slide, note_idx, "Good for " + ", ".join(item.get("ksb_mappings") or []) if item.get("ksb_mappings") else NOT_AVAILABLE)
         else:
-            _set(slide, strength_idx, NOT_AVAILABLE)
+            _set_stat(slide, strength_idx, NOT_AVAILABLE)
             _set(slide, title_idx, NOT_AVAILABLE)
             _set(slide, note_idx, NOT_AVAILABLE)
 
-    _set(slide, 23, _s(pack["epa"].get("current_readiness")))
+    _set_stat(slide, 23, _s(pack["epa"].get("current_readiness")))
     _set(slide, 25, "Upload & map evidence")
 
     accepted = sum(1 for e in evidence if e.get("manager_verification_status") == "accepted")

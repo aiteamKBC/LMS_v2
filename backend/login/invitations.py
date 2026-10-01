@@ -57,6 +57,33 @@ def reset_link(token):
     return f"{frontend_base_url()}/reset-password?token={token}"
 
 
+def one_to_one_booking(account):
+    """``(case owner name, booking link)`` for a learner's invitation, or None.
+
+    The link opens the LMS introduction request page (``lms_introduction``),
+    where the learner picks a preferred time for a one-to-one with their case
+    owner. Best effort: the invitation is the point of the email, so a learner
+    with no case owner, a case owner who does not resolve to a staff email, or a
+    lookup failure leaves the option out instead of stopping the invitation.
+    """
+    if account.subject_type != "learner":
+        return None
+    try:
+        from . import lms_introduction
+
+        learner, owner_email, owner_name = lms_introduction.learner_and_owner(account)
+    except Exception:  # noqa: BLE001 - an optional extra must not block the invitation
+        import logging
+
+        logging.getLogger("login").exception(
+            "Could not look up the case owner for account %s's LMS introduction", account.id
+        )
+        return None
+    if learner is None or not owner_email:
+        return None
+    return owner_name, lms_introduction.booking_link(account, frontend_base_url())
+
+
 def record(event, *, email=None, account_id=None, succeeded=False, reason=None,
            ip=None, user_agent=None):
     """Write one audit row. Never raises — auditing must not break the flow."""
@@ -113,10 +140,13 @@ def send_invitation(account, *, invited_by=None, ip=None, user_agent=None):
     """
     invitation, token = create_invitation(account, invited_by=invited_by, ip=ip)
 
+    booking = one_to_one_booking(account)
     subject, html, text = email_azure.invitation_message(
         display_name=account.display_name,
         link=invitation_link(token),
         expires_days=INVITATION_TTL.days,
+        booking_owner=booking[0] if booking else None,
+        booking_link=booking[1] if booking else None,
     )
     sent, detail = email_azure.send_mail(
         to=account.email, subject=subject, html_body=html, text_body=text,

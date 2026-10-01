@@ -78,6 +78,30 @@ describe('coaching learner navigation and actions', () => {
     expect(screen.getByTestId('location')).toHaveTextContent('/learner/monthly-coaching?kind=apprenticeship&learner=12');
     expect(props.onAttend).not.toHaveBeenCalled();
   });
+  it('orders the timeline by Curriculum target date and labels each item with its occurrence number', () => {
+    mount({ sessions: [
+      session('mcm-2', '2026-10-10', {
+        occurrenceNumber: 2, sequence: 2, targetDate: '2026-11-01', scheduledDate: '2026-10-10',
+      }),
+      session('mcm-1', '2026-11-10', {
+        occurrenceNumber: 1, sequence: 1, targetDate: '2026-10-01', scheduledDate: '2026-11-10',
+      }),
+    ] });
+
+    const timeline = within(screen.getByRole('region', { name: 'Monthly coaching programme timeline' }));
+    const meetings = timeline.getAllByRole('button');
+    expect(meetings[0]).toHaveTextContent('10 Nov 2026');
+    expect(meetings[0]).toHaveTextContent('MCM 1');
+    expect(meetings[1]).toHaveTextContent('10 Oct 2026');
+    expect(meetings[1]).toHaveTextContent('MCM 2');
+  });
+  it('shows an in-progress meeting status in the learner timeline and meeting card', () => {
+    mount({ sessions: [session('mcm-1', today, { status: 'in-progress' })] });
+
+    const timeline = within(screen.getByRole('region', { name: 'Monthly coaching programme timeline' }));
+    expect(timeline.getByRole('button', { name: /In Progress/ })).toBeInTheDocument();
+    expect(within(screen.getByRole('article', { name: 'Current coaching meeting' })).getByText('In Progress')).toBeInTheDocument();
+  });
   it('opens the overview card when selecting a meeting from the full list view', () => {
     mount({ sessions: [session('next', '2026-10-01'), session('later', '2026-11-01')] }, '&view=all');
     fireEvent.click(within(screen.getByRole('region', { name: 'Monthly coaching programme timeline' })).getByRole('button', { name: /1 Nov 2026, Scheduled/ }));
@@ -245,7 +269,7 @@ describe('coaching learner navigation and actions', () => {
     const props = mount({ sessions: [current, planned], attendance: [attendance('current')], canAct: false });
     const book = screen.getByRole('button', { name: 'Book a time' });
     const confirm = screen.getByRole('button', { name: 'Confirm attendance' });
-    fireEvent.click(screen.getByText('More options'));
+    fireEvent.click(screen.getByText('Details'));
     const reschedule = screen.getByRole('button', { name: 'Reschedule' });
     const report = screen.getByRole('button', { name: 'Report absence' });
     for (const button of [book, confirm, reschedule, report]) {

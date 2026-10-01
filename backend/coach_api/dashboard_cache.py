@@ -25,7 +25,7 @@ def coach_dashboard_cache_key(coach_identity: str) -> str:
 
 
 def coach_dashboard_cache_ttl() -> int:
-    return max(int(getattr(settings, "COACH_DASHBOARD_CACHE_TTL", 90)), 1)
+    return max(int(getattr(settings, "COACH_DASHBOARD_CACHE_TTL", 30)), 1)
 
 
 def get_cached_coach_dashboard(coach_identity: str):

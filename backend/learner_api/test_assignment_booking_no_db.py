@@ -87,6 +87,7 @@ class AssignmentBookingTests(unittest.TestCase):
         self.addCleanup(modules.stop)
         self.resolver = Mock(return_value=(self.event['eventKey'], None))
         self.mark_imported = Mock()
+        self.imported_mcm = Mock(return_value=('2026-10', None))
         self.ns = dict(__package__='learner_api', json=json, datetime=datetime,
                        FIRST_SESSION_TYPE='first-session',
                        _s=lambda value: str(value or '').strip(), JsonResponse=Response,
@@ -97,7 +98,8 @@ class AssignmentBookingTests(unittest.TestCase):
                        _resolve_assignment_month_mcm_occurrence=self.resolver,
                        _resolve_assignment_month_progress_review_occurrence=self.resolver,
                        _mark_imported_review_scheduled=self.mark_imported, _friendly_sync_warning=lambda warning: warning,
-                       _follow_first_session_start_date=Mock(),
+                       _assignment_imported_mcm_month=self.imported_mcm,
+                       _follow_first_session_start_date=Mock(), _record_enrolment_review=Mock(),
                        _serialize_event=lambda record: {'eventKey': record.event_key, 'reviewInstanceId': record.review_instance_id},
                        CoachCalendarEvent=types.SimpleNamespace(objects=self.manager, STATUS_AWAITING_SIGNATURE='awaiting-signature',
                                                                STATUS_COMPLETED='completed', STATUS_SCHEDULED='scheduled'))
@@ -107,6 +109,9 @@ class AssignmentBookingTests(unittest.TestCase):
                 for target in node.targets:
                     if isinstance(target, ast.Name) and target.id in {'BOOKABLE_TYPES', 'ONBOARDING_REVIEW_TYPES'}:
                         self.ns[target.id] = ast.literal_eval(node.value)
+                    elif isinstance(target, ast.Name) and target.id == 'COACH_APPROVAL_TYPES':
+                        # frozenset((...)): read the literal inside the call.
+                        self.ns[target.id] = frozenset(ast.literal_eval(node.value.args[0]))
         load_functions(ROOT / 'calendar.py', {'_error', 'learner_calendar_book'}, self.ns)
 
     def persist_reservation(self, record, *, review_event=None):
@@ -163,11 +168,61 @@ class AssignmentBookingTests(unittest.TestCase):
                 self.assertEqual(self.book(scheduledDate='2026-09-22', **changes).status_code, 400)
         self.assert_no_booking()
 
-    def test_assignment_context_cannot_be_used_for_an_imported_or_other_review(self):
+    def test_assignment_context_cannot_be_used_for_another_review_or_a_mixed_identity(self):
+        # An imported review plus a Curriculum slot names two identities at once.
         for changes in ({'reviewId': '9'}, {'sessionType': 'progress-review'}, {'sessionType': 'catch-up'}):
             with self.subTest(changes=changes):
                 self.assertEqual(self.book(scheduledDate='2026-09-22', **changes).status_code, 400)
         self.assert_no_booking()
+        self.imported_mcm.assert_not_called()
+
+    def use_imported_path(self, earlier_key=None):
+        imported = self.manager.filter.return_value
+        imported.order_by.return_value.values_list.return_value.first.return_value = earlier_key
+        imported.first.return_value = None
+        self.coach.reserve_coach_calendar_booking = Mock(return_value=(self.record, True))
+        self.coach.build_booked_calendar_event = Mock(return_value={'eventKey': self.record.event_key})
+
+    def test_assignment_books_an_owned_aptem_mcm_on_the_imported_path(self):
+        # Aptem-sourced learners have no Curriculum MCM on the coach timetable,
+        # so the assignment must book their imported Aptem MCM instead.
+        self.use_imported_path()
+        response = self.book(eventKey=None, reviewId='9840', scheduledDate='2026-10-27')
+        self.assertEqual(response.status_code, 201, response)
+        self.imported_mcm.assert_called_once_with(248, '9840')
+        self.resolver.assert_not_called()
+        self.coach.find_generated_timetable_event.assert_not_called()
+        self.manager.get_or_create.assert_not_called()
+        kwargs = self.coach.reserve_coach_calendar_booking.call_args.kwargs
+        self.assertEqual(kwargs['idempotency_key'], 'learner-book:mcm:commercial:101:2026-10:9840')
+        self.assertEqual((kwargs['learner_id'], kwargs['session_type'], kwargs['initial_status']), (248, 'mcr', 'scheduled'))
+        self.coach.synchronize_reserved_calendar_event.assert_called_once()
+        self.mark_imported.assert_called_once_with('9840', 248, date(2026, 10, 27), time(10, 0))
+
+    def test_assignment_reuses_an_earlier_booking_of_the_same_aptem_mcm(self):
+        self.use_imported_path(earlier_key='learner-book:mcm:commercial:101:2026-11:9840')
+        response = self.book(eventKey=None, reviewId='9840', scheduledDate='2026-10-27')
+        self.assertEqual(response.status_code, 201, response)
+        self.assertEqual(self.coach.reserve_coach_calendar_booking.call_args.kwargs['idempotency_key'],
+                         'learner-book:mcm:commercial:101:2026-11:9840')
+
+    def test_assignment_rejects_an_unowned_or_finished_aptem_mcm(self):
+        for status in (404, 409):
+            with self.subTest(status=status):
+                self.imported_mcm.return_value = (None, ('Not available', status))
+                response = self.book(eventKey=None, reviewId='9840', scheduledDate='2026-10-27')
+                self.assertEqual(response.status_code, status)
+                self.assertEqual(response['error'], 'Not available')
+        self.assert_no_booking()
+        self.coach.reserve_coach_calendar_booking.assert_not_called()
+        self.mark_imported.assert_not_called()
+
+    def test_imported_aptem_mcm_still_respects_both_assignment_windows(self):
+        self.use_imported_path()
+        for day in ('2026-10-06', '2026-11-06'):
+            with self.subTest(day=day):
+                self.assertEqual(self.book(eventKey=None, reviewId='9840', scheduledDate=day).status_code, 400)
+        self.coach.reserve_coach_calendar_booking.assert_not_called()
 
     def test_no_explicit_slot_resolves_to_an_official_occurrence(self):
         response = self.book(eventKey=None)

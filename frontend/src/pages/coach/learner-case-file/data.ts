@@ -485,10 +485,14 @@ export function buildReviewMeetingItems(
       eventKey: event.eventKey || event.id,
       reviewInstanceId: event.reviewInstanceId,
       source,
+      reviewTypeCode: String(event.reviewTypeCode || '').trim() || null,
+      occurrenceNumber: event.occurrenceNumber ?? event.sequence ?? null,
       reviewTypeName,
       title: event.title || reviewTypeName,
       date: formatCalendarDateLabel(displayDate),
       plannedDate: formatCalendarDateLabel(event.targetDate || event.scheduledDate),
+      scheduledDate: event.scheduledDate ? formatCalendarDateLabel(event.scheduledDate) : '--',
+      scheduledTime: event.scheduledTime ? event.scheduledTime.slice(0, 5) : '--',
       completedDate: event.status === 'completed'
         ? formatCalendarDateLabel(event.reviewCompletedAt || displayDate)
         : '--',
@@ -520,6 +524,25 @@ function reviewTypeLabel(event: CoachCalendarEvent) {
   return 'Review';
 }
 
+export type CaseFileReviewCategory = 'mcr' | 'progress-review' | 'review';
+
+/** The displayed system type label wins over stale code metadata; source is retained for legacy rows. */
+export function caseFileReviewCategory(item: Pick<CaseFileReviewMeeting, 'reviewTypeCode' | 'reviewTypeName' | 'source'>): CaseFileReviewCategory {
+  const typeName = String(item.reviewTypeName || '').trim().toLowerCase();
+  // A few older booked rows have a stale reviewTypeCode after their template
+  // was corrected. Keep the filter aligned with the Review Type shown in the
+  // table so a visible Progress Review cannot appear under MCM (or vice versa).
+  if (typeName === 'monthly coaching meeting') return 'mcr';
+  if (typeName === 'progress review') return 'progress-review';
+
+  const typeCode = String(item.reviewTypeCode || '').trim().toLowerCase();
+  if (typeCode === 'mcm') return 'mcr';
+  if (typeCode === 'progress_review') return 'progress-review';
+  if (typeCode) return 'review';
+  if (item.source === 'mcr' || item.source === 'progress-review') return item.source;
+  return 'review';
+}
+
 export function buildReviewGroups(items: CaseFileReviewMeeting[]): CaseFileReviewGroup[] {
   const groups = new Map<string, CaseFileReviewGroup>();
   for (const item of items) {
@@ -535,7 +558,17 @@ export function buildReviewGroups(items: CaseFileReviewMeeting[]): CaseFileRevie
       });
     }
   }
-  return Array.from(groups.values()).sort((a, b) => {
+  return Array.from(groups.values()).map(group => ({
+    ...group,
+    // Curriculum's occurrence number is the canonical MCM/Review order. A
+    // booking can be moved to a different date, so sorting by scheduled date
+    // would make MCM2 appear before MCM1 after a reschedule.
+    items: [...group.items].sort((a, b) => {
+      const aOccurrence = Number.isFinite(a.occurrenceNumber) ? a.occurrenceNumber! : Number.POSITIVE_INFINITY;
+      const bOccurrence = Number.isFinite(b.occurrenceNumber) ? b.occurrenceNumber! : Number.POSITIVE_INFINITY;
+      return aOccurrence - bOccurrence;
+    }),
+  })).sort((a, b) => {
     const aSystemRank = reviewGroupRank(a.title);
     const bSystemRank = reviewGroupRank(b.title);
     return aSystemRank - bSystemRank || a.title.localeCompare(b.title);
@@ -654,8 +687,8 @@ function buildCaseFileData(args: {
     learnerIdentityIds,
   };
   const allReviewMeetings = buildReviewMeetingItems(reviewEventContext, args.timetableEvents);
-  const progressReviews = allReviewMeetings.filter(item => item.source === 'progress-review' || item.reviewTypeName === 'Progress Review');
-  const monthlyCoachMeetings = allReviewMeetings.filter(item => item.source === 'mcr' || item.reviewTypeName === 'Monthly Coaching Meeting');
+  const progressReviews = allReviewMeetings.filter(item => caseFileReviewCategory(item) === 'progress-review');
+  const monthlyCoachMeetings = allReviewMeetings.filter(item => caseFileReviewCategory(item) === 'mcr');
   // Use the exact programme/OTJH totals displayed by the learner dashboard.
   // The coach view must not turn the learner's whole-plan target into a
   // cumulative target-to-date or substitute OTJH progress for programme progress.
@@ -676,6 +709,7 @@ function buildCaseFileData(args: {
     attendance: args.attendance,
     evidence: args.evidence,
     detail: args.detail,
+    learningActivity: args.aptemActivity || null,
     journey,
     activityStates,
     peers,

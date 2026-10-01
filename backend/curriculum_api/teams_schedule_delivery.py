@@ -6,6 +6,8 @@ The owner provisions the ledger using backend/sql/teams_schedule_emails.sql.
 """
 import base64
 import logging
+import re
+from datetime import timedelta
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import quote
@@ -74,6 +76,18 @@ def _guarded_send(send, recipient, message):
     except Exception:
         # No exception text, message body or learner address enters logs.
         return 'unknown', 'mail_result_unknown'
+
+
+def valid_resend_key(value):
+    """A resend names its own batch, so "accepted once, never again" applies inside
+    that one press instead of silencing it.
+
+    The browser generates the name and repeats it across the press's batches,
+    which is what makes its retry safe. The name carries no recipient and no
+    date -- both are still read back from the stored calendar -- so all it can
+    ever decide is whether this press starts a fresh round or continues one.
+    """
+    return isinstance(value, str) and bool(re.match(r'^[A-Za-z0-9-]{8,64}$', value))
 
 
 def dispatch_batch(live_id, recipients, message, ledger, send, retry_failed=False, parallel=False):
@@ -457,12 +471,15 @@ def schedule_email(request, live_session_id):
     from . import views as v
     payload = v.json_body(request)
     added = payload.get('addedPeople') if isinstance(payload, dict) else None
-    if (not isinstance(payload, dict) or set(payload) - {'retryFailed', 'changeNotice', 'addedPeople'}
+    resend = payload.get('resendKey') if isinstance(payload, dict) else None
+    if (not isinstance(payload, dict) or set(payload) - {'retryFailed', 'changeNotice', 'addedPeople', 'resendKey'}
             or not isinstance(payload.get('retryFailed', False), bool)
             or not isinstance(payload.get('changeNotice', ''), str)
             or ('addedPeople' in payload and (payload.get('changeNotice') or not isinstance(added, list) or len(added) > 500
-                                              or not all(isinstance(value, str) for value in added)))):
-        return JsonResponse({'error': 'Supply only the retryFailed boolean and either a changeNotice or an addedPeople list.'}, status=400)
+                                              or not all(isinstance(value, str) for value in added)))
+            or ('resendKey' in payload and (payload.get('changeNotice') or 'addedPeople' in payload
+                                            or not valid_resend_key(resend)))):
+        return JsonResponse({'error': 'Supply only the retryFailed boolean and one of a changeNotice, an addedPeople list or a resendKey.'}, status=400)
     try:
         ledger = DeliveryLedger(connection)
         ledger.check()
@@ -477,7 +494,12 @@ def schedule_email(request, live_session_id):
             # People an update added: the same full schedule a creation sends,
             # under the calendar's own key, to them alone.
             recipients, organisers = added_only(recipients, organisers, added)
-        return JsonResponse(dispatch_by_role(live_session_id, recipients, organisers, learner_copy, organiser_copy,
+        # A resend is the creation email again, to everyone the saved calendar
+        # invites -- including the people it already reached. Only the ledger
+        # key changes: the message and the recipients are still the verified
+        # ones read back from the stored calendar, never anything sent here.
+        key = f'{live_session_id}@{resend}' if resend else live_session_id
+        return JsonResponse(dispatch_by_role(key, recipients, organisers, learner_copy, organiser_copy,
                                              ledger, _send_message, payload.get('retryFailed', False)))
     except (ValueError, RuntimeError) as exc:
         return JsonResponse({'error': str(exc), 'code': 'schedule_email_blocked'}, status=409)
@@ -485,3 +507,86 @@ def schedule_email(request, live_session_id):
         logger.error('Schedule email batch could not finish; durable delivery claims remain intact.')
         return JsonResponse({'error': 'Schedule email status could not be confirmed. Retry to check pending messages; accepted messages will not be sent again.',
                              'code': 'schedule_email_status_unknown'}, status=502)
+
+
+def week_meeting_message(live_id):
+    """The learner copy and the organiser copy of one additional week meeting.
+
+    The same rendered email the module's calendar sends, for a calendar of one
+    session. Where it differs from `verified_message` is only what genuinely
+    differs:
+
+    * The row is looked up as a week meeting (``status = 'week-meeting'``), so a
+      module series can never be emailed through here and vice versa.
+    * There is no occurrences table row to read: this meeting is a single event
+      with no series, so its one session is built from the stored start,
+      duration and join link that Microsoft already confirmed.
+    * Its recipients are the people named on its own form, never the module's
+      learners. `learner_recipients`/`organiser_recipients` read the invitation
+      columns off the row, which is exactly what those hold.
+    """
+    from coach_api.views import get_graph_settings
+    from . import views as v
+    series_rows = v.authoring_fetch_all(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id], ensure_tables=False)
+    if not series_rows or v.clean_str(series_rows[0].get('status')) != 'week-meeting':
+        raise ValueError('The additional meeting could not be found.')
+    series = series_rows[0]
+    start = v.parse_graph_datetime(series.get('start_datetime'))
+    join_url = v.clean_str(series.get('join_url'))
+    if not start or not join_url:
+        raise ValueError('The meeting has no confirmed time or join link yet.')
+    duration = max(15, min(1440, v.parse_int(series.get('duration_minutes'), 60)))
+    title = v.clean_str(series.get('module_title')) or 'Live session'
+    rows = [{
+        'session_number': 1,
+        'scheduled_start': start,
+        'scheduled_end': start + timedelta(minutes=duration),
+        'join_url': join_url,
+    }]
+    recipients = learner_recipients(v, series)
+    organisers = organiser_recipients(v, series, recipients)
+    zone = calendar_time_zone(v, series, get_graph_settings())
+    # Named after the meeting itself rather than "SESSION 01": a one-off has a
+    # name, and it is the one the invitation already carries.
+    names = {1: title}
+    message = render_schedule_email(title, rows, zone, session_titles=names)
+    organiser_copy = render_schedule_email(title, rows, zone, roster=learner_roster(recipients),
+                                           settings=meeting_settings(series, zone), session_titles=names)
+    return recipients, organisers, message, organiser_copy
+
+
+def send_week_meeting_emails(live_id, ledger=None, send=None):
+    """Send an additional week meeting's schedule email, from us, to its guests.
+
+    Microsoft's own invitation is a calendar item; this is the readable schedule
+    with the date, the time and the join button, which is the pair the module's
+    calendar already sends. Same ledger as every other schedule email, keyed by
+    the meeting's own id, so a retry re-reads what was sent rather than sending
+    it twice.
+
+    Never raises: the meeting is booked and saved by the time this runs, and a
+    mail problem is reported beside it rather than in place of it.
+    """
+    try:
+        from login import email_azure
+        ledger = ledger or DeliveryLedger(connection)
+        ledger.check()
+        if not email_azure.is_configured():
+            return {'error': 'Schedule emails are not configured. Check the existing Azure mail settings.',
+                    'code': 'schedule_email_not_configured'}
+        recipients, organisers, learner_copy, organiser_copy = week_meeting_message(live_id)
+        if not recipients and not organisers:
+            return {'total': 0, 'accepted': 0, 'queued': 0, 'failed': 0, 'uncertain': 0, 'status': 'complete'}
+        previous_queued = None
+        while True:
+            status = dispatch_by_role(live_id, recipients, organisers, learner_copy, organiser_copy,
+                                      ledger, send or _send_message, parallel=True)
+            if not status['queued'] or (previous_queued is not None and status['queued'] >= previous_queued):
+                return status
+            previous_queued = status['queued']
+    except (ValueError, RuntimeError) as exc:
+        return {'error': str(exc), 'code': 'schedule_email_blocked'}
+    except Exception:
+        logger.error('Additional meeting schedule emails could not finish; durable delivery claims remain intact.')
+        return {'error': 'Schedule email status could not be confirmed. Retry to check pending messages; accepted messages will not be sent again.',
+                'code': 'schedule_email_status_unknown'}

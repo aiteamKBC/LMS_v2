@@ -36,6 +36,8 @@ interface ReviewFormRendererProps {
   /** Optional non-coach respondent whose writable questions should be
    * labelled in the shared renderer. */
   respondentRole?: 'participant' | 'employer';
+  /** Show a green indicator when a read-only viewer has saved content. */
+  showSavedAnswerStatus?: boolean;
   openSectionId: string;
   onOpenSectionChange: (sectionId: string) => void;
   renderFieldAddon?: (field: ReviewFieldDefinition) => ReactNode;
@@ -72,15 +74,18 @@ function computeSectionRespondentSummary(
   let count = 0;
   let required = 0;
   let missing = 0;
+  let unanswered = 0;
   const walk = (fields: ReviewFieldDefinition[], visible: boolean) => {
     for (const field of fields) {
       const displayOnly = field.fieldType === 'title_description' || field.fieldType === 'action_button';
       const canRespond = visible && !displayOnly && fieldAllowsRespondent(field, role);
       if (canRespond) {
         count += 1;
+        const answered = fieldAnswered(field, answers);
+        if (!answered) unanswered += 1;
         if (field.required) {
           required += 1;
-          if (!fieldAnswered(field, answers)) missing += 1;
+          if (!answered) missing += 1;
         }
       }
       if (field.fieldType === 'boolean_case_block') {
@@ -91,11 +96,24 @@ function computeSectionRespondentSummary(
     }
   };
   if (section.enabled) walk(section.fields, true);
-  return { count, required, missing };
+  // `unanswered` counts every field opened up to this respondent, not just the
+  // required ones -- a section they were asked to fill in should not read as
+  // "done" while an optional question of theirs is still blank.
+  return { count, required, missing, unanswered };
 }
 
 function sectionRequiredFields(section: ReviewSectionDefinition) {
   return section.fields.filter((field) => field.required);
+}
+
+function sectionHasAnsweredFields(section: ReviewSectionDefinition, answers: Record<string, unknown>) {
+  const walk = (fields: ReviewFieldDefinition[]): boolean => fields.some((field) => (
+    fieldAnswered(field, answers)
+    || (field.fieldType === 'boolean_case_block' && (
+      walk(field.yesFields || []) || walk(field.noFields || [])
+    ))
+  ));
+  return section.enabled && walk(section.fields);
 }
 
 export function ReviewFormRenderer({
@@ -106,6 +124,7 @@ export function ReviewFormRenderer({
   readOnly,
   fieldReadOnly,
   respondentRole,
+  showSavedAnswerStatus = false,
   openSectionId,
   onOpenSectionChange,
   renderFieldAddon,
@@ -134,8 +153,10 @@ export function ReviewFormRenderer({
                 ? computeSectionRespondentSummary(section, answers, respondentRole)
                 : null;
               const complete = respondentSummary
-                ? respondentSummary.missing === 0
+                ? respondentSummary.count > 0 && respondentSummary.unanswered === 0
                 : computeMissingRequiredFields([section], answers).size === 0;
+              const savedAnswer = showSavedAnswerStatus && sectionHasAnsweredFields(section, answers);
+              const pending = Boolean(respondentSummary && respondentSummary.count > 0 && respondentSummary.unanswered > 0);
               const stepNumber = sectionIndex + 1;
               return (
                 <li key={section.id}>
@@ -152,11 +173,13 @@ export function ReviewFormRenderer({
                       'flex h-8 w-8 shrink-0 items-center justify-center rounded-full border text-xs font-bold',
                       selected
                         ? 'border-primary-600 bg-primary-600 text-white'
-                        : complete
+                        : complete || savedAnswer
                           ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                          : 'border-background-300 bg-white text-foreground-500',
+                          : pending
+                            ? 'border-amber-200 bg-amber-50 text-amber-700'
+                            : 'border-background-300 bg-white text-foreground-500',
                     )}>
-                      {complete && !selected ? <AppIcon className="ri-check-line"></AppIcon> : stepNumber}
+                      {(complete || savedAnswer) && !selected ? <AppIcon className="ri-check-line"></AppIcon> : stepNumber}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block text-[11px] font-bold uppercase tracking-[0.1em]">Step {stepNumber}</span>
@@ -253,8 +276,10 @@ export function ReviewFormRenderer({
           : null;
         const requiredFields = sectionRequiredFields(section);
         const complete = respondentSummary
-          ? respondentSummary.missing === 0
+          ? respondentSummary.count > 0 && respondentSummary.unanswered === 0
           : requiredFields.every((field) => fieldAnswered(field, answers));
+        const savedAnswer = showSavedAnswerStatus && sectionHasAnsweredFields(section, answers);
+        const pending = Boolean(respondentSummary && respondentSummary.count > 0 && respondentSummary.unanswered > 0);
         return (
           <section id={`review-section-${section.id}`} key={section.id} className={cn('overflow-hidden rounded-2xl border bg-background-50 transition-all', open ? 'border-primary-300 shadow-sm' : respondentSummary?.count ? 'border-primary-300 bg-primary-50/30' : 'border-background-200')}>
             <button
@@ -279,7 +304,14 @@ export function ReviewFormRenderer({
                   </span>
                 ) : null}
               </span>
-              {complete ? <AppIcon className="ri-checkbox-circle-fill text-lg text-emerald-500"></AppIcon> : null}
+              {complete || savedAnswer ? (
+                <AppIcon
+                  aria-label={savedAnswer && !complete ? 'Section has saved answers' : 'Section complete'}
+                  className="ri-checkbox-circle-fill text-lg text-emerald-500"
+                ></AppIcon>
+              ) : pending ? (
+                <AppIcon className="ri-time-line text-lg text-amber-500"></AppIcon>
+              ) : null}
               <span className={cn('flex h-8 w-8 items-center justify-center rounded-full bg-background-100 text-foreground-500 transition-transform', open && 'rotate-180')}>
                 <AppIcon className="ri-arrow-down-s-line"></AppIcon>
               </span>
@@ -337,13 +369,22 @@ function ReviewFieldControl({
 
   if (field.fieldType === 'title_description') {
     const description = String(field.configuration?.description || '');
+    const tableRows = importedTableRows(field.configuration);
     return (
       <div className="rounded-lg border border-background-200 bg-background-100/70 px-4 py-3">
         <div className="flex items-start gap-3">
           <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary-100 text-[12px] font-bold text-primary-700">{index + 1}</span>
-          <div>
+          <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold leading-5 text-foreground-900">{field.title}</p>
-            {description ? <p className="mt-1 text-sm leading-5 text-foreground-500">{description}</p> : null}
+            {tableRows ? <div className="mt-3 max-w-full overflow-x-auto rounded-lg border border-background-200 bg-background-50">
+              <table className="min-w-full border-collapse text-left text-sm">
+                <thead className="bg-primary-50 text-foreground-900"><tr>{tableRows[0].map((cell, column) =>
+                  <th key={column} scope="col" className="whitespace-nowrap border-b border-background-200 px-3 py-2 font-semibold">{cell}</th>)}</tr></thead>
+                <tbody>{tableRows.slice(1).map((row, rowIndex) => <tr key={rowIndex} className="border-b border-background-100 last:border-b-0">
+                  {row.map((cell, column) => <td key={column} className="min-w-36 align-top px-3 py-2 leading-5 text-foreground-600">{cell}</td>)}
+                </tr>)}</tbody>
+              </table>
+            </div> : description ? <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-foreground-500">{description}</p> : null}
           </div>
         </div>
       </div>
@@ -396,6 +437,17 @@ function ReviewFieldControl({
       ) : null}
     </div>
   );
+}
+
+export function importedTableRows(configuration: Record<string, unknown>): string[][] | null {
+  let value = configuration.importedTable;
+  if (value == null && configuration.imported === true && typeof configuration.description === 'string') {
+    try { value = JSON.parse(configuration.description); } catch { return null; }
+  }
+  if (!Array.isArray(value) || value.length < 2 || !value.every(Array.isArray)) return null;
+  const width = value[0].length;
+  if (!width || !value.every(row => row.length === width)) return null;
+  return value.map(row => row.map(cell => cell == null ? '' : String(cell)));
 }
 
 function ReviewFieldInput({

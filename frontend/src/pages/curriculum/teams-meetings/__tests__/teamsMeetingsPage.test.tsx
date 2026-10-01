@@ -1,6 +1,7 @@
 import { finishTeamsCreation, finishTeamsUpdate } from '../creationResult';
 import { syncTeamsCalendarState } from '../calendarState';
 import { calendarAction } from '../calendarActions';
+import { compareTeamsAttendees } from '../attendeeComparison';
 import { loadTeamsMeetingArtifacts } from '../../module-builder/moduleAuthoringData';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -144,6 +145,12 @@ const alertMock = vi.mocked(showCurriculumAlert);
 vi.mock('../creationResult', () => ({ finishTeamsCreation: vi.fn(), finishTeamsUpdate: vi.fn() }));
 vi.mock('../calendarState', () => ({ syncTeamsCalendarState: vi.fn() }));
 vi.mock('../calendarActions', () => ({ calendarAction: vi.fn() }));
+// Only the Microsoft read is replaced; the pure helpers beside it are the real
+// ones, so the panel's "not published yet" list is the shipped logic.
+vi.mock('../attendeeComparison', async importOriginal => ({
+  ...(await importOriginal<typeof import('../attendeeComparison')>()),
+  compareTeamsAttendees: vi.fn(),
+}));
 
 // Every week already has its live session unless a test says otherwise.
 const probeModuleTeamsAttachment = vi.fn(async () => 0);
@@ -811,7 +818,7 @@ describe('Teams Meetings page', () => {
     expect(dialog.queryByRole('button', { name: 'Remove mahmoudfouda015@gmail.com' })).not.toBeInTheDocument();
     expect(fetchModuleMeetingInvitees).not.toHaveBeenCalled();
 
-    await userEvent.click(dialog.getByRole('button', { name: "Prefill from the module's tutor and learner plans" }));
+    await userEvent.click(dialog.getByRole('button', { name: 'Prefill from the learners who have this module on their plan' }));
     await waitFor(() => expect(dialog.getByRole('button', { name: 'Remove mahmoudfouda015@gmail.com' })).toBeInTheDocument());
     expect(fetchModuleMeetingInvitees).toHaveBeenCalledWith('MOD-3');
   });
@@ -935,8 +942,8 @@ describe('Teams Meetings page', () => {
     expect(input.scheduledOccurrences.map(item => item.startDateTimeUtc)).toEqual([
       '2026-09-04T08:30:00.000Z',
     ]);
-    // The create attaches the links (topping weeks up) itself before answering,
-    // so no follow-up restore request holds the confirmation back.
+    // The create attaches links to the components already authored before
+    // answering, so no follow-up restore request holds the confirmation back.
     await waitFor(() => expect(finishTeamsCreation).toHaveBeenCalledTimes(1));
     expect(restoreModuleTeamsMeeting).not.toHaveBeenCalled();
   });
@@ -1173,5 +1180,136 @@ describe('Teams Meetings page', () => {
     // The calendar's zone is what the column shows; a reader elsewhere is told
     // how far their own Teams will differ rather than left to wonder.
     expect(screen.getByText(/Microsoft calendar's timezone \(GMT Standard Time\)/)).toBeInTheDocument();
+  });
+});
+
+/**
+ * The attendee comparison: the one action on this page that asks Microsoft a
+ * question instead of telling it something.
+ *
+ * The gap it fills is that a save only writes when the form differs from the
+ * stored roster, so somebody added to the meeting in Outlook is invisible here
+ * -- the form matches, Save refuses, and the extra person stays. So these tests
+ * hold the two things that make it useful: it works on an untouched form, and
+ * it leaves a touched one exactly as it found it.
+ */
+describe('Comparing the invitation list with Teams', () => {
+  const comparison = {
+    status: 'different' as const, lmsCount: 3, teamsCount: 3, matchingCount: 2, extraCount: 1, missingCount: 1,
+    matching: [{ email: 'learner@example.com', name: 'A Learner' }, { email: 'tutor@example.com', name: 'Tutor One' }],
+    extraOnTeams: [{ email: 'john@example.com', name: 'John Smith' }],
+    missingFromTeams: [{ email: 'apprentice@example.com', name: 'An Apprentice' }],
+    aliasPossible: true, checkedAt: '2026-09-30T16:48:00Z',
+  };
+  const matched = {
+    ...comparison, status: 'match' as const, matchingCount: 3, extraCount: 0, missingCount: 0,
+    extraOnTeams: [], missingFromTeams: [], aliasPossible: false,
+  };
+
+  beforeEach(() => {
+    vi.mocked(syncTeamsCalendarState).mockReset();
+    vi.mocked(syncTeamsCalendarState).mockResolvedValue({ changed: false, seriesStatus: 'active', cancelledSessions: [], errors: [] });
+    vi.mocked(loadTeamsMeetingArtifacts).mockReset();
+    vi.mocked(loadTeamsMeetingArtifacts).mockResolvedValue(artifacts as never);
+    vi.mocked(compareTeamsAttendees).mockReset();
+    vi.mocked(compareTeamsAttendees).mockResolvedValue(comparison);
+    updateTeamsMeetingSchedule.mockClear();
+    fetchCurriculumTeamsMeetingSummaries.mockImplementation(async () => summaries);
+  });
+
+  async function openInvitations() {
+    await renderPage();
+    expect(await screen.findByText('Data Foundations')).toBeInTheDocument();
+    await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    await waitFor(() => expect(dialog.getByRole('button', { name: 'Update Teams calendar' })).not.toBeDisabled());
+    return dialog;
+  }
+
+  it('offers the comparison on an untouched form, where Save itself is refused', async () => {
+    const dialog = await openInvitations();
+    // Nothing has been edited, so the save path is closed...
+    expect(dialog.getByRole('button', { name: /Save invitations/ })).toBeDisabled();
+    // ...and this is exactly when an externally added attendee is invisible.
+    const compare = dialog.getByRole('button', { name: /Compare with Teams/ });
+    expect(compare).toBeEnabled();
+
+    await userEvent.click(compare);
+    await waitFor(() => expect(compareTeamsAttendees).toHaveBeenCalledWith('LIVE-1'));
+    // The comparison is not a save: nothing was sent to the calendar.
+    expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
+  });
+
+  it('shows it is working and refuses to ask Microsoft twice at once', async () => {
+    let release: (value: typeof comparison) => void = () => undefined;
+    vi.mocked(compareTeamsAttendees).mockImplementation(() => new Promise(resolve => { release = resolve; }));
+    const dialog = await openInvitations();
+    await userEvent.click(dialog.getByRole('button', { name: /Compare with Teams/ }));
+
+    const busy = await dialog.findByRole('button', { name: /Comparing/ });
+    expect(busy).toBeDisabled();
+    await userEvent.click(busy);
+    expect(compareTeamsAttendees).toHaveBeenCalledTimes(1);
+
+    await act(async () => { release(comparison); });
+    await dialog.findByRole('button', { name: /Compare with Teams/ });
+  });
+
+  it('names who is on Teams and who is not, with the moment it was read', async () => {
+    const dialog = await openInvitations();
+    await userEvent.click(dialog.getByRole('button', { name: /Compare with Teams/ }));
+
+    const extra = within(await dialog.findByRole('list', { name: 'Extra on Teams' }));
+    expect(extra.getByText('John Smith')).toBeInTheDocument();
+    expect(extra.getByText('john@example.com')).toBeInTheDocument();
+    const missing = within(dialog.getByRole('list', { name: 'Missing from Teams' }));
+    expect(missing.getByText('apprentice@example.com')).toBeInTheDocument();
+    expect(dialog.getByText(/Last checked:/)).toBeInTheDocument();
+    // Both lists are occupied, so one pair of them may be one mailbox.
+    expect(dialog.getByText(/may be\s+the same person under two spellings/)).toBeInTheDocument();
+    // Found only on Teams, and left there: the editable list is untouched.
+    expect(dialog.queryByRole('button', { name: 'Remove john@example.com' })).not.toBeInTheDocument();
+  });
+
+  it('says so plainly when Microsoft holds exactly the published list', async () => {
+    vi.mocked(compareTeamsAttendees).mockResolvedValue(matched);
+    const dialog = await openInvitations();
+    await userEvent.click(dialog.getByRole('button', { name: /Compare with Teams/ }));
+
+    expect(await dialog.findByText('Teams attendees match the LMS invitation list.')).toBeInTheDocument();
+    expect(dialog.queryByRole('list', { name: 'Extra on Teams' })).not.toBeInTheDocument();
+    expect(dialog.queryByRole('list', { name: 'Missing from Teams' })).not.toBeInTheDocument();
+  });
+
+  it('shows why the comparison failed rather than an empty panel', async () => {
+    vi.mocked(compareTeamsAttendees).mockRejectedValue(new Error('The Microsoft calendar event could not be found.'));
+    const dialog = await openInvitations();
+    await userEvent.click(dialog.getByRole('button', { name: /Compare with Teams/ }));
+
+    expect(await dialog.findByText('The Microsoft calendar event could not be found.')).toBeInTheDocument();
+    expect(dialog.queryByText(/Last checked:/)).not.toBeInTheDocument();
+  });
+
+  it('leaves an unsaved edit alone, and counts it as pending rather than lost', async () => {
+    vi.mocked(compareTeamsAttendees).mockResolvedValue(matched);
+    const dialog = await openInvitations();
+    const attendees = dialog.getByRole('combobox', { name: 'Attendees' });
+    fireEvent.change(attendees, { target: { value: 'mohamed@example.com' } });
+    fireEvent.keyDown(attendees, { key: 'Enter' });
+    expect(dialog.getByRole('button', { name: 'Remove mohamed@example.com' })).toBeInTheDocument();
+
+    await userEvent.click(dialog.getByRole('button', { name: /Compare with Teams/ }));
+    await dialog.findByText('Teams attendees match the LMS invitation list.');
+
+    // Microsoft was asked about the published list, so the person typed a
+    // moment ago is pending -- not a learner whose invitation went missing.
+    const pending = within(dialog.getByRole('list', { name: 'Not published yet' }));
+    expect(pending.getByText('mohamed@example.com')).toBeInTheDocument();
+    expect(dialog.getByText('Pending local changes are not included in this comparison.')).toBeInTheDocument();
+    expect(dialog.queryByRole('list', { name: 'Missing from Teams' })).not.toBeInTheDocument();
+
+    // The edit itself survived the round trip, and is still savable.
+    expect(dialog.getByRole('button', { name: 'Remove mohamed@example.com' })).toBeInTheDocument();
+    expect(dialog.getByRole('button', { name: /Save invitations/ })).toBeEnabled();
   });
 });

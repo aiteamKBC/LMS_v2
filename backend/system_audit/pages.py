@@ -53,6 +53,7 @@ WORKSPACES = {
     'admin': 'Administration',
     'enrolment': 'Enrolment',
     'audit': 'Audit',
+    'record-monitor': 'Record Monitor',
     'platform': 'Platform',
 }
 
@@ -63,7 +64,7 @@ SEGMENT_WORKSPACE = {
     'users': 'enrolment',
     'internal-panel': 'admin',
     'activity-categories': 'audit',
-    'old-otjh': 'learner',
+    'old-otjh': 'record-monitor',
     'my-courses': 'learner',
     'training-plan': 'learner',
 }
@@ -208,6 +209,7 @@ TUTOR = (
 
 LEARNER = (
     ('/learner', 'learner-home', 'Learner home', '', ''),
+    ('/learner/home', 'learner-home', 'Learner home', '', ''),
     ('/learner/my-learning', 'my-learning', 'My learning', '', ''),
     ('/learner/my-learning/{kind}/{id}', 'my-learning-course', 'My learning: one course', 'course', 'id'),
     ('/learner/modules', 'learner-modules', 'Modules', '', ''),
@@ -264,6 +266,17 @@ LEARNER = (
     ('/learner/messages', 'learner-messages', 'Messages', '', ''),
     ('/learner/support', 'learner-support', 'Support', '', ''),
     ('/learner/profile', 'learner-profile', 'Profile', '', ''),
+)
+
+RECORD_MONITOR = (
+    ('/old-otjh', 'record-monitor-home', 'Record Monitor', '', ''),
+    ('/old-otjh/months', 'record-monitor-months', 'Record Monitor months', '', ''),
+    ('/old-otjh/months/{month}', 'record-monitor-month', 'Record Monitor month', 'month', 'month'),
+    ('/old-otjh/coach', 'record-monitor-coaches', 'Record Monitor coaches', '', ''),
+    ('/old-otjh/monitor', 'record-monitor-dashboard', 'Record Monitor dashboard', '', ''),
+    ('/old-otjh/coach/{aptemId}', 'record-monitor-learner', 'Record Monitor learner', 'learner', 'aptemId'),
+    ('/old-otjh/coach/{aptemId}/months', 'record-monitor-learner-months', 'Record Monitor learner months', 'learner', 'aptemId'),
+    ('/old-otjh/coach/{aptemId}/months/{month}', 'record-monitor-learner-month', 'Record Monitor learner month', 'learner', 'aptemId'),
 )
 
 EMPLOYER = (
@@ -471,6 +484,7 @@ PAGES_BY_WORKSPACE = {
     'admin': tuple(route for route in ADMIN if not route[0].startswith('/users')),
     'enrolment': tuple(route for route in ADMIN if route[0].startswith('/users')),
     'audit': AUDIT,
+    'record-monitor': RECORD_MONITOR,
     'platform': PLATFORM,
 }
 
@@ -563,6 +577,7 @@ def resolve(path):
             'targetType': target_type if target_id else '',
             'targetId': target_id[:120],
             'path': path,
+            'routePattern': '/' + '/'.join(template),
             'known': True,
         }
     workspace = workspace_for(path)
@@ -575,6 +590,7 @@ def resolve(path):
         'targetType': '',
         'targetId': '',
         'path': path,
+        'routePattern': '',
         'known': False,
     }
 

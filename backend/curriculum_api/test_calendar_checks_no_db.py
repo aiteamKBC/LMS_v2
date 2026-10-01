@@ -60,6 +60,10 @@ class CalendarChecksTests(unittest.TestCase):
                               CalendarMismatch=checks.CalendarMismatch, safe_teams_join_url=checks.safe_teams_join_url,
                               utc_datetime=checks.utc_datetime, graph_calendar_time=checks.graph_calendar_time,
                               verify_calendar=checks.verify_calendar, publish_attendees=checks.publish_attendees,
+                              attendee_differences=checks.attendee_differences,
+                              attendees_already_match=checks.attendees_already_match,
+                              event_organizer_address=checks.event_organizer_address,
+                              unconfirmed_attendee_detail=checks.unconfirmed_attendee_detail,
                               teams_meeting_default_organizer=lambda: '', teams_new_meeting_organizer=lambda value: value,
                               json_body=lambda request: self.payload, ensure_live_sessions_table=lambda: None,
                               ensure_live_session_tracking_tables=lambda: None,
@@ -216,8 +220,9 @@ class CalendarChecksTests(unittest.TestCase):
         result = self.create()
         self.assertEqual(result.status_code, 201, result)
         module_id, saved, settings, occurrences = self.attach.call_args.args
-        # The same walk tops weeks up to their delivery days, so no follow-up restore is needed.
-        self.assertTrue(self.attach.call_args.kwargs.get('create_missing'))
+        # Sending a calendar only links components the author already added;
+        # missing weeks stay content-only until Restore/Re-attach is requested.
+        self.assertFalse(self.attach.call_args.kwargs.get('create_missing'))
         self.assertEqual(module_id, 'MOD-SYNTHETIC')
         self.assertEqual(saved['id'], 'LIVE-SYNTHETIC')
         self.assertEqual(settings['liveSessionUrl'], result['meeting']['joinUrl'])
@@ -859,6 +864,80 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertEqual(result.status_code, 201, result)
         event = self.events['event-1']
         self.assertEqual(checks.event_instant(event, 'end') - checks.event_instant(event, 'start'), timedelta(hours=2))
+
+
+class AttendeeConfirmationTests(unittest.TestCase):
+    """What counts as Microsoft confirming the invitation list it was sent.
+
+    A pasted internal alias comes back from Graph as that mailbox's primary
+    address, and the organizer is never an attendee of their own event. Read
+    character by character, both looked like a lost invitation -- and because
+    the saved roster kept the alias, the same save failed again every time,
+    which also blocked simply taking somebody off the meeting.
+    """
+
+    def people(self, *addresses):
+        return [{'emailAddress': {'address': address}} for address in addresses]
+
+    def test_an_alias_stored_under_its_primary_address_is_the_same_person(self):
+        self.assertEqual(
+            checks.attendee_differences(
+                self.people('med.maher@example.invalid', 'learner@example.invalid'),
+                self.people('mohamed.maher@example.invalid', 'learner@example.invalid'),
+                'organizer@example.invalid',
+            ),
+            ([], []),
+        )
+
+    def test_the_organizer_is_not_expected_back_as_an_attendee(self):
+        self.assertEqual(
+            checks.attendee_differences(
+                self.people('organizer@example.invalid', 'learner@example.invalid'),
+                self.people('learner@example.invalid'),
+                'organizer@example.invalid',
+            ),
+            ([], []),
+        )
+
+    def test_a_learner_microsoft_dropped_is_still_a_failure(self):
+        missing, extra = checks.attendee_differences(
+            self.people('one@example.invalid', 'two@example.invalid'),
+            self.people('one@example.invalid'), 'organizer@example.invalid',
+        )
+        self.assertEqual((missing, extra), (['two@example.invalid'], []))
+        self.assertIn('two@example.invalid', checks.unconfirmed_attendee_detail(missing, extra))
+
+    def test_somebody_the_series_does_not_invite_is_still_a_failure(self):
+        self.assertEqual(
+            checks.attendee_differences(
+                self.people('one@example.invalid'),
+                self.people('one@example.invalid', 'stranger@example.invalid'),
+                'organizer@example.invalid',
+            ),
+            ([], ['stranger@example.invalid']),
+        )
+
+    def test_swapping_one_invitee_for_another_is_a_change_worth_writing(self):
+        # The write decision stays strict: pairing is only how a list already
+        # sent is read back, never how "has anything changed" is answered.
+        self.assertFalse(checks.attendees_already_match(
+            self.people('new@example.invalid'), self.people('old@example.invalid'),
+            'organizer@example.invalid',
+        ))
+
+    def test_removing_somebody_is_a_change_worth_writing(self):
+        self.assertFalse(checks.attendees_already_match(
+            self.people('one@example.invalid'),
+            self.people('one@example.invalid', 'two@example.invalid'),
+            'organizer@example.invalid',
+        ))
+
+    def test_an_unchanged_list_writes_nothing(self):
+        self.assertTrue(checks.attendees_already_match(
+            self.people('one@example.invalid'),
+            self.people('one@example.invalid', 'organizer@example.invalid'),
+            'organizer@example.invalid',
+        ))
 
 
 if __name__ == '__main__':

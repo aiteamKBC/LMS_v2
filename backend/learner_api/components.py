@@ -24,9 +24,13 @@ from .identity import learner_profile_for_source
 from .models import CommercialUser, EnrolmentUser
 from .time_tracking import (
     TrackingSessionError,
-    outside_uk_working_hours,
     tracking_session_already_used,
     verify_tracking_session,
+)
+from .working_rules import (
+    DeclaredCompletionError,
+    resolve_completion_instants,
+    validation_response_payload,
 )
 from login.permissions import learner_self_or_admin
 
@@ -271,6 +275,19 @@ def submit_component_progress(request, component_id):
     except (ValueError, UnicodeDecodeError) as exc:
         return _error(f"Invalid JSON body: {exc}", 400)
 
+    # Working rules are decided here, before any lookup, criteria check or
+    # write: a refusal must leave no completion, no percentage change and no
+    # history entry behind.
+    submitted_at_dt = timezone.now()
+    try:
+        declared_at, validation_reason = resolve_completion_instants(
+            payload, submitted_at_dt, component_id=component_id,
+        )
+    except DeclaredCompletionError as exc:
+        return JsonResponse(validation_response_payload(exc), status=409)
+    except DatabaseError:
+        return _error("Could not verify the working-hours holiday calendar. Please try again.", 503)
+
     week_title = payload.get("week")
     module_title = payload.get("module")
     time_taken_seconds = payload.get("timeTakenSeconds")
@@ -341,18 +358,6 @@ def submit_component_progress(request, component_id):
         1 for r in history if r.get("kind") == "component" and r.get("componentId") == component_id
     ) + 1
 
-    submitted_at_dt = timezone.now()
-    try:
-        outside_working_hours = outside_uk_working_hours(submitted_at_dt)
-    except DatabaseError:
-        return _error("Could not verify the working-hours holiday calendar. Please try again.", 503)
-    confirmation_received = payload.get("insideWorkingHoursConfirmed") is True
-    if outside_working_hours and not confirmation_received:
-        return _error(
-            "Confirm that this activity was completed inside UK working hours.",
-            400,
-        )
-    inside_working_hours_confirmed = outside_working_hours and confirmation_received
     try:
         tracking = verify_tracking_session(
             payload.get("trackingToken"),
@@ -389,11 +394,13 @@ def submit_component_progress(request, component_id):
         "claimedSeconds": tracking["claimedSeconds"],
         "serverSessionSeconds": tracking["serverSessionSeconds"],
         "verifiedSeconds": tracking["verifiedSeconds"],
-        "outsideWorkingHours": outside_working_hours,
+        "outsideWorkingHours": bool(validation_reason),
         "outsideWorkingHoursConfirmed": False,
-        "insideWorkingHoursConfirmed": inside_working_hours_confirmed,
-        "insideWorkingHoursConfirmedAt": submitted_at if inside_working_hours_confirmed else None,
+        "insideWorkingHoursConfirmed": False,
+        "insideWorkingHoursConfirmedAt": None,
         "outsideWorkingHoursConfirmedAt": None,
+        "declaredCompletedAt": declared_at.isoformat() if declared_at else None,
+        "submissionValidationReason": validation_reason,
     }
 
     action, _noun = TYPE_ACTIONS.get(component_type, ("Completed activity", "Activity"))
@@ -445,7 +452,9 @@ def submit_component_progress(request, component_id):
                 "moduleTitle": module_title or "",
                 "weekTitle": week_title or "",
                 "plannedOtjh": reported_time,
-                "actualTimeHours": time_taken,
+                # The marking schema stores decimal hours. ``timeTaken`` above
+                # remains the learner-facing MM:SS clock value.
+                "actualTimeHours": tracking["verifiedSeconds"] / 3600,
                 "progressEntryId": None,
             },
         )

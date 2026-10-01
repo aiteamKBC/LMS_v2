@@ -220,7 +220,8 @@ def read_student_material(cursor, aptem_id, group_id, activity_id, *, include_so
                material.reading_iframe_url AS material_reading_url,
                material.audio_iframe_url AS material_audio_url,
                material.blob_container AS material_blob_container,material.blob_name AS material_blob_name,
-               material.blob_content_type AS material_blob_content_type,material.backup_status AS material_backup_status
+               material.blob_content_type AS material_blob_content_type,material.backup_status AS material_backup_status,
+               material.source_metadata->>'azure_storage_account' AS material_blob_account
         FROM "Learner".learners l
         JOIN "Learner".learner_source_course_memberships membership
           ON membership.learner_id=l.id AND membership.deleted_at IS NULL
@@ -229,15 +230,32 @@ def read_student_material(cursor, aptem_id, group_id, activity_id, *, include_so
         JOIN curriculum.source_activities catalogue ON catalogue.source_course_id=course.id
           AND catalogue.source_system='old_lms' AND catalogue.source_activity_kind='material'
           AND catalogue.deleted_at IS NULL
-        JOIN curriculum.source_materials material ON material.id=catalogue.source_material_id
+        JOIN curriculum.source_materials material ON material.material_id=catalogue.source_material_id
           AND material.source_system=catalogue.source_system AND material.deleted_at IS NULL
         LEFT JOIN "Last_audit".activities a ON catalogue.source_activity_id='material:' || a.activity_id::text
-        LEFT JOIN "Learner".learner_external_identities identity
-          ON identity.learner_id=l.id AND identity.source_system='old_lms' AND identity.deleted_at IS NULL
-          AND (SELECT count(*) FROM "Learner".learner_external_identities other
-               WHERE other.learner_id=l.id AND other.source_system='old_lms' AND other.deleted_at IS NULL)=1
-        LEFT JOIN "Last_audit".activity_results r ON r.learner_id::text=identity.source_learner_id
-          AND r.group_id::text=course.source_course_ref AND r.activity_id=a.activity_id
+        LEFT JOIN LATERAL (
+            -- Same positive-completion/highest-score policy as merge_result.
+            -- Keep score, maximum, attempt number and answers from ONE attempt.
+            SELECT history.quiz_answers,history.quiz_score,history.quiz_maximum_score,
+                   history.quiz_attempt_number,
+                   bool_or(history.quiz_passed) OVER () AS quiz_passed,
+                   bool_or(history.reading_viewed) OVER () AS reading_viewed,
+                   bool_or(history.video_completed) OVER () AS video_completed,
+                   CASE max(CASE history.status WHEN 'completed' THEN 3
+                        WHEN 'quiz_attempted' THEN 2 WHEN 'reading_viewed' THEN 1 ELSE 0 END) OVER ()
+                     WHEN 3 THEN 'completed' WHEN 2 THEN 'quiz_attempted'
+                     WHEN 1 THEN 'reading_viewed' ELSE history.status END AS status
+            FROM "Learner".learner_external_identities identity
+            JOIN "Last_audit".activity_results history
+              ON history.learner_id::text=identity.source_learner_id
+            WHERE identity.learner_id=l.id AND identity.source_system='old_lms'
+              AND identity.deleted_at IS NULL
+              AND history.group_id::text=course.source_course_ref AND history.activity_id=a.activity_id
+            ORDER BY history.quiz_score / nullif(history.quiz_maximum_score,0) DESC NULLS LAST,
+                     (history.quiz_answers IS NOT NULL AND history.quiz_answers<>'[]'::jsonb) DESC,
+                     history.quiz_attempt_number DESC NULLS LAST,identity.id
+            LIMIT 1
+        ) r ON true
         WHERE l.aptem_id = %s AND course.source_course_ref = %s::text AND catalogue.source_activity_id = %s
         LIMIT 2
     ''', [activity_id, aptem_id, group_id, f'material:{activity_id}'])

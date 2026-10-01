@@ -1,4 +1,3 @@
-import { coachFetch } from '@/lib/coachFetch';
 import { invalidateLearnerReads } from '@/api/learnerRead';
 import { useCallback, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
@@ -152,19 +151,27 @@ export default function AttendancePage() {
     } catch (error) { setAttendError(error instanceof Error ? error.message : 'Could not save attendance. Please try again.'); }
     finally { attendInFlight.current = false; setAttendBusy(false); }
   };
-  const saveCatchup = async () => {
-    if (!catchup?.absenceReport || !catchupBooking) return;
+  // Links a catch-up to the reported absence: an existing booking the learner picks,
+  // or (passed in) one just booked here, which is linked straight away.
+  const saveCatchup = async (booking: LearnerCalendarEvent | null = catchupBooking): Promise<boolean> => {
+    if (!catchup?.absenceReport || !booking) return false;
     setBookingBusy(true); setAttendError('');
     try {
-      const response = await coachFetch(`/learner_api/session-catchup/${learner.kind}/${learner.id}/`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reportId: catchup.absenceReport.id, eventKey: catchupBooking.eventKey }),
+      // The attendance workspace carries its own CSRF token: learners cannot read /coach_api/csrf.
+      if (!data?.csrfToken) throw new Error('Please refresh the page before linking the catch-up.');
+      const response = await fetch(`/learner_api/session-catchup/${learner.kind}/${learner.id}/`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': data.csrfToken },
+        body: JSON.stringify({ reportId: catchup.absenceReport.id, eventKey: booking.eventKey }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Could not link catch-up.');
       invalidateLearnerReads(); setAttendNotice(result.message); setCatchup(null); read.refresh();
-    } catch (reason) { setAttendError(reason instanceof Error ? reason.message : 'Could not link catch-up.'); }
-    finally { setBookingBusy(false); }
+      return true;
+    } catch (reason) {
+      setAttendError(reason instanceof Error ? reason.message : 'Could not link catch-up.');
+      return false;
+    } finally { setBookingBusy(false); }
   };
   const selectCatchupBooking = useCallback((event: LearnerCalendarEvent | null) => {
     setCatchupBooking(event);
@@ -251,7 +258,8 @@ export default function AttendancePage() {
         <p className={styles.catchupLectureTitle}>{catchup.title} · {catchup.date}</p>
         <CatchupBooking key={catchup.id} lecture={{ ...catchup, status: 'absent', dateIso: catchup.date,
           sessionType: 'live_session', coach: catchup.coach || '' }} selectedKey={catchupBooking?.eventKey || ''}
-          onSelect={selectCatchupBooking} onBusyChange={setBookingBusy} standalone />
+          onSelect={selectCatchupBooking} onBooked={booking => saveCatchup(booking)} onBusyChange={setBookingBusy} standalone
+          reportId={catchup.absenceReport.id} />
         {attendError && <p role="alert">{attendError}</p>}
         <button type="button" className={styles.catchupDone} disabled={bookingBusy || !catchupBooking} onClick={() => void saveCatchup()}>Link catch-up to this absence</button>
         <button type="button" className={styles.catchupDone} disabled={bookingBusy} onClick={() => { setCatchup(null); read.refresh(); }}>Close</button>

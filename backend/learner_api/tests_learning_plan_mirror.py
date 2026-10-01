@@ -121,3 +121,64 @@ class SyncMirrorTests(SimpleTestCase):
 
         self.assertEqual(child_rows.call_count, 1)
         self.assertEqual(child_rows.call_args.args[1], PLAN)
+
+
+class ChildRowBatchingTests(SimpleTestCase):
+    """The mirror rebuild is three inserts, not one per module and per week.
+
+    Written row by row, a learner on five thirteen-week modules cost about 140
+    sequential round trips, which is what made assigning a single learner to a
+    module hang for seconds against a remote database.
+    """
+
+    def _replace(self, plan):
+        from . import active_users
+
+        calls = []
+
+        def bulk(name):
+            def create(rows, **kwargs):
+                calls.append(name)
+                for index, row in enumerate(rows, 1):
+                    row.pk = index if name != 'weeks' else 100 + index
+                return list(rows)
+            return create
+
+        with patch.object(active_users, 'LearnerTrainingPlanModule') as modules,                 patch.object(active_users, 'LearnerTrainingPlanWeek') as weeks,                 patch.object(active_users, 'LearnerTrainingPlanComponent') as components:
+            modules.side_effect = lambda **kw: type('Row', (), {**kw, 'pk': None})()
+            weeks.side_effect = lambda **kw: type('Row', (), {**kw, 'pk': None})()
+            components.side_effect = lambda **kw: type('Row', (), {**kw, 'pk': None})()
+            modules.objects.bulk_create.side_effect = bulk('modules')
+            weeks.objects.bulk_create.side_effect = bulk('weeks')
+            components.objects.bulk_create.side_effect = bulk('components')
+            active_users.replace_training_plan(object(), plan)
+            return calls, modules, weeks, components
+
+    def test_one_insert_per_level_and_a_single_delete(self):
+        calls, modules, weeks, components = self._replace(PLAN)
+
+        self.assertEqual(calls, ['modules', 'weeks', 'components'])
+        modules.objects.filter.return_value.delete.assert_called_once_with()
+        self.assertEqual(len(modules.objects.bulk_create.call_args.args[0]), 1)
+        self.assertEqual(len(weeks.objects.bulk_create.call_args.args[0]), 2)
+        self.assertEqual(len(components.objects.bulk_create.call_args.args[0]), 2)
+
+    def test_every_component_is_filed_under_its_own_week(self):
+        # Batching the inserts is only safe while each child still points at the
+        # parent it belongs to; an off-by-one here would silently re-file a
+        # learner's components under the wrong week.
+        _calls, _modules, weeks, components = self._replace(PLAN)
+
+        week_rows = weeks.objects.bulk_create.call_args.args[0]
+        self.assertEqual([row.week_ref for row in week_rows], ['WEEK-1', 'WEEK-2'])
+        self.assertEqual([row.position for row in week_rows], [1, 2])
+        component_rows = components.objects.bulk_create.call_args.args[0]
+        self.assertEqual([row.component_ref for row in component_rows], ['COMP-1', 'COMP-2'])
+        self.assertEqual({row.plan_week.week_ref for row in component_rows}, {'WEEK-1'})
+        self.assertEqual([row.position for row in component_rows], [1, 2])
+
+    def test_an_empty_plan_clears_without_inserting(self):
+        calls, modules, _weeks, _components = self._replace([])
+
+        self.assertEqual(calls, [])
+        modules.objects.filter.return_value.delete.assert_called_once_with()

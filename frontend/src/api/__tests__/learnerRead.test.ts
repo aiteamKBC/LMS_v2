@@ -5,6 +5,7 @@ import { fetchLearnerDetail, fetchLearnerSummary, peekLearnerDetail, invalidateL
 import { fetchStudentActivity } from '../studentActivity';
 import { fetchTrainingPlanDashboard } from '../trainingPlanDashboard';
 import { overviewSchedule } from '../learnerOverview';
+import { fetchLearnerFirstSession } from '../learnerCalendar';
 import { updateLearnerCoach } from '../coach';
 import { updateEnrolmentUser } from '../enrolmentUsers';
 import { getSummary, RecordError } from '@/features/old-otjh/api';
@@ -101,6 +102,21 @@ describe('learner data transport', () => {
     await rejected;
     await expect(second).resolves.toEqual({ ready: true });
     expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('shares the live first-session gate while a StrictMode caller cancels', async () => {
+    const network = pending<Response>();
+    vi.mocked(fetch).mockReturnValue(network.promise);
+    const controller = new AbortController();
+    const first = fetchLearnerFirstSession('commercial', '125', controller.signal);
+    const cancelled = expect(first).rejects.toMatchObject({ name: 'AbortError' });
+    controller.abort();
+    const second = fetchLearnerFirstSession('commercial', '125');
+    network.resolve(reply({ caseOwner: null, booked: true, event: null, startsOn: null, access: 'open' }));
+    await cancelled;
+    await expect(second).resolves.toMatchObject({ access: 'open' });
+    expect(fetch).toHaveBeenCalledOnce();
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe('/learner_api/calendar/commercial/125/first-session/');
   });
 
   it('does not start a request for an already cancelled caller', async () => {

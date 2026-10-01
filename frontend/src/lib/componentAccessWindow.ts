@@ -1,6 +1,8 @@
 import { SYSTEM_TIME_ZONE } from './format';
 
-export interface WorkingHoursHoliday { start: string; end: string }
+/** One closed date range. `label` names the holiday when the scoped
+ *  (componentId) endpoint answered; the unscoped answer carries no names. */
+export interface WorkingHoursHoliday { start: string; end: string; label?: string }
 
 export interface ComponentAccessWindow {
   open: boolean;
@@ -8,6 +10,8 @@ export interface ComponentAccessWindow {
   closedReason: 'outside-hours' | 'weekend' | 'invalid' | null;
   outsideWorkingHours: boolean;
   outsideReason: 'outside-hours' | 'weekend' | 'holiday' | null;
+  /** The learner's own closed dates, when a scoped read supplied them. */
+  holidays?: WorkingHoursHoliday[];
   holidayCalendarReady?: boolean;
   holidayError?: string;
   refreshHolidays?: () => void;

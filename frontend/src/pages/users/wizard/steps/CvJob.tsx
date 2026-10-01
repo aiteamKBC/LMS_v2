@@ -133,7 +133,7 @@ function DocumentField({ label, docKind, store }: { label: string; docKind: CvDo
             ))}
           </div>
         )}
-        <label className={`inline-flex items-center gap-2 px-3 py-1.5 text-[12px] bg-background-100 text-foreground-600 rounded-lg border border-background-200 hover:bg-background-200 transition-smooth ${disabled ? 'opacity-60 pointer-events-none' : 'cursor-pointer'}`}>
+        <label className={`relative inline-flex items-center gap-2 px-3 py-1.5 text-[12px] bg-background-100 text-foreground-600 rounded-lg border border-background-200 hover:bg-background-200 transition-smooth ${disabled ? 'opacity-60 pointer-events-none' : 'cursor-pointer'}`}>
           <AppIcon className={uploading ? 'ri-loader-4-line animate-spin' : 'ri-upload-2-line'} />
           {uploading ? 'Uploading…' : 'Select file…'}
           <input

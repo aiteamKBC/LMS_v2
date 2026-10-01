@@ -5,6 +5,7 @@ Source PDFs and their learners' answers/signatures are never used as content.
 """
 import base64
 import binascii
+import json
 import re
 from datetime import datetime, timezone
 from html import escape
@@ -18,18 +19,40 @@ ROLE_LABELS = {'advisor': 'Advisor', 'employer': 'Employer', 'participant': 'Par
 IMAGE_PATTERN = re.compile(r'^data:image/(png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$', re.I)
 
 REVIEW_TYPE_MCM = 'mcm'
+REVIEW_TYPE_APTEM_MCM = 'aptem_mcm'
 REVIEW_TYPE_PROGRESS_REVIEW = 'progress_review'
 #: Review Types with a signed export, by the Review Type's stable code -- never
 #: by a template's name. Anything else has no PDF at all (404), exactly as
 #: before this Progress Review entry was added.
 EXPORTABLE_REVIEW_TYPES = {
     REVIEW_TYPE_MCM: 'Monthly-Coaching-Meeting',
+    REVIEW_TYPE_APTEM_MCM: 'Monthly-Coaching-Meeting',
     REVIEW_TYPE_PROGRESS_REVIEW: 'Progress-Review',
 }
 
 
 def review_type_code(definition):
     return definition.get('template', {}).get('reviewTypeCode')
+
+
+def is_mcm_review(definition):
+    return review_type_code(definition) in {REVIEW_TYPE_MCM, REVIEW_TYPE_APTEM_MCM}
+
+
+def imported_table_rows(field):
+    configuration = field.get('configuration') or {}
+    value = configuration.get('importedTable')
+    if value is None and configuration.get('imported') and isinstance(configuration.get('description'), str):
+        try:
+            value = json.loads(configuration['description'])
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+    if not isinstance(value, list) or len(value) < 2 or not all(isinstance(row, list) for row in value):
+        return None
+    width = len(value[0])
+    if not width or any(len(row) != width for row in value):
+        return None
+    return [['' if cell is None else str(cell) for cell in row] for row in value]
 
 
 def pdf_availability(definition):
@@ -342,7 +365,7 @@ def build_mcm_pdf(definition, information):
 
     formal_meeting_summary = (
         meeting_summary_field(definition)
-        if review_type_code(definition) == REVIEW_TYPE_MCM
+        if is_mcm_review(definition)
         else None
     )
 
@@ -356,6 +379,22 @@ def build_mcm_pdf(definition, information):
             if formal_meeting_summary and field.get('id') == formal_meeting_summary.get('id'):
                 continue
             if field.get('fieldType') == 'action_button':
+                continue
+            imported_rows = imported_table_rows(field)
+            if imported_rows:
+                column_width = width / len(imported_rows[0])
+                imported_table = Table(
+                    [[paragraph(cell, row_index == 0) for cell in row] for row_index, row in enumerate(imported_rows)],
+                    colWidths=[column_width] * len(imported_rows[0]), repeatRows=1,
+                )
+                imported_table.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#eee9ff')),
+                    ('GRID', (0, 0), (-1, -1), .35, colors.HexColor('#c9c3dc')),
+                    ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                    ('LEFTPADDING', (0, 0), (-1, -1), 5), ('RIGHTPADDING', (0, 0), (-1, -1), 5),
+                    ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+                ]))
+                rows.append([paragraph(field.get('title'), True), Spacer(1, 4), imported_table])
                 continue
             kind = field.get('fieldType')
             if kind in ('boolean', 'boolean_case_block', 'numeric', 'date', 'list_item', 'email', 'phone'):
@@ -390,7 +429,7 @@ def build_mcm_pdf(definition, information):
             ] if history else [paragraph('No completed Progress Reviews recorded.')]),
             Spacer(1, 16),
         ])
-    elif review_type_code(definition) == REVIEW_TYPE_MCM:
+    elif is_mcm_review(definition):
         # The signed document reads only the answer attached to this frozen
         # semantic field. It never reaches the mutable Coach AI artifact.
         summary = formal_meeting_summary.get('answer') if formal_meeting_summary else None

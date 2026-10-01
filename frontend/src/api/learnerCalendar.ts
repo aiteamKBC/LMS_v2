@@ -1,5 +1,5 @@
 ﻿import { createCachedResource } from './cachedRequest';
-import { readLearnerJson, invalidateLearnerReads, subscribeLearnerReadInvalidation } from './learnerRead';
+import { readLearnerJson, invalidateLearnerReads, subscribeLearnerReadInvalidation, withCallerSignal } from './learnerRead';
 import type { LearnerKind } from '@/api/learnerDetail';
 import type { CoachMeetingArtifactsResponse } from '@/pages/coach/shared/calendarEvents';
 import type { ImportedReview } from '@/api/reviewHistory';
@@ -18,6 +18,8 @@ export interface LearnerCalendarEvent {
   meetingOutcome?: 'ended' | 'completed' | null;
   /** Live session the learner missed but then watched in full as a recording. */
   watchedRecording?: boolean;
+  /** Catch-up only: the absence report it already makes up, if any. */
+  linkedReportId?: number | null;
   eventKey: string;
   title: string;
   source: 'mcr' | 'progress-review' | string;
@@ -100,6 +102,7 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
 export function invalidateLearnerCalendarCache(kind?: LearnerKind, id?: string): void {
   calendarResource.invalidate(kind && id ? `${kind}:${id}` : undefined);
+  firstSessionResource.invalidate(kind && id ? `${kind}:${id}` : undefined);
   invalidateLearnerReads();
 }
 
@@ -157,7 +160,7 @@ export function learnerMeetingArtifactContentUrl(kind: LearnerKind, learnerId: s
   return options.preview ? `${base}?preview=1` : base;
 }
 
-export async function signLearnerProgressReview(kind: LearnerKind, learnerId: string, eventKey: string, input: { name: string; signature: string }): Promise<{ event: LearnerCalendarEvent; monthlyLogSync?: { status: string; month?: string; message?: string } | null }> {
+export async function signLearnerProgressReview(kind: LearnerKind, learnerId: string, eventKey: string, input: { name: string; signature: string; applyMonthlyLogSignature?: boolean }): Promise<{ event: LearnerCalendarEvent; monthlyLogSync?: { status: string; month?: string; message?: string } | null }> {
   const response = await fetch(`${BASE}/${kind}/${learnerId}/events/${encodeURIComponent(eventKey)}/sign/`, {
     method: 'POST',
     credentials: 'include',
@@ -189,7 +192,7 @@ export type BookableSessionType =
   // the learner's case owner rather than a coach, who doesn't exist yet).
   | OnboardingReviewType;
 
-export type OnboardingReviewType = 'eligibility-review' | 'workspace' | 'training-plan';
+export type OnboardingReviewType = 'eligibility-review' | 'workspace' | 'training-plan' | 'uln-privacy';
 
 export interface OnboardingReview {
   type: OnboardingReviewType;
@@ -409,6 +412,15 @@ export interface SessionSlot {
  *  Pinned to Europe/London rather than the browser's zone: the session happens
  *  in Kent whatever the learner's own clock says, and a learner signing in
  *  from abroad must still be offered — and book — the college's hours. */
+/** UK times the learner's coach is free for a catch-up of this length on `date`. */
+export async function fetchCatchupSlots(kind: LearnerKind, id: string, date: string, durationMinutes: number, signal?: AbortSignal): Promise<string[]> {
+  const query = new URLSearchParams({ date, timezoneOffsetMinutes: String(ukOffsetForDate(date)), durationMinutes: String(durationMinutes), purpose: 'catch-up' });
+  const response = await fetch(`${BASE}/${kind}/${id}/coach-availability/?${query}`, { credentials: 'include', signal });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || 'Could not check your coach’s calendar.');
+  return Array.isArray(result.times) ? result.times as string[] : [];
+}
+
 export function ukOffsetForDate(date: string): number {
   return (
     (12 -
@@ -488,7 +500,31 @@ export interface LearnerFirstSession {
    *  yet. 'waiting' — booked, day not arrived. 'open' — the session day has
    *  come, so the programme runs normally. */
   access: 'enrolling' | 'book' | 'waiting' | 'open';
+  /** Whether it can be booked (or already is) from the learner's First Learning
+   *  Session tab — for an apprentice in Delivery, once they have signed all four
+   *  compliance documents. Older servers omit it. */
+  canBook?: boolean;
 }
+
+// This permission check is live rather than TTL-cached, but its transport is
+// shared while it is in flight. React StrictMode tears down the first effect
+// immediately in development; cancelling only that caller keeps the server
+// request alive so the remount joins it instead of opening a duplicate read.
+const firstSessionResource = createCachedResource<LearnerFirstSession>(
+  'learner-first-session',
+  async key => {
+    const [kind, id] = key.split(':', 2);
+    const response = await fetch(`${BASE}/${kind}/${id}/first-session/`, {
+      credentials: 'include',
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(result.error || 'Could not check your first session.');
+    }
+    return result as LearnerFirstSession;
+  },
+  0,
+);
 
 /**
  * The learner's first-session state.
@@ -501,13 +537,5 @@ export async function fetchLearnerFirstSession(
   id: string,
   signal?: AbortSignal,
 ): Promise<LearnerFirstSession> {
-  const response = await fetch(`${BASE}/${kind}/${id}/first-session/`, {
-    credentials: 'include',
-    signal,
-  });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(result.error || 'Could not check your first session.');
-  }
-  return result as LearnerFirstSession;
+  return withCallerSignal(firstSessionResource.read(`${kind}:${id}`), signal);
 }

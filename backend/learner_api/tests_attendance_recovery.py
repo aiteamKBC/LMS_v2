@@ -38,14 +38,26 @@ class RecoveryBookingTests(SimpleTestCase):
         self.clock.start()
         self.addCleanup(self.clock.stop)
 
-    def resolve(self, event, *, lock=False):
-        with patch('learner_api.absence_reports.CoachCalendarEvent.objects') as manager:
+    def resolve(self, event, *, lock=False, linked_elsewhere=False, for_report_id=None):
+        with patch('learner_api.absence_reports.CoachCalendarEvent.objects') as manager,                 patch('learner_api.absence_reports.CoachAbsenceReport.objects') as reports:
             manager.filter.return_value.first.return_value = event
             manager.select_for_update.return_value.filter.return_value.first.return_value = event
-            result = _catchup_booking(SOURCE, MIRROR, 'catch-up:99:1', date(2026, 10, 1), lock=lock)
+            linked = reports.filter.return_value.exclude.return_value
+            linked.exists.return_value = linked_elsewhere
+            linked.exclude.return_value.exists.return_value = linked_elsewhere
+            result = _catchup_booking(SOURCE, MIRROR, 'catch-up:99:1', date(2026, 10, 1), lock=lock,
+                                      for_report_id=for_report_id)
             if lock:
                 manager.select_for_update.assert_called_once()
+            self.last_reports = reports
             return result
+
+    def test_a_catchup_already_making_up_another_lecture_is_refused(self):
+        with self.assertRaisesRegex(RecoveryPlanError, 'already linked to another lecture'):
+            self.resolve(booked_event(), linked_elsewhere=True)
+        # Re-linking the same report keeps its own booking out of the check.
+        self.assertIsNotNone(self.resolve(booked_event(), for_report_id=34))
+        self.last_reports.filter.return_value.exclude.return_value.exclude.assert_called_once_with(pk=34)
 
     def test_saved_pending_approval_booking_is_valid_and_can_be_locked(self):
         event = booked_event()
@@ -364,3 +376,16 @@ class CatchupOutcomeTests(SimpleTestCase):
                     events.filter.return_value.exists.return_value = True
                     response = inspect.unwrap(link_catchup)(request, kind='apprenticeship', learner_id=12)
                 self.assertEqual(response.status_code, expected)
+
+
+class LinkedCatchupCalendarTests(SimpleTestCase):
+    def test_learner_calendar_marks_catchups_already_making_up_a_lecture(self):
+        from .calendar import _annotate_linked_catchups
+        events = [{'source': 'catch-up', 'eventKey': 'catch-up:1'}, {'source': 'catch-up', 'eventKey': 'catch-up:2'},
+                  {'source': 'mcr', 'eventKey': 'mcr:1'}]
+        with patch('coach_api.models.CoachAbsenceReport.objects') as reports:
+            reports.filter.return_value.exclude.return_value.values_list.return_value = [('catch-up:1', 40)]
+            _annotate_linked_catchups(events)
+        self.assertEqual([event.get('linkedReportId') for event in events], [40, None, None])
+        self.assertNotIn('linkedReportId', events[2])
+        reports.filter.assert_called_once_with(catchup_event_key__in=['catch-up:1', 'catch-up:2'])

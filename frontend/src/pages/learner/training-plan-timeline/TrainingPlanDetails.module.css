@@ -72,7 +72,7 @@
 .tabPanel h3 { overflow-wrap: anywhere; }
 .tabPanel[hidden] { display: none; }
 .toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
-.title h2 { color: var(--kbc-learner-primary, #4f2d7f); font-size: 1rem; font-weight: 700; }
+.title h2 { padding-left: .75rem; border-left: 4px solid var(--learner-purple, #7350a8); color: var(--kbc-learner-primary, #4f2d7f); font-size: 1rem; font-weight: 700; }
 .title a { margin-top: .35rem; }
 .filters { display: flex; flex-wrap: wrap; align-items: end; gap: .75rem; max-width: 100%; }
 .filters label { display: grid; gap: .35rem; min-width: 0; font-size: .6875rem; color: var(--kbc-muted); }
@@ -184,6 +184,9 @@
 .activityBreakdown { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .5rem 1rem; list-style: none; padding: 0; margin: 0; font-size: .6875rem; }
 .activityBreakdown li { display: flex; justify-content: space-between; align-items: start; gap: .5rem; color: var(--kbc-muted); }
 .activityBreakdown strong { color: var(--kbc-text); }
+.trainingCards .activityBreakdown { display: flex; gap: .75rem; overflow-x: auto; padding: .125rem .125rem .5rem; scrollbar-gutter: stable; }
+.trainingCards .activityBreakdown li { flex: 1 0 10rem; align-items: center; min-width: 0; padding: .75rem .875rem; border: 1px solid var(--kbc-border); border-radius: .75rem; background: var(--kbc-surface); }
+.trainingCards .activityBreakdown strong { color: var(--kbc-learner-primary, #4f2d7f); }
 .moduleDisclosure { font-size: .75rem; line-height: 1.6; }
 .moduleDisclosure summary { cursor: pointer; color: var(--learner-purple); font-weight: 600; }
 .moduleDisclosure summary:focus-visible { outline: 2px solid var(--learner-purple); outline-offset: 3px; }
@@ -210,8 +213,13 @@
 @container moduleOverview (min-width: 40rem) {
   .root .overview .scheduleFacts { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 }
+@container moduleOverview (min-width: 80rem) {
+  .trainingCards .overviewGroups { grid-template-columns: minmax(0, 2.2fr) repeat(2, minmax(0, 1fr)); }
+  .trainingCards .scheduleGroup { grid-column: auto; }
+}
 @container trainingDetails (min-width: 64rem) {
   .withWeeklyFocus, .root .cards { grid-template-columns: minmax(0, 1.8fr) minmax(20rem, 1fr); }
+  .root .cards.trainingCards { grid-template-columns: minmax(0, 1fr); }
   .activityOverviewTopRow { grid-template-columns: minmax(0, 4fr) minmax(18rem, 1fr) !important; }
   .weeklyPlan { min-height: 0; align-items: stretch; }
   .weekRail { contain: size; display: flex; min-height: 0; flex-direction: column; overflow: hidden; }
@@ -321,3 +329,8 @@
 :global([data-theme='dark'] .dashboard-theme[data-workspace-role='learner']) :is(.rowAction, .root .overviewGroup h3, .studyHoursProgress > span) {
   color: #d7c4f4;
 }
+
+/* Overview without the Monthly study plan: charts use the full width instead
+   of leaving the plan's column empty. */
+.activityOverviewTopRow.overviewSingle { grid-template-columns: minmax(0, 1fr) !important; margin-bottom: 0; }
+.overviewSingle .activityOverviewMain { gap: .75rem; }

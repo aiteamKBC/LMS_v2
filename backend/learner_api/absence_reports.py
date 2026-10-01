@@ -32,6 +32,7 @@ from .alternative_recovery import (
     alternative_event_key,
     alternative_target_details,
     eligible_alternative_occurrences,
+    eligible_alternatives_by_occurrence,
     validate_alternative_occurrence,
 )
 
@@ -91,6 +92,11 @@ def _fetch_missed_sessions(learner, learner_id, *, meetings=False, kind=None):
         if _can_report_absence(row)
     ]
 
+    # Alternatives for every Teams lecture in one batch, not several queries per lecture.
+    alternatives = eligible_alternatives_by_occurrence([
+        str(row.get("occurrence_id") or row.get("session_id") or "")
+        for row in rows if row.get("source") == "microsoft-teams"
+    ])
     result = []
     for row in rows:
         item = {
@@ -107,8 +113,8 @@ def _fetch_missed_sessions(learner, learner_id, *, meetings=False, kind=None):
             "module": row.get("module_title", "") or "",
         }
         if row.get("source") == "microsoft-teams":
-            item["alternativeSessions"] = eligible_alternative_occurrences(
-                str(row.get("occurrence_id") or row.get("session_id") or "")
+            item["alternativeSessions"] = alternatives.get(
+                str(row.get("occurrence_id") or row.get("session_id") or ""), []
             )
         result.append(item)
     return result
@@ -245,8 +251,13 @@ def _email_coach_recovery(report, *, recovery_details=""):
         logger.exception("Coach recovery email failed for absence report %s", report.id)
 
 
-def _catchup_booking(learner, mirror, event_key, session_date, *, lock=False):
-    """Recheck the saved appointment; matching IDs never override another email."""
+def _catchup_booking(learner, mirror, event_key, session_date, *, lock=False, for_report_id=None):
+    """Recheck the saved appointment; matching IDs never override another email.
+
+    One catch-up makes up one lecture: a booking already linked to another
+    (not declined) absence report is refused. ``for_report_id`` is the report
+    being (re)linked, which may keep its own booking.
+    """
     query = CoachCalendarEvent.objects
     if lock:
         query = query.select_for_update()
@@ -264,6 +275,11 @@ def _catchup_booking(learner, mirror, event_key, session_date, *, lock=False):
     start = datetime.combine(booking.scheduled_date, booking.scheduled_time)
     if booking.scheduled_date < session_date or start <= timezone.localtime().replace(tzinfo=None):
         raise RecoveryPlanError('Choose a future catch-up session on or after the lecture date.')
+    linked = CoachAbsenceReport.objects.filter(catchup_event_key=event_key).exclude(status='declined')
+    if for_report_id is not None:
+        linked = linked.exclude(pk=for_report_id)
+    if linked.exists():
+        raise RecoveryPlanError('This catch-up is already linked to another lecture. Book or select another session.')
     return booking
 
 

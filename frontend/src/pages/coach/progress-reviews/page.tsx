@@ -10,6 +10,7 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { SearchInput } from '@/components/ui/FilterToolbar';
 import { PageContainer } from '@/components/ui/PageContainer';
+import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
 import { Pagination } from '@/components/ui/Pagination';
 import { Panel } from '@/components/ui/Panel';
 import { StatusBadge } from '@/components/ui/StatusBadge';
@@ -49,12 +50,6 @@ import {
   statusLabel,
 } from '../shared/calendarEvents';
 import { normalizeResolvedReview, normalizeResolvedReviews, reviewActionMatrix } from '../shared/resolvedReviewRows';
-import { MeetingsHero } from '../monthly-coaching/components/MeetingsHero';
-import { MiniCalendar } from '../monthly-coaching/components/MiniCalendar';
-import { MonthlyStatsCard } from '../monthly-coaching/components/MonthlyStatsCard';
-import { MeetingStatusPill, StatusTabs, type StatusTabItem } from '../monthly-coaching/components/StatusTabs';
-import { getStatusCounts } from '../monthly-coaching/meetingsView';
-import styles from '../shared/meetingTable.module.css';
 import {
   type ProgressReviewSlide,
   type ProgressReviewSlideListItem,
@@ -197,10 +192,6 @@ function addDays(value: Date, days: number) {
 
 function startOfMonth(value = new Date()) {
   return new Date(value.getFullYear(), value.getMonth(), 1);
-}
-
-function endOfMonth(value: Date) {
-  return new Date(value.getFullYear(), value.getMonth() + 1, 0);
 }
 
 function monthKey(value: Date) {
@@ -985,7 +976,8 @@ export default function CoachProgressReviews() {
   const [currentPage, setCurrentPage] = useState(() => pageFromQuery(searchParams.get('page')));
   const [searchTerm, setSearchTerm] = useState(() => searchParams.get('q') || '');
   const [selectedMonth, setSelectedMonth] = useState(() => monthFromQuery(searchParams.get('month')));
-  const cacheKey = coachSessionKey('progress-reviews', coach.email, monthKey(selectedMonth));
+  const [allMonths, setAllMonths] = useState(() => searchParams.get('months') === 'all');
+  const cacheKey = coachSessionKey('progress-reviews', coach.email, 'all-months');
   const initialCache = readCoachSessionCache<{ events: CoachCalendarEvent[]; ownerName: string }>(cacheKey);
   const [events, setEvents] = useState<CoachCalendarEvent[]>(() => initialCache?.events || []);
   const [ownerName, setOwnerName] = useState(() => initialCache?.ownerName || 'Coach');
@@ -1001,24 +993,23 @@ export default function CoachProgressReviews() {
   const [pptxModalReview, setPptxModalReview] = useState<CoachCalendarEvent | null>(null);
   const [generatedReviewKeys, setGeneratedReviewKeys] = useState<Set<string>>(new Set());
   const [bulkGenerating, setBulkGenerating] = useState(false);
-  // Programme-wide reviews feed only the stats card; the list stays month-scoped.
-  const programmeCacheKey = coachSessionKey('progress-reviews', coach.email, 'programme');
-  const [programmeEvents, setProgrammeEvents] = useState<CoachCalendarEvent[] | null>(
-    () => readCoachSessionCache<CoachCalendarEvent[]>(programmeCacheKey) || null,
-  );
-  const [programmeError, setProgrammeError] = useState<string | null>(null);
 
   useEffect(() => {
     const params = new URLSearchParams(searchParams);
-    if (monthKey(selectedMonth) === monthKey(startOfMonth())) {
+    if (allMonths) {
       params.delete('month');
+      params.set('months', 'all');
+    } else if (monthKey(selectedMonth) === monthKey(startOfMonth())) {
+      params.delete('month');
+      params.delete('months');
     } else {
       params.set('month', monthKey(selectedMonth));
+      params.delete('months');
     }
     setSearchParams(params, { replace: true });
     // Only the selected month belongs to this sync. Other page state is local.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedMonth, setSearchParams]);
+  }, [allMonths, selectedMonth, setSearchParams]);
 
   useEffect(() => {
     if (!coach.isInitialized) return;
@@ -1043,8 +1034,6 @@ export default function CoachProgressReviews() {
       setError(null);
       try {
         const data = await fetchCoachCalendarEvents(controller.signal, {
-          start: toIsoDate(startOfMonth(selectedMonth)),
-          end: toIsoDate(endOfMonth(selectedMonth)),
           includeLiveSessions: false,
           includeSchedulerQueues: false,
         });
@@ -1064,33 +1053,14 @@ export default function CoachProgressReviews() {
 
     loadReviews();
     return () => controller.abort();
-  }, [cacheKey, coach.email, coach.isInitialized, coach.name, selectedMonth]);
+  }, [cacheKey, coach.email, coach.isInitialized, coach.name]);
 
-  useEffect(() => {
-    if (!coach.isInitialized || !coach.email) return;
-    const controller = new AbortController();
-    const cached = readCoachSessionCache<CoachCalendarEvent[]>(programmeCacheKey);
-    setProgrammeEvents(cached || null);
-    setProgrammeError(null);
-    // No start/end: the timetable returns every review across the programme.
-    fetchCoachCalendarEvents(controller.signal, { includeLiveSessions: false, includeSchedulerQueues: false })
-      .then((data) => {
-        const reviews = normalizeResolvedReviews((data.events || []).filter(event => event.source === 'progress-review'));
-        writeCoachSessionCache(programmeCacheKey, reviews);
-        setProgrammeEvents(reviews);
-      })
-      .catch((err) => {
-        if (err instanceof DOMException && err.name === 'AbortError') return;
-        if (cached) return;
-        setProgrammeError(err instanceof Error ? err.message : 'Unable to load programme totals.');
-      });
-    return () => controller.abort();
-  }, [coach.email, coach.isInitialized, programmeCacheKey]);
-
-  const selectedMonthLabel = monthLabel(selectedMonth);
-  const selectedMonthIsCurrent = monthKey(selectedMonth) === monthKey(startOfMonth());
-  const monthTabDescription = `Progress reviews due or scheduled in ${selectedMonthLabel}.`;
-  const selectedMonthEvents = events.filter(event => isEventInMonth(event, selectedMonth));
+  const selectedMonthLabel = allMonths ? 'All months' : monthLabel(selectedMonth);
+  const selectedMonthIsCurrent = !allMonths && monthKey(selectedMonth) === monthKey(startOfMonth());
+  const monthTabDescription = allMonths
+    ? 'Past and upcoming progress reviews across all months.'
+    : `Progress reviews due or scheduled in ${selectedMonthLabel}.`;
+  const selectedMonthEvents = allMonths ? events : events.filter(event => isEventInMonth(event, selectedMonth));
   const scheduledEvents = selectedMonthEvents.filter(event => isScheduledEvent(event));
   const inProgressEvents = selectedMonthEvents.filter(event => isInProgressEvent(event));
   const awaitingSignatureEvents = selectedMonthEvents.filter(event => isAwaitingSignatureEvent(event));
@@ -1111,9 +1081,14 @@ export default function CoachProgressReviews() {
                     ? selectedMonthEvents
                     : [];
   const normalizedSearchTerm = searchTerm.trim();
-  const filteredData = normalizedSearchTerm
+  const filteredData = (normalizedSearchTerm
     ? data.filter(review => matchesReviewSearch(review, normalizedSearchTerm))
-    : data;
+    : data
+  ).slice().sort((left, right) => {
+    const leftDate = parseLocalDate(eventDisplayDate(left))?.getTime() ?? 0;
+    const rightDate = parseLocalDate(eventDisplayDate(right))?.getTime() ?? 0;
+    return rightDate - leftDate || eventIdentity(left).localeCompare(eventIdentity(right));
+  });
   const pageCount = Math.ceil(filteredData.length / REVIEWS_PER_PAGE);
   const activePage = Math.min(currentPage, Math.max(pageCount, 1));
   const paginatedReviews = filteredData.slice(
@@ -1160,7 +1135,14 @@ export default function CoachProgressReviews() {
   };
 
   const changeMonth = (nextMonth: Date) => {
+    setAllMonths(false);
     setSelectedMonth(startOfMonth(nextMonth));
+    setTab('all');
+    setCurrentPage(1);
+  };
+
+  const showAllMonths = () => {
+    setAllMonths(true);
     setTab('all');
     setCurrentPage(1);
   };
@@ -1174,9 +1156,6 @@ export default function CoachProgressReviews() {
     setEvents(prevEvents => sortEvents(prevEvents.map(event => (
       eventIdentity(event) === eventIdentity(updatedEvent) ? normalizeResolvedReview(updatedEvent) : event
     ))));
-    setProgrammeEvents(prevEvents => prevEvents?.map(event => (
-      eventIdentity(event) === eventIdentity(updatedEvent) ? normalizeResolvedReview(updatedEvent) : event
-    )) ?? null);
     setScheduleForm(scheduleDefaults(updatedEvent));
   };
 
@@ -1213,7 +1192,8 @@ export default function CoachProgressReviews() {
     const query = new URLSearchParams();
     if (tab !== 'all') query.set('filter', tab);
     if (searchTerm.trim()) query.set('q', searchTerm.trim());
-    if (!selectedMonthIsCurrent) query.set('month', monthKey(selectedMonth));
+    if (allMonths) query.set('months', 'all');
+    else if (!selectedMonthIsCurrent) query.set('month', monthKey(selectedMonth));
     if (activePage > 1) query.set('page', String(activePage));
     const queryString = query.toString();
     return `/coach/progress-reviews${queryString ? `?${queryString}` : ''}`;
@@ -1303,7 +1283,7 @@ export default function CoachProgressReviews() {
       if (failed) {
         setActionError(`Bulk generation finished with ${failed} of ${data.results.length} failure(s).`);
       } else {
-        setActionNotice(`Bulk generation complete — ${data.results.length} deck(s) generated.`);
+        setActionNotice(`Bulk generation complete — ${data.results.length} draft(s) generated. Open each review to review and save its slides.`);
       }
     } catch (err) {
       setActionError(err instanceof Error ? err.message : 'Unable to run bulk generation.');
@@ -1329,15 +1309,14 @@ export default function CoachProgressReviews() {
     }
   };
 
-  const tabItems: StatusTabItem[] = [
+  const tabItems: PageTabItem[] = [
     { value: 'all', label: FILTER_COPY.all.label, count: selectedMonthEvents.length },
-    { value: 'needs-schedule', label: FILTER_COPY['needs-schedule'].label, count: pendingSchedule, status: 'not-scheduled' },
-    { value: 'scheduled', label: FILTER_COPY.scheduled.label, count: scheduledEvents.length, status: 'scheduled' },
-    { value: 'in-progress', label: FILTER_COPY['in-progress'].label, count: inProgressEvents.length, status: 'in-progress' },
-    { value: 'awaiting-signature', label: FILTER_COPY['awaiting-signature'].label, count: awaitingSignatureEvents.length, status: 'awaiting-signature' },
-    { value: 'completed', label: FILTER_COPY.completed.label, count: completedEvents.length, status: 'completed' },
+    { value: 'needs-schedule', label: FILTER_COPY['needs-schedule'].label, count: pendingSchedule, tone: 'caution' },
+    { value: 'scheduled', label: FILTER_COPY.scheduled.label, count: scheduledEvents.length, tone: 'info' },
+    { value: 'in-progress', label: FILTER_COPY['in-progress'].label, count: inProgressEvents.length, tone: 'info' },
+    { value: 'awaiting-signature', label: FILTER_COPY['awaiting-signature'].label, count: awaitingSignatureEvents.length, tone: 'upcoming' },
+    { value: 'completed', label: FILTER_COPY.completed.label, count: completedEvents.length, tone: 'positive' },
   ];
-  const programmeCounts = programmeEvents ? getStatusCounts(programmeEvents) : null;
 
   return (
     <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Progress Reviews" pageSubtitle="Manage learner progress reviews and sign-offs" userName={ownerName} userRole="Progress Coach">
@@ -1348,11 +1327,7 @@ export default function CoachProgressReviews() {
           </div>
         ) : null}
 
-        <div className="space-y-4">
-        <MeetingsHero title="Progress Reviews" subject="progress reviews" monthLabel={selectedMonthLabel} />
-
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
-        <Panel padding="none" className="min-w-0">
+        <Panel padding="none">
           <div className="border-b border-foreground-100 px-4 py-5 md:px-5">
             <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
               <div className="flex shrink-0 flex-wrap items-center gap-2">
@@ -1361,6 +1336,7 @@ export default function CoachProgressReviews() {
                   <span className="min-w-36 text-center text-[14px] font-bold text-primary-900">{selectedMonthLabel}</span>
                   <button type="button" onClick={() => changeMonth(addMonths(selectedMonth, 1))} className="flex h-9 w-9 items-center justify-center rounded-lg border border-primary-100 bg-white text-primary-700 shadow-sm transition hover:bg-primary-50" aria-label="Next month"><AppIcon className="ri-arrow-right-s-line text-lg" /></button>
                 </div>
+                <button type="button" onClick={showAllMonths} aria-pressed={allMonths} className={cn('h-9 rounded-lg border px-3 text-[12px] font-semibold transition', allMonths ? 'border-primary-600 bg-primary-600 text-white' : 'border-primary-200 bg-primary-50 text-primary-700 hover:bg-primary-100')}>All months</button>
                 {!selectedMonthIsCurrent ? <button type="button" onClick={() => changeMonth(startOfMonth())} className="h-9 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-semibold text-primary-700 transition hover:bg-primary-100">Today</button> : null}
               </div>
               <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center xl:justify-end">
@@ -1370,7 +1346,7 @@ export default function CoachProgressReviews() {
               </div>
             </div>
             <div className="mt-5 border-t border-foreground-100 pt-4">
-              <StatusTabs items={tabItems} value={tab} onChange={(next) => changeTab(next as ReviewTab)} label="Filter progress reviews by status" />
+              <PageTabs items={tabItems} value={tab} onChange={(next) => changeTab(next as ReviewTab)} label="Filter progress reviews by status" />
             </div>
           </div>
 
@@ -1396,10 +1372,10 @@ export default function CoachProgressReviews() {
 
             {!loading && filteredData.length > 0 ? (
               <div className="overflow-x-auto rounded-xl border border-primary-100 bg-white shadow-sm">
-                <table className={cn('w-full min-w-[1120px] border-collapse text-left', styles.meetingTable)}>
+                <table className="w-full min-w-[1120px] border-collapse text-left">
                   <caption className="sr-only">Progress reviews for {selectedMonthLabel}</caption>
                   <thead>
-                    <tr className="bg-[#F7F4FF] text-[11px] font-bold uppercase tracking-wide text-[#6B6385]">
+                    <tr className="bg-primary-50/70 text-[11px] font-bold uppercase tracking-wide text-primary-800">
                       <th className="whitespace-nowrap px-4 py-3 align-middle">Learner</th>
                       <th className="whitespace-nowrap px-4 py-3 align-middle">Programme</th>
                       <th className="whitespace-nowrap px-4 py-3 align-middle">Date &amp; time</th>
@@ -1419,22 +1395,22 @@ export default function CoachProgressReviews() {
                           <td className="px-4 py-3 align-middle">
                             <div className="flex items-center gap-3">
                               <LearnerAvatar name={review.learner} tone={isAtRiskProgressReview(review) ? 'critical' : statusTone(review.status)} />
-                              <div className="min-w-0 text-left">
+                              <div className="min-w-0">
                                 <strong className="block text-[13px] font-bold text-primary-900">{review.learner || 'Unknown learner'}</strong>
-                                <span className={cn('block text-[11px] text-foreground-500', styles.learnerEmail)}>{review.email || 'Progress review'}</span>
+                                <span className="block text-[11px] text-foreground-500">{review.email || 'Progress review'}</span>
                               </div>
                             </div>
                           </td>
                           <td className="px-4 py-3 align-middle text-[12px] text-foreground-700"><span className="inline-flex items-center gap-1.5 whitespace-nowrap"><AppIcon className="ri-book-open-line text-primary-500" />{review.programme || '--'}</span></td>
                           <td className="whitespace-nowrap px-4 py-3 align-middle text-[12px] text-foreground-700"><span className="inline-flex min-w-[150px] flex-col gap-1"><span className="flex items-center gap-1.5 whitespace-nowrap"><AppIcon className="ri-calendar-line shrink-0 text-primary-500" />{formatDateLabel(eventDisplayDate(review))}</span><span className="flex items-center gap-1.5 whitespace-nowrap text-foreground-500"><AppIcon className="ri-time-line shrink-0 text-primary-500" />{formatTimeRangeLabel(review)}</span></span></td>
-                          <td className="px-4 py-3 text-center align-middle"><div className="flex flex-wrap justify-center gap-1.5"><MeetingStatusPill event={review} />{isAtRiskProgressReview(review) ? <StatusBadge tone="critical" label="Overdue" dot={false} size="sm" /> : null}{isDueSoonEvent(review) ? <StatusBadge tone="upcoming" label="Due Soon" dot={false} size="sm" /> : null}</div></td>
-                          <td className={cn('px-4 py-3 align-middle', styles.rowActions)} onClick={(clickEvent) => clickEvent.stopPropagation()}>{actions.schedule ? <button type="button" onClick={() => openScheduleModal(review)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-calendar-schedule-line" />{actions.schedule}</button> : null}</td>
-                          <td className="whitespace-nowrap px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}>
-                            <div className={cn('flex flex-nowrap justify-end gap-1.5', styles.rowActions)}>
+                          <td className="px-4 py-3 text-center align-middle"><div className="flex flex-wrap justify-center gap-1.5"><StatusBadge tone={statusTone(review.status)} label={statusLabel(review.status)} size="sm" />{isAtRiskProgressReview(review) ? <StatusBadge tone="critical" label="Overdue" dot={false} size="sm" /> : null}{isDueSoonEvent(review) ? <StatusBadge tone="upcoming" label="Due Soon" dot={false} size="sm" /> : null}</div></td>
+                          <td className="px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}>{actions.schedule ? <button type="button" onClick={() => openScheduleModal(review)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-calendar-schedule-line" />{actions.schedule}</button> : null}</td>
+                          <td className="min-w-[320px] px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}>
+                            <div className="flex justify-end gap-1.5">
+                              <button type="button" onClick={() => openDetails(review)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-eye-line" />View</button>
                               {actions.viewForm ? <button type="button" onClick={() => { void openCompletionForm(review); }} disabled={isBusy} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className="ri-file-edit-line" />View Form</button> : null}
                               {actions.presentation ? <button type="button" onClick={() => { handleCreateSlides(review); }} disabled={!reviewHasLearnerReference(review)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className={hasSlides ? 'ri-slideshow-2-line' : 'ri-file-ppt-line'} />{hasSlides ? 'View Slides' : 'Create Slides'}</button> : null}
                               {actions.join ? <button type="button" onClick={() => { handleJoin(review); }} disabled={isBusy} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className="ri-video-on-line" />Join</button> : null}
-                              <button type="button" aria-label="View" title="View" onClick={() => openDetails(review)} className={cn('inline-flex h-9 items-center justify-center rounded-lg border border-primary-100 bg-white text-[14px] text-primary-700 shadow-sm transition hover:bg-primary-50', styles.iconAction)}><AppIcon className="ri-eye-line" /></button>
                             </div>
                           </td>
                         </tr>
@@ -1461,20 +1437,6 @@ export default function CoachProgressReviews() {
             ) : null}
           </div>
         </Panel>
-
-        <aside className="grid content-start gap-4 md:grid-cols-2 xl:grid-cols-1" aria-label="Progress review overview">
-          <MiniCalendar month={selectedMonth} events={selectedMonthEvents} onMonthChange={(offset) => changeMonth(addMonths(selectedMonth, offset))} />
-          {programmeCounts ? (
-            <MonthlyStatsCard counts={programmeCounts} title="Whole programme" totalLabel="Total progress reviews" showAllStatuses monthLabel="All reviews across the programme" />
-          ) : (
-            <section aria-label="Whole programme" className="rounded-[20px] border border-primary-100 bg-white p-4 text-[12px] text-foreground-500 shadow-[0_10px_30px_-18px_rgb(76_29_149/0.35)]">
-              <h3 className="mb-2 flex items-center gap-2 text-[14px] font-bold text-primary-900"><AppIcon className="ri-bar-chart-2-fill text-primary-600" />Whole programme</h3>
-              {programmeError ? <p role="alert" className="text-red-700">{programmeError}</p> : <p>Loading programme totals...</p>}
-            </section>
-          )}
-        </aside>
-        </div>
-        </div>
 
         {scheduleModalEvent ? (
           <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm" onClick={() => { if (!busyEventId) setScheduleModalEvent(null); }}>

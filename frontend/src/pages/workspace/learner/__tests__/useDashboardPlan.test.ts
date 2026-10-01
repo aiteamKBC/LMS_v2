@@ -2,19 +2,29 @@ import { describe, expect, it } from 'vitest';
 import type { LogSummary } from '@/features/monthly-logs/api';
 import { contractPlannedOtjh, monthlyLogActualOtjh, monthlyLogOtjh } from '../useDashboardPlan';
 
+it('uses journal targets even when the older contract is unavailable or different', () => {
+  expect(contractPlannedOtjh({ contractStatus: 'unavailable', months: {},
+    journalTargets: { '2026-01': 0, '2026-02': 33, '2026-03': 25 } })).toBe(58);
+  expect(contractPlannedOtjh({ contractStatus: 'ready', months: {
+    '2026-01': { label: '', topics: [], source: 'contract', planned: 99 },
+  }, journalTargets: { '2026-01': 0 } })).toBe(0);
+});
+
 describe('dashboard OTJH source transition', () => {
-  it('maps retained Audit values and LMS months into the chart payload', () => {
+  it('maps SSOT monthly values and programme totals into the chart payload', () => {
     const summary = {
       learner: { id: 125, aptem_id: 7001, name: 'Learner', programme: 'Programme', coach_name: '', planned_end_date: '2027-10-17' },
       months: [
-        { month: '2025-04', source: 'legacy', training_plan_target: '44.00', actual_hours: '61.021944', not_accepted_hours: '2.5' },
+        { month: '2025-04', source: 'lms', training_plan_target: '44.00', actual_hours: '61.021944', not_accepted_hours: '2.5' },
         { month: '2026-09', source: 'lms', training_plan_target: 40, actual_hours: 12, not_accepted_hours: 3 },
       ],
+      training_plan_totals: { accepted_hours: 73.021944, planned_hours: 84 },
     } as unknown as LogSummary;
 
     expect(monthlyLogOtjh(summary)).toEqual({
-      cutoffMonth: '2026-08',
       plannedEndDate: '2027-10-17',
+      acceptedTotal: 73.021944,
+      plannedTotal: 84,
       months: {
         '2025-04': { target: 44, submitted: 2.5, completed: 61.021944 },
         '2026-09': { target: 40, submitted: 3, completed: 12 },
@@ -22,20 +32,22 @@ describe('dashboard OTJH source transition', () => {
     });
   });
 
-  it('leaves learners without an Audit record entirely on LMS calculations', () => {
+  it('keeps a learner entirely on SSOT calculations', () => {
     const summary = {
       learner: { id: 125, aptem_id: null, name: 'Learner', programme: 'Programme', coach_name: '' },
       months: [{ month: '2026-09', source: 'lms', training_plan_target: 40, actual_hours: 12, not_accepted_hours: 3 }],
+      training_plan_totals: { accepted_hours: 12, planned_hours: 40 },
     } as unknown as LogSummary;
 
     expect(monthlyLogOtjh(summary)).toEqual({
       months: { '2026-09': { target: 40, submitted: 3, completed: 12 } },
-      cutoffMonth: undefined,
       plannedEndDate: null,
+      acceptedTotal: 12,
+      plannedTotal: 40,
     });
   });
 
-  it('sums accepted log months once, including months after the Audit cutoff', () => {
+  it('sums accepted SSOT log months once', () => {
     expect(monthlyLogActualOtjh({
       '2026-08': { completed: 18 },
       '2026-09': { completed: 2.5 },
@@ -43,17 +55,5 @@ describe('dashboard OTJH source transition', () => {
     })).toBe(21.75);
     expect(monthlyLogActualOtjh(undefined)).toBeNull();
     expect(monthlyLogActualOtjh({})).toBe(0);
-  });
-
-  it('uses all parsed PDF months and preserves a genuine zero target', () => {
-    const month = { label: '', topics: [], source: 'contract', planned: 0 };
-    expect(contractPlannedOtjh({ contractStatus: 'ready', months: {
-      '2026-08': { ...month, planned: 32 }, '2026-09': { ...month, planned: 37 },
-      '2027-01': { ...month, planned: 35 },
-    } })).toBe(104);
-    expect(contractPlannedOtjh({ contractStatus: 'ready', months: { '2026-08': month } })).toBe(0);
-    expect(contractPlannedOtjh({ contractStatus: 'ready', months: { '2026-08': { ...month, planned: null } } })).toBeNull();
-    expect(contractPlannedOtjh({ contractStatus: 'unavailable', months: {} })).toBeNull();
-    expect(contractPlannedOtjh(undefined)).toBeNull();
   });
 });

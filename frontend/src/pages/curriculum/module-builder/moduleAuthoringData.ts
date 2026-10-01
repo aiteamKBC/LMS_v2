@@ -14,6 +14,7 @@ import { hoursToRoundedMinutes, roundedMinutesToHours } from '@/lib/format';
 import { reviewCalendar } from '../teams-meetings/calendarReview';
 import { normalizedClock } from '../teams-meetings/calendarTime';
 import {
+  ADDITIONAL_TEAMS_MEETING_SETTING_KEYS,
   componentTypeGroups,
   componentTypes,
   getDefaultComponentSettings,
@@ -1445,6 +1446,10 @@ export const TEAMS_MEETING_SETTING_KEYS = [
   'teamsWebLink',
   'teamsDurationMinutes',
   'sessionRescheduled',
+  // The one-off week meeting is the original's too: its organiser invited its
+  // own guests to one date, and a copy placed in another week must arrive with
+  // no link at all rather than pointing people at somebody else's meeting.
+  ...ADDITIONAL_TEAMS_MEETING_SETTING_KEYS,
 ] as const;
 
 /**
@@ -2770,6 +2775,135 @@ export function fetchTeamsCreateStatus(moduleCatalogueId: string) {
   );
 }
 
+/**
+ * One extra Teams meeting on a single week, with its own host and guests.
+ *
+ * A different record from the module's calendar, not a variation of it: its own
+ * organiser, its own invitation list, one date, and a join link kept under the
+ * component's `extraTeams*` settings. It never creates, updates, supersedes or
+ * redirects the module's own meeting — see `backend/curriculum_api/teams_week_meeting.py`
+ * for how the two are held apart on both sides.
+ *
+ * The backend refuses a week with no live-session component, and refuses a live
+ * session that already holds a Teams link, so nothing here can replace a link
+ * that exists.
+ */
+export interface WeekTeamsMeetingInput {
+  weekId: string;
+  componentId: string;
+  title: string;
+  organizerEmail: string;
+  attendees: string[];
+  presenters: string[];
+  coOrganizers: string[];
+  localStartDateTime: string;
+  startDateTimeUtc: string;
+  durationMinutes: number;
+  lobbyBypass: string;
+  recording: string;
+  spokenLanguage: string;
+  details: string;
+  requestResponses: boolean;
+  allowNewTimeProposals: boolean;
+  transactionId: string;
+  scheduleTimeZone?: 'Africa/Cairo' | 'Europe/London';
+}
+
+export interface WeekTeamsMeetingResult {
+  created: boolean;
+  /** Whether Microsoft confirmed the invitation write that mails everyone named. */
+  invitationsSent: boolean;
+  /** Every address Microsoft confirmed on the meeting — organiser's guests, in all roles. */
+  invited: string[];
+  /**
+   * Our own schedule email, sent beside Microsoft's invitation — the same pair
+   * the module calendar sends. Null when the caller may not send LMS mail.
+   */
+  scheduleEmail?: TeamsMeetingResult['scheduleEmail'] | null;
+  meeting: {
+    liveSessionId: string;
+    weekId: string;
+    componentId: string;
+    eventId: string;
+    onlineMeetingId: string;
+    joinUrl: string;
+    webLink: string;
+    meetingOptionsUrl: string;
+    organizerEmail: string;
+    attendees: string[];
+    presenters: string[];
+    coOrganizers: string[];
+    startDateTimeUtc: string;
+    durationMinutes: number;
+    subject: string;
+    settingsApplied: boolean;
+  };
+  componentSettings: ComponentSettings;
+  warnings: string[];
+}
+
+export async function createWeekTeamsMeeting(moduleCatalogueId: string, input: WeekTeamsMeetingInput) {
+  return apiJson<WeekTeamsMeetingResult>(
+    `/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/week-teams-meetings/`,
+    { method: 'POST', body: JSON.stringify(input), timeoutMs: 45000 },
+  ).then(result => {
+    // Same reason as the module create below: this POST goes through this
+    // module's own client, so nothing else invalidates the curriculum GET cache.
+    clearCurriculumGetCache();
+    return result;
+  });
+}
+
+/**
+ * Change an additional week meeting, or cancel it.
+ *
+ * Its own endpoint, never `updateTeamsMeetingSchedule`: that one ends by
+ * re-attaching its series across every live-session component of the module,
+ * which would put one week's private link on all of them. The server refuses a
+ * week meeting sent to it for the same reason.
+ *
+ * `notifyAttendees` decides only whether people ALREADY invited are told.
+ * Anyone this save adds is always reached, because Microsoft puts a meeting on
+ * someone's calendar only when something is sent to them.
+ */
+export type WeekTeamsMeetingEdit =
+  Omit<WeekTeamsMeetingInput, 'weekId' | 'componentId' | 'organizerEmail' | 'transactionId'>
+  & { notifyAttendees: boolean };
+
+export interface WeekTeamsMeetingUpdateResult {
+  updated: boolean;
+  notifiedExisting: boolean;
+  /** Everyone this save added, who were sent the meeting individually. */
+  forwardedTo: string[];
+  meeting: WeekTeamsMeetingResult['meeting'];
+  componentSettings: ComponentSettings;
+  warnings: string[];
+}
+
+export async function updateWeekTeamsMeeting(
+  moduleCatalogueId: string,
+  liveSessionId: string,
+  input: WeekTeamsMeetingEdit,
+) {
+  return apiJson<WeekTeamsMeetingUpdateResult>(
+    `/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/week-teams-meetings/${encodeURIComponent(liveSessionId)}/`,
+    { method: 'PATCH', body: JSON.stringify(input), timeoutMs: 45000 },
+  ).then(result => {
+    clearCurriculumGetCache();
+    return result;
+  });
+}
+
+export async function cancelWeekTeamsMeeting(moduleCatalogueId: string, liveSessionId: string) {
+  return apiJson<{ cancelled: boolean; componentId: string; warnings: string[] }>(
+    `/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/week-teams-meetings/${encodeURIComponent(liveSessionId)}/`,
+    { method: 'DELETE', timeoutMs: 45000 },
+  ).then(result => {
+    clearCurriculumGetCache();
+    return result;
+  });
+}
+
 export async function createTeamsMeeting(
   input: TeamsMeetingInput,
   options: { confirmUncertain?: boolean; onSubmitted?: () => void } = {},
@@ -2794,6 +2928,25 @@ export async function createTeamsMeeting(
     clearCurriculumGetCache();
     return result;
   });
+}
+
+/**
+ * Who a save puts on the meeting that the saved calendar does not already have.
+ *
+ * Read against the stored roster rather than the form's starting values, and
+ * case-insensitively across every role, so moving somebody from attendee to
+ * presenter is not "someone new". The organizer counts as already invited:
+ * they own the event.
+ */
+function peopleAddedBySave(
+  invitations: { attendees?: string[]; presenters?: string[]; coOrganizers?: string[] },
+  series: { organizer_email?: string; attendees: string[]; presenters: string[]; co_organizers: string[] },
+) {
+  const keys = (...lists: Array<string[] | undefined>) => lists.flatMap(list => (list || [])
+    .map(value => String(value || '').trim().toLowerCase()).filter(Boolean));
+  const invited = new Set(keys([series.organizer_email || ''], series.attendees, series.presenters, series.co_organizers));
+  return [...new Set(keys(invitations.attendees, invitations.presenters, invitations.coOrganizers))]
+    .filter(email => !invited.has(email));
 }
 
 /**
@@ -2831,14 +2984,25 @@ export async function updateTeamsMeetingSchedule(liveSessionId: string, input: P
   // people/settings-only save is always quiet for everyone already invited;
   // newly added people are handled separately after the calendar is verified.
   const notifyAttendees = reviewed.peopleOnly ? false : reviewed.notifyAttendees !== false;
-  await reviewCalendar({ ...reviewed, settingsOnly, organizerEmail: series.organizer_email, joinUrl: series.join_url,
-    notifyOnUpdate: notifyAttendees,
+  const invitations = {
     attendees: reviewed.attendees ?? series.attendees, presenters: reviewed.presenters ?? series.presenters,
     coOrganizers: reviewed.coOrganizers ?? series.co_organizers,
-    recording: reviewed.recording ?? series.recording, lobbyBypass: reviewed.lobbyBypass ?? series.lobby_bypass, spokenLanguage: reviewed.spokenLanguage ?? series.spoken_language,
-    calendarSeries: series.calendar_series, previousOccurrences: occurrences,
-    seriesMode: series.calendar_series?.length ? 'per_day' : 'shared',
-  }, series.timeZoneIana || getCalendarTimeZone());
+  };
+  // The review exists to be the last look before something leaves: a calendar
+  // that moves tells everyone already invited, and a person added is forwarded
+  // the meeting and sent the schedule email. A people-only save that adds
+  // nobody -- taking someone off, moving them between roles, changing the
+  // recording or the lobby -- sends no mail at all, to anybody, so a full
+  // session-by-session review and a "Save and send" button confirm an act with
+  // no outward effect. That save applies on the press instead.
+  if (!reviewed.peopleOnly || peopleAddedBySave(invitations, series).length) {
+    await reviewCalendar({ ...reviewed, settingsOnly, organizerEmail: series.organizer_email, joinUrl: series.join_url,
+      notifyOnUpdate: notifyAttendees, ...invitations,
+      recording: reviewed.recording ?? series.recording, lobbyBypass: reviewed.lobbyBypass ?? series.lobby_bypass, spokenLanguage: reviewed.spokenLanguage ?? series.spoken_language,
+      calendarSeries: series.calendar_series, previousOccurrences: occurrences,
+      seriesMode: series.calendar_series?.length ? 'per_day' : 'shared',
+    }, series.timeZoneIana || getCalendarTimeZone());
+  }
   // The review is complete. The caller can now replace its form with a
   // progress panel without showing it behind the confirmation dialog.
   options.onSubmitted?.();

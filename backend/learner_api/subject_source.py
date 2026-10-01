@@ -194,18 +194,33 @@ def read_learner(cursor, aptem_id, email):
     if not email or not secret or not endpoint:
         logger.warning('learner_live_source stage=configuration result=failed aptem_id=%s endpoint_configured=%s api_key_configured=%s', aptem_id, bool(endpoint), bool(secret))
         return None
-    cursor.execute('''SELECT l.learner_id,coalesce(a.lms_learner_id,l.learner_id),
-        CASE WHEN a.lms_learner_id IS NULL THEN l.learner_email ELSE a.lms_email END
+    cursor.execute('''SELECT l.id,i.source_learner_id,
+        coalesce(nullif(i.source_payload->>'source_email',''),i.source_payload->>'learner_email'),
+        coalesce((i.source_payload#>>'{legacy_alias,is_primary}')::boolean,
+                 i.source_payload ? 'record_id') AS is_primary
+        FROM "Learner".learners l
+        JOIN "Learner".learner_external_identities i
+          ON i.learner_id=l.id AND i.source_system='old_lms' AND i.deleted_at IS NULL
+        WHERE l.aptem_id=%s AND lower(btrim(l.email))=%s
+        UNION ALL
+        SELECT l.learner_id,coalesce(a.lms_learner_id,l.learner_id)::text,
+        CASE WHEN a.lms_learner_id IS NULL THEN l.learner_email ELSE a.lms_email END,
+        coalesce(a.is_primary,true)
         FROM "Last_audit".learners l
         LEFT JOIN "Last_audit".learner_lms_aliases a
           ON a.aptem_id=l.aptem_id AND a.canonical_lms_id=l.learner_id
-        WHERE l.aptem_id=%s AND lower(btrim(l.learner_email))=%s''', [aptem_id, email])
+        WHERE l.aptem_id=%s AND lower(btrim(l.learner_email))=%s
+          AND NOT EXISTS (SELECT 1 FROM "Learner".learners canonical
+                          WHERE canonical.aptem_id=l.aptem_id)''',
+        [aptem_id, email, aptem_id, email])
     identities = cursor.fetchall()
     if not identities:
         logger.warning('learner_live_source stage=database_identity result=no-match aptem_id=%s aliases=0', aptem_id)
         return None
     if len({row[0] for row in identities}) != 1:
         logger.warning('learner_live_source stage=database_identity result=invalid aptem_id=%s reason=multiple_canonical_rows aliases=%s', aptem_id, len(identities))
+        return None
+    if any(not str(row[1]).isdigit() or int(row[1]) <= 0 for row in identities):
         return None
     sources = tuple(sorted({(int(row[1]), str(row[2] or '').strip().casefold()) for row in identities}))
     # The enrolment email verifies the canonical learner above. Each stored
@@ -216,14 +231,15 @@ def read_learner(cursor, aptem_id, email):
     if len({ident for ident, _ in sources}) != len(sources):
         logger.warning('learner_live_source stage=database_identity result=invalid aptem_id=%s reason=duplicate_source_ids aliases=%s', aptem_id, len(sources))
         return None
+    primary_ids = tuple(sorted(int(row[1]) for row in identities if row[3] is True))
     logger.info('learner_live_source stage=database_identity result=success aptem_id=%s aliases=%s endpoint=%s', aptem_id, len(sources), label)
-    key = ('learner', endpoint, hashlib.sha256(secret.encode()).hexdigest(), sources, email)
+    key = ('learner', endpoint, hashlib.sha256(secret.encode()).hexdigest(), sources, email, primary_ids)
     def fetch():
         pages, groups = {}, {}
         for ident, source_email in sources:
             # A primary account can use either its saved original email or its
             # current canonical email; both are already verified DB identities.
-            expected = tuple(sorted({source_email, email})) if ident == identities[0][0] and source_email != email else source_email
+            expected = tuple(sorted({source_email, email})) if ident in primary_ids and source_email != email else source_email
             for group in _read_identity(endpoint, secret, ident, expected, pages):
                 existing = groups.get(group['id'])
                 if existing:

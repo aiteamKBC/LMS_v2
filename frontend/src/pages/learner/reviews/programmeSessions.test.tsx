@@ -142,8 +142,11 @@ function viewAction(item: typeof cases[number]) { return item.source === 'mcr' ?
 function reviewFilter(name: 'All' | 'Upcoming' | 'Past', count: number) {
   return screen.getByRole('button', { name: `${name} (${count})` });
 }
-function openMoreOptions() {
-  const summary = screen.getByText('More options', { selector: 'summary' });
+function openMoreOptions(item: typeof cases[number]) {
+  // CoachingHome labels this control "Details" (always shown, expanded inline)
+  // for the current-meeting card; every other context keeps "More options".
+  const label = item.source === 'mcr' ? 'Details' : 'More options';
+  const summary = screen.getByText(label, { selector: 'summary' });
   fireEvent.click(summary);
 }
 
@@ -239,7 +242,7 @@ describe.each(cases)('$path programme sessions', item => {
     expect(await screen.findByText(item.source === 'mcr' ? 'Calendar sync pending' : warning)).toBeVisible();
     page.unmount(); mount(item, undefined, 'current');
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(warning));
-    openMoreOptions();
+    openMoreOptions(item);
     fireEvent.click(screen.getAllByRole('button', { name: item.source === 'mcr' ? 'Reschedule' : 'Reschedule meeting' })[0]);
     const dialog = await screen.findByRole('dialog', { name: /Reschedule (monthly coaching|progress review)/ });
     const submit = within(dialog).getByRole('button', { name: 'Save new time' });

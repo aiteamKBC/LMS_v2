@@ -1,15 +1,16 @@
 import * as React from 'react';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { fetchAbsenceReports, submitAbsenceReport, type LearnerAbsenceReport } from '@/api/absenceReports';
-import { bookLearnerCalendarSession, fetchLearnerCalendarEvents, type LearnerCalendarEvent, type BookSessionResponse } from '@/api/learnerCalendar';
+import { bookLearnerCalendarSession, fetchCatchupSlots, fetchLearnerCalendarEvents, type LearnerCalendarEvent, type BookSessionResponse } from '@/api/learnerCalendar';
 import AbsenceReportForm from './components/AbsenceReportForm';
 
 vi.mock('@/hooks/useMyLearner', () => ({ useMyLearner: () => ({ kind: 'apprenticeship', id: '12' }) }));
 vi.mock('@/api/absenceReports', () => ({ fetchAbsenceReports: vi.fn(), submitAbsenceReport: vi.fn() }));
-vi.mock('@/api/learnerCalendar', () => ({ fetchLearnerCalendarEvents: vi.fn(), bookLearnerCalendarSession: vi.fn() }));
+vi.mock('@/api/learnerCalendar', () => ({ fetchLearnerCalendarEvents: vi.fn(), bookLearnerCalendarSession: vi.fn(),
+  fetchCatchupSlots: vi.fn(), ukOffsetForDate: vi.fn(() => -60) }));
 
 const futureDate = (days: number) => {
   const date = new Date(); date.setDate(date.getDate() + days); date.setHours(12, 0, 0, 0);
@@ -34,6 +35,7 @@ beforeEach(() => {
   })) });
   vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue(calendar());
   vi.mocked(bookLearnerCalendarSession).mockResolvedValue({ event: booking });
+  vi.mocked(fetchCatchupSlots).mockResolvedValue(['11:00', '11:15']);
   vi.mocked(submitAbsenceReport).mockResolvedValue({ id: 1, sessionTitle: 'first lecture', sessionDate: lectureDate, reference: 'AR-0001', status: 'pending' } as LearnerAbsenceReport);
 });
 afterEach(() => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
@@ -43,13 +45,14 @@ async function openForm() {
   await waitFor(() => expect(screen.getByLabelText('Lecture *')).toHaveValue('first'));
   fireEvent.change(screen.getByLabelText('Main reason'), { target: { value: 'illness' } });
 }
-const submit = () => screen.getByRole('button', { name: /Submit absence report/ });
+const submit = () => screen.getByRole('button', { name: /Submit absence report|Book catch-up & submit/ });
 async function chooseCatchup() {
   fireEvent.click(screen.getByRole('radio', { name: /Coach catch-up/ }));
   await waitFor(() => expect(screen.queryByText('Loading your bookings…')).not.toBeInTheDocument());
 }
-function fillBooking() {
+async function fillBooking() {
   fireEvent.change(screen.getByLabelText('Catch-up date'), { target: { value: bookingDate } });
+  await within(screen.getByLabelText('Catch-up time')).findByRole('option', { name: '11:00' });
   fireEvent.change(screen.getByLabelText('Catch-up time'), { target: { value: '11:00' } });
 }
 
@@ -131,7 +134,7 @@ describe('absence recovery choice', () => {
       'href', '/learner/calendar?kind=apprenticeship&learner=12&event=absence-recording%3A1');
   });
 
-  it('links a newly saved catch-up booking to the absence report automatically', async () => {
+  it('books the chosen coach time and submits the report with one button', async () => {
     let finish!: (result: BookSessionResponse) => void;
     vi.mocked(bookLearnerCalendarSession).mockReturnValue(new Promise(resolve => { finish = resolve; }));
     vi.mocked(submitAbsenceReport).mockResolvedValue({
@@ -141,15 +144,19 @@ describe('absence recovery choice', () => {
     await openForm(); await chooseCatchup();
     fireEvent.click(screen.getByRole('checkbox'));
     expect(submit()).toBeDisabled();
-    fillBooking(); fireEvent.click(screen.getByRole('button', { name: 'Book Catch-up Session' }));
-    expect(submit()).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Book Catch-up Session' })).not.toBeInTheDocument();
+    await fillBooking();
+    expect(screen.getByRole('button', { name: /Book catch-up & submit/ })).toBeEnabled();
+    fireEvent.click(submit());
     expect(submitAbsenceReport).not.toHaveBeenCalled();
     finish({ event: booking });
     await waitFor(() => expect(submitAbsenceReport).toHaveBeenCalledOnce());
     const data = vi.mocked(submitAbsenceReport).mock.calls[0][2];
     expect(data.get('recoveryMethod')).toBe('catch-up');
     expect(data.get('catchupEventKey')).toBe(booking.eventKey);
-    expect(bookLearnerCalendarSession).toHaveBeenCalledWith('apprenticeship', '12', expect.objectContaining({ sessionType: 'catch-up', scheduledDate: bookingDate, notes: expect.stringContaining('first lecture') }));
+    expect(bookLearnerCalendarSession).toHaveBeenCalledWith('apprenticeship', '12', expect.objectContaining({ sessionType: 'catch-up', scheduledDate: bookingDate,
+      scheduledTime: '11:00', timezoneOffsetMinutes: -60, notes: expect.stringContaining('first lecture') }));
+    expect(fetchCatchupSlots).toHaveBeenCalledWith('apprenticeship', '12', bookingDate, 30, expect.anything());
     expect(await screen.findByText('Added to your calendar')).toBeVisible();
     expect(screen.getByRole('link', { name: 'View in calendar' })).toHaveAttribute(
       'href', '/learner/calendar?kind=apprenticeship&learner=12&event=catch-up%3A12%3A1');
@@ -157,23 +164,24 @@ describe('absence recovery choice', () => {
 
   it('keeps Submit disabled after a failed booking', async () => {
     vi.mocked(bookLearnerCalendarSession).mockRejectedValue(new Error('That time is already booked.'));
-    await openForm(); await chooseCatchup(); fillBooking();
+    await openForm(); await chooseCatchup(); await fillBooking();
     fireEvent.click(screen.getByRole('checkbox'));
-    fireEvent.click(screen.getByRole('button', { name: 'Book Catch-up Session' }));
-    await screen.findByRole('alert');
-    expect(submit()).toBeDisabled();
+    fireEvent.click(submit());
+    expect(await screen.findByText('That time is already booked.')).toBeVisible();
+    await waitFor(() => expect(submit()).toBeDisabled());
     expect(submitAbsenceReport).not.toHaveBeenCalled();
   });
 
   it('keeps a successful booking selected when automatic report linking fails', async () => {
     vi.mocked(submitAbsenceReport).mockRejectedValueOnce(new Error('Could not link the absence report.'));
-    await openForm(); await chooseCatchup(); fillBooking();
+    await openForm(); await chooseCatchup(); await fillBooking();
     fireEvent.click(screen.getByRole('checkbox'));
-    fireEvent.click(screen.getByRole('button', { name: 'Book Catch-up Session' }));
+    fireEvent.click(submit());
 
     expect(await screen.findByText('Could not link the absence report.')).toBeVisible();
-    expect(screen.getByText(/Catch-up session booked\. Submit your absence report/)).toBeVisible();
-    expect(submit()).toBeEnabled();
+    expect(screen.getByText('Catch-up session booked.')).toBeVisible();
+    // Already booked: the button only submits now.
+    expect(screen.getByRole('button', { name: /Submit absence report/ })).toBeEnabled();
     expect(bookLearnerCalendarSession).toHaveBeenCalledOnce();
 
     vi.mocked(submitAbsenceReport).mockResolvedValue({
@@ -195,10 +203,21 @@ describe('absence recovery choice', () => {
         bankHolidays: [{ date: bookingDate, title: 'Test bank holiday' }],
       },
     });
-    await openForm(); await chooseCatchup(); fillBooking();
+    await openForm(); await chooseCatchup();
+    fireEvent.change(screen.getByLabelText('Catch-up date'), { target: { value: bookingDate } });
     expect(screen.getByRole('alert')).toHaveTextContent('Catch-up sessions cannot be booked on Test bank holiday.');
-    expect(screen.getByRole('button', { name: 'Book Catch-up Session' })).toBeDisabled();
+    expect(submit()).toBeDisabled();
+    expect(fetchCatchupSlots).not.toHaveBeenCalled();
     expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+  });
+
+  it('offers only the coach’s free times and says when a day has none', async () => {
+    vi.mocked(fetchCatchupSlots).mockResolvedValueOnce([]);
+    await openForm(); await chooseCatchup();
+    fireEvent.change(screen.getByLabelText('Catch-up date'), { target: { value: bookingDate } });
+    expect(await screen.findByText('Your coach has no free time on this day. Choose another date.')).toBeVisible();
+    expect(screen.getByLabelText('Catch-up time')).toBeDisabled();
+    expect(submit()).toBeDisabled();
   });
 
   it('reuses an existing booking and invalidates it when cancelled on refresh', async () => {
@@ -211,6 +230,14 @@ describe('absence recovery choice', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Refresh bookings' }));
     await waitFor(() => expect(submit()).toBeDisabled());
     expect(bookLearnerCalendarSession).not.toHaveBeenCalled();
+  });
+
+  it('does not offer a catch-up that already makes up another lecture', async () => {
+    const spare = { ...booking, id: 'catch-up:12:2', eventKey: 'catch-up:12:2', scheduledTime: '12:00' };
+    vi.mocked(fetchLearnerCalendarEvents).mockResolvedValue(calendar([{ ...booking, linkedReportId: 40 }, spare]));
+    await openForm(); await chooseCatchup();
+    const options = [...(screen.getByLabelText('Catch-up booking') as HTMLSelectElement).options].map(option => option.value);
+    expect(options).toEqual(['', spare.eventKey]);
   });
 
   it('clears the chosen recovery plan when a different lecture is selected', async () => {

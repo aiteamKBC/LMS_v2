@@ -7,9 +7,11 @@ import {
 } from 'react';
 import { isTeamsReviewCancelled } from './calendarReview';
 import { finishTeamsCreation, finishTeamsUpdate } from './creationResult';
+import { newResendKey, submitResendEmails } from './scheduleEmail';
 import { UNCERTAIN_MESSAGE, waitForSavedCreate, type CreateProgress, type CreateRecovery } from './createRecovery';
 import { type UpdateProgress } from './updateProgress';
 import { syncTeamsCalendarState } from './calendarState';
+import { compareTeamsAttendees, type AttendeeComparison } from './attendeeComparison';
 import { type CalendarActionTarget } from './CalendarActionDialog';
 import { calendarAction, type ActionResult } from './calendarActions';
 import { normalizedClock } from './calendarTime';
@@ -162,21 +164,70 @@ function liveSessionPlan(module: ModuleCatalogueItem | null, plan: ModuleWeekSes
   const selected: ModuleWeekSessionPlan['sessions'] = [];
   let fallbackIndex = 0;
   module.weekStructure.forEach(week => {
-    const liveCount = (week.components || []).filter(component => component.type === 'live-session').length;
+    const liveSessions = (week.components || []).filter(component => component.type === 'live-session');
+    const liveCount = liveSessions.length;
     if (!liveCount) return;
     const byWeek = (plan.sessions || []).filter(session => Number(session.weekNumber) === Number(week.weekNumber));
     const candidates = byWeek.length
       ? byWeek.slice(0, liveCount)
       : (plan.sessions || []).slice(fallbackIndex, fallbackIndex + liveCount);
-    selected.push(...candidates);
+    // A live session delivered by its own additional meeting is not part of
+    // this calendar: it is not shown among these dates, not counted among
+    // them, and not sent when they are. Its slot is still CONSUMED rather than
+    // skipped — the dates are taken in order, so dropping one from the middle
+    // without consuming it would pull every later session a slot early.
+    candidates.forEach((candidate, index) => {
+      if (cleanText(liveSessions[index]?.settings?.extraTeamsMeetingUrl)) return;
+      selected.push(candidate);
+    });
     fallbackIndex += candidates.length;
   });
   return selected;
 }
 
-/** The module's live-session components, in the order their weeks run. */
+/**
+ * The module's live-session components, in the order their weeks run.
+ *
+ * These name the dates in `liveSessionPlan`, and `namedSessions` pairs the two
+ * BY POSITION — so a live session that plan drops (one delivered by its own
+ * additional meeting) has to be dropped here too, or every session after it
+ * would be labelled with the previous one's title.
+ */
+/** Every live-session component of a module, in the order its weeks run. */
+function allLiveSessionComponents(module: ModuleCatalogueItem | null): ModuleComponent[] {
+  return (module?.weekStructure || []).flatMap(week => (week.components || []).filter(
+    component => component.type === 'live-session',
+  ));
+}
+
+/**
+ * Drop the sessions delivered by their own additional meeting.
+ *
+ * `liveSessionPlan` already excludes them from the planned list, but a module
+ * with NO calendar yet never builds that list -- its plan effect returns early
+ * when there is no summary -- so the create form reads the module's stored
+ * sessions straight through. This is where those are filtered, which is what
+ * keeps a week's private meeting off the module calendar's preview AND out of
+ * what Create sends.
+ *
+ * Matched on the session's own `componentId`, and by position against the live
+ * sessions in week order when a row does not carry one -- the same pairing
+ * `namedSessions` uses, so the two can never disagree about which row is which.
+ */
+function withoutAdditionalMeetings(
+  sessions: CurriculumSession[], components: ModuleComponent[], excluded: Set<string>,
+): CurriculumSession[] {
+  if (!excluded.size) return sessions;
+  return sessions.filter((session, index) => {
+    const componentId = cleanText(session.componentId) || cleanText(components[index]?.id);
+    return !componentId || !excluded.has(componentId);
+  });
+}
+
 function liveSessionComponents(module: ModuleCatalogueItem | null): ModuleComponent[] {
-  return (module?.weekStructure || []).flatMap(week => (week.components || []).filter(component => component.type === 'live-session'));
+  return (module?.weekStructure || []).flatMap(week => (week.components || []).filter(
+    component => component.type === 'live-session' && !cleanText(component.settings?.extraTeamsMeetingUrl),
+  ));
 }
 
 /**
@@ -361,6 +412,11 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   // The selected module's live-session components, so each date can be shown
   // under the name of the session that runs on it.
   const [liveComponents, setLiveComponents] = useState<Record<string, ModuleComponent[]>>({});
+  // Per module: every live session in week order, and the ids of the ones
+  // delivered by their own additional meeting. Kept beside `liveComponents`
+  // (which is already filtered) because excluding a session by position needs
+  // the unfiltered order to count against.
+  const [additionalMeetings, setAdditionalMeetings] = useState<Record<string, { all: ModuleComponent[]; excluded: string[] }>>({});
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
   const [artifactSyncing, setArtifactSyncing] = useState<Set<string>>(() => new Set());
@@ -407,8 +463,19 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   const updateBaseline = useRef<TeamsCalendarForm | null>(null);
   // The calendar the invitation fields were filled from.
   const invitationsFor = useRef('');
+  // The last reading of Microsoft's attendee list for the open calendar, and
+  // whether one is in flight. Kept beside the drawer rather than in it: the
+  // drawer's form is what the author is editing, and a comparison must never
+  // be mistaken for -- or write into -- that.
+  const [comparison, setComparison] = useState<AttendeeComparison | null>(null);
+  const [comparing, setComparing] = useState(false);
+  const [comparisonError, setComparisonError] = useState<string | null>(null);
+  const comparisonFor = useRef('');
   const [drawerTarget, setDrawerTarget] = useState<MeetingRow | null>(null);
   const [invitedPrefilling, setInvitedPrefilling] = useState(false);
+  // What the last prefill did, said beside its own button: until now a
+  // request that failed and one that found nobody both looked like nothing.
+  const [prefillNotice, setPrefillNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   // Guards a fetchModuleMeetingInvitees() response against landing after the
   // caller has since opened a different module's drawer (or closed it).
   const inviteesRequestId = useRef(0);
@@ -618,12 +685,21 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   }, [selectedId]);
   const selectedForDisplay = useMemo(() => {
     if (!selected) return null;
-    const components = liveComponents[normaliseKey(selected.catalogueId)] || [];
-    const sessionsForPlan = plannedSessions[normaliseKey(selected.catalogueId)];
-    if (!sessionsForPlan) return { ...selected, sessions: namedSessions(selected.sessions, components) };
-    const plannedStarts = sessionsForPlan.map(session => zonedNaiveToUtcIso(sessionNaiveLocal(session), session.timeZone || selected.summary?.timeZone));
-    return { ...selected, sessions: namedSessions(sessionsForPlan, components), plannedStarts };
-  }, [liveComponents, plannedSessions, selected]);
+    const key = normaliseKey(selected.catalogueId);
+    const components = liveComponents[key] || [];
+    const extra = additionalMeetings[key];
+    const excluded = new Set(extra?.excluded || []);
+    // Filtered on BOTH branches, because a module with no calendar yet never
+    // reaches the planned one. A week delivered by its own additional meeting
+    // is not this calendar's to show, to count, or to send.
+    const drop = (list: CurriculumSession[]) => withoutAdditionalMeetings(list, extra?.all || [], excluded);
+    const startsFor = (list: CurriculumSession[]) => list.map(
+      session => zonedNaiveToUtcIso(sessionNaiveLocal(session), session.timeZone || selected.summary?.timeZone),
+    );
+    const sessionsForPlan = plannedSessions[key];
+    const sessions = drop(sessionsForPlan || selected.sessions);
+    return { ...selected, sessions: namedSessions(sessions, components), plannedStarts: startsFor(sessions) };
+  }, [additionalMeetings, liveComponents, plannedSessions, selected]);
   const selectedLiveId = useRef('');
   selectedLiveId.current = selected?.summary?.liveSessionId || '';
 
@@ -717,6 +793,16 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       .then(module => {
         if (cancelled) return;
         setLiveComponents(previous => ({ ...previous, [normaliseKey(catalogueId)]: liveSessionComponents(module) }));
+        const everyLiveSession = allLiveSessionComponents(module);
+        setAdditionalMeetings(previous => ({
+          ...previous,
+          [normaliseKey(catalogueId)]: {
+            all: everyLiveSession,
+            excluded: everyLiveSession
+              .filter(component => cleanText(component.settings?.extraTeamsMeetingUrl))
+              .map(component => component.id),
+          },
+        }));
       })
       // A missing name leaves the row reading as it always did; it never blanks
       // the dates themselves.
@@ -928,6 +1014,12 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     updateBaseline.current = form;
     invitationsFor.current = row.summary.liveSessionId;
     updateDrawer.openWith(form);
+    // Another calendar's reading says nothing about this one.
+    if (comparisonFor.current !== row.summary.liveSessionId) {
+      comparisonFor.current = row.summary.liveSessionId;
+      setComparison(null);
+      setComparisonError(null);
+    }
   };
 
   /** The fields and what they started from, when they belong to this calendar. */
@@ -954,6 +1046,92 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       updateDrawer.setSaving(false);
       setUpdateProgress(null);
     }
+  };
+
+  /**
+   * Everyone the LMS has actually published for the open calendar.
+   *
+   * The drawer's *baseline*, never its form: the form is what the author is
+   * editing now, and Microsoft was never asked about anybody added to it since
+   * the last save.
+   */
+  const publishedInvitees = (row: MeetingRow): string[] => {
+    const baseline = row.summary && invitationsFor.current === row.summary.liveSessionId ? updateBaseline.current : null;
+    if (!baseline) return [];
+    return [...new Set([...emailList(baseline.attendees), ...emailList(baseline.presenters),
+      ...emailList(baseline.coOrganizers)].map(value => value.trim().toLowerCase()).filter(Boolean))];
+  };
+
+  /**
+   * "Compare with Teams": read Microsoft's attendee list and show the difference.
+   *
+   * Deliberately independent of Save. It does not look at `dirty`, does not
+   * send the form, and does not touch it afterwards -- an author half-way
+   * through adding somebody can press it and still have their edit when the
+   * answer arrives. Every press is a fresh read, because the question is what
+   * Microsoft holds *now*; the previous answer stays on screen until the new
+   * one lands so the panel does not blink empty.
+   */
+  const compareAttendees = async (row: MeetingRow) => {
+    const summary = row.summary;
+    if (!summary?.liveSessionId || comparing) return;
+    comparisonFor.current = summary.liveSessionId;
+    setComparing(true);
+    setComparisonError(null);
+    try {
+      const result = await compareTeamsAttendees(summary.liveSessionId);
+      if (comparisonFor.current !== summary.liveSessionId) return;
+      setComparison(result);
+    } catch (err) {
+      if (comparisonFor.current !== summary.liveSessionId) return;
+      setComparisonError(err instanceof Error ? err.message : 'Unable to read the current attendee list from Microsoft.');
+    } finally {
+      setComparing(false);
+    }
+  };
+
+  /**
+   * Send the schedule email again, as a creation email, to everyone the saved
+   * calendar invites -- not the "was ... now ..." update notice.
+   *
+   * Its own action, before any review: it never touches the Teams calendar and
+   * never asks Microsoft to announce anything. It re-reads the calendar the
+   * server has already verified and posts that same full timetable, so a
+   * learner who lost the first email, or who was added and removed and added
+   * again, holds the dates and the join links as they now stand. Each press is
+   * its own ledger round, so it reaches the people the last one reached too.
+   */
+  const resendSchedule = async (row: MeetingRow) => {
+    const summary = row.summary;
+    if (blockedReason || !summary?.liveSessionId) return;
+    const people = new Set([...(summary.attendees || []), ...(summary.presenters || []),
+      ...(summary.coOrganizers || []), summary.organizerEmail || '']
+      .map(value => String(value || '').trim().toLowerCase()).filter(Boolean));
+    const count = people.size;
+    setNotice(null);
+    await showCurriculumConfirm({
+      title: 'Email the full schedule to everyone?',
+      text: `${count || 'Every'} invited ${count === 1 ? 'person' : 'people'} on ${row.name} will be sent the complete timetable and join links again, as a new schedule email rather than a change notice. Anyone who already received it will receive it a second time. The Teams calendar itself is not changed.`,
+      icon: 'warning',
+      confirmButtonText: 'Send schedule emails',
+      onConfirm: async () => {
+        setBusy(`${row.catalogueId}:resend`);
+        try {
+          const email = await submitResendEmails(summary.liveSessionId, newResendKey());
+          const unfinished = email.failed + email.uncertain;
+          setNotice({
+            tone: unfinished ? 'warning' : 'info',
+            text: unfinished
+              ? `${row.name}: Microsoft accepted ${email.accepted} of ${email.total} schedule emails. ${unfinished} could not be confirmed — press the button again to send a fresh round.`
+              : `${row.name}: the full schedule was submitted to all ${email.accepted} recipient${email.accepted === 1 ? '' : 's'}.`,
+          });
+        } finally {
+          setBusy('');
+        }
+      },
+      successTitle: 'Schedule emails submitted',
+      successText: 'Microsoft has accepted the messages for delivery.',
+    });
   };
 
   const pushDates = async (row: MeetingRow) => {
@@ -1112,6 +1290,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   ) => {
     const requestId = ++inviteesRequestId.current;
     setInvitedPrefilling(true);
+    setPrefillNotice(null);
     try {
       const result = await fetchModuleMeetingInvitees(row.catalogueId);
       if (inviteesRequestId.current !== requestId) return;
@@ -1119,8 +1298,28 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
         attendees: result.attendees.join('\n'),
         presenters: result.presenters.join('\n'),
       });
-    } catch {
-      // Best-effort: the form stays usable with people typed in by hand.
+      // A prefill that found nobody used to look exactly like one that failed:
+      // the fields stayed as they were and the button said nothing either way.
+      setPrefillNotice(result.attendees.length || result.presenters.length
+        ? {
+          tone: 'ok',
+          text: `Filled in ${result.attendees.length} learner${result.attendees.length === 1 ? '' : 's'} who ${result.attendees.length === 1 ? 'has' : 'have'} this module on their training plan`
+            + (result.presenters.length
+              ? " and the module's tutor as presenter."
+              : '. This module has no tutor assigned, so Presenters was cleared.'),
+        }
+        : {
+          tone: 'error',
+          text: 'No learner has this module on their training plan yet, and it has no tutor. Assign the module to the learners who should attend, then prefill again.',
+        });
+    } catch (err) {
+      // The form stays usable with addresses typed in by hand -- but the
+      // failure is said out loud rather than swallowed.
+      if (inviteesRequestId.current !== requestId) return;
+      setPrefillNotice({
+        tone: 'error',
+        text: err instanceof Error ? err.message : 'The learners who have this module on their plan could not be read.',
+      });
     } finally {
       if (inviteesRequestId.current === requestId) setInvitedPrefilling(false);
     }
@@ -1432,11 +1631,10 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       }
       if (!result) return;
       endCreateProgress();
-      // The create itself writes the join link into every live-session
-      // component (topping weeks up to their delivery days) before it answers,
-      // and a create that could not do so answers with an error instead. The
-      // restore request that used to follow repeated that walk plus a full
-      // module rebuild, and the confirmation waited on all of it.
+      // The create itself writes the join link into the live-session
+      // components the author already placed before it answers. It must not
+      // author new components in content-only weeks; Restore/Re-attach is the
+      // explicit action for that.
       createDrawer.close();
       // The dialog was the create form and the create has happened, so it has
       // nothing left to show: close it rather than re-selecting the module into
@@ -1569,10 +1767,11 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     busy, notice, setNotice, detail, detailLoading, detailError, loadDetail, detailOccurrenceFor,
     artifactSyncing, autoSyncEnabled, setAutoSyncEnabled, calendarSyncing, resultsModule, setResultsModule,
     preview, setPreview, transcriptPreview, setTranscriptPreview, pendingComponents, now,
-    settingsDrawer, createDrawer, updateDrawer, drawerTarget, invitedPrefilling,
+    settingsDrawer, createDrawer, updateDrawer, drawerTarget, invitedPrefilling, prefillNotice,
     loadTeamsState, holidayLabelFor, rows, selected, selectedForDisplay, stats,
     openCalendarAction, checkCalendarAction, runArtifactSync, runCalendarSync,
-    pushDates, saveInvitations, reattach, prefillInvitees, openSettings, saveSettings,
+    pushDates, resendSchedule, saveInvitations, reattach, prefillInvitees, openSettings, saveSettings,
+    comparison, comparing, comparisonError, compareAttendees, publishedInvitees,
     sendUpdateEmails, setSendUpdateEmails,
     createCalendar, createRecovery, createProgress, updateProgress, requestCloseSelected, notifyChanged, blockedReason, drawerOpen,
   };

@@ -22,6 +22,7 @@ import {
   archiveCurriculumGroup,
   archiveCurriculumModule,
   CurriculumApiError,
+  curriculumErrorMessage,
   tutorConflictMessage,
   deleteCurriculumProgramme,
   fetchCurriculumModules,
@@ -135,7 +136,12 @@ function showProgrammeSwalToast(title: string, text: string, icon: 'success' | '
  * it is shown as-is rather than reduced to "could not be saved".
  */
 function reportEditorSaveFailure(error: unknown, fallback: string) {
-  return showProgrammeSwalToast('Could not save', tutorConflictMessage(error) || (error instanceof Error ? error.message : fallback), 'error');
+  return showProgrammeSwalToast(
+    'Could not save',
+    tutorConflictMessage(error)
+      || curriculumErrorMessage(error, error instanceof Error ? error.message : fallback),
+    'error',
+  );
 }
 
 const DEPENDENCY_LABELS: Record<string, string> = {

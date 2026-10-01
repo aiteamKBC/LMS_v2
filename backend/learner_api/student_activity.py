@@ -5,6 +5,7 @@ import re
 import time
 from uuid import UUID
 
+from .journal_sources import learner_journal_view
 from django.db import DatabaseError, connections
 from django.http import JsonResponse, HttpResponseRedirect
 from django.middleware.csrf import get_token
@@ -217,6 +218,7 @@ def _activity_source_issues(enrolment_id, group_ids):
 
 @require_GET
 @learner_self_or_staff(kwarg="pk")
+@learner_journal_view
 def student_activity(request, kind, pk):
     """Return LMS activities for the requested learner, never for a client id.
 
@@ -451,21 +453,25 @@ def _owned_material(kind, pk, group_id, activity_id):
 @require_GET
 @learner_self_or_staff(kwarg='pk')
 def source_material_file(request, kind, pk, group_id, activity_id):
-    from . import evidence_storage
+    from django.conf import settings
+    from .material_storage import read_url
     try:
         _aptem_id, stored = _owned_material(kind, pk, group_id, activity_id)
         row = stored['_source']
         if not row.get('_material_blob_ready'):
             return _error('This file has not been copied to the LMS yet.', 404)
-        if not evidence_storage.azure_configured():
-            return _error('File storage is temporarily unavailable.', 503)
-        response = HttpResponseRedirect(evidence_storage.get_read_sas(
-            row['material_blob_container'], row['material_blob_name'], ttl_minutes=5))
+        if row.get('material_blob_content_type') == 'application/pdf':
+            from .material_storage import pdf_response
+            response = pdf_response(row, settings, request)
+        else:
+            response = HttpResponseRedirect(read_url(row, settings))
         response['Cache-Control'] = 'private, no-store'
         response['Referrer-Policy'] = 'no-referrer'
         return response
     except LookupError:
         return _error('Activity not found.', 404)
+    except ValueError:
+        return _error('File storage is temporarily unavailable.', 503)
     except DatabaseError:
         return _error('Could not load this file. Please try again.', 503)
 

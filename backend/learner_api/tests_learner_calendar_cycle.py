@@ -80,6 +80,35 @@ class CurriculumCycleFixture:
 
 
 class GeneratedCycleTests(CurriculumCycleFixture, SimpleTestCase):
+    def test_stored_rows_reuse_generated_review_metadata(self):
+        key = review_calendar_event_key(248, 'REV-MCM', 1)
+        record = _record(event_key=key)
+        record.learner_email = _learner().email
+        record.review_template_id = 'REV-MCM'
+        record.occurrence_number = 1
+        queryset = Mock()
+        queryset.order_by.return_value = [record]
+        generated = [{
+            'id': key, 'eventKey': key, 'learnerId': '248',
+            'reviewTemplateId': 'REV-MCM', 'occurrenceNumber': 1,
+            'title': 'Coaching conversation', 'source': 'mcr', 'type': 'coaching',
+            'sequence': 1, 'targetDate': '2026-09-14',
+            'reviewTypeId': 'REVT-MCM', 'reviewTypeCode': 'mcm',
+            'reviewTypeName': 'Monthly Coaching Meeting', 'reviewTypeIsSystem': True,
+        }]
+        with patch('learner_api.calendar.CoachCalendarEvent.objects.filter', return_value=queryset), \
+             patch('learner_api.calendar._generated_cycle_events', return_value=generated), \
+             patch('curriculum_api.reviews.get_review_template_rows') as read_templates, \
+             patch('learner_api.calendar.review_type_rows_by_template') as read_types, \
+             patch('learner_api.calendar._serialize_event', return_value={'eventKey': key}) as serialize:
+            events = coaching_events_for_learner(_learner(), _mirror())
+
+        self.assertEqual(events[0]['title'], 'Coaching conversation')
+        read_templates.assert_not_called()
+        read_types.assert_not_called()
+        self.assertEqual(serialize.call_args.kwargs['templates_by_id']['REV-MCM']['name'], 'Coaching conversation')
+        self.assertEqual(serialize.call_args.kwargs['review_types_by_template']['REV-MCM']['code'], 'mcm')
+
     def test_shared_coaching_source_rejects_another_email_with_a_colliding_numeric_id(self):
         mine=_record();mine.learner_email='AYA.KHATER@example.com'
         foreign=_record(event_key='someone-else');foreign.learner_email='another@example.com'

@@ -66,11 +66,22 @@ class GroupFirstTests(unittest.TestCase):
             self.assertEqual(resolved['session_week_day'], 'Monday', group)
             self.assertEqual(self.clock(module, group), ('14:00', '16:00'), group)
 
-    def test_a_group_that_states_only_a_clock_leaves_the_module_its_days(self):
+    def test_a_group_that_states_a_clock_but_no_day_delivers_on_no_day(self):
+        # A group that has been given a slot has stated its days, and stating
+        # none of them is an answer. The module's own day is a copy left by
+        # whatever created it, not a second opinion to fall back on.
         module = {'session_week_day': 'Monday, Friday', 'session_start_time': '14:00', 'session_end_time': '16:00'}
         resolved = views['module_delivery_row'](module, {'session_start_time': '09:00', 'session_end_time': '11:00'})
-        self.assertEqual(resolved['session_week_day'], 'Monday, Friday')
+        self.assertEqual(resolved['session_week_day'], '')
         self.assertEqual((resolved['session_start_time'], resolved['session_end_time']), ('09:00', '11:00'))
+
+    def test_a_weekday_table_cannot_add_days_back_to_a_dayless_group(self):
+        # Same rule through the other door: the table is the module's own
+        # refinement of a pattern the group no longer has.
+        module = {'weekly_schedule': [{'day': 'Monday', 'startTime': '14:00', 'endTime': '16:00'}]}
+        resolved = views['module_delivery_row'](module, {'session_start_time': '09:00', 'session_end_time': '11:00'})
+        self.assertEqual(views['module_weekly_schedule'](resolved), [])
+        self.assertEqual(resolved['session_week_day'], '')
 
     def test_a_stale_per_weekday_slot_no_longer_outranks_the_group(self):
         # The bug this rule exists for: the module kept a copy of the clock the

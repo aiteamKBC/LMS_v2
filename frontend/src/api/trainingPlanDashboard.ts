@@ -48,7 +48,7 @@ export type PlanModule = { id: string; title: string; description: string; start
   effectiveEndDate?: string;
   /** Where the run would have ended with nothing closed. */
   originalEndDate?: string };
-export type PlanReview = Pick<LearnerCalendarEvent, 'id' | 'eventKey' | 'title' | 'source' | 'sequence' | 'status' | 'date' | 'targetDate' | 'scheduledDate' | 'scheduledTime' | 'durationMinutes' | 'coachName' | 'invited'> & { meetingLink?: string | null };
+export type PlanReview = Pick<LearnerCalendarEvent, 'id' | 'eventKey' | 'title' | 'source' | 'sequence' | 'status' | 'date' | 'targetDate' | 'scheduledDate' | 'scheduledTime' | 'durationMinutes' | 'coachName' | 'invited' | 'reviewTemplateId' | 'reviewInstanceId'> & { meetingLink?: string | null };
 export type PlanModuleSummary = {
   id: string;
   moduleIds: string[];
@@ -72,11 +72,9 @@ export type TrainingPlanDashboard = {
   programmeStartDate?: string | null;
   programmeEndDate?: string | null;
   /** Monthly OTJH; assignment submissions use marking status, other activity types keep their existing semantics. */
-  monthlyOtjh?: Record<string, { planned: number | null; submitted?: number; actual: number; missingPlannedActivities: number }>;
-  /** Authoritative Monthly Logs totals: retained Audit history, then LMS months. */
+  monthlyOtjh?: Record<string, { planned: number | null; submitted?: number; actual: number; includesHistorical?: boolean; missingPlannedActivities: number }>;
+  /** Authoritative SSOT Monthly Logs totals. */
   monthlyLogOtjh?: Record<string, { target: number | null; submitted: number; completed: number }>;
-  /** Last YYYY-MM month whose OTJH figures must come from Audit rather than live LMS calculations. */
-  auditOtjhCutoffMonth?: string;
   /** Whole-programme OTJH requirement from the shared dashboard metrics. */
   requiredOtjh?: number | null;
   actual: { month: string; groupId: string | null; hours: number; count: number }[];
@@ -86,6 +84,7 @@ export type TrainingPlanDashboard = {
   sessions: PlanSession[];
   reviews: PlanReview[];
   coach: { name: string; email?: string; phone?: string; bookingUrl: string | null };
+  journalTargets?: Record<string, number>;
   contractStatus: string;
   generatedAt: string;
 };
@@ -96,7 +95,7 @@ export function fetchTrainingPlanDashboard(kind: LearnerKind, id: string, signal
 }
 
 export type TrainingPlanContract = Pick<TrainingPlanDashboard,
-  'months' | 'contractStatus' | 'programmeStartDate' | 'programmeEndDate'>;
+  'months' | 'contractStatus' | 'programmeStartDate' | 'programmeEndDate' | 'journalTargets'>;
 export function fetchTrainingPlanContract(kind: LearnerKind, id: string, signal?: AbortSignal) {
   return subjectRequest<TrainingPlanContract>(`/learner_api/training-plan-dashboard/${kind}/${encodeURIComponent(id)}/?section=contract`, { signal });
 }

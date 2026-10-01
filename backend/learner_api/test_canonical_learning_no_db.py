@@ -17,6 +17,7 @@ from unittest.mock import Mock, patch
 from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).parent
+sys.path.insert(0, str(ROOT.parent))
 
 
 class ServiceError(Exception):
@@ -36,13 +37,185 @@ def functions(filename, scope, names=None):
 def adapter(query):
     scope = dict(query=query, json=json, math=math, hashlib=hashlib, re=re,
                  datetime=datetime, escape=escape, UK=ZoneInfo('Europe/London'), ServiceError=ServiceError,
-                 current_records=lambda owner, records: records)
+                 current_records=lambda owner, records: records,
+                 current_records_bulk=lambda owners, records: {
+                     owner['enrolment_id']: records.get(owner['id'], []) for owner in owners
+                 })
     functions('monthly_log_sources.py', scope, {'decoded', 'number', 'stable_id', 'row'})
+    functions('current_learning.py', scope, {'source_payload_metadata'})
     functions('canonical_learning.py', scope)
     return scope
 
 
 class CanonicalLearningTests(unittest.TestCase):
+    def test_material_preview_requires_exact_unique_activity_or_component_id(self):
+        self.scope['__package__'] = 'learner_api'
+        record = {'id': 20, 'actual_seconds': 9000,
+                  'source_payload': {'original_source_ref': 'att:verified-session'}}
+        self.scope['entries_for'] = Mock(return_value=[record])
+        material = {'source_course_ref': '50', 'source_course_title': 'Course',
+            'source_activity_id': 'material:10', 'source_activity_title': 'Same title',
+            'curriculum_component_ref': 'COMP-10',
+            'material_record_id': 100, 'material_title': 'Same title', 'backup_status': 'available',
+            'material_blob_container': 'private', 'material_blob_name': 'hash',
+            'material_blob_content_type': 'application/pdf'}
+        sibling = {**material, 'source_activity_id': 'material:11',
+                   'curriculum_component_ref': 'COMP-11', 'material_record_id': 101}
+        self.query.return_value = [material, sibling]
+        signer = Mock(return_value='https://materials.example/owned-file')
+        item = {'id': 9, 'progress_id': 20, 'title': 'Same title', 'category': 'Attendance'}
+        with patch.dict(sys.modules, {'django.conf': SimpleNamespace(settings=SimpleNamespace()),
+                'learner_api.material_storage': SimpleNamespace(read_url=signer)}):
+            self.assertEqual(self.scope['material_parts'](item, self.owner), [])
+            signer.assert_not_called()
+            self.assertEqual(self.query.call_count, 1)
+            record['curriculum_component_ref'] = 'COMP-11'
+            self.assertEqual([p['id'] for p in self.scope['material_parts'](item, self.owner)], [101])
+            record['sources'] = [{'source_system': 'old_lms', 'source_course_ref': '50',
+                                  'source_activity_id': 'material:10'}]
+            self.assertEqual([p['id'] for p in self.scope['material_parts'](item, self.owner)], [100])
+            record['sources'][0]['source_activity_id'] = 'quiz:10'
+            self.assertEqual(self.scope['material_parts'](item, self.owner), [])
+            record['sources'][0]['source_activity_id'] = 'material:10'
+            record['sources'].append({**record['sources'][0], 'source_activity_id': 'material:11'})
+            self.assertEqual(self.scope['material_parts'](item, self.owner), [])
+            record['sources'] = [{**record['sources'][0], 'source_course_ref': '999'}]
+            self.assertEqual(self.scope['material_parts'](item, self.owner), [])
+            self.assertEqual(record['actual_seconds'], 9000)
+
+    def test_monthly_material_redirect_checks_owner_month_row_and_material(self):
+        row = {'id': 9, 'progress_id': 20}
+        parts = [{'id': 100, 'url': 'https://materials.example/private?sig=test'}]
+        scope = {'scope': Mock(return_value=({'_profile': self.owner}, 'learner')),
+            'valid_month': lambda month: None,
+            'canonical': SimpleNamespace(enabled=lambda _: True, content_row=Mock(return_value=(row, {'id': 20})), material_parts=Mock(return_value=parts),
+                content=Mock(return_value={'id': 9, 'parts': [dict(parts[0])]})),
+            'detail_data': Mock(return_value={'source': 'lms', 'rows': [row]}),
+            'old': SimpleNamespace(ServiceError=ServiceError),
+            'HttpResponseRedirect': lambda url: {'Location': url}, 'JsonResponse': lambda value: value}
+        functions('monthly_logs.py', scope, {'canonical_material', 'content'})
+        response = scope['canonical_material'](None, 271, '2026-08', 9, 100)
+        self.assertEqual(response['Location'], parts[0]['url'])
+        self.assertEqual(response['Cache-Control'], 'private, no-store')
+        payload = scope['content'](None, 271, '2026-08', 9)
+        self.assertEqual(payload['parts'][0]['url'], '/learner_api/monthly-logs/271/2026-08/activities/9/materials/100/')
+        with self.assertRaises(ServiceError):
+            scope['canonical_material'](None, 271, '2026-08', 9, 999)
+        scope['canonical'].content_row.side_effect = ServiceError('Missing row', 'not_found', 404)
+        scope['canonical'].material_parts.reset_mock()
+        with self.assertRaises(ServiceError):
+            scope['canonical_material'](None, 271, '2026-09', 9, 100)
+        scope['canonical'].material_parts.assert_not_called()
+        scope['scope'].side_effect = ServiceError('Not allowed', 'forbidden', 403)
+        scope['detail_data'].reset_mock()
+        with self.assertRaises(ServiceError):
+            scope['canonical_material'](None, 999, '2026-08', 9, 100)
+        scope['detail_data'].assert_not_called()
+
+    def test_monthly_content_uses_owned_azure_material_and_keeps_notes(self):
+        self.scope['__package__'] = 'learner_api'
+        self.scope['entries_for'] = Mock(return_value=[{'id': 20, 'accepted': True, 'actual_seconds': 60,
+            'component_ref': 'journal:42',
+            'journal_routes': [{'group_id': 50, 'activity_id': 10, 'source_ref': 'la:50:10'}],
+            'source_payload': {'original_source_ref': 'la:50:10'}}])
+        self.query.return_value = [{'source_course_ref': '50', 'source_course_title': 'Course',
+            'source_activity_id': 'material:10', 'source_activity_title': 'PDF',
+            'material_record_id': 100, 'material_title': 'Local PDF', 'backup_status': 'available',
+            'material_blob_container': 'private', 'material_blob_name': 'hash',
+            'material_blob_content_type': 'application/pdf'}]
+        read_url = Mock(return_value='https://materials.blob.core.windows.net/private/hash?sig=test')
+        item = {'id': 9, 'progress_id': 20, 'title': 'Activity', 'category': 'Reading',
+                'completion_note': '<private note>'}
+        with patch.dict(sys.modules, {'django.conf': SimpleNamespace(settings=SimpleNamespace()),
+                'learner_api.material_storage': SimpleNamespace(read_url=read_url)}):
+            result = self.scope['content'](item, self.owner)
+            self.assertEqual(result['parts'][0]['url'], read_url.return_value)
+            self.assertEqual(result['parts'][0]['content_type'], 'application/pdf')
+            self.assertIn('&lt;private note&gt;', result['parts'][1]['html'])
+            self.assertEqual(self.query.call_args_list[0].args[1], [self.owner['id']])
+            self.assertNotIn('Last_audit', self.query.call_args_list[0].args[0])
+            self.assertIn('m.material_id=a.source_material_id', self.query.call_args_list[0].args[0])
+            read_url.reset_mock()
+            self.query.return_value[0]['backup_status'] = 'pending'
+            pending = self.scope['content'](item, self.owner)
+            self.assertIsNone(pending['parts'][0]['url'])
+            self.assertIn('not ready', pending['parts'][0]['html'])
+            read_url.assert_not_called()
+            self.query.return_value[0]['payload'] = {'text_body': '<p>Original reading</p>',
+                'quiz_questions': [{'question_text': 'Question?'}]}
+            combined = self.scope['content'](item, self.owner)['parts'][0]
+            self.assertEqual(combined['html'], '<p>Original reading</p>')
+            self.assertEqual(len(combined['quiz']['definition']['questions']), 1)
+            self.assertIsNone(combined['url'])
+            self.scope['entries_for'].return_value = []
+            self.query.reset_mock()
+            result = self.scope['content'](item, self.owner)
+            self.assertIsNone(result['parts'][0]['url'])
+            self.query.assert_not_called()
+            read_url.assert_not_called()
+
+    def test_content_row_reuses_records_and_rejects_other_month(self):
+        records = [{'id': 20}]
+        self.scope['entries_for'] = Mock(return_value=records)
+        self.scope['rows_for'] = Mock(return_value=[{'id': 7, 'progress_id': 20, 'reporting_month': '2025-07'}])
+        row, record = self.scope['content_row'](self.owner, '2025-07', 7)
+        self.assertIs(record, records[0])
+        self.scope['entries_for'].assert_called_once_with(self.owner)
+        self.scope['rows_for'].assert_called_once_with(self.owner, records)
+        with self.assertRaises(ServiceError):
+            self.scope['content_row'](self.owner, '2025-08', 7)
+        with self.assertRaises(ServiceError):
+            self.scope['content_row'](self.owner, '2025-07', 99)
+
+    def test_material_questions_exclude_grading_keys(self):
+        from learner_api.source_material_content import material_quiz_definition
+        definition = material_quiz_definition({'quiz_questions': [{'question_body': 'Question?',
+            'correct_answer': 'Secret', 'options': [{'option_body': 'Option', 'is_correct': True}]}]})
+        self.assertEqual(definition['questions'][0]['answer_options'], [{'option_text': 'Option'}])
+        self.assertNotIn('correct', json.dumps(definition))
+        self.assertIsNone(material_quiz_definition({'quiz_questions': []}))
+
+    def test_local_quiz_reads_exact_component_and_saved_answers(self):
+        item = {'id': 7, 'title': 'Quiz', 'category': 'Quiz'}
+        record = {'id': 20, 'passed': True, 'attempt': 2}
+        quiz = {'id': 50, 'title': 'Local quiz', 'short_description': None, 'show_correct_answer': False}
+        question = {'question_id': 1, 'question_text': 'Question?', 'question_type': 'single_choice',
+                    'answer_options': [{'option_id': 4, 'option_text': 'Selected'}, {'option_id': 5, 'option_text': 'Other'}]}
+        self.query.side_effect = [[quiz], [{**question, 'answer_options': json.dumps(question['answer_options'])}], [], []]
+        parts = self.scope['component_parts'](item, self.owner, record)
+        self.assertEqual(len(parts[0]['quiz']['definition']['questions']), 1)
+        self.assertIsInstance(parts[0]['quiz']['definition']['questions'][0]['answer_options'], list)
+        self.assertIsNone(parts[0]['quiz']['attempt'])
+        first_sql, first_params = self.query.call_args_list[0].args
+        self.assertEqual(first_params, [20, self.owner['id']])
+        self.assertIn('c.id=p.component_ref', first_sql)
+        self.assertIn('q.id::text=p.quiz_ref', first_sql)
+        self.query.side_effect = [[quiz], [{**question, 'answer_options': json.dumps(question['answer_options'])}], [{'question_ref': 1, 'chosen_answer_ref': 4,
+            'is_correct': True, 'selected': [], 'correct': [4]}], []]
+        saved = self.scope['component_parts'](item, self.owner, record)[0]['quiz']['attempt']
+        self.assertEqual(saved['quiz_body']['questions'][0]['learner_selected_answers'], ['Selected'])
+        self.assertEqual(saved['quiz_body']['questions'][0]['correct_answers'], [])
+        self.query.side_effect = [[quiz], [{**question, 'answer_options': 'invalid json'}]]
+        with self.assertRaises(ServiceError):
+            self.scope['component_parts'](item, self.owner, record)
+        self.query.side_effect = [[quiz, {**quiz, 'id': 51}], []]
+        self.assertEqual(self.scope['component_parts'](item, self.owner, record), [])
+        self.query.side_effect = [[], []]
+        self.assertEqual(self.scope['component_parts'](item, self.owner, record), [])
+
+    def test_imported_quiz_uses_explicit_quiz_id_and_never_related_file(self):
+        item = {'id': 7, 'title': 'Quiz', 'category': 'Quiz'}
+        self.query.return_value = [{'id': 100, 'payload': {'quiz_questions': [{'question_text': 'Original question'}]}}]
+        self.scope['__package__'] = 'learner_api'
+        part = self.scope['source_quiz_parts'](item, self.owner, {'id': 20})[0]
+        self.assertIsNone(part['url'])
+        self.assertEqual(len(part['quiz']['definition']['questions']), 1)
+        sql, params = self.query.call_args.args
+        self.assertIn("m.payload->>'quiz_id'", sql)
+        self.assertEqual(params, [20, self.owner['id'], 20, self.owner['id'], self.owner['id']])
+        self.query.return_value *= 2
+        self.assertEqual(self.scope['source_quiz_parts'](item, self.owner, {'id': 20}), [])
+
     def setUp(self):
         self.query = Mock()
         self.scope = adapter(self.query)
@@ -56,6 +229,13 @@ class CanonicalLearningTests(unittest.TestCase):
         self.assertEqual(self.scope['entries'](272), [])
         self.assertEqual(self.scope['activity_rows'](272), [])
         self.assertTrue(all(call.args[1] == [272] for call in self.query.call_args_list))
+
+    def test_metrics_fail_closed_when_the_ssot_identity_is_missing(self):
+        self.query.return_value = []
+        with self.assertRaises(ServiceError) as error:
+            self.scope['metrics'](272)
+        self.assertEqual(error.exception.code, 'ssot_identity_required')
+        self.assertEqual(error.exception.status, 409)
 
     def test_rollout_is_not_limited_to_named_pilot_students(self):
         self.query.return_value = [{**self.owner, 'id': 700, 'enrolment_id': 500}]
@@ -76,12 +256,13 @@ class CanonicalLearningTests(unittest.TestCase):
         self.assertEqual(rows[0]['documents'][0]['url'], '/learner_api/monthly-logs/234/canonical-documents/8/')
 
     def test_metrics_use_final_records_and_accepted_hours_not_source_snapshots(self):
-        self.scope['entries'] = Mock(return_value=[
+        self.scope['profile'] = Mock(return_value=self.owner)
+        self.scope['entries_for'] = Mock(return_value=[
             {'id': 1, 'accepted': True, 'actual_seconds': 1800, 'ksbs': ['K1', 'K1']},
             {'id': 2, 'accepted': False, 'actual_seconds': 7200, 'ksbs': ['K1', 'S1']},
             {'id': 3, 'accepted': True, 'actual_seconds': None, 'ksbs': ['S1']},
         ])
-        self.scope['targets'] = Mock(return_value={})
+        self.scope['targets_for'] = Mock(return_value={})
         result = self.scope['metrics'](271)
         self.assertEqual(result['programme']['total'], 3)
         self.assertEqual(result['programme']['completed'], 2)
@@ -91,15 +272,36 @@ class CanonicalLearningTests(unittest.TestCase):
         self.assertIsNone(result['aptem_planned_total'])
         self.assertEqual(result['ksb']['total'], 4)
         self.assertEqual(result['ksb']['completed'], 2)
-        self.scope['targets'].return_value = {'2026-07': 12, '2026-08': 15}
+        self.scope['targets_for'].return_value = {'2026-07': 12, '2026-08': 15}
         self.assertEqual(self.scope['metrics'](271)['otjh']['planned'], 27)
+
+    def test_source_lineage_does_not_discard_an_accepted_canonical_row(self):
+        self.scope['profile'] = Mock(return_value=self.owner)
+        self.scope['entries_for'] = Mock(return_value=[
+            {'id': 1, 'source_system': 'old_lms', 'accepted': True, 'actual_seconds': 10800, 'ksbs': []},
+            {'id': 2, 'source_system': 'journal', 'accepted': True, 'actual_seconds': 1800, 'ksbs': []},
+        ])
+        self.scope['targets_for'] = Mock(return_value={})
+        result = self.scope['metrics'](271)
+        self.assertEqual(result['otjh']['actual'], 3.5)
+        self.assertEqual(result['programme']['historicalCompleted'], 2)
+
+        self.scope['entries_for'] = Mock(return_value=[
+            {'id': 1, 'source_system': 'old_lms', 'accepted': True, 'actual_seconds': 10800,
+             'reporting_month': '2026-08', 'source_payload': {}, 'ksbs': []},
+        ])
+        self.query.return_value = []
+        row = self.scope['rows_for'](self.owner)[0]
+        self.assertTrue(row['accepted'])  # preserve the stored decision for the detail view
+        self.assertEqual(row['source_system'], 'old_lms')
 
     def test_segments_replace_parent_hours_without_multiplying_activity_count(self):
         entry = {'id': 1, 'accepted': True, 'actual_seconds': 99999, 'ksbs': ['K1'],
                  'segments': [{'id': 10, 'actual_seconds': 1800, 'reporting_month': '2026-07'},
                               {'id': 11, 'actual_seconds': 3600, 'reporting_month': '2026-08'}]}
-        self.scope['entries'] = Mock(return_value=[entry])
-        self.scope['targets'] = Mock(return_value={})
+        self.scope['profile'] = Mock(return_value=self.owner)
+        self.scope['entries_for'] = Mock(return_value=[entry])
+        self.scope['targets_for'] = Mock(return_value={})
         result = self.scope['metrics'](271)
         self.assertEqual(result['programme']['total'], 1)
         self.assertEqual(result['otjh']['actual'], 1.5)
@@ -133,7 +335,7 @@ class CanonicalLearningTests(unittest.TestCase):
         self.scope['entries_for'] = Mock(return_value=[{
             'id': 20, 'accepted': True, 'actual_seconds': 3600, 'ksbs': [],
             'sources': [{'source_system': 'old_lms', 'source_course_ref': '50', 'source_activity_id': 'material:10'}]}])
-        self.scope['targets'] = Mock(return_value={'2026-08': 10})
+        self.scope['targets_for'] = Mock(return_value={'2026-08': 10})
         self.query.side_effect = [[{'id': 3, 'source_course_ref': '50', 'source_course_title': 'Synthetic course'}],
             [{'id': 5, 'source_course_ref': '50', 'source_course_id': 3, 'source_activity_id': 'material:10',
               'source_activity_kind': 'material', 'source_activity_title': 'Reading', 'source_activity_type': 'reading',
@@ -183,6 +385,70 @@ class CanonicalLearningTests(unittest.TestCase):
         with self.assertRaises(ServiceError):
             self.scope['profile'](271)
 
+    def test_bulk_metrics_use_three_canonical_queries_for_many_learners(self):
+        other = {**self.owner, 'id': 511, 'enrolment_id': 272,
+                 'email': 'other@example.test', 'account_email': 'other@example.test',
+                 'account_record_id': 272, 'aptem_id': 3583, 'account_aptem_id': '3583'}
+        self.query.side_effect = [
+            [self.owner, other],
+            [],
+            [{'learner_id': 510, 'report_month': '2026-08', 'target_hours': 12}],
+        ]
+
+        result = self.scope['metrics_bulk']([271, 272])
+
+        self.assertEqual(self.query.call_count, 3)
+        self.assertEqual(set(result), {271, 272})
+        self.assertEqual(result[271]['otjh']['planned'], 12)
+        self.assertIsNone(result[272]['otjh']['planned'])
+        self.assertIn('l.enrolment_id=ANY(%s)', self.query.call_args_list[0].args[0])
+        self.assertIn('p.learner_id=ANY(%s)', self.query.call_args_list[1].args[0])
+
+    def test_bulk_metrics_load_related_progress_in_constant_queries(self):
+        progress = {
+            'owner_id': 510, 'id': 90, 'kind': 'component', 'component_ref': 'C1',
+            'component_link_source': 'direct', 'source_system': 'canonical',
+            'accepted': True, 'actual_seconds': 3600, 'passed': None,
+            'source_payload': {}, 'submitted_at': None,
+        }
+        self.query.side_effect = [
+            [self.owner],
+            [progress],
+            [{'progress_id': 90, 'ksb_code': 'K1'}],
+            [],
+            [],
+            [],
+            [],
+        ]
+
+        result = self.scope['metrics_bulk']([271])
+
+        self.assertEqual(self.query.call_count, 7)
+        self.assertEqual(result[271]['programme']['completed'], 1)
+        self.assertEqual(result[271]['otjh']['actual'], 1)
+        self.assertEqual(result[271]['ksb']['completed'], 1)
+
+    def test_verified_journal_route_precedes_payload_without_repeating_progress(self):
+        courses = [{'source_course_ref': '50', 'source_course_title': 'Course A'}]
+        definitions = [{'source_course_ref': '50', 'source_activity_id': 'material:10',
+            'source_course_title': 'Course A', 'source_activity_title': 'Reading'}]
+        route = {'group_id': 50, 'activity_id': 10, 'source_ref': 'la:50:10'}
+        record = {'id': 1, 'accepted': True, 'actual_seconds': 120,
+            'source_payload': {'original_source_ref': 'la:99:10'}, 'journal_routes': [route, route]}
+        items, _, _ = self.scope['recorded_course_items'](courses, definitions, [record])
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]['actual'], 120 / 3600)
+        record['journal_routes'] = [route, {**route, 'activity_id': 11, 'source_ref': 'la:50:11'}]
+        record['source_payload']['original_source_ref'] = 'la:50:10'
+        merged, _, _ = self.scope['recorded_course_items'](courses, definitions, [record])
+        self.assertEqual(len(merged), 1)
+        self.assertEqual(merged[0]['actual'], 120 / 3600)
+        for bad in ({**route, 'group_id': 99}, {**route, 'source_ref': 'att:50:10'},
+                    {**route, 'activity_id': None}):
+            record['journal_routes'] = [route, bad]
+            record['source_payload']['original_source_ref'] = 'la:50:10'
+            self.assertEqual(self.scope['recorded_course_items'](courses, definitions, [record])[0], [])
+
     def test_journal_payload_routes_only_to_owned_material_and_preserves_hours(self):
         courses = [{'source_course_ref': '50', 'source_course_title': 'Course A'},
                    {'source_course_ref': '60', 'source_course_title': 'Course B'}]
@@ -210,7 +476,7 @@ class CanonicalLearningTests(unittest.TestCase):
         self.assertEqual(self.scope['recorded_course_items'](courses, definitions, [record])[0], [])
 
     def test_monthly_scope_checks_owner_before_reading_canonical_identity(self):
-        canonical = SimpleNamespace(profile=Mock(return_value=self.owner))
+        canonical = SimpleNamespace(require_profile=Mock(return_value=self.owner))
         scope = dict(canonical=canonical, old=SimpleNamespace(ServiceError=ServiceError))
         functions('monthly_logs.py', scope, {'scope'})
         request = SimpleNamespace(login_account=SimpleNamespace(role='learner', is_active=True,
@@ -218,13 +484,13 @@ class CanonicalLearningTests(unittest.TestCase):
         with self.assertRaises(ServiceError) as error:
             scope['scope'](request, 271)
         self.assertEqual(error.exception.status, 404)
-        canonical.profile.assert_not_called()
+        canonical.require_profile.assert_not_called()
 
     def test_monthly_scope_allows_owner_and_rejects_unassigned_coach(self):
         owner = {**self.owner, 'programme': 'Synthetic programme', 'coach_email': 'coach@example.test'}
         old = SimpleNamespace(ServiceError=ServiceError, normalize=lambda v: str(v or '').strip().lower(),
                               coach_actor=lambda _: {'role': 'coach', 'email': 'other@example.test'})
-        scope = dict(canonical=SimpleNamespace(profile=lambda _: owner), old=old)
+        scope = dict(canonical=SimpleNamespace(require_profile=lambda _: owner), old=old)
         functions('monthly_logs.py', scope, {'scope'})
         request = SimpleNamespace(GET={}, method='GET', login_account=SimpleNamespace(
             role='learner', is_active=True, subject_type='learner', subject_id=271, email='learner@example.test'))
@@ -258,9 +524,33 @@ class CanonicalLearningTests(unittest.TestCase):
         self.assertEqual(rows[0]['ksb_codes'], ['K1'])
         self.assertEqual(len(rows[0]['documents']), 1)
         sql, params = self.query.call_args_list[1].args
-        self.assertIn('p.deleted_at IS NULL', sql)
+        self.assertIn('progress.deleted_at IS NULL', sql)
+        self.assertIn('canonical_activity_key', sql)
+        self.assertIn('canonical_rank=1', sql)
+        self.assertIn('progress_ksbs AS', sql)
+        self.assertIn('reporting_segments AS', sql)
+        self.assertIn('activity_sources AS', sql)
+        self.assertIn('journal_routes AS', sql)
+        self.assertNotIn('coalesce((SELECT', sql)
         self.assertEqual(params, [510])
         self.assertIn('s.canonical_progress_id=p.id', sql)
+
+    def test_otjh_activity_log_uses_accepted_segments_and_keeps_ksbs(self):
+        records = [{
+            'id': 7, 'kind': 'component', 'component_ref': 'COMP-7',
+            'component_title': 'Reading', 'component_type': 'reading',
+            'accepted': True, 'actual_seconds': 99999, 'expected_otjh': 2,
+            'ksbs': ['K1'], 'segments': [
+                {'id': 70, 'actual_seconds': 1800, 'reporting_started_at': '2026-08-01T09:00:00Z'},
+                {'id': 71, 'actual_seconds': 3600, 'reporting_started_at': '2026-09-01T09:00:00Z'},
+            ],
+        }, {'id': 8, 'accepted': False, 'actual_seconds': 7200, 'ksbs': []}]
+        rows = self.scope['otjh_activities'](records)
+        self.assertEqual([row['actualSeconds'] for row in rows], [1800, 3600])
+        self.assertEqual(sum(row['actualSeconds'] for row in rows), 5400)
+        self.assertEqual(rows[0]['expectedOtjh'], 2)
+        self.assertIsNone(rows[1]['expectedOtjh'])
+        self.assertEqual(rows[0]['ksbs'], ['K1'])
 
     def test_missing_timestamp_is_not_invented_and_rejection_is_preserved(self):
         self.query.side_effect = [[self.owner], [{'payload': {'id': 2, 'kind': 'assignment',
@@ -325,7 +615,7 @@ class CanonicalLearningTests(unittest.TestCase):
             old_repo=SimpleNamespace(query=query), old=SimpleNamespace(ServiceError=ServiceError),
             detail_data=lambda *a, **kw: report, lock_state=lambda *_: {'locked': False},
             lock_if_fully_signed=Mock(), JsonResponse=lambda value: value, json=json, base64=base64)
-        functions('monthly_logs.py', scope, {'sign'})
+        functions('monthly_logs.py', scope, {'_canonical_signature_scope', 'sign'})
         request = SimpleNamespace(POST={'snapshot_digest': 'digest', 'confirmed': 'true', 'capture_method': 'draw'},
             FILES={'signature': object()}, GET={}, login_account=SimpleNamespace(display_name='Synthetic learner', email='', id=1))
         scope['sign'](request, 271, '2026-08')

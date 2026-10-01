@@ -1,6 +1,7 @@
 import type { CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
 import type { CoachReviewGenerationIssue } from '@/pages/coach/shared/calendarEvents';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
+import type { StudentActivityResponse } from '@/api/studentActivity';
 import type { JourneyModule } from '@/utils/learnerJourney';
 import type { CaseFileActivityStates } from './activityState';
 
@@ -13,6 +14,7 @@ interface CoachCompletedKsbDetail {
     title?: string;
     typeLabel?: string;
     kind?: string;
+    componentId?: string | null;
     source?: string;
     activityId?: string;
     completedAt?: string;
@@ -164,10 +166,14 @@ export interface CaseFileReviewMeeting {
   eventKey: string;
   reviewInstanceId?: string | null;
   source: string;
+  reviewTypeCode?: string | null;
+  occurrenceNumber?: number | null;
   reviewTypeName: string;
   title: string;
   date: string;
   plannedDate: string;
+  scheduledDate: string;
+  scheduledTime: string;
   completedDate: string;
   time: string;
   detail: string;
@@ -197,6 +203,8 @@ export interface CoachLearnerCaseFileData {
   attendance: CoachAttendanceLearner | null;
   evidence: CoachMarkingQueueItem | null;
   detail: LearnerDetail | null;
+  /** Exact recorded-learning payload used by the learner's My Learning page. */
+  learningActivity?: StudentActivityResponse | null;
   journey: JourneyModule[];
   activityStates?: CaseFileActivityStates;
   peers: CoachCaseloadLearner[];

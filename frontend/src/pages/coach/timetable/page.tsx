@@ -579,7 +579,7 @@ type StatusFilter = 'all' | 'overdue' | 'due-soon' | 'needs-schedule' | 'schedul
 //
 // Unchanged: these are SCHEDULING buckets, not filters. The schedule modal,
 // its copy and its icons are keyed on the routing `source`.
-type SchedulableSource = 'mcr' | 'progress-review' | 'review' | 'catch-up' | 'student-support';
+type SchedulableSource = 'mcr' | 'progress-review' | 'review' | 'catch-up' | 'student-support' | 'lms-introduction';
 const STATUS_FILTER_ORDER: StatusFilter[] = ['all', 'overdue', 'due-soon', 'needs-schedule', 'scheduled', 'in-progress', 'awaiting-signature', 'completed'];
 
 const STATUS_FILTER_LABELS: Record<StatusFilter, string> = {
@@ -594,7 +594,7 @@ const STATUS_FILTER_LABELS: Record<StatusFilter, string> = {
   cancelled: 'Cancelled',
 };
 
-const SCHEDULABLE_SOURCE_ORDER: SchedulableSource[] = ['mcr', 'progress-review', 'review', 'catch-up', 'student-support'];
+const SCHEDULABLE_SOURCE_ORDER: SchedulableSource[] = ['mcr', 'progress-review', 'review', 'catch-up', 'student-support', 'lms-introduction'];
 const SCHEDULABLE_SOURCE_META: Record<SchedulableSource, { description: string; icon: string; accent: string; surface: string }> = {
   mcr: {
     description: 'Monthly coaching reviews waiting for a slot.',
@@ -626,10 +626,21 @@ const SCHEDULABLE_SOURCE_META: Record<SchedulableSource, { description: string; 
     accent: 'text-blue-700',
     surface: 'from-blue-500/10 via-blue-400/5 to-transparent',
   },
+  'lms-introduction': {
+    description: 'New learners asking for a one-to-one LMS introduction.',
+    icon: 'ri-user-voice-line',
+    accent: 'text-emerald-700',
+    surface: 'from-emerald-500/10 via-emerald-400/5 to-transparent',
+  },
 };
 
 function isSchedulableSource(value?: string): value is SchedulableSource {
-  return value === 'mcr' || value === 'progress-review' || value === 'review' || value === 'catch-up' || value === 'student-support';
+  return value === 'mcr' || value === 'progress-review' || value === 'review' || value === 'catch-up' || value === 'student-support' || value === 'lms-introduction';
+}
+
+// Learner-made requests the coach approves by placing them (status not-scheduled).
+function isApprovalRequestSource(source?: string) {
+  return source === 'student-support' || source === 'lms-introduction';
 }
 
 function parseScheduleNavigationIntent(value: unknown): ScheduleNavigationIntent | null {
@@ -762,7 +773,7 @@ function scheduleActionLabel(event: TimetableEvent | null | undefined) {
   if (!event) return 'Schedule';
   if (event.status === 'cancelled') return 'Schedule Again';
   if (event.status === 'scheduled') return 'Reschedule';
-  if (event.source === 'student-support') return 'Approve & Schedule';
+  if (isApprovalRequestSource(event.source)) return 'Approve & Schedule';
   return 'Schedule';
 }
 
@@ -1918,7 +1929,7 @@ export default function CoachTimetablePage() {
   const selectedEventDetailsPath = selectedEvent ? eventDetailsPath(selectedEvent) : null;
   const selectedScheduleEventNotes = sanitizeEventNotes(selectedScheduleEvent?.notes);
   const scheduleModalFeedback = sanitizeCalendarSyncMessage(scheduleModalError || scheduleModalNotice);
-  const scheduleNeedsApproval = selectedScheduleEvent?.source === 'student-support'
+  const scheduleNeedsApproval = isApprovalRequestSource(selectedScheduleEvent?.source)
     && selectedScheduleEvent.status === 'not-scheduled';
   const scheduleModalTitle = scheduleModalCompact
     ? scheduleActionLabel(selectedScheduleEvent)
@@ -2742,7 +2753,7 @@ export default function CoachTimetablePage() {
                           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary-50 text-primary-600">
                             <AppIcon className="ri-calendar-schedule-line"></AppIcon>
                           </span>
-                          {selectedEvent.status === 'not-scheduled' && selectedEvent.source === 'student-support' ? 'Approve & Schedule' : 'Schedule Meeting'}
+                          {selectedEvent.status === 'not-scheduled' && isApprovalRequestSource(selectedEvent.source) ? 'Approve & Schedule' : 'Schedule Meeting'}
                         </h4>
                         {selectedEvent.status === 'not-scheduled' && (
                           <span className="rounded-full bg-red-50 px-2.5 py-1 text-[12px] font-bold text-red-700">Needs scheduling</span>

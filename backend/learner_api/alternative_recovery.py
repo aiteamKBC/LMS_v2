@@ -116,31 +116,9 @@ def _future_instant(value, now=None) -> bool:
     return instant > reference
 
 
-def _cohort_context(original_occurrence_id: str, database: str):
-    occurrence = (
-        LiveSessionOccurrence.objects.using(database)
-        .filter(pk=original_occurrence_id)
-        .first()
-    )
-    if occurrence is None or not _active(occurrence.status):
-        return None
-    session = (
-        LiveSession.objects.using(database)
-        .filter(pk=occurrence.live_session_id)
-        .first()
-    )
-    if session is None or not _active(session.status):
-        return None
-    module = (
-        ModuleAuthoringModule.objects.using(database)
-        .filter(module_catalogue_id=session.module_catalogue_id, deleted_at__isnull=True)
-        .first()
-    )
-    if module is None or module.is_programme_deleted:
-        return None
-    if not all((module.programme_id, module.cohort_id, module.group_id)):
-        return None
-    return occurrence, session, module
+def _usable_module(module) -> bool:
+    return (module is not None and not module.is_programme_deleted
+            and all((module.programme_id, module.cohort_id, module.group_id)))
 
 
 def eligible_alternative_occurrences(
@@ -154,71 +132,109 @@ def eligible_alternative_occurrences(
     `at` is the apology time.  This intentionally allows an alternative before
     or after the original lecture, provided the alternative has not started.
     """
-    context = _cohort_context(original_occurrence_id, database)
-    if context is None:
-        return []
-    original, _original_session, original_module = context
+    return eligible_alternatives_by_occurrence(
+        [original_occurrence_id], at=at, database=database,
+    ).get(str(original_occurrence_id), [])
+
+
+def eligible_alternatives_by_occurrence(
+    original_occurrence_ids,
+    *,
+    at=None,
+    database: str = "enrolment",
+) -> dict[str, list[dict]]:
+    """``eligible_alternative_occurrences`` for many occurrences in a few queries.
+
+    A learner's absence form lists every missed lecture with its alternatives;
+    asking per lecture cost several round trips each (minutes for a long plan).
+    The same rules are applied to rows read once.
+    """
+    ids = [str(value) for value in dict.fromkeys(original_occurrence_ids) if value]
+    result = {occurrence_id: [] for occurrence_id in ids}
+    if not ids:
+        return result
     now = at or timezone.now()
 
-    modules = list(
-        ModuleAuthoringModule.objects.using(database)
-        .filter(
-            programme_id=original_module.programme_id,
-            cohort_id=original_module.cohort_id,
-            deleted_at__isnull=True,
-            is_programme_deleted=False,
-        )
-        .exclude(Q(group_id__isnull=True) | Q(group_id=""))
-    )
-    modules_by_id = {str(module.module_catalogue_id): module for module in modules}
-    sessions = list(
-        LiveSession.objects.using(database)
-        .filter(module_catalogue_id__in=list(modules_by_id))
-    )
-    matched_series = _matching_alternative_series(
-        _original_session, original_module, modules, sessions,
-    )
-    unambiguous_series = {
-        group_id: pair[1] for group_id, pair in matched_series.items()
+    occurrences = {
+        occurrence.id: occurrence
+        for occurrence in LiveSessionOccurrence.objects.using(database).filter(pk__in=ids)
+        if _active(occurrence.status)
     }
-    if not unambiguous_series:
-        return []
+    sessions = {
+        session.id: session
+        for session in LiveSession.objects.using(database).filter(
+            pk__in={occurrence.live_session_id for occurrence in occurrences.values()})
+        if _active(session.status)
+    }
+    first_module = {}
+    for module in (ModuleAuthoringModule.objects.using(database)
+                   .filter(module_catalogue_id__in={session.module_catalogue_id for session in sessions.values()},
+                           deleted_at__isnull=True)
+                   .order_by("pk")):
+        first_module.setdefault(str(module.module_catalogue_id), module)
 
+    contexts = {}
+    for occurrence_id in ids:
+        occurrence = occurrences.get(occurrence_id)
+        session = sessions.get(occurrence.live_session_id) if occurrence else None
+        module = first_module.get(str(session.module_catalogue_id)) if session else None
+        if _usable_module(module):
+            contexts[occurrence_id] = (occurrence, session, module)
+    if not contexts:
+        return result
+
+    # Each cohort's modules and series, read once however many lectures share it.
+    cohort_rows = {}
+    for cohort in {(module.programme_id, module.cohort_id) for _o, _s, module in contexts.values()}:
+        modules = list(
+            ModuleAuthoringModule.objects.using(database)
+            .filter(programme_id=cohort[0], cohort_id=cohort[1], deleted_at__isnull=True, is_programme_deleted=False)
+            .exclude(Q(group_id__isnull=True) | Q(group_id=""))
+        )
+        modules_by_id = {str(module.module_catalogue_id): module for module in modules}
+        cohort_rows[cohort] = (modules, list(
+            LiveSession.objects.using(database).filter(module_catalogue_id__in=list(modules_by_id))))
+
+    matched = {}
+    for occurrence_id, (occurrence, session, module) in contexts.items():
+        modules, cohort_sessions = cohort_rows[(module.programme_id, module.cohort_id)]
+        series = _matching_alternative_series(session, module, modules, cohort_sessions)
+        if series:
+            matched[occurrence_id] = series
+    if not matched:
+        return result
+
+    series_ids = {pair[1].id for series in matched.values() for pair in series.values()}
+    numbers = {contexts[occurrence_id][0].session_number for occurrence_id in matched}
     candidates = list(
         LiveSessionOccurrence.objects.using(database)
-        .filter(
-            live_session_id__in=[session.id for session in unambiguous_series.values()],
-            session_number=original.session_number,
-            scheduled_start__gt=now,
-        )
+        .filter(live_session_id__in=list(series_ids), session_number__in=list(numbers), scheduled_start__gt=now)
         .order_by("scheduled_start", "id")
     )
-    session_context = {
-        session.id: (group_id, matched_series[group_id][0])
-        for group_id, session in unambiguous_series.items()
-    }
-    result = []
-    for occurrence in candidates:
-        if not _active(occurrence.status):
-            continue
-        group_id, module = session_context.get(occurrence.live_session_id, (None, None))
-        session = unambiguous_series.get(group_id)
-        if module is None or session is None:
-            continue
-        start, end = _local(occurrence.scheduled_start), _local(occurrence.scheduled_end)
-        result.append({
-            "id": occurrence.id,
-            "sessionId": f"teams:{occurrence.id}",
-            "title": f"{session.module_title or module.title or 'Live session'} — Session {occurrence.session_number}",
-            "dateIso": start.date().isoformat(),
-            "startTime": start.strftime("%H:%M"),
-            "endTime": end.strftime("%H:%M") if end else "",
-            "groupId": str(module.group_id),
-            "group": module.group_name or "",
-            "cohortId": str(module.cohort_id),
-            "cohort": module.cohort_name or "",
-            "module": session.module_title or module.title or "",
-        })
+    for occurrence_id, series in matched.items():
+        original = contexts[occurrence_id][0]
+        session_context = {pair[1].id: (group_id, pair[0]) for group_id, pair in series.items()}
+        for occurrence in candidates:
+            if occurrence.session_number != original.session_number or not _active(occurrence.status):
+                continue
+            group_id, module = session_context.get(occurrence.live_session_id, (None, None))
+            session = series[group_id][1] if group_id in series else None
+            if module is None or session is None:
+                continue
+            start, end = _local(occurrence.scheduled_start), _local(occurrence.scheduled_end)
+            result[occurrence_id].append({
+                "id": occurrence.id,
+                "sessionId": f"teams:{occurrence.id}",
+                "title": f"{session.module_title or module.title or 'Live session'} — Session {occurrence.session_number}",
+                "dateIso": start.date().isoformat(),
+                "startTime": start.strftime("%H:%M"),
+                "endTime": end.strftime("%H:%M") if end else "",
+                "groupId": str(module.group_id),
+                "group": module.group_name or "",
+                "cohortId": str(module.cohort_id),
+                "cohort": module.cohort_name or "",
+                "module": session.module_title or module.title or "",
+            })
     return result
 
 
@@ -280,23 +296,30 @@ def alternative_target_details(
     return data
 
 
-def approved_alternative_guests(database: str = "enrolment") -> dict[str, set[str]]:
+def approved_alternative_guests(
+    database: str = "enrolment", current_emails_by_enrolment: dict[int, str] | None = None,
+) -> dict[str, set[str]]:
     """Current learner emails expected only for their approved target occurrence."""
-    reports = list(
-        CoachAbsenceReport.objects.filter(
-            status=CoachAbsenceReport.STATUS_APPROVED,
-            recovery_method=ALTERNATIVE_METHOD,
-            catchup_event_key__startswith=ALTERNATIVE_KEY_PREFIX,
-        ).values("learner_id", "learner_email", "catchup_event_key")
+    reports_query = CoachAbsenceReport.objects.filter(
+        status=CoachAbsenceReport.STATUS_APPROVED,
+        recovery_method=ALTERNATIVE_METHOD,
+        catchup_event_key__startswith=ALTERNATIVE_KEY_PREFIX,
     )
+    if current_emails_by_enrolment is not None:
+        if not current_emails_by_enrolment:
+            return defaultdict(set)
+        reports_query = reports_query.filter(learner_id__in=current_emails_by_enrolment)
+    reports = list(reports_query.values("learner_id", "learner_email", "catchup_event_key"))
     if not reports:
         return defaultdict(set)
-    current_emails = {
-        profile.enrolment_id: str(profile.email or "").strip().casefold()
-        for profile in LearnerProfile.objects.using(database).filter(
-            enrolment_id__in=[report["learner_id"] for report in reports]
-        )
-    }
+    current_emails = current_emails_by_enrolment
+    if current_emails is None:
+        current_emails = {
+            profile.enrolment_id: str(profile.email or "").strip().casefold()
+            for profile in LearnerProfile.objects.using(database).filter(
+                enrolment_id__in=[report["learner_id"] for report in reports]
+            ).only('enrolment_id', 'email')
+        }
     guests = defaultdict(set)
     for report in reports:
         occurrence_id = alternative_occurrence_id(report["catchup_event_key"])

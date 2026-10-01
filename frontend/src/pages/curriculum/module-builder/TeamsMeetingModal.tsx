@@ -5,6 +5,7 @@ import { cleanText } from '../shared/entities/model';
 import { TeamsMeetingDialogs } from '../teams-meetings/TeamsMeetingDialogs';
 import { useTeamsMeetingsWorkspace } from '../teams-meetings/useTeamsMeetingsWorkspace';
 import { loadModuleStructure, type ModuleCatalogueItem } from './moduleAuthoringData';
+import { WeekTeamsMeetingPanel } from './WeekTeamsMeetingForm';
 
 // The module the calendar belongs to. Its catalogue id selects the calendar; the
 // placement fields are kept for callers that already pass them.
@@ -13,6 +14,8 @@ export type TeamsMeetingModuleContext = ModuleCatalogueItem & {
   cohort?: string;
   group?: string;
 };
+
+const UNSAVED_WEEK_MEETING_REASON = 'This module has unsaved changes. An additional meeting is attached to a live session as it is STORED, so a week or a live session that exists only in this tab has nothing to attach to. Close this, press Save, then reopen the calendar.';
 
 const UNSAVED_REASON = 'This module has unsaved changes. The Teams calendar is built from the module’s saved sessions and writes its join links back into them, so nothing here can be sent until the module is saved. Close this, press Save, then reopen the calendar. Viewing and syncing still work.';
 
@@ -39,11 +42,14 @@ const UNSAVED_REASON = 'This module has unsaved changes. The Teams calendar is b
 export function TeamsMeetingModal({
   module,
   unsavedChanges = false,
+  initialWeekId = '',
   onClose,
   onRestored,
 }: {
   module: TeamsMeetingModuleContext;
   unsavedChanges?: boolean;
+  /** Opened from one live session's editor: the additional-meeting tab starts on that week. */
+  initialWeekId?: string;
   onClose: () => void;
   onRestored?: (module: ModuleCatalogueItem) => void;
 }) {
@@ -97,5 +103,25 @@ export function TeamsMeetingModal({
       </Modal>
     );
   }
-  return <TeamsMeetingDialogs workspace={workspace} />;
+  return (
+    <TeamsMeetingDialogs
+      workspace={workspace}
+      /* The second door's second door. The tab above it is the module's own
+         calendar, unchanged — this one books a separate meeting on a single
+         week and never touches that calendar. */
+      secondTab={{
+        label: 'Additional week meeting',
+        subtitle: 'A separate meeting on one week — its own organiser, guests and link',
+        render: () => (
+          <WeekTeamsMeetingPanel
+            module={module}
+            initialWeekId={initialWeekId}
+            blockedReason={unsavedChanges ? UNSAVED_WEEK_MEETING_REASON : ''}
+            graphConfigured={workspace.graphConfigured}
+            onCreated={() => { void readBack(); }}
+          />
+        ),
+      }}
+    />
+  );
 }

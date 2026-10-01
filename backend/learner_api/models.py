@@ -800,6 +800,11 @@ class LearnerProfile(models.Model):
                     entry.outside_working_hours_confirmed_at.isoformat()
                     if entry.outside_working_hours_confirmed_at else ""
                 ),
+                "declaredCompletedAt": (
+                    entry.declared_completed_at.isoformat()
+                    if entry.declared_completed_at else ""
+                ),
+                "submissionValidationReason": entry.submission_validation_reason,
                 "ksbs": [
                     row.ksb_code
                     for row in entry.ksb_links.all()
@@ -1073,6 +1078,11 @@ class LearnerProgressEntry(models.Model):
     outside_working_hours_confirmed_at = models.DateTimeField(null=True, blank=True)
     inside_working_hours_confirmed = models.BooleanField(default=False)
     inside_working_hours_confirmed_at = models.DateTimeField(null=True, blank=True)
+    # The working instant the learner declared after their real Finish click
+    # failed the working rules, and why that click failed. ``submitted_at``
+    # keeps the real click and is never rewritten.
+    declared_completed_at = models.DateTimeField(null=True, blank=True)
+    submission_validation_reason = models.CharField(max_length=32, blank=True, default='')
     feed_kind = models.CharField(max_length=30, blank=True)
     feed_action = models.TextField(blank=True)
     feed_title = models.TextField(blank=True)
@@ -1555,6 +1565,22 @@ class HealthSafetyReviewDetail(_ReviewDetail):
 
     def __str__(self):
         return f"Health & safety review {self.event_key}"
+
+
+class UlnPrivacyReviewDetail(_ReviewDetail):
+    """enrolment."Review_ULN_Privacy" — ULN Privacy Notice & Learner Acknowledgement."""
+
+    # "Yes" once the learner has read the ULN privacy notice / confirmed the
+    # acknowledgement; saving each panel records it.
+    privacy_notice_read = models.TextField(db_column="Privacy_notice_read", blank=True)
+    learner_acknowledged = models.TextField(db_column="Learner_acknowledged", blank=True)
+
+    class Meta:
+        managed = False
+        db_table = 'enrolment"."Review_ULN_Privacy'
+
+    def __str__(self):
+        return f"ULN privacy review {self.event_key}"
 
 
 class Organisation(models.Model):

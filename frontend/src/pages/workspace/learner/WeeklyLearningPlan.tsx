@@ -9,7 +9,7 @@ import { buildCurriculumTimeline, type CurriculumRow } from '@/pages/learner/tra
 import { learningToday } from '@/pages/learner/my-learning/subjectLearning';
 import { dateLabel, ukDate, ukTime } from './overviewSchedule';
 import { learnerHeaderPlan } from './learnerHeaderPlan';
-import { completedComponentIds, ksbTypeCode, resourceTypeMeta, type JourneyComponent } from '@/utils/learnerJourney';
+import { completedComponentIds, formatHoursMinutes, ksbTypeCode, resourceTypeMeta, type JourneyComponent } from '@/utils/learnerJourney';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { HolidayNoteHint } from '@/components/feature/HolidayNoteHint';
 import { Panel } from '@/components/ui/Panel';
@@ -20,7 +20,7 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { cn } from '@/lib/cn';
 import {
   activityActionLabel, activityExpectedTimeLabel, activityHref, activityKsbCodes, activityStatus,
-  resolveInitialWeek, weekComponents, weekKey, weekProgress, weekWindow, type ActivityStatus,
+  resolveInitialWeek, weekComponents, weekExpectedHours, weekKey, weekKsbProgress, weekProgress, weekWindow, type ActivityStatus,
 } from './weeklyPlanHelpers';
 import planLayout from '@/pages/learner/training-plan-timeline/TrainingPlanDetails.module.css';
 
@@ -75,6 +75,8 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
   const isTeachingWeek = selectedWeek?.kind === 'session';
   const components = isTeachingWeek ? weekComponents(real, resolvedModuleId || undefined, (selectedWeek as SessionRow).weekId, selectedWeek?.slotNumber) : [];
   const progress = weekProgress(components, completedIds);
+  const ksbProgress = weekKsbProgress(components, completedIds);
+  const weekHours = weekExpectedHours(components, completedIds);
 
   // A schedule failure with nothing cached is already surfaced by the
   // dashboard's own retry banner above this component -- a second, redundant
@@ -176,7 +178,7 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
     <div className={cn(planLayout.weekDetail, 'min-w-0 rounded-2xl border border-foreground-100 bg-background-50 p-4 shadow-sm')}>
       {!selectedWeek ? <Panel><EmptyState title="No weeks scheduled yet" description="This module's weekly schedule isn't available yet." /></Panel> : <>
         <div className="overflow-hidden">
-          <div className="flex flex-col gap-4 border-b border-foreground-100 pb-5 md:flex-row md:items-start md:justify-between">
+          <div className="flex flex-col gap-4 border-b border-foreground-100 pb-5 xl:flex-row xl:items-start xl:justify-between">
             <div className="min-w-0 border-l-4 border-primary-600 pl-3">
           <p className="text-[11px] font-extrabold uppercase tracking-[0.16em] text-primary-700">
             {selectedWeek.kind === 'reading-week' ? 'Reading week' : `Week ${selectedWeek.sessionNumber}`}
@@ -191,13 +193,18 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
 
             </div>
 
-            {isTeachingWeek && <div className="w-full shrink-0 rounded-xl border border-foreground-100 bg-background-50 p-4 shadow-sm md:w-[300px]">
-              <div className="flex items-end justify-between gap-3">
-                <span className="text-xs font-bold text-foreground-700">Week progress</span>
-                <strong className="text-2xl font-bold tabular-nums text-foreground-900">{progress.percent}%</strong>
-              </div>
-              <ProgressBar percent={progress.total ? progress.percent : null} tone="bg-primary-600" height="h-2" className="mt-2" />
-              <p className="mt-1.5 text-xs font-medium text-foreground-500">{progress.completed} of {progress.total} activities</p>
+            {isTeachingWeek && <div className="grid w-full shrink-0 grid-cols-1 gap-3 sm:grid-cols-3 xl:w-[660px]">
+              <WeekStatCard label="Week progress" value={`${progress.percent}%`} percent={progress.total ? progress.percent : null} tone="bg-primary-600"
+                caption={`${progress.completed} of ${progress.total} activities`} />
+              <WeekStatCard label="KSBs this week" value={ksbProgress.total ? `${ksbProgress.percent}%` : '—'}
+                percent={ksbProgress.total ? ksbProgress.percent : null} tone="bg-emerald-600"
+                caption={ksbProgress.total ? `${ksbProgress.achieved} of ${ksbProgress.total} KSBs` : 'No KSBs mapped this week'}
+                title={ksbProgress.codes.join(', ') || undefined} />
+              <WeekStatCard label="OTJH this week" value={weekHours.plannedHours ? `${weekHours.percent}%` : '—'}
+                percent={weekHours.plannedHours ? weekHours.percent : null} tone="bg-amber-500"
+                caption={weekHours.plannedHours
+                  ? `${formatHoursMinutes(weekHours.completedHours)} of ${formatHoursMinutes(weekHours.plannedHours)} hours${weekHours.untimed ? ` · ${weekHours.untimed} untimed` : ''}`
+                  : 'No expected time set'} />
             </div>}
           </div>
 
@@ -224,6 +231,20 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
     </div>
     </>}
   </section>;
+}
+
+/** One of the week summary cards: activities, KSBs and expected OTJ hours. */
+function WeekStatCard({ label, value, percent, tone, caption, title }: {
+  label: string; value: string; percent: number | null; tone: string; caption: string; title?: string;
+}) {
+  return <div className="min-w-0 rounded-xl border border-foreground-100 bg-background-50 p-3.5 shadow-sm" title={title}>
+    <div className="flex items-end justify-between gap-2">
+      <span className="min-w-0 truncate whitespace-nowrap text-[11px] font-bold text-foreground-700">{label}</span>
+      <strong className="shrink-0 whitespace-nowrap text-xl font-bold tabular-nums text-foreground-900">{value}</strong>
+    </div>
+    <ProgressBar percent={percent} tone={tone} height="h-2" className="mt-2" />
+    <p className="mt-1.5 truncate text-[11px] font-medium text-foreground-500">{caption}</p>
+  </div>;
 }
 
 function PaginationControls({ page, pageCount, onPageChange, label, className }: {

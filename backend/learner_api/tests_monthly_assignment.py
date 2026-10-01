@@ -146,17 +146,35 @@ class MonthlyAssignmentTests(SimpleTestCase):
         payload["monthlyAssignment"]["claims"] *= 2
         self.assertFalse(self.checks(payload)["ksbs"])
 
-    def test_outside_hours_confirmation_is_required(self):
+    def test_hours_no_longer_depend_on_a_working_hours_confirmation(self):
+        """The confirmation checkbox is gone; the Finish gate replaced it.
+
+        Working-hours validation now happens once, at Finish/Submit, against
+        the real click (see learner_api.working_rules). The quality check is
+        back to judging the time entries themselves, so an out-of-hours flag on
+        the payload -- and the legacy confirmation keys, which keep their old
+        meaning on historical records -- no longer decide it either way.
+        """
         payload = self.payload()
         payload["outsideWorkingHours"] = True
+        self.assertTrue(self.checks(payload)["hours"])
+
+        for key in ("outsideWorkingHoursConfirmed", "insideWorkingHoursConfirmed"):
+            denied = {**payload, key: False}
+            self.assertTrue(self.checks(denied)["hours"], key)
+
+    def test_hours_still_reject_a_non_working_date(self):
+        # The entry-level rule the check has always owned is untouched.
+        payload = self.payload()
+        payload["monthlyAssignment"]["timeEntries"] = [
+            {"topic": "Research", "hours": 8, "date": "2026-09-25"},   # a Friday
+        ]
+        self.assertTrue(self.checks(payload)["hours"])
+
+        payload["monthlyAssignment"]["timeEntries"] = [
+            {"topic": "Research", "hours": 8, "date": "2026-09-27"},   # a Sunday
+        ]
         self.assertFalse(self.checks(payload)["hours"])
-        payload["outsideWorkingHoursConfirmed"] = True
-        self.assertTrue(self.checks(payload)["hours"])
-        # New activity submissions declare inside-hours work; the old key is
-        # retained for historical/extra-activity payloads with its old meaning.
-        del payload["outsideWorkingHoursConfirmed"]
-        payload["insideWorkingHoursConfirmed"] = True
-        self.assertTrue(self.checks(payload)["hours"])
 
     def test_hours_reject_zero_negative_nonfinite_or_invalid(self):
         for value in ["0", "-1", "NaN", "Infinity", "bad"]:
