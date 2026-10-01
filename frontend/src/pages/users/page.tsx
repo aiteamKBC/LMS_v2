@@ -15,6 +15,7 @@ import { listEmployers, type EmployerRow } from '@/api/employers';
 import type { UserListRow, UsersFilter } from './types';
 import { StatusBadge, Pagination, inputClass, btnPrimary, btnSecondary } from './components/ui';
 import { SendInvitationButton } from './components/SendInvitationButton';
+import { CopyInvitationLinkButton } from './components/CopyInvitationLinkButton';
 import { CreateUserModal } from './components/CreateUserModal';
 import { DownloadLearnerTemplateButton } from './components/DownloadLearnerTemplateButton';
 import { ImportLearnersModal } from './components/ImportLearnersModal';
@@ -901,6 +902,11 @@ export default function UsersListPage() {
                             email={row.email}
                             onSent={load}
                           />
+                        )}
+                        {/* For learners whose employer blocks our email: staff
+                            send the same single-use link another way. */}
+                        {!row.hasSignedIn && isLearner && (
+                          <CopyInvitationLinkButton subjectId={Number(row.id)} name={row.name} onIssued={load} />
                         )}
                       </span>
                     </td>

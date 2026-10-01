@@ -39,6 +39,7 @@ urlpatterns = [
     path("invitation/", views.invitation_info, name="login-invitation-info"),
     path("accept-invitation/", views.accept_invitation_view, name="login-accept-invitation"),
     path("accounts/invite/", views.invite_account, name="login-invite-account"),
+    path("accounts/invitation-link/", views.invitation_link_view, name="login-invitation-link"),
 
     # --- a signed-in account with no access grant asking for one ---
     path("request-access/", access_requests.request_access, name="login-request-access"),
