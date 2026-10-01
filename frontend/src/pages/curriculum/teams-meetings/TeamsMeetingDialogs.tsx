@@ -372,8 +372,9 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
   const {
     calendarActionTarget, loadTeamsState, notifyChanged, setSelectedId, setCalendarActionTarget, selected,
     requestCloseSelected, notice, openCalendarAction, busy, detailLoading, detail, graphConfigured,
+    graphStatus, checkGraphConfiguration,
     checkCalendarAction, pendingComponents, reattach, selectedForDisplay, createCalendar, createDrawer, createRecovery,
-    runCalendarSync, calendarSyncing, runArtifactSync, artifactSyncing, autoSyncEnabled, setAutoSyncEnabled,
+    runCalendarSync, calendarSyncing, autoSyncEnabled, setAutoSyncEnabled,
     openSettings, setResultsModule, resultsModule, detailError, loadDetail, holidayLabelFor,
     detailOccurrenceFor, now, setPreview, setTranscriptPreview, invitedPrefilling, prefillNotice, prefillInvitees, preview,
     transcriptPreview, settingsDrawer, drawerTarget, saveSettings, blockedReason,
@@ -582,9 +583,21 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
               )}
             </div>
 
-            {!graphConfigured && (
+            {/* Two different facts, so two different sentences. Only the first
+                one has been established; the second is this screen admitting it
+                does not know, and it disables nothing. */}
+            {graphStatus === 'unconfigured' && (
               <p className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-800">
                 Microsoft Graph credentials are missing from the backend, so nothing here can reach the Teams calendar.
+              </p>
+            )}
+            {graphStatus === 'unknown' && (
+              <p className="mb-4 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[11px] font-semibold text-foreground-600">
+                The Teams calendar check did not finish, so this screen could not confirm the backend is set up for
+                Microsoft. The actions below still work &mdash; if the setup is missing, the action itself will say so.
+                <button type="button" onClick={() => void checkGraphConfiguration()} className="font-bold text-primary-700 underline hover:text-primary-800">
+                  Check again
+                </button>
               </p>
             )}
             {blockedReason && (
@@ -645,30 +658,35 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     <AppIcon className={`${calendarSyncing.has(selected.summary.liveSessionId) ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'} text-sm`}></AppIcon>
                     {calendarSyncing.has(selected.summary.liveSessionId) ? 'Checking calendar...' : 'Sync calendar status'}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => void runArtifactSync(selected.summary!.liveSessionId, 'manual')}
-                    disabled={artifactSyncing.has(selected.summary.liveSessionId) || !graphConfigured}
-                    title="Ask Microsoft Graph now for attendance, transcripts and recordings from meetings that have ended."
-                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-2.5 text-[11px] font-bold text-primary-700 transition-smooth hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-50"
-                  >
-                    <AppIcon className={`${artifactSyncing.has(selected.summary.liveSessionId) ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'} text-sm`}></AppIcon>
-                    {artifactSyncing.has(selected.summary.liveSessionId) ? 'Syncing…' : 'Sync attendance & files'}
-                  </button>
+                  {/* Attendance, transcripts and recordings are not asked for
+                      from here. The durable server worker polls for them every
+                      minute and owns the transfer, so the only honest place to
+                      ask for them sooner is beside the sessions they belong to,
+                      in the Sessions & Recordings panel below. */}
+
+                  {/* This switch is one browser's preference for the in-page
+                      cancellation sweep, and nothing more: the server worker
+                      collects attendance and files whether it is on or off.
+                      Without Graph credentials the sweep cannot run at all, so
+                      the control says that instead of showing a green "on" for
+                      something that is not happening. */}
                   <button
                     type="button"
                     role="switch"
-                    aria-checked={autoSyncEnabled}
+                    aria-checked={graphConfigured && autoSyncEnabled}
+                    disabled={!graphConfigured}
                     onClick={() => setAutoSyncEnabled(enabled => !enabled)}
-                    title="Check calendar status while this page is open. Attendance and files are processed in the background."
-                    className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[11px] font-bold transition-smooth ${
-                      autoSyncEnabled
+                    title={graphConfigured
+                      ? 'Checks this calendar for cancellations every five minutes while this page is open, in this browser only. Attendance and files are collected by the server either way.'
+                      : 'Microsoft Graph credentials are missing from the backend, so no calendar check can run.'}
+                    className={`inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[11px] font-bold transition-smooth disabled:cursor-not-allowed disabled:opacity-50 ${
+                      graphConfigured && autoSyncEnabled
                         ? 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
                         : 'border-background-200 bg-background-50 text-foreground-500 hover:bg-background-100'
                     }`}
                   >
-                    <AppIcon className={`${autoSyncEnabled ? 'ri-checkbox-circle-line' : 'ri-close-circle-line'} text-sm`}></AppIcon>
-                    Auto-sync {autoSyncEnabled ? 'on' : 'off'}
+                    <AppIcon className={`${graphConfigured && autoSyncEnabled ? 'ri-checkbox-circle-line' : 'ri-close-circle-line'} text-sm`}></AppIcon>
+                    {graphConfigured ? `Auto-sync ${autoSyncEnabled ? 'on' : 'off'}` : 'Auto-sync unavailable'}
                   </button>
                   <button
                     type="button"
@@ -683,7 +701,17 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                   </span>
                 </div>
 
-                <button type="button" className="rounded-lg border border-primary-200 px-4 py-2 text-sm font-semibold text-primary-700" onClick={() => setResultsModule(current => current === selected.summary!.moduleCatalogueId ? '' : selected.summary!.moduleCatalogueId)}>
+                {/* Navigation, not an action on the meeting: this view has its
+                    own home on the module and the button only opens it in
+                    place, so it reads as a link rather than competing with the
+                    buttons that change the meeting. */}
+                <button
+                  type="button"
+                  aria-expanded={resultsModule === selected.summary.moduleCatalogueId}
+                  className="inline-flex items-center gap-1.5 text-sm font-semibold text-primary-700 underline-offset-4 hover:underline"
+                  onClick={() => setResultsModule(current => current === selected.summary!.moduleCatalogueId ? '' : selected.summary!.moduleCatalogueId)}
+                >
+                  <AppIcon className={`${resultsModule === selected.summary.moduleCatalogueId ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} text-base`}></AppIcon>
                   Sessions & Recordings
                 </button>
                 {resultsModule === selected.summary.moduleCatalogueId && <ModuleSessions moduleId={resultsModule} />}
@@ -874,7 +902,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                 </section>
 
                 <p className="text-[11px] font-semibold text-foreground-400">
-                  Auto-sync checks calendar cancellations every five minutes while this page is open. Attendance, transcripts and recordings are checked after a meeting has run. Use the sync buttons to check now.
+                  Auto-sync checks this calendar for cancellations every five minutes while this page is open, in this browser only; Sync calendar status checks now. Attendance, transcripts and recordings are collected by the server after a meeting has run — open Sessions & Recordings to see them or to ask for them sooner.
                 </p>
               </div>
             ) : (

@@ -401,7 +401,17 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   // refresh belongs over the rows already on screen, not in place of them.
   const [teamsLoaded, setTeamsLoaded] = useState(false);
   const [teamsError, setTeamsError] = useState<string | null>(null);
-  const [graphConfigured, setGraphConfigured] = useState(true);
+  // Three states, not two. 'unconfigured' is the backend ANSWERING that the
+  // five Graph environment variables are not all set -- the one fact that makes
+  // every action here certain to fail. 'unknown' is the check itself not
+  // completing: a 401, a 500, a timeout. Those two used to share one `false`,
+  // so a request that never arrived locked the author out of creating,
+  // updating and booking additional meetings while the credentials were fine.
+  // Only a definitive 'unconfigured' disables anything now; an unknown check
+  // says so and lets the server answer, which it does properly (503
+  // "Microsoft Graph credentials are not configured").
+  const [graphStatus, setGraphStatus] = useState<'checking' | 'configured' | 'unconfigured' | 'unknown'>('checking');
+  const graphConfigured = graphStatus !== 'unconfigured';
   const [defaultOrganizer, setDefaultOrganizer] = useState('');
   const [timeZoneLabel, setTimeZoneLabel] = useState('');
 
@@ -548,29 +558,43 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     const controller = new AbortController();
     void (async () => {
       // A group edit can happen in the Group drawer while this module builder
-      // stays mounted. Refresh the scoped overview before constructing rows so
-      // its delivery day, clock and coach are the values the Teams planner will
-      // use, rather than the overview snapshot that opened the page.
-      if (scopeModuleId) await reloadEntitiesRef.current({ silent: true });
-      if (!controller.signal.aborted) await loadTeamsState(controller.signal);
+      // stays mounted. Re-read the overview so its delivery day, clock and coach
+      // are the values the Teams planner will use, rather than the snapshot that
+      // opened the page. `revalidate`, not `skipCache`: a write already
+      // invalidates the server's copy through the shared epoch, and forcing a
+      // whole-curriculum rebuild (plus tutors, coaches and holidays) here held
+      // the dialog on "Loading this module's calendar" for its full duration.
+      // Neither read depends on the other, so they run side by side; the dialog
+      // still waits for both (`loaded` and `teamsLoaded`) before it shows a row.
+      await Promise.all([
+        scopeModuleId ? reloadEntitiesRef.current({ silent: true, skipCache: false, revalidate: true }) : null,
+        loadTeamsState(controller.signal),
+      ]);
     })();
     return () => controller.abort();
   }, [loadTeamsState, scopeModuleId]);
 
   // The organizer default and the calendar's timezone both come from the
   // backend's Graph configuration — never from this browser's own zone.
-  useEffect(() => {
-    let active = true;
-    loadTeamsMeetingConfiguration()
+  //
+  // `alive` lets a retry started by the banner be abandoned the same way the
+  // first attempt is when the page unmounts.
+  const graphCheckAlive = useRef(true);
+  useEffect(() => () => { graphCheckAlive.current = false; }, []);
+  const checkGraphConfiguration = useCallback(() => {
+    setGraphStatus('checking');
+    return loadTeamsMeetingConfiguration()
       .then(configuration => {
-        if (!active) return;
-        setGraphConfigured(configuration.configured);
+        if (!graphCheckAlive.current) return;
+        setGraphStatus(configuration.configured ? 'configured' : 'unconfigured');
         setDefaultOrganizer(configuration.defaultOrganizer || '');
         setTimeZoneLabel(configuration.timeZone || configuration.timeZoneIana || '');
       })
-      .catch(() => { if (active) setGraphConfigured(false); });
-    return () => { active = false; };
+      // The check did not complete. That says nothing about the credentials, so
+      // nothing is disabled on the strength of it.
+      .catch(() => { if (graphCheckAlive.current) setGraphStatus('unknown'); });
   }, []);
+  useEffect(() => { void checkGraphConfiguration(); }, [checkGraphConfiguration]);
 
   // -------------------------------------------------------------- row model
 
@@ -700,15 +724,25 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     const components = liveComponents[key] || [];
     const extra = additionalMeetings[key];
     const excluded = new Set(extra?.excluded || []);
-    // Filtered on BOTH branches, because a module with no calendar yet never
-    // reaches the planned one. A week delivered by its own additional meeting
-    // is not this calendar's to show, to count, or to send.
+    // The STORED branch only. A module with no calendar yet never builds a
+    // planned list, so its stored sessions arrive one per live-session
+    // component, unfiltered, and this is what keeps a week's private meeting
+    // off the module calendar's preview.
+    //
+    // The planned branch must NOT be filtered again. `liveSessionPlan` has
+    // already dropped the weeks another calendar delivers, and it drops them
+    // from a list `extra.all` still holds in full -- so the positional pairing
+    // inside this filter lines its result up against the wrong components and
+    // removes the session AFTER each dropped week as well. That is what hid a
+    // week moved onto the module calendar from "Module dates sent to Teams"
+    // while Update Teams calendar, which reads `liveSessionPlan` directly,
+    // listed it on the review page.
     const drop = (list: CurriculumSession[]) => withoutAdditionalMeetings(list, extra?.all || [], excluded);
     const startsFor = (list: CurriculumSession[]) => list.map(
       session => zonedNaiveToUtcIso(sessionNaiveLocal(session), session.timeZone || selected.summary?.timeZone),
     );
     const sessionsForPlan = plannedSessions[key];
-    const sessions = drop(sessionsForPlan || selected.sessions);
+    const sessions = sessionsForPlan || drop(selected.sessions);
     return { ...selected, sessions: namedSessions(sessions, components), plannedStarts: startsFor(sessions) };
   }, [additionalMeetings, liveComponents, plannedSessions, selected]);
   const selectedLiveId = useRef('');
@@ -1814,7 +1848,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
 
   return {
     programmes, cohorts, groups, modules, loading, loaded, refreshing, error, reload,
-    teamsLoading, teamsLoaded, teamsError, graphConfigured, timeZoneLabel,
+    teamsLoading, teamsLoaded, teamsError, graphConfigured, graphStatus, checkGraphConfiguration, timeZoneLabel,
     selectedId, setSelectedId, calendarActionTarget, setCalendarActionTarget,
     busy, notice, setNotice, detail, detailLoading, detailError, loadDetail, detailOccurrenceFor,
     artifactSyncing, autoSyncEnabled, setAutoSyncEnabled, calendarSyncing, resultsModule, setResultsModule,

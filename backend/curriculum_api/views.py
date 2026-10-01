@@ -909,22 +909,11 @@ def table_exists(table):
     if cache_key in _TABLE_EXISTS_CACHE:
         return _TABLE_EXISTS_CACHE[cache_key]
     try:
-        if connection.vendor == 'postgresql':
-            rows = fetch_all(
-                '''
-                select 1
-                from information_schema.tables
-                where table_schema = %s and table_name = %s
-                limit 1
-                ''',
-                [CURRICULUM_SCHEMA, table],
-            )
-        else:
-            rows = fetch_all(
-                "select 1 from sqlite_master where type='table' and name = %s limit 1",
-                [table],
-            )
-        exists = bool(rows)
+        # schema_gate owns the probe, so the gate and these read paths share one
+        # answer instead of each asking information_schema the same question.
+        # The first call there lists the schema once; after it, a table that
+        # exists is answered without touching the database at all.
+        exists = schema_gate.table_exists(table)
         _TABLE_EXISTS_CACHE[cache_key] = exists
         return exists
     except (Exception, AssertionError):
@@ -2252,6 +2241,110 @@ def teams_expanded_instances(owner_key, event_key, instance_query, expected, dea
         waited += 2.0
 
 
+def vacated_occurrence_keys(targets, existing_occurrences):
+    """The dates sessions in THIS operation have just moved off.
+
+    Keyed by the minute key of the old date, holding the identity that proves
+    it: the LMS session number, where that session was, and where it is going.
+    One entry per session whose stored date differs from the date it is being
+    given now -- that old slot is the stale twin of a session still on this
+    calendar, and the only occurrence a shift is ever allowed to retire.
+
+    A session absent from ``targets`` contributes nothing. Its date has not been
+    vacated; it is simply not part of this send. That distinction is the whole
+    point: ``scheduledOccurrences`` is a positive update list, not a desired
+    state, so "this Microsoft date is not in the array" says nothing about
+    whether anybody wanted it cancelled -- and a week routed to its own
+    additional meeting, or a weekly slot Graph materialised from the unbroken
+    recurrence, is absent for reasons that have nothing to do with intent.
+    """
+    stored = {}
+    for row in existing_occurrences or ():
+        number = parse_int((row or {}).get('session_number'))
+        key = teams_calendar_minute_key((row or {}).get('scheduled_start'))
+        if number and key:
+            stored[number] = key
+    vacated = {}
+    for target in targets or ():
+        number = parse_int((target or {}).get('session_number'))
+        previous = stored.get(number)
+        current = teams_calendar_minute_key((target or {}).get('start'))
+        if number and previous and current and previous != current:
+            vacated[previous] = {
+                'session_number': number,
+                'previous_start': previous,
+                'new_start': current,
+                'reason': 'stale_twin_of_moved_session',
+            }
+    return vacated
+
+
+def tracked_occurrence_keys(existing_occurrences):
+    """Every date this calendar still owns a live session on.
+
+    A Graph weekly recurrence materialises an instance in EVERY weekly slot of
+    its range, so most of what Microsoft lists was never a session anybody
+    planned -- it is filler the pattern generated, and clearing it is the only
+    way a holiday-shifted plan can match at all.
+
+    These keys are what tells the two apart. A date with an LMS occurrence row
+    behind it is a real session, and a real session is never retired because it
+    is absent from a send list: that is how a week routed to its own additional
+    meeting came to be cancelled. A date with no row behind it never was one.
+    """
+    return {
+        key for key in (
+            teams_calendar_minute_key((row or {}).get('scheduled_start'))
+            for row in existing_occurrences or ()
+        ) if key
+    }
+
+
+def execute_teams_occurrence_deletions(
+    graph_request, owner_key, deletions, *, live_session_id='', module_catalogue_id='', source='holiday_move_cleanup',
+):
+    """Issue the Graph deletes a shift has PROVED, once nothing else can refuse.
+
+    Held back from `apply_teams_occurrence_shifts` and run by the caller on
+    purpose. A cancellation cannot be taken back and Exchange emails everyone on
+    the meeting, so it must not happen before a validation that may still fail:
+    an author whose update is rejected should not already have had the cohort
+    told a session was cancelled.
+
+    Every delete is logged with the identity that justified it -- which session,
+    where it was, where it went, why, and which action asked. There is no
+    anonymous cancellation on this calendar, and no reason that amounts to "the
+    date was not in the array".
+    """
+    warnings = []
+    for deletion in deletions or ():
+        instance_id = clean_str((deletion or {}).get('instance_id'))
+        if not instance_id:
+            continue
+        logger.info(
+            'Teams occurrence delete: live_session_id=%s module_catalogue_id=%s graph_event_id=%s '
+            'session_number=%s previous_start=%s new_start=%s reason=%s source=%s',
+            live_session_id, module_catalogue_id, instance_id,
+            deletion.get('session_number'), deletion.get('previous_start'),
+            deletion.get('new_start'), deletion.get('reason'), source,
+        )
+        try:
+            graph_request(
+                'DELETE', f'users/{owner_key}/events/{urllib_parse.quote(instance_id, safe="")}',
+                extra_headers=GRAPH_SILENT_INVITE_HEADERS,
+            )
+        except RuntimeError as exc:
+            warnings.append({
+                'code': 'teams_stale_occurrence_not_removed',
+                'message': (
+                    'Microsoft Teams could not remove the slot this session moved off, so the calendar may still '
+                    'show it on its previous date.'
+                ),
+                'detail': str(exc),
+            })
+    return warnings
+
+
 def apply_teams_occurrence_shifts(
     owner_key,
     event_key,
@@ -2278,10 +2371,11 @@ def apply_teams_occurrence_shifts(
 
     warnings = []
     recreated_details = []
+    stale_deletions = []
     protected_instances = set()
     moved_instances = set()
     if not target_occurrences:
-        return warnings, recreated_details
+        return warnings, recreated_details, stale_deletions
 
     instance_start = (min(item['start'] for item in target_occurrences) - timedelta(days=7)).isoformat()
     instance_end = (max(item['end'] for item in target_occurrences) + timedelta(days=7)).isoformat()
@@ -2452,9 +2546,18 @@ def apply_teams_occurrence_shifts(
             # none had to move, so nothing can be left over to delete. Re-reading
             # the series here only spends another round trip on a calendar that
             # already matches the plan.
-            return warnings, recreated_details
+            return warnings, recreated_details, stale_deletions
         instance_response = microsoft_graph_request('GET', f'users/{owner_key}/events/{event_key}/instances?{instance_query}')
         instances = [graph_event_utc(item) for item in (instance_response.get('value') or [])] if isinstance(instance_response, dict) else []
+        # Session-aware, not date-set-aware. The old rule here deleted every
+        # instance whose start was absent from `series_target_keys`, which turned
+        # an omission into a cancellation: a week moved to its own additional
+        # meeting left the target list, its live occurrence was read as surplus,
+        # and Exchange emailed the whole cohort "Canceled: <module>". Nothing is
+        # retired now unless the LMS's own occurrence rows prove this very
+        # session has just moved off that date.
+        stale = vacated_occurrence_keys(series_targets, existing_occurrences)
+        tracked = tracked_occurrence_keys(existing_occurrences)
         for instance in instances:
             instance_id = clean_str(instance.get('id'))
             if not instance_id:
@@ -2463,13 +2566,29 @@ def apply_teams_occurrence_shifts(
             # An occurrence this run has just moved is never surplus. Microsoft
             # can still answer with its previous start for a moment, and deleting
             # it on that reading destroys the session the move had just placed.
-            if instance_id in moved_instances:
+            if instance_id in moved_instances or instance_id in protected_instances:
                 continue
-            if current_key and current_key not in series_target_keys and instance_id not in protected_instances:
-                microsoft_graph_request(
-                    'DELETE', f'users/{owner_key}/events/{urllib_parse.quote(instance_id, safe="")}',
-                    extra_headers=GRAPH_SILENT_INVITE_HEADERS,
-                )
+            if not current_key or current_key in series_target_keys:
+                continue
+            identity = stale.get(current_key)
+            if identity is None and current_key in tracked:
+                # A session this calendar owns, absent from the send list. That
+                # is routing, not intent: the week now belongs to its own
+                # additional meeting, and nothing about its absence asks for a
+                # cancellation. Leave Microsoft alone.
+                continue
+            stale_deletions.append({
+                **(identity or {
+                    'session_number': '',
+                    'previous_start': current_key,
+                    'new_start': '',
+                    # Graph's own weekly filler: a slot the recurrence generated
+                    # that has never been an LMS session. Clearing it is what
+                    # lets a shifted plan verify.
+                    'reason': 'recurrence_filler_never_an_lms_session',
+                }),
+                'instance_id': instance_id,
+            })
         master_keys = {
             teams_calendar_minute_key((instance.get('start') or {}).get('dateTime'))
             for instance in instances
@@ -2511,7 +2630,7 @@ def apply_teams_occurrence_shifts(
             'message': 'Microsoft Teams updated the meeting series, but could not update shifted individual sessions.',
             'detail': str(exc),
         })
-    return warnings, recreated_details
+    return warnings, recreated_details, stale_deletions
 
 
 def verify_teams_calendar_with_standalones(
@@ -2809,6 +2928,30 @@ def teams_meeting_base_path(organizer, meeting_id, join_url=''):
     """Graph path of one onlineMeeting, resolved for the organizer that owns it."""
     owner_key = urllib_parse.quote(teams_online_meeting_owner_id(organizer, join_url), safe='')
     return f'users/{owner_key}/onlineMeetings/{urllib_parse.quote(clean_str(meeting_id), safe="")}'
+
+
+def teams_warning_sentence(warnings):
+    """Graph's own reasons for a refusal, as one sentence an author can act on.
+
+    Every warning raised on the Teams paths carries a ``message`` saying what
+    was not applied and a ``detail`` holding Microsoft's raw error. Both are
+    wanted: the message is what the person reads, the detail is the code
+    support asks for. Duplicates are collapsed -- one policy refusal arrives
+    once per occurrence on a shifted series, and ten copies of a sentence reads
+    as ten separate faults.
+    """
+    seen, parts = set(), []
+    for warning in warnings or ():
+        if not isinstance(warning, dict):
+            text = clean_str(warning)
+        else:
+            message = clean_str(warning.get('message'))
+            detail = clean_str(warning.get('detail'))
+            text = f'{message} ({detail})' if message and detail else message or detail
+        if text and text not in seen:
+            seen.add(text)
+            parts.append(text)
+    return ' '.join(parts)
 
 
 def apply_teams_meeting_options(
@@ -3219,7 +3362,12 @@ def curriculum_teams_meeting(request):
     # wizard's holiday-shifted dates now, otherwise the calendar keeps sessions on
     # holidays the wizard already moved them off and the two disagree from day one.
     if repeat != 'none':
-        shift_warnings, recreated_details = apply_teams_occurrence_shifts(
+        # No `existing_occurrences`: this calendar is being created, so the LMS
+        # owns no session on any date yet and `tracked_occurrence_keys` is empty.
+        # Every slot left over is therefore the recurrence's own weekly filler,
+        # which is exactly what has to go for a holiday-shifted plan to match.
+        # There is no previously-routed week here for an omission to harm.
+        shift_warnings, recreated_details, stale_deletions = apply_teams_occurrence_shifts(
             owner_key,
             urllib_parse.quote(event_id, safe=''),
             clean_str(event_payload.get('subject')) or teams_calendar_subject(payload),
@@ -3227,6 +3375,12 @@ def curriculum_teams_meeting(request):
             invited_people,
             meeting_options,
         )
+        shift_warnings.extend(execute_teams_occurrence_deletions(
+            microsoft_graph_request, owner_key, stale_deletions,
+            live_session_id=clean_str(payload.get('liveSessionId')),
+            module_catalogue_id=clean_str(payload.get('moduleCatalogueId')),
+            source='series_creation_cleanup',
+        ))
         for shift_warning in shift_warnings:
             message = clean_str(shift_warning.get('message'))
             detail = clean_str(shift_warning.get('detail'))
@@ -3822,9 +3976,13 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         'presenters': presenters,
         'co_organizers': co_organizers,
     }
-    warnings, recreated_details = [], []
+    warnings, recreated_details, stale_deletions = [], [], []
     if repeat != 'none':
-        warnings, recreated_details = apply_teams_occurrence_shifts(
+        # `current_occurrences` is what makes the cleanup provable: the LMS's own
+        # occurrence rows, carrying each session's number and the date this
+        # calendar last recorded for it. Nothing is deleted from the shape of the
+        # target list alone.
+        warnings, recreated_details, stale_deletions = apply_teams_occurrence_shifts(
             owner_key, event_key, title,
             teams_shifted_occurrence_targets(payload, duration), invited_people,
             meeting_options, current_occurrences,
@@ -3849,7 +4007,27 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
     warnings.extend(option_warnings)
     try:
         if warnings or not _applied:
-            raise RuntimeError('Microsoft did not accept every calendar or meeting option change.')
+            # Say what Microsoft actually refused. Every warning already carries
+            # Graph's own message and detail; raising a generic sentence here
+            # threw that away, so the dialog -- and the row this is recorded on
+            # -- could only report that something was not accepted, never which
+            # thing or why. The author is the person who has to act on it.
+            raise RuntimeError(teams_warning_sentence(warnings)
+                               or 'Microsoft did not accept every calendar or meeting option change.')
+        # Destructive writes last. The schedule is reconciled and the meeting
+        # options are accepted before a single slot is retired, so an update
+        # that is going to be refused cannot first have Exchange tell the cohort
+        # a session was cancelled. Previously the deletes ran inside the shift,
+        # several Graph calls before this check could reject the whole update.
+        delete_warnings = execute_teams_occurrence_deletions(
+            microsoft_graph_request, owner_key, stale_deletions,
+            live_session_id=live_session_id,
+            module_catalogue_id=clean_str(series.get('module_catalogue_id')),
+            source='holiday_move_cleanup',
+        )
+        if delete_warnings:
+            warnings.extend(delete_warnings)
+            raise RuntimeError(teams_warning_sentence(delete_warnings))
         occurrence_details = recreated_details or current_occurrences
         if not notify_attendees:
             # An author who chose not to email still gets a structurally correct
@@ -3901,8 +4079,12 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             'warnings': json_db_value([*warnings, {'code': 'teams_calendar_unverified', 'message': str(exc)}]),
             'updated_at': datetime.utcnow(),
         })
+        # `errors` is the field the curriculum client already appends to the
+        # sentence it shows, so the reason travels all the way to the dialog
+        # instead of living only in this row's `warnings` column.
         return json_error('Microsoft did not confirm the reviewed calendar. Requested dates have not been marked as synchronized.',
-                          status=502, detail=str(exc), partial=True, liveSessionId=live_session_id)
+                          status=502, detail=str(exc), partial=True, liveSessionId=live_session_id,
+                          errors=[warning for warning in warnings if isinstance(warning, dict)] or [str(exc)])
     occurrence_rows = authoring_fetch_all(LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [live_session_id]) if payload.get('peopleOnly') else replace_live_session_occurrences(
         live_session_id,
         payload,
@@ -8930,17 +9112,6 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
     grouped = defaultdict(list)
     group_meta = {}
     order = {}
-    free_programme_counts = defaultdict(lambda: {'modules': 0, 'components': 0})
-    try:
-        for row in free_programme_fetch_all(FREE_PROGRAMME_MODULES_TABLE):
-            programme_id = clean_str(row.get('programme_id'))
-            if not programme_id:
-                continue
-            free_programme_counts[programme_id]['modules'] += 1
-            free_programme_counts[programme_id]['components'] += parse_int(row.get('component_count'), 0)
-    except Exception:
-        logger.debug('Free programme counts are not available yet.', exc_info=True)
-
     # Cohorts, groups, modules and weeks all come from the same read of the
     # tables that own them, so the card cannot disagree with the programme's own
     # page about any of the four.
@@ -9051,7 +9222,6 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
         standard = (profile.get('name') if profile else None) or name
         level = (config or {}).get('level') or infer_level(standard) or infer_level(name)
         structure_type = 'scheduled'
-        free_counts = free_programme_counts.get(clean_str(source_id), {})
         # The authoring tables answer for every programme that has any row of its
         # own. A programme that exists only as legacy delivery rows has no entry
         # there and keeps the figures derived from those rows just above.
@@ -9060,10 +9230,16 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
             structure_counts_by_id,
             structure_counts_by_name,
         ) or {}
-        programme_modules_count = (
-            parse_int(free_counts.get('modules'), 0) if structure_type == 'free'
-            else structure_counts.get('modules', len(delivery_rows))
-        )
+        # curriculum.free_course_weeks is NOT read here. It carries no
+        # programme_id -- ownership is only expressed through
+        # free_programme_components (see free_programme_owned_ids) -- so the
+        # per-programme tally this used to attempt was always zero, and the
+        # branch that would have read it was unreachable behind the fixed
+        # structure_type above. What it did cost was a `select *` over a table
+        # whose cover_image_url column holds base64 image payloads: ~1.9 MB and
+        # several seconds on every cold overview build, for a number nothing
+        # could use.
+        programme_modules_count = structure_counts.get('modules', len(delivery_rows))
         programme_cohorts_count = structure_counts.get('cohorts', len(cohort_names))
         programme_groups_count = structure_counts.get('groups', len(group_keys))
         programme_weeks_count = structure_counts.get(
@@ -9102,7 +9278,11 @@ def build_programmes(training_rows, program_configs, ksb_profiles, include_confi
             'structureType': structure_type,
             'ksbProfileSourceId': normalise_ksb_profile_source_value((config or {}).get('ksb_profile_source_id') or ''),
             'requiredOtjh': parse_required_otjh((config or {}).get('required_otjh')),
-            'freeComponents': parse_int(free_counts.get('components'), 0),
+            # Always 0, exactly as before: the tally this reported was keyed on
+            # a free_course_weeks.programme_id column that does not exist, so no
+            # row ever matched. The field stays in the payload because the
+            # frontend type declares it (CurriculumProgramme.freeComponents).
+            'freeComponents': 0,
             # The card's place in the hand-picked order. Reading it back is what
             # lets the grid tell a saved order from the alphabetical fallback.
             'displayOrder': parse_int((config or {}).get('display_order'), 0),
@@ -14489,9 +14669,18 @@ def archived_programme_module_edit_error(existing_module_row, *, title, programm
 
 
 @scoped_curriculum_read
-def free_programme_fetch_all(table, where_sql='', params=None, order_sql=''):
+def free_programme_fetch_all(table, where_sql='', params=None, order_sql='', columns=None):
+    """Free-course rows. `columns` names the ones to read.
+
+    Default is every column, which is what the payload builders want. Callers
+    that only need identifiers should name them: free_course_weeks.
+    cover_image_url and free_courses.cover_image_url hold base64 `data:` image
+    payloads on some rows -- hundreds of kilobytes each -- and a `select *` for
+    an id list drags all of them across the wire.
+    """
     ensure_free_programme_tables()
-    query = f'select * from {authoring_table_name(table)}'
+    selection = ', '.join(quote_ident(column) for column in columns) if columns else '*'
+    query = f'select {selection} from {authoring_table_name(table)}'
     if where_sql:
         query += f' where {where_sql}'
     if order_sql:
@@ -20642,7 +20831,10 @@ def free_programme_module_id(programme_id, module, index):
     requested = clean_str(module.get('id') or module.get('moduleId') or module.get('catalogueId'))
     if re.match(r'^(FREECOURSE|FREEWEEK)-[0-9]{20}$', requested):
         return requested
-    existing = [row.get('id') for row in free_programme_fetch_all(FREE_PROGRAMME_MODULES_TABLE)]
+    existing = [
+        row.get('id')
+        for row in free_programme_fetch_all(FREE_PROGRAMME_MODULES_TABLE, columns=['id'])
+    ]
     return unique_timestamp_prefixed_id('FREEWEEK', existing)
 
 
@@ -20787,6 +20979,7 @@ def free_programme_owned_ids(programme_id):
         placeholders = ', '.join(['%s'] * len(week_ids))
         for row in free_programme_fetch_all(
             FREE_PROGRAMME_MODULES_TABLE, f'id in ({placeholders})', list(week_ids),
+            columns=['id', 'course_id'],
         ):
             course_id = clean_str(row.get('course_id'))
             if course_id:
@@ -20796,7 +20989,7 @@ def free_programme_owned_ids(programme_id):
     owned_course_ids = set()
     for course_id in course_ids:
         siblings = free_programme_fetch_all(
-            FREE_PROGRAMME_MODULES_TABLE, 'course_id = %s', [course_id],
+            FREE_PROGRAMME_MODULES_TABLE, 'course_id = %s', [course_id], columns=['id'],
         )
         sibling_ids = {clean_str(row.get('id')) for row in siblings if clean_str(row.get('id'))}
         if sibling_ids and sibling_ids.issubset(week_ids):
@@ -23468,7 +23661,9 @@ def _delete_single_free_course_rows(course_id):
     course_id = clean_str(course_id)
     if not course_id:
         return
-    week_rows = free_programme_fetch_all(FREE_PROGRAMME_MODULES_TABLE, 'course_id = %s', [course_id])
+    week_rows = free_programme_fetch_all(
+        FREE_PROGRAMME_MODULES_TABLE, 'course_id = %s', [course_id], columns=['id', 'week_id'],
+    )
     free_week_ids = [clean_str(row.get('id')) for row in week_rows if clean_str(row.get('id'))]
     # The authoring_weeks mirror is keyed on both the free week row id and the
     # authoring week_id it was written under, plus the course id — same predicate

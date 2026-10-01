@@ -133,23 +133,89 @@ def runtime_bootstrap_allowed():
     return bool(getattr(settings, 'CURRICULUM_ALLOW_RUNTIME_SCHEMA_BOOTSTRAP', False))
 
 
-# Populated by table_exists() probes; cleared when schema is provisioned.
+# The single record of which tables this process has seen. Shared by every
+# caller (curriculum_api, quiz_api), so no two of them ask the database the same
+# question. Only ever holds tables confirmed PRESENT: a table that exists cannot
+# stop existing without a deploy, whereas a table that is absent may be created
+# a moment later by a migration or a provisioning script, so "missing" is never
+# remembered. Bounded by the number of tables in one schema; cleared by
+# reset_verification_cache().
 _VERIFIED_TABLES = set()
+
+# Whether the one-shot listing of the schema below has already been taken. The
+# listing seeds _VERIFIED_TABLES for every table that exists, which is what
+# turns a page load's worth of separate probes into a single round trip.
+_SCHEMA_LISTED = False
+
+
+def _existence_query(tables):
+    """SQL + params that return, of `tables`, the names that exist."""
+    placeholders = ', '.join(['%s'] * len(tables))
+    if connection.vendor == 'postgresql':
+        return (
+            'select table_name from information_schema.tables '
+            f'where table_schema = %s and table_name in ({placeholders})',
+            [CURRICULUM_SCHEMA, *tables],
+        )
+    # SQLite has no schemas; the test runner builds these tables unqualified.
+    return (
+        f"select name from sqlite_master where type='table' and name in ({placeholders})",
+        list(tables),
+    )
+
+
+def _listing_query():
+    """SQL + params that return every table name in the schema."""
+    if connection.vendor == 'postgresql':
+        return (
+            'select table_name from information_schema.tables where table_schema = %s',
+            [CURRICULUM_SCHEMA],
+        )
+    return ("select name from sqlite_master where type='table'", [])
+
+
+def _fetch_names(sql, params):
+    with connection.cursor() as cursor:
+        cursor.execute(sql, params)
+        return {row[0] for row in cursor.fetchall()}
+
+
+def _existing_tables(tables):
+    """Which of `tables` exist, in one round trip.
+
+    Takes a listing of the whole schema the first time it is called in a
+    process and remembers every table in it, so the probes a single page load
+    would otherwise make -- one per table, each a separate trip to a remote
+    database -- collapse into that one query. Tables the listing did not name
+    are still asked about directly: the listing is a snapshot, and treating
+    "absent when we looked" as permanent would hide a table provisioned since.
+    """
+    global _SCHEMA_LISTED
+    if not _SCHEMA_LISTED:
+        _VERIFIED_TABLES.update(_fetch_names(*_listing_query()))
+        _SCHEMA_LISTED = True
+    present = {table for table in tables if table in _VERIFIED_TABLES}
+    unknown = [table for table in tables if table not in present]
+    if unknown:
+        present |= _fetch_names(*_existence_query(unknown))
+    return present
 
 
 def _table_exists(table):
-    if connection.vendor == 'postgresql':
-        sql = (
-            'select 1 from information_schema.tables '
-            'where table_schema = %s and table_name = %s limit 1'
-        )
-        params = [CURRICULUM_SCHEMA, table]
-    else:
-        sql = "select 1 from sqlite_master where type='table' and name = %s limit 1"
-        params = [table]
-    with connection.cursor() as cursor:
-        cursor.execute(sql, params)
-        return cursor.fetchone() is not None
+    """Single-table probe. Kept for callers that ask about exactly one table."""
+    return table in _existing_tables([table])
+
+
+def table_exists(table):
+    """Does this one table exist in the Curriculum schema?
+
+    Public because curriculum_api.views asks the same question on its own read
+    paths. Routing it here means the two share one answer -- and one round trip
+    -- rather than each probing information_schema for a schema neither of them
+    can change. Raises whatever the database raised; the caller decides what an
+    unanswerable probe means.
+    """
+    return _table_exists(table)
 
 
 def require_tables(*tables):
@@ -158,28 +224,38 @@ def require_tables(*tables):
     Results are memoised because schema does not change under a running process
     without a deploy. A negative result is never cached, so a transient error
     cannot pin a table to "missing" for the process lifetime.
+
+    Every table named here is required; the optional ones are handled by the
+    callers, which only reach this gate once runtime_bootstrap_allowed() says
+    this process does not own schema.
     """
-    unverified = [table for table in tables if table not in _VERIFIED_TABLES]
+    seen = set()
+    unverified = [
+        table for table in tables
+        if table not in _VERIFIED_TABLES and not (table in seen or seen.add(table))
+    ]
     if not unverified:
         return
 
-    missing = []
-    for table in unverified:
-        try:
-            if _table_exists(table):
-                _VERIFIED_TABLES.add(table)
-            else:
-                missing.append(table)
-        except Exception:
-            # Do not mask a connectivity problem as a schema problem; let the
-            # caller's own query surface the real database error.
-            logger.debug('Could not verify %s.%s', CURRICULUM_SCHEMA, table, exc_info=True)
-            return
+    try:
+        present = _existing_tables(unverified)
+    except Exception:
+        # Do not mask a connectivity problem as a schema problem; let the
+        # caller's own query surface the real database error.
+        logger.debug(
+            'Could not verify %s.%s',
+            CURRICULUM_SCHEMA, ', '.join(unverified), exc_info=True,
+        )
+        return
 
+    _VERIFIED_TABLES.update(present)
+    missing = [table for table in unverified if table not in present]
     if missing:
         raise SchemaNotProvisioned(missing)
 
 
 def reset_verification_cache():
     """Forget verified tables (test isolation / after provisioning)."""
+    global _SCHEMA_LISTED
     _VERIFIED_TABLES.clear()
+    _SCHEMA_LISTED = False
