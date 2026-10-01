@@ -18,6 +18,8 @@ export interface LearnerCalendarEvent {
   meetingOutcome?: 'ended' | 'completed' | null;
   /** Live session the learner missed but then watched in full as a recording. */
   watchedRecording?: boolean;
+  /** Catch-up only: the absence report it already makes up, if any. */
+  linkedReportId?: number | null;
   eventKey: string;
   title: string;
   source: 'mcr' | 'progress-review' | string;
