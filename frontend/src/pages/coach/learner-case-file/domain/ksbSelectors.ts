@@ -82,6 +82,38 @@ export function selectCaseFileKsbSummary(rows: CaseFileKsbBrowserRow[]) {
   };
 }
 
+/** One row for each canonical activity/code point; framework titles only enrich labels. */
+export function selectCaseFileKsbPointRows(
+  data: CoachLearnerCaseFileData,
+  fallbackKsbs: Array<{ code: string; description: string; type: string; number: string }> = [],
+) {
+  if (data.metricsAvailable === false || data.ksbStatus === 'unavailable') return [];
+  const framework = buildDisplayKsbs(data, fallbackKsbs);
+  return (data.ksbActivityPoints || []).map((point) => {
+    const description = framework.find((item) => item.code.trim().toUpperCase() === point.code.toUpperCase())?.description
+      || framework.find((item) => item.code.trim().toUpperCase() === normalizeKsbCode(point.code))?.description
+      || point.code;
+    return {
+      id: JSON.stringify([point.activityId, point.code]),
+      code: point.code,
+      description,
+      activityTitle: point.title || 'Activity title unavailable',
+      category: ksbCategoryFromCode(point.code.trim().toUpperCase()),
+      linked: point.completed,
+      evidenceActivities: [{
+        title: point.title || 'Activity title unavailable',
+        type: point.type || 'Activity type unavailable',
+        activityId: point.activityId,
+        source: point.source || undefined,
+        completedAt: point.completedAt || undefined,
+        status: point.status || (point.completed ? 'Completed' : 'Not completed'),
+        module: point.module || undefined,
+        componentId: point.componentId || undefined,
+      }],
+    };
+  });
+}
+
 function ksbLearningActivities(data: CoachLearnerCaseFileData, code: string): EvidencePreviewTarget['activities'] {
   const normalizedCode = normalizeKsbCode(code);
   const activities: EvidencePreviewTarget['activities'] = [];
@@ -162,4 +194,23 @@ function ksbCategoryFromCode(code: string) {
   if (code.startsWith('S')) return 'Skills';
   if (code.startsWith('B')) return 'Behaviours';
   return 'Other';
+}
+
+/** Activity-linked KSB points, shared with learner Overview; browser rows are codes. */
+export function selectCaseFileKsbProgress(data: CoachLearnerCaseFileData) {
+  const available = data.metricsAvailable !== false && data.ksbStatus !== 'unavailable';
+  const total = available ? data.ksbTotalCount ?? null : null;
+  const achieved = available ? data.ksbEvidencedCount ?? null : null;
+  const category = (prefix: string) => {
+    const points = available ? (data.ksbCodeProgress || []).filter((point) => point.code.trim().toUpperCase().startsWith(prefix)) : [];
+    const total = points.length ? points.reduce((sum, point) => sum + point.total, 0) : null;
+    const achieved = points.length ? points.reduce((sum, point) => sum + point.completed, 0) : null;
+    return { total, achieved, percent: total && achieved !== null ? Math.round(achieved / total * 1000) / 10 : null };
+  };
+  return {
+    total, achieved,
+    remaining: total !== null && achieved !== null ? Math.max(0, total - achieved) : null,
+    percent: available ? data.ksbProgress ?? null : null,
+    knowledge: category('K'), skills: category('S'), behaviours: category('B'),
+  };
 }

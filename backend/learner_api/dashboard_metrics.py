@@ -487,7 +487,14 @@ def learner_metrics(request, kind, pk):
         with measure_projection('metrics', kind=kind, learner_id=pk) as measurement:
             source = model.all_learners.only('id', 'aptem_id', 'email').get(pk=pk)
             with measurement.stage('metrics'):
-                payload = read_metrics(source, kind)
+                if request.GET.get('view') == 'learner-overview':
+                    payload = canonical_learning.metrics_bulk(
+                        [source.pk], learner_workspace=True, include_ksb_points=True,
+                    ).get(source.pk)
+                    if payload is None:
+                        raise ValueError('Learner identity is unavailable.')
+                else:
+                    payload = read_metrics(source, kind)
     except model.DoesNotExist:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     except ServiceError as error:

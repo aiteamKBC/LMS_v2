@@ -72,11 +72,11 @@ def _validated_profile(owner):
     return owner
 
 
-def programme_planned_hours(learner_id):
+def programme_planned_hours(learner_id, *, owner=None):
     """The enrolment's overall plan is independent of the scheduled month totals."""
     from math import isfinite
 
-    owner = profile(learner_id)
+    owner = profile(learner_id) if owner is None else owner
     value = owner.get('programme_planned_hours') if owner else None
     try:
         hours = float(value)
@@ -727,7 +727,7 @@ def recorded_course_items(courses, catalogue, records):
     return items, subjects, links
 
 
-def metrics_from_records(records, monthly_targets):
+def metrics_from_records(records, monthly_targets, *, include_ksb_points=False):
     """Count final activity records once, using accepted evidence only for hours.
 
     KSB points retain the shared activity/code definition; they are not a claim
@@ -749,7 +749,7 @@ def metrics_from_records(records, monthly_targets):
     actual = round(sum(recorded_seconds(item) for item in accepted) / 3600, 4)
     from learner_api import journal_sources
     planned = round(sum(monthly_targets.values()), 4) if monthly_targets or journal_sources.enabled() else None
-    return {
+    result = {
         'migrated': True, 'aptem_planned_total': planned,
         'programme': {**ratio(len(completed), len(counted)), 'historicalCompleted': len(accepted)},
         'otjh': {'historical': actual, 'new': 0, 'actual': actual,
@@ -759,6 +759,23 @@ def metrics_from_records(records, monthly_targets):
                 'codes': [{'code': code, **ratio(*counts)} for code, counts in sorted(codes.items())]},
         '_ksb_evidence_sources': [],
     }
+    if include_ksb_points:
+        # Expand the very same activity/code pairs counted above. A completion
+        # belongs to this activity, never to every activity sharing its code.
+        result['ksb']['points'] = [
+            {'activityId': str(item['id']), 'code': code,
+             'completed': item.get('accepted') is True,
+             'title': item.get('component_title') or None,
+             'type': item.get('component_type') or item.get('kind') or None,
+             'module': item.get('module_title') or None,
+             'status': item.get('activity_status') or None,
+             'source': item.get('source_system') or None,
+             'completedAt': (item.get('submitted_at') or item.get('reporting_ended_at'))
+                 if item.get('accepted') is True else None,
+             'componentId': item.get('component_ref') or None}
+            for item in counted for code in sorted(set(item.get('ksbs') or []))
+        ]
+    return result
 
 
 def metrics(learner_id):
@@ -773,7 +790,7 @@ def metrics(learner_id):
     return result
 
 
-def metrics_bulk(learner_ids):
+def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=False):
     """Return canonical metrics for a caseload without per-learner queries.
 
     Keys present with ``None`` identify a canonical record that failed identity
@@ -788,7 +805,8 @@ def metrics_bulk(learner_ids):
 
     owners = query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
         l.programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,
-        u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id
+        u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id,
+        u."Planned_hours" AS programme_planned_hours
         FROM "Learner".learners l
         LEFT JOIN enrolment."Created_users" u ON u.id=l.enrolment_id
         WHERE l.enrolment_id=ANY(%s)''', [enrolment_ids])
@@ -855,7 +873,7 @@ def metrics_bulk(learner_ids):
             if record is not None:
                 record['segments'].append(decoded(item['payload'], {}))
         for item in query('''SELECT s.canonical_progress_id AS progress_id,
-            s.id AS source_id,s.source_system,s.source_activity_id,
+            s.id AS source_id,s.source_system,s.source_activity_id,s.completed,
             c.source_course_ref,c.id AS source_course_id,
             c.source_course_title AS course_title,a.id AS catalogue_id,
             coalesce(nullif(s.curriculum_component_ref,''),a.curriculum_component_ref) AS component_ref,
@@ -899,10 +917,25 @@ def metrics_bulk(learner_ids):
             targets_by_learner.setdefault(int(target['learner_id']), {})[target['report_month']] = float(target['target_hours'])
 
     for enrolment_id, owner in valid_owners.items():
+        records = current_by_enrolment.get(enrolment_id, [])
+        if learner_workspace:
+            # Match entries_for's learner journal completion rule, including
+            # completed source activities that are excluded from OTJ hours.
+            for record in records:
+                record['completed'] = record.get('completed', record.get('accepted')) is True or any(
+                    source.get('source_system') == 'old_lms' and source.get('completed') is True
+                    for source in record.get('sources') or [])
         result[enrolment_id] = metrics_from_records(
-            current_by_enrolment.get(enrolment_id, []),
+            records,
             targets_by_learner.get(int(owner['id']), {}),
+            include_ksb_points=include_ksb_points,
         )
+        if learner_workspace:
+            # The learner Overview uses the enrolment's programme plan, not
+            # the sum of monthly targets. Reuse the already-validated owner.
+            planned = programme_planned_hours(enrolment_id, owner=owner)
+            result[enrolment_id]['otjh']['planned'] = planned
+            result[enrolment_id]['aptem_planned_total'] = planned
     return result
 
 

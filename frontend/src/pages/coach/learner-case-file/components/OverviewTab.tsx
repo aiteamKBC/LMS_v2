@@ -14,13 +14,13 @@ import type { CaseFileTabProps } from '../types';
 import styles from '../learnerCaseFile.module.css';
 
 type CaseFileKsbSummary = {
-  total: number;
-  achieved: number;
-  remaining: number;
+  total: number | null;
+  achieved: number | null;
+  remaining: number | null;
   percent: number | null;
-  knowledge: { total: number; achieved: number; percent: number | null };
-  skills: { total: number; achieved: number; percent: number | null };
-  behaviours: { total: number; achieved: number; percent: number | null };
+  knowledge: { total: number | null; achieved: number | null; percent: number | null };
+  skills: { total: number | null; achieved: number | null; percent: number | null };
+  behaviours: { total: number | null; achieved: number | null; percent: number | null };
 };
 
 export default function OverviewTab({ data, ksbSummary, onOpenNotes }: CaseFileTabProps & { ksbSummary?: CaseFileKsbSummary; onOpenNotes?: () => void }) {
@@ -47,7 +47,7 @@ export default function OverviewTab({ data, ksbSummary, onOpenNotes }: CaseFileT
         <LearningMetric label="Attendance" value={formatPercent(data.attendanceRate)} tone="warning" />
         <LearningMetric label="Actual" value={formatHours(data.otjhCompleted)} />
         <LearningMetric label="Planned" value={formatHours(data.totalExpectedOtjh || null)} tone="positive" />
-        <LearningMetric label="Mapped KSBs" value={ksbSummary ? `${ksbSummary.achieved} / ${ksbSummary.total}` : '--'} />
+        <LearningMetric label="Mapped KSBs" value={ksbSummary?.achieved != null && ksbSummary.total != null ? `${ksbSummary.achieved} / ${ksbSummary.total}` : '--'} />
       </div>
 
       <div className={styles.learningGrid}>

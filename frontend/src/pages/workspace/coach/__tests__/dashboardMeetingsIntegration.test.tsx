@@ -204,8 +204,8 @@ it('renders dashboard-owned KSB, activity, and attendance metrics without a case
     learners: [{
       id: '1', name: 'Metric Learner', learnerType: 'commercial', rawProgramStatus: 'active',
       otjhStatus: 'on-track', otjhCompleted: 20, otjhTarget: 40,
-      ksbProgress: 25, ksbProgressAvailable: true, ksbCompleted: 3, ksbTarget: 12,
-      activityProgress: 40, activityProgressAvailable: true, componentsCompleted: 8, componentsPlanned: 20,
+      ksbProgress: 85.3, ksbProgressAvailable: true, ksbCompleted: 498, ksbTarget: 584,
+      activityProgress: 87.3, activityProgressAvailable: true, componentsCompleted: 137, componentsPlanned: 157,
       attendanceRate: 80, attendanceAvailable: true, attendancePresent: 8, attendanceSessions: 10,
     }],
     monthlyRisk: [], marking: { items: [] }, meetings: { events: [] },
@@ -215,11 +215,11 @@ it('renders dashboard-owned KSB, activity, and attendance metrics without a case
   const region = await screen.findByRole('region', { name: 'Coach learner caseload' });
   const row = (await within(region).findByText('Metric Learner')).closest('tr');
   expect(row).not.toBeNull();
-  expect(within(row!).getByText('25%')).toBeVisible();
-  expect(within(row!).getByText('40%')).toBeVisible();
+  expect(within(row!).getByText('85.3%')).toBeVisible();
+  expect(within(row!).getByText('87.3%')).toBeVisible();
   expect(within(row!).getByText('80%')).toBeVisible();
-  expect(within(row!).getByText('3 / 12')).toBeVisible();
-  expect(within(row!).getByText('8 / 20')).toBeVisible();
+  expect(within(row!).getByText('498 / 584')).toBeVisible();
+  expect(within(row!).getByText('137 / 157')).toBeVisible();
   expect(within(row!).getByText('8 / 10')).toBeVisible();
   expect(mocks.load).toHaveBeenCalledTimes(1);
   expect(mocks.coachFetch).not.toHaveBeenCalled();
