@@ -8717,6 +8717,8 @@ def coach_meeting_artifact_content_response(request, record, event_key, artifact
 @coach_access_required
 @require_GET
 def coach_timetable_event_artifact_content(request, event_key, artifact_type, artifact_id):
+    if event_key.startswith("imported-review:") and is_coach_view_as(request):
+        return JsonResponse({"detail": "Admin view-as cannot fetch migrated Teams content.", "code": "coach_view_as_read_only"}, status=403)
     owner_email = authenticated_coach_email(request)
     record = coach_meeting_artifact_record(owner_email, event_key)
     if not record:
@@ -14439,6 +14441,9 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         role: {"required": False, "signed": False, "signedBy": None, "signedName": None, "signedAt": None, "signature": None}
         for role in curriculum_review_instances.SIGNATURE_ROLES
     }
+    if migrated_form and saved_instance:
+        from coach_api.migrated_completion import signature_states
+        signatures = signature_states(saved_instance)
     instance_status = (
         clean_text(review.get("status")) or CoachCalendarEvent.STATUS_NOT_SCHEDULED
         if summary_only or historical_completed or is_template_preview
@@ -14483,7 +14488,7 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
                     or (clean_text(approved_template.name) if is_template_preview else "")
                     or clean_text(review.get("name")) or review_type or "Imported review",
             "reviewTypeCode": review_type_code,
-            "signatures": {role: False for role in curriculum_review_instances.SIGNATURE_ROLES},
+            "signatures": {role: signatures[role]["required"] for role in curriculum_review_instances.SIGNATURE_ROLES},
             "visibleTo": {role: role == "advisor" for role in curriculum_review_instances.SIGNATURE_ROLES},
             "recurrence": {"interval": 0, "unit": "none"},
             "notifications": {},
@@ -14500,15 +14505,21 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         ),
         "historicalReview": review,
     }
-    definition["pdf"] = ({
-        "available": False,
-        "reason": "LMS-generated migrated PDFs are not available yet.",
-        "source": "lms-migrated",
-    } if migrated_form else {
+    if migrated_form:
+        from coach_api.models import MigratedReviewDocument
+        pdf_ready = bool(saved_instance and saved_instance.status == ImportedReviewInstance.STATUS_COMPLETED
+                         and MigratedReviewDocument.objects.filter(overlay=saved_instance).exists())
+        definition["pdf"] = {
+            "available": pdf_ready,
+            "reason": "" if pdf_ready else "Generate the LMS review PDF after completion." if saved_instance.status == ImportedReviewInstance.STATUS_COMPLETED else "Available after completion.",
+            "source": "lms-migrated",
+        }
+    else:
+        definition["pdf"] = {
         "available": True,
         "reason": "",
         "source": "aptem",
-    })
+        }
     if not historical_completed and (migrated_form or can_initialize or is_template_preview):
         calendar_rows = list(CoachCalendarEvent.objects.filter(event_key=canonical_event_key)[:2])
         calendar = calendar_rows[0] if calendar_rows else None
@@ -14598,6 +14609,7 @@ def coach_review_instance_initialize(request, instance_id):
         except ValueError as exc:
             return JsonResponse({"detail": str(exc)}, status=409)
         try:
+            from coach_api.migrated_completion import requirements_for_family
             with transaction.atomic():
                 overlay, created = ImportedReviewInstance.objects.get_or_create(
                     owner_email=owner_email, event_key=definition["instance"]["id"],
@@ -14606,6 +14618,7 @@ def coach_review_instance_initialize(request, instance_id):
                         "source_review_id": source_id,
                         "migrated_template": template,
                         "template_snapshot": {"name": template.name, **json.loads(json.dumps(template.definition_json))},
+                        "signature_requirements": requirements_for_family(family),
                         "answers": {}, "status": local_status,
                     },
                 )
@@ -15361,12 +15374,12 @@ def coach_review_instance_complete(request, instance_id):
                     return JsonResponse({"detail": "Only an in-progress migrated review can be submitted."}, status=409)
                 final_answers = payload.get("answers", imported.answers)
                 try:
-                    validate_migrated_answers(imported.template_snapshot, final_answers, completing=True)
+                    from coach_api.migrated_completion import submit
+                    submit(imported, final_answers)
                 except ValueError as exc:
                     return JsonResponse({"detail": str(exc)}, status=400)
-                imported.answers = final_answers
-                imported.status = ImportedReviewInstance.STATUS_AWAITING_SIGNATURE
-                imported.save(update_fields=["answers", "status", "updated_at"])
+                from coach_api.migrated_completion_views import _mirror_status
+                _mirror_status(imported)
             return JsonResponse(_imported_review_definition(owner_email, imported.event_key))
         field_ids = {
             field["id"]

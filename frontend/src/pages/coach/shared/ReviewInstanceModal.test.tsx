@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReviewInstanceModal } from './ReviewInstanceModal';
-import { bookMigratedReview, calculateReviewInstanceProgress, completeReviewInstance, downloadReviewInstancePdf, fetchPreviousReviewSession, fetchReviewInstanceForm, generateReviewMeetingSummary, initializeMigratedReview, reopenReviewInstance, saveReviewInstanceAnswers, signReviewInstance, startMigratedReview, type ReviewInstanceFormDefinition, type ReviewProgressSnapshot } from '@/api/reviewInstances';
+import { bookMigratedReview, calculateReviewInstanceProgress, completeMigratedReview, completeReviewInstance, downloadReviewInstancePdf, fetchPreviousReviewSession, fetchReviewInstanceForm, generateMigratedReviewPdf, generateReviewMeetingSummary, initializeMigratedReview, reopenReviewInstance, saveReviewInstanceAnswers, signMigratedReviewAsCoach, signReviewInstance, startMigratedReview, submitMigratedReview, type ReviewInstanceFormDefinition, type ReviewProgressSnapshot } from '@/api/reviewInstances';
 
 const account = vi.hoisted(() => ({ name: 'Sam Coach' }));
 const coachMode = vi.hoisted(() => ({ email: 'coach@example.invalid', isInitialized: true, isViewingAsCoach: false }));
@@ -13,6 +13,7 @@ vi.mock('@/api/reviewInstances', async (importOriginal) => ({
   fetchReviewInstanceForm: vi.fn(), saveReviewInstanceAnswers: vi.fn(), completeReviewInstance: vi.fn(), reopenReviewInstance: vi.fn(), signReviewInstance: vi.fn(),
   downloadReviewInstancePdf: vi.fn(), calculateReviewInstanceProgress: vi.fn(), generateReviewMeetingSummary: vi.fn(), fetchPreviousReviewSession: vi.fn(),
   initializeMigratedReview: vi.fn(), startMigratedReview: vi.fn(), bookMigratedReview: vi.fn(),
+  submitMigratedReview: vi.fn(), signMigratedReviewAsCoach: vi.fn(), completeMigratedReview: vi.fn(), generateMigratedReviewPdf: vi.fn(),
 }));
 vi.mock('@/pages/users/wizard/steps/SignaturePad', () => ({
   SignaturePad: ({ signatoryName, onCommit }: { signatoryName: string; onCommit: (signature: string) => void }) => <div>
@@ -45,6 +46,16 @@ function mcmDefinition(status = 'awaiting-signature'): ReviewInstanceFormDefinit
         configuration: { semanticKey: 'meeting_summary' }, answer: null }] }],
     meetingSummarySource: { fieldId: 'summary-field', status: 'ready', summaryText: 'AI generated coaching summary.' },
     pdf: { available: false, reason: 'The PDF is available after the learner and all required parties have signed.' },
+  };
+}
+
+function migratedDefinition(status = 'in-progress'): ReviewInstanceFormDefinition {
+  const base = definition(status);
+  return {
+    ...base, source: 'aptem', migratedForm: true, formAvailable: true, summaryOnly: false,
+    readOnly: status !== 'in-progress', localStatus: status, sourceStatus: 'Scheduled',
+    instance: { ...base.instance, id: 'imported-review:synthetic', reviewTemplateId: '', occurrenceNumber: null },
+    pdf: { available: status === 'completed', reason: '', source: 'lms-migrated' },
   };
 }
 
@@ -423,7 +434,7 @@ describe('review reopen flow', () => {
     mount();
     fireEvent.click(await screen.findByRole('button', { name: 'Start migrated review' }));
     await waitFor(() => expect(startMigratedReview).toHaveBeenCalledWith('imported-review:scheduled'));
-    expect(await screen.findByRole('button', { name: 'Send for signatures' })).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'Submit Review' })).toBeVisible();
   });
 
   it('books a migrated review explicitly and then shows meeting actions', async () => {
@@ -533,9 +544,9 @@ describe('review reopen flow', () => {
     mount();
     expect(await screen.findByText(/Aptem source:/)).toHaveTextContent('Scheduled');
     expect(screen.getByText(/LMS continuation:/)).toHaveTextContent('awaiting signature');
-    expect(screen.getByText(/Signing will be available in a later phase/)).toBeVisible();
+    expect(screen.getByText(/Submitted answers are locked while the required parties sign/)).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Confirm coach signature' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Download signed PDF' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Download LMS-generated review PDF' })).toBeDisabled();
   });
 
   it('keeps migrated required-field feedback before submission', async () => {
@@ -550,9 +561,9 @@ describe('review reopen flow', () => {
     };
     vi.mocked(fetchReviewInstanceForm).mockResolvedValue(migrated);
     mount();
-    fireEvent.click(await screen.findByRole('button', { name: 'Send for signatures' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Submit Review' }));
     expect(screen.getByText('Please complete every required field before finishing the review.')).toBeVisible();
-    expect(completeReviewInstance).not.toHaveBeenCalled();
+    expect(submitMigratedReview).not.toHaveBeenCalled();
   });
 
   it('renders an imported Aptem table as accessible columns and rows', async () => {
@@ -765,6 +776,43 @@ describe('coach review page presentation', () => {
 });
 
 describe('coach review signature workflow', () => {
+  it('submits migrated answers and shows the frozen signature progress', async () => {
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(migratedDefinition());
+    vi.mocked(submitMigratedReview).mockResolvedValue(migratedDefinition('awaiting-signature'));
+    mount('imported-review:synthetic');
+    fireEvent.click(await screen.findByRole('button', { name: 'Submit Review' }));
+    expect(submitMigratedReview).toHaveBeenCalledWith('imported-review:synthetic', { 'field-1': 'Review the next module' });
+    expect(completeReviewInstance).not.toHaveBeenCalled();
+    expect(await screen.findByText('0 of 2 required signatures saved')).toBeVisible();
+    expect(screen.getByRole('textbox')).toBeDisabled();
+  });
+
+  it('signs as the coach, completes after all signatures, and shows the LMS PDF action', async () => {
+    const pending = migratedDefinition('awaiting-signature');
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(pending);
+    const signed = structuredClone(pending);
+    signed.signatures.advisor = { required: true, signed: true, signedName: 'Sam Coach' };
+    signed.signatures.participant = { required: true, signed: true, signedName: 'Test learner' };
+    vi.mocked(signMigratedReviewAsCoach).mockResolvedValue(signed);
+    vi.mocked(completeMigratedReview).mockResolvedValue(migratedDefinition('completed'));
+    mount('imported-review:synthetic');
+    fireEvent.click(await screen.findByRole('button', { name: 'Confirm coach signature' }));
+    expect(signMigratedReviewAsCoach).toHaveBeenCalledWith('imported-review:synthetic', 'data:image/png;base64,c2ln');
+    fireEvent.click(await screen.findByRole('button', { name: 'Complete review' }));
+    expect(completeMigratedReview).toHaveBeenCalledWith('imported-review:synthetic');
+    expect(await screen.findByRole('button', { name: 'Download LMS-generated review PDF' })).toBeVisible();
+  });
+
+  it('keeps migrated writes hidden in admin view-as mode', async () => {
+    coachMode.isViewingAsCoach = true;
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(migratedDefinition('awaiting-signature'));
+    mount('imported-review:synthetic');
+    expect(await screen.findByText('0 of 2 required signatures saved')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Confirm coach signature' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Complete review' })).not.toBeInTheDocument();
+    expect(signMigratedReviewAsCoach).not.toHaveBeenCalled();
+  });
+
   it('keeps the submitted review open and focuses the coach signature without requiring a second visit', async () => {
     const { onStatusChange, onClose } = mount();
     await screen.findByDisplayValue('Review the next module');

@@ -11,6 +11,13 @@ from .enrolment_documents import (
     coach_sign_enrolment_document,
 )
 from .review_pdf import coach_mcm_pdf
+from .migrated_completion_views import (
+    migrated_review_submit, migrated_review_coach_sign,
+    migrated_review_complete, migrated_review_generate_pdf,
+)
+from .migrated_intelligence_views import (
+    migrated_review_intelligence, migrated_review_check_session, migrated_review_summary,
+)
 from .dashboard_view import coach_dashboard
 from .views import (
     coach_attendance,
@@ -55,6 +62,13 @@ from .views import (
 
 
 urlpatterns = [
+    path('migrated-reviews/<str:review_id>/intelligence', migrated_review_intelligence, name='migrated-review-intelligence'),
+    path('migrated-reviews/<str:review_id>/check-session', migrated_review_check_session, name='migrated-review-check-session'),
+    path('migrated-reviews/<str:review_id>/summary', migrated_review_summary, name='migrated-review-summary'),
+    path('migrated-reviews/<str:review_id>/submit', migrated_review_submit, name='migrated-review-submit'),
+    path('migrated-reviews/<str:review_id>/coach-sign', migrated_review_coach_sign, name='migrated-review-coach-sign'),
+    path('migrated-reviews/<str:review_id>/complete', migrated_review_complete, name='migrated-review-complete'),
+    path('migrated-reviews/<str:review_id>/generate-pdf', migrated_review_generate_pdf, name='migrated-review-generate-pdf'),
     path('coach/personal-marking', personal_learning.marking),
     path('coach/personal-marking/<uuid:submission_id>', personal_learning.marking),
     path('coach/personal-marking/<uuid:submission_id>/evidence', personal_learning.evidence),

@@ -31,6 +31,7 @@ import { LearnerPlanBody } from '@/components/feature/RealLearnerPlanView';
 import { OtjhBody } from '@/components/feature/RealOtjhView';
 import { KsbProgressBody } from '@/components/feature/RealKsbView';
 import { LearnerReviewInstanceForm } from '@/pages/learner/reviews/LearnerReviewInstanceForm';
+import { downloadMigratedReviewForParty, fetchMigratedReviewForParty, signMigratedReviewAsParty } from '@/api/learnerCalendar';
 
 // ============================================================================
 // One learner, as their employer sees them.
@@ -227,7 +228,9 @@ function DocumentRow({
             employer={item.parties?.includes('employer') !== false ? item.signed : undefined}
           />
         )}
-        {item.signed ? (
+        {item.kind === 'review' && item.migratedForm && item.signed && !item.completed ? (
+          <span className="text-[11px] text-foreground-500">Signed · awaiting final completion</span>
+        ) : item.signed ? (
           <>
             {/* Opens the saved document — the signed artefact, carrying every
                 party's signature. Not the sign dialog: this row is done, and
@@ -314,7 +317,9 @@ export default function EmployerLearnerPage() {
       return;
     }
     let active = true;
-    fetchEmployerReviewInstance(employerId, kind, learnerId, signing.eventKey)
+    (signing.migratedForm
+      ? fetchMigratedReviewForParty(signing.eventKey)
+      : fetchEmployerReviewInstance(employerId, kind, learnerId, signing.eventKey))
       .then(value => { if (active) setReviewDefinition(value); })
       .catch(() => { if (active) setReviewDefinition(null); });
     return () => { active = false; };
@@ -347,7 +352,9 @@ export default function EmployerLearnerPage() {
     if (signing.kind === 'review') {
       // Curriculum review instances and legacy enrolment reviews share this
       // list but not a sign endpoint.
-      if (signing.reviewInstanceId) {
+      if (signing.migratedForm) {
+        await signMigratedReviewAsParty(signing.eventKey, signature);
+      } else if (signing.reviewInstanceId) {
         await signReviewAsEmployer(employerId, kind, learnerId, signing.eventKey, { name, signature });
       } else {
         await signEnrolmentReviewAsEmployer(kind, learnerId, signing.eventKey, { name, signature });
@@ -379,6 +386,10 @@ export default function EmployerLearnerPage() {
     setOpening(item.kind === 'review' ? item.eventKey : item.id);
     try {
       if (item.kind === 'review') {
+        if (item.migratedForm) {
+          await downloadMigratedReviewForParty(item.eventKey);
+          return;
+        }
         // Legacy enrolment reviews are read through the employer portal; the
         // learner-side read refuses employers.
         const review = item.reviewInstanceId
@@ -606,7 +617,7 @@ export default function EmployerLearnerPage() {
           reviewDefinition={reviewDefinition}
           onClose={() => setSigning(null)}
           onSign={handleSign}
-          onSaveReviewAnswers={signing.kind === 'review' ? answers => saveEmployerReviewAnswers(employerId, kind, learnerId, signing.eventKey, answers) : undefined}
+          onSaveReviewAnswers={signing.kind === 'review' && !signing.migratedForm ? answers => saveEmployerReviewAnswers(employerId, kind, learnerId, signing.eventKey, answers) : undefined}
         />
       )}
     </WorkspaceShell>

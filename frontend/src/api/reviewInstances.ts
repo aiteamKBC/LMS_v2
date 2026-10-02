@@ -8,6 +8,7 @@
  */
 import { coachFetch } from '@/lib/coachFetch';
 import { saveReviewPdfResponse } from './reviewPdf';
+import type { CoachMeetingArtifactsResponse, CoachMeetingSummary, CoachMeetingSummaryPayload } from '@/pages/coach/shared/calendarEvents';
 
 export type ReviewFieldType =
   | 'text'
@@ -251,6 +252,49 @@ async function readJsonResponse<T>(response: Response): Promise<T> {
 }
 
 const instanceUrl = (instanceId: string) => `/coach_api/coach/reviews/${encodeURIComponent(instanceId)}`;
+const migratedUrl = (instanceId: string) => `/coach_api/migrated-reviews/${encodeURIComponent(instanceId)}`;
+
+export async function fetchMigratedReviewIntelligence(
+  instanceId: string,
+  signal?: AbortSignal,
+  options: { refresh?: boolean } = {},
+): Promise<CoachMeetingArtifactsResponse> {
+  const path = options.refresh ? 'check-session' : 'intelligence';
+  return readJsonResponse<CoachMeetingArtifactsResponse>(await coachFetch(`${migratedUrl(instanceId)}/${path}`, {
+    signal,
+    ...(options.refresh ? { method: 'POST' } : {}),
+  }));
+}
+
+export async function saveMigratedMeetingSummary(instanceId: string, summary: CoachMeetingSummaryPayload): Promise<{ meetingSummary: CoachMeetingSummary | null }> {
+  return readJsonResponse<{ meetingSummary: CoachMeetingSummary | null }>(
+    await coachFetch(`${migratedUrl(instanceId)}/summary`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ summary }),
+    }),
+  );
+}
+
+export async function submitMigratedReview(instanceId: string, answers: Record<string, unknown>) {
+  return readJsonResponse<ReviewInstanceFormDefinition>(await coachFetch(`${migratedUrl(instanceId)}/submit`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answers }),
+  }));
+}
+
+export async function signMigratedReviewAsCoach(instanceId: string, signature: string) {
+  return readJsonResponse<ReviewInstanceFormDefinition>(await coachFetch(`${migratedUrl(instanceId)}/coach-sign`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ signature }),
+  }));
+}
+
+export async function completeMigratedReview(instanceId: string) {
+  return readJsonResponse<ReviewInstanceFormDefinition>(await coachFetch(`${migratedUrl(instanceId)}/complete`, { method: 'POST' }));
+}
+
+export async function generateMigratedReviewPdf(instanceId: string) {
+  return readJsonResponse<{ available: boolean; documentId: number }>(await coachFetch(`${migratedUrl(instanceId)}/generate-pdf`, { method: 'POST' }));
+}
 
 export async function downloadReviewInstancePdf(instanceId: string): Promise<void> {
   await saveReviewPdfResponse(await coachFetch(`${instanceUrl(instanceId)}/pdf`));

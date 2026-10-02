@@ -31,7 +31,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from coach_api.models import CoachCalendarEvent
+from coach_api.models import CoachCalendarEvent, ImportedReviewInstance
 
 from .learner_detail import SOURCE_MODELS
 from .identity import learner_profile_for_source
@@ -433,12 +433,18 @@ def _serialize_event(record, *, review_types_by_template=None, templates_by_id=N
         and event_type in {"mcr", "progress-review"}
         and booking_parts[2] in SOURCE_MODELS and booking_parts[5].isdigit()
     )
+    migrated_form = (record.event_key.startswith("imported-review:")
+                     and ImportedReviewInstance.objects.filter(
+                         event_key=record.event_key, learner_id=record.learner_id,
+                         source_review_id__isnull=False,
+                     ).exists())
     return {
         "id": record.event_key,
         "eventKey": record.event_key,
         "title": (template or {}).get('name') or EVENT_TITLES.get(event_type, "Coaching Session"),
         "reviewTemplateId": template_id or None,
         "reviewInstanceId": _s(getattr(record, 'review_instance_id', '')) or None,
+        "migratedForm": migrated_form,
         "occurrenceNumber": getattr(record, 'occurrence_number', None) or record.sequence,
         **review_type_event_fields({
             'reviewTypeId': type_row.get('id'), 'reviewTypeCode': type_row.get('code'),

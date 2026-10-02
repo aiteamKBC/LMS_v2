@@ -202,7 +202,11 @@ class ImportedReviewInstance(models.Model):
         related_name="review_overlays",
     )
     template_snapshot = models.JSONField(default=dict, blank=True)
+    signature_requirements = models.JSONField(default=dict, blank=True)
     answers = models.JSONField(default=dict, blank=True)
+    # Phase E metadata only. Full transcripts and attendance remain in the
+    # existing Teams snapshot tables keyed by this overlay's calendar event.
+    meeting_intelligence = models.JSONField(default=dict, blank=True)
     status = models.CharField(
         max_length=32,
         choices=STATUS_CHOICES,
@@ -238,6 +242,36 @@ class ImportedReviewInstance(models.Model):
                 name="coach_imported_review_status_valid",
             ),
         ]
+
+class MigratedReviewSignature(models.Model):
+    """One immutable LMS sign-off for an imported review and participant role."""
+
+    overlay = models.ForeignKey(ImportedReviewInstance, on_delete=models.PROTECT, related_name="migrated_signatures")
+    role = models.CharField(max_length=16)
+    signer_account_id = models.BigIntegerField()
+    signer_name = models.CharField(max_length=255)
+    signer_email = models.EmailField(max_length=255, blank=True)
+    signature = models.TextField()
+    signed_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = _table_name('coach_test_migrated_review_signatures', 'Coach"."coach_migrated_review_signature')
+        constraints = [models.UniqueConstraint(fields=["overlay", "role"], name="coach_migrated_signature_role_unique")]
+
+
+class MigratedReviewDocument(models.Model):
+    """Authoritative final LMS PDF; never stored among original Aptem documents."""
+
+    overlay = models.OneToOneField(ImportedReviewInstance, on_delete=models.PROTECT, related_name="migrated_document")
+    pdf_bytes = models.BinaryField()
+    sha256 = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = _table_name('coach_test_migrated_review_documents', 'Coach"."coach_migrated_review_document')
+
 
 class CoachCalendarSequence(models.Model):
     """Cross-process sequence allocator for a learner/session-type scope."""

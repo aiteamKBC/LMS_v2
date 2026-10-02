@@ -8,16 +8,20 @@ import {
   bookMigratedReview,
   calculateReviewInstanceProgress,
   completeReviewInstance,
+  completeMigratedReview,
   downloadReviewInstancePdf,
   fetchPreviousReviewSession,
   fetchReviewInstanceForm,
   flattenReviewFields,
   generateReviewMeetingSummary,
+  generateMigratedReviewPdf,
   initializeMigratedReview,
   reopenReviewInstance,
   saveReviewInstanceAnswers,
   signReviewInstance,
+  signMigratedReviewAsCoach,
   startMigratedReview,
+  submitMigratedReview,
   type PreviousReviewSession,
   type ReviewInstanceFormDefinition,
 } from '@/api/reviewInstances';
@@ -26,6 +30,7 @@ import { formatDateLabel } from './calendarEvents';
 import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
 import { useAuth } from '@/hooks/useAuth';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
+import { MigratedMeetingIntelligence } from './MigratedMeetingIntelligence';
 
 const isAbortError = (err: unknown): boolean => err instanceof DOMException && err.name === 'AbortError';
 
@@ -488,12 +493,43 @@ export function ReviewInstanceModal({
     setSaving(true);
     setError(null);
     try {
-      const completed = await completeReviewInstance(definition.instance.id, answers);
+      const completed = definition.migratedForm
+        ? await submitMigratedReview(definition.instance.id, answers)
+        : await completeReviewInstance(definition.instance.id, answers);
       setDefinition(completed);
       onStatusChanged?.(completed.instance.status);
     } catch (err) {
       if (isAbortError(err)) return;
       setError(err instanceof Error ? err.message : 'This review cannot be completed yet.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const finalizeMigrated = async () => {
+    if (!definition?.migratedForm || isViewingAsCoach || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await completeMigratedReview(definition.instance.id);
+      setDefinition(updated);
+      onStatusChanged?.(updated.instance.status);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to complete the migrated review.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const generateMigratedPdf = async () => {
+    if (!definition?.migratedForm || isViewingAsCoach || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await generateMigratedReviewPdf(definition.instance.id);
+      setDefinition(await fetchReviewInstanceForm(definition.instance.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to generate the LMS review PDF.');
     } finally {
       setSaving(false);
     }
@@ -753,7 +789,7 @@ export function ReviewInstanceModal({
                   ? 'This review has a summary only; no section details were imported.'
                   : 'Changes are saved to this LMS review. The original Aptem import remains unchanged.'}</p>
               </section>
-            ) : isSignatureStage && !isViewingAsCoach ? (
+            ) : isSignatureStage && !isViewingAsCoach && !definition.migratedForm ? (
               <section className="rounded-2xl border border-amber-200 bg-amber-50 p-4" aria-label="Edit completed review">
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
@@ -791,6 +827,16 @@ export function ReviewInstanceModal({
                 <p className="mt-1 text-primary-800">{definition.booking.scheduledDate} at {definition.booking.scheduledTime} · {definition.booking.durationMinutes} minutes</p>
                 {definition.booking.meetingLink ? <a href={definition.booking.meetingLink} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block font-semibold text-primary-700 underline">Join Teams</a> : null}
               </section>
+            ) : null}
+            {definition.migratedForm && definition.booking?.eventKey && definition.booking.syncState === 'synced' ? (
+              <MigratedMeetingIntelligence
+                key={definition.instance.id}
+                instanceId={definition.instance.id}
+                family={definition.template.reviewTypeCode || ''}
+                status={definition.localStatus || ''}
+                viewAs={isViewingAsCoach}
+                meetingLink={definition.booking.meetingLink}
+              />
             ) : null}
             {definition.migratedForm && definition.booking?.canAttach && !isViewingAsCoach ? (
               <button type="button" onClick={() => { void bookMigrated(); }} disabled={busy} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">Use existing meeting</button>
@@ -853,7 +899,7 @@ export function ReviewInstanceModal({
                 : isSummaryOnly
                 ? 'The imported summary remains available for reference, but there is no form to edit or complete.'
                 : isImportedReadOnly
-                ? definition.migratedForm ? 'This migrated review is awaiting signatures. Signing will be available in a later phase.' : 'These historical answers are displayed from the imported Aptem review and cannot be changed here.'
+                ? definition.migratedForm ? 'Submitted answers are locked while the required parties sign this LMS review.' : 'These historical answers are displayed from the imported Aptem review and cannot be changed here.'
                 : definition.migratedForm ? 'Answers are saved in LMS continuation state; the original Aptem record is unchanged.'
                 : `These answers are saved to this ${definition.template.name} and follow the sections/questions configured in Curriculum.`}</span>
             </div>
@@ -1105,7 +1151,9 @@ export function ReviewInstanceModal({
                         signatureSaveInFlightRef.current = true;
                         setSaving(true);
                         setError(null);
-                        void signReviewInstance(definition.instance.id, 'advisor', auth.user?.fullName || 'Coach', signature)
+                        void (definition.migratedForm
+                          ? signMigratedReviewAsCoach(definition.instance.id, signature)
+                          : signReviewInstance(definition.instance.id, 'advisor', auth.user?.fullName || 'Coach', signature))
                           .then((updated) => {
                             setDefinition(updated);
                             onStatusChanged?.(updated.instance.status);
@@ -1141,7 +1189,9 @@ export function ReviewInstanceModal({
             ) : null}
             {definition.instance.status === 'completed' ? (
               <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-semibold text-emerald-800">
-                Review completed
+                Review completed{definition.migratedForm && definition.instance.completedAt
+                  ? ` on ${new Intl.DateTimeFormat('en-GB', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/London' }).format(new Date(definition.instance.completedAt))} (Europe/London)`
+                  : ''}
               </div>
             ) : null}
             {/* The signed-PDF export and the full signature summary (coach +
@@ -1151,12 +1201,19 @@ export function ReviewInstanceModal({
                 same components/API the learner side already uses, reading the
                 same signatures/pdf-availability this same fetch already
                 returned. */}
-            {!definition.migratedForm && (isHistoricalPdfAvailable || (EXPORTABLE_REVIEW_TYPES.includes(definition.template.reviewTypeCode || '') && isSignatureStage)) ? (
+            {(definition.migratedForm && isSignatureStage) || (!definition.migratedForm && (isHistoricalPdfAvailable || (EXPORTABLE_REVIEW_TYPES.includes(definition.template.reviewTypeCode || '') && isSignatureStage))) ? (
               <>
-                {!isHistoricalPdfAvailable && <ReviewSignatures signatures={definition.signatures} />}
+                {(definition.migratedForm || !isHistoricalPdfAvailable) && <ReviewSignatures signatures={definition.signatures} />}
+                {definition.migratedForm && definition.localStatus === 'awaiting-signature' && allRequiredSignaturesSaved && !isViewingAsCoach ? (
+                  <button type="button" onClick={() => { void finalizeMigrated(); }} disabled={busy} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-60">Complete review</button>
+                ) : null}
+                {definition.migratedForm && definition.localStatus === 'completed' && !definition.pdf?.available && !isViewingAsCoach ? (
+                  <button type="button" onClick={() => { void generateMigratedPdf(); }} disabled={busy} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-60">Generate LMS review PDF</button>
+                ) : null}
                 <ReviewPdfDownload
                   availability={definition.pdf}
                   onDownload={() => downloadReviewInstancePdf(definition.instance.id)}
+                  label={definition.migratedForm ? 'Download LMS-generated review PDF' : undefined}
                 />
               </>
             ) : null}
@@ -1178,7 +1235,7 @@ export function ReviewInstanceModal({
           </button>
           {(!definition?.migratedForm || definition.localStatus === 'in-progress') ? <button type="button" onClick={complete} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-600 px-5 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60">
             <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-check-double-line'}></AppIcon>
-            {saving ? 'Saving...' : definition?.migratedForm || requiredSignatures.length ? 'Send for signatures' : 'Complete review'}
+            {saving ? 'Saving...' : definition?.migratedForm ? 'Submit Review' : requiredSignatures.length ? 'Send for signatures' : 'Complete review'}
           </button> : null}
         </div> : null}
       </footer>
