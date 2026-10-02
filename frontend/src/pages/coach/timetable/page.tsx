@@ -112,6 +112,7 @@ interface TimetableEvent {
   priority: 'normal' | 'urgent' | 'high';
   status: 'completed' | 'scheduled' | 'in-progress' | 'awaiting-signature' | 'confirmed' | 'pending' | 'cancelled' | 'not-scheduled';
   source?: 'mcr' | 'progress-review' | string;
+  reviewSource?: 'aptem' | 'curriculum' | string;
   sourceStatus?: string;
   sequence?: number;
   rawPlanned?: string;
@@ -757,6 +758,7 @@ function scheduleLearnerOptionLabel(event: TimetableEvent) {
 }
 
 function isSelectableScheduleEvent(event: TimetableEvent) {
+  if (event.reviewSource === 'aptem') return false;
   if (!isSchedulableSource(event.source)) return false;
   if (event.source === 'catch-up') {
     return !['completed', 'confirmed', 'in-progress'].includes(event.status);
@@ -765,6 +767,7 @@ function isSelectableScheduleEvent(event: TimetableEvent) {
 }
 
 function canEditScheduleEvent(event: TimetableEvent | null | undefined): event is TimetableEvent {
+  if (event?.reviewSource === 'aptem') return false;
   if (!event || !isSchedulableSource(event.source)) return false;
   return !['completed', 'confirmed', 'in-progress', 'awaiting-signature'].includes(event.status);
 }
@@ -1780,6 +1783,12 @@ export default function CoachTimetablePage() {
     if (!event.eventKey) return;
     setEventActionError(null);
     setEventActionNotice(null);
+    if (event.reviewSource === 'aptem' && event.eventKey.startsWith('imported-review:')) {
+      navigate(reviewInstancePath(event.eventKey), {
+        state: reviewInstanceRouteState(event, `${location.pathname}${location.search}`),
+      });
+      return;
+    }
     setReviewFormBusy(true);
     try {
       const { instanceId } = await openReviewInstanceForEvent(event.eventKey);
@@ -2727,14 +2736,14 @@ export default function CoachTimetablePage() {
                       )}
                     </div>
                   )}
-                  {selectedEvent.reviewTemplateId && (
+                  {(selectedEvent.reviewTemplateId || selectedEvent.reviewSource === 'aptem') && (
                     <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-secondary-200 bg-secondary-50 p-4 sm:flex-row sm:items-center">
                       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-secondary-100 text-secondary-700">
                         <AppIcon className="ri-survey-line"></AppIcon>
                       </span>
                       <div className="flex-1">
                         <p className="text-xs font-bold text-secondary-900">{selectedEvent.title} form</p>
-                        <p className="mt-1 text-[12px] text-secondary-700">The questions for this review come from Curriculum. Answers save as you go and can be finished later.</p>
+                        <p className="mt-1 text-[12px] text-secondary-700">{selectedEvent.reviewSource === 'aptem' ? 'Open this migrated review to book its LMS meeting and work on the approved form.' : 'The questions for this review come from Curriculum. Answers save as you go and can be finished later.'}</p>
                       </div>
                       <button
                         type="button"

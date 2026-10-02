@@ -220,7 +220,7 @@ export default function CoachMonthlyCoaching() {
     events.map(event => event.learner?.trim()).filter((learner): learner is string => Boolean(learner)),
   )).sort((a, b) => a.localeCompare(b)), [events]);
   const schedulableEvents = useMemo(
-    () => events.filter(event => event.source === 'mcr' && !isCompletedEvent(event) && event.status !== 'cancelled'),
+    () => events.filter(event => event.source === 'mcr' && event.reviewSource !== 'aptem' && !event.aptemReviewId && !isCompletedEvent(event) && event.status !== 'cancelled'),
     [events],
   );
   const selectedScheduleEvent = schedulableEvents.find(event => eventIdentity(event) === scheduleEventKey) || null;

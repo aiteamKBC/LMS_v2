@@ -1,5 +1,6 @@
 import copy
 import json
+from datetime import date, time, timedelta
 from inspect import unwrap
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -13,7 +14,7 @@ from coach_api.migrated_reviews import (
     candidate_definition, initial_local_status, programme_key,
     render_sections, review_family, validate_answers,
 )
-from coach_api.models import ImportedReviewInstance, MigratedReviewTemplate
+from coach_api.models import CoachCalendarEvent, ImportedReviewInstance, MigratedReviewTemplate
 
 
 SOURCE = {
@@ -97,16 +98,19 @@ class MigratedDefinitionTests(SimpleTestCase):
 
     @patch("coach_api.views.curriculum_review_instances.progress_review_rag_history", return_value=[])
     @patch("coach_api.views._imported_review_progress_snapshot", return_value=None)
+    @patch("coach_api.views.CoachCalendarEvent.objects.filter")
     @patch("coach_api.views.ImportedReviewInstance.objects.filter")
     @patch("coach_api.views._sections_by_review", return_value={})
     @patch("coach_api.views.connections")
     @patch("coach_api.views.fetch_caseload_dashboard_profiles")
     def test_detail_uses_snapshot_and_separates_source_from_local_status(
-        self, profiles, connections, _sections, overlays, _progress, _history,
+        self, profiles, connections, _sections, overlays, calendar_rows, _progress, _history,
     ):
+        calendar_rows.return_value.__getitem__.return_value = []
         profiles.return_value = [SimpleNamespace(
             id=21, aptem_id=101, _caseload_source=SimpleNamespace(aptem_id=101),
-            programme_id="P-42", programme="Programme", username="Synthetic learner",
+            programme_id="P-42", programme="Programme", username="Authoritative learner",
+            email="learner@example.invalid",
         )]
         cursor = connections["default"].cursor.return_value.__enter__.return_value
         columns = ["id", "learner_id", "aptem_review_id", "review_name", "review_type",
@@ -114,7 +118,7 @@ class MigratedDefinitionTests(SimpleTestCase):
                    "status", "review_data", "extraction_status", "last_error"]
         cursor.description = [(column,) for column in columns]
         cursor.fetchall.return_value = [(407, 21, "A-7", "Progress Review", "Progress Review",
-                                        "Coach", "Synthetic learner", None, None,
+                                        "Coach", "Stale source learner label", None, None,
                                         "Scheduled", {"sections": []}, "partial", None)]
         overlays.return_value.first.return_value = SimpleNamespace(
             event_key="imported-review:A-7", owner_email="coach@example.invalid",
@@ -128,6 +132,10 @@ class MigratedDefinitionTests(SimpleTestCase):
         self.assertTrue(result["migratedForm"])
         self.assertEqual(result["sourceStatus"], "Scheduled")
         self.assertEqual(result["localStatus"], "in-progress")
+        self.assertEqual(result["learnerName"], "Authoritative learner")
+        self.assertEqual(result["learnerEmail"], "learner@example.invalid")
+        self.assertEqual(result["programme"], "Programme")
+        self.assertEqual(result["programmeId"], "P-42")
         self.assertEqual(result["sections"][0]["fields"][0]["answer"], "LMS answer")
         self.assertEqual(result["instance"]["reviewTemplateId"], "")
         self.assertIsNone(result["instance"]["occurrenceNumber"])
@@ -135,6 +143,24 @@ class MigratedDefinitionTests(SimpleTestCase):
         self.assertFalse(result["pdf"]["available"])
         overlays.return_value.first.return_value.learner_id = 22
         self.assertIsNone(views._imported_review_definition("coach@example.invalid", "imported-review:A-7"))
+
+    @patch("coach_api.views._review_instance_meeting_summary_source", return_value=None)
+    @patch("coach_api.views.curriculum_review_instances.review_instance_form_definition")
+    @patch("coach_api.views.LearnerProfile.objects.filter")
+    def test_native_definition_uses_linked_profile_identity(self, profiles, form_definition, _summary):
+        form_definition.return_value = {"instance": {"id": "native-1", "learnerId": 21}}
+        profiles.return_value.only.return_value.first.return_value = SimpleNamespace(
+            full_name="Native learner", email="native@example.invalid",
+            programme="Native programme", programme_id="P-99",
+        )
+        result = views._coach_review_instance_definition({"learner_id": 21})
+        self.assertEqual(result["learnerName"], "Native learner")
+        self.assertEqual(result["learnerEmail"], "native@example.invalid")
+        self.assertEqual(result["programme"], "Native programme")
+        self.assertEqual(result["programmeId"], "P-99")
+        profiles.assert_called_once_with(pk=21)
+        profiles.return_value.only.return_value.first.return_value = None
+        self.assertEqual(views._coach_review_instance_definition({"learner_id": 21})["learnerName"], "")
 
 
 class MigratedPreviewTests(SimpleTestCase):
@@ -145,6 +171,7 @@ class MigratedPreviewTests(SimpleTestCase):
         self.profile = SimpleNamespace(
             id=21, aptem_id=101, _caseload_source=SimpleNamespace(aptem_id=101),
             programme_id="P-42", programme="Programme", username="Synthetic learner",
+            email="synthetic@example.invalid",
         )
         self._patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[self.profile])
         connections = self._patch("coach_api.views.connections")
@@ -158,6 +185,7 @@ class MigratedPreviewTests(SimpleTestCase):
         self._patch("coach_api.views._sections_by_review", return_value={})
         self.overlays = self._patch("coach_api.views.ImportedReviewInstance.objects.filter")
         self.overlays.return_value.first.return_value = None
+        self._patch("coach_api.views.CoachCalendarEvent.objects.filter").return_value.__getitem__.return_value = []
         self.templates = self._patch("coach_api.views.MigratedReviewTemplate.objects.filter")
         self.templates.return_value.first.return_value = SimpleNamespace(
             name="Approved template", definition_json=self.definition_json,
@@ -261,6 +289,8 @@ class MigratedPreviewTests(SimpleTestCase):
         self.assertTrue(result["summaryOnly"])
         self.assertEqual(result["sections"], [])
         self.assertEqual(result["pdf"]["source"], "aptem")
+        self.assertEqual(result["learnerName"], "Synthetic learner")
+        self.assertEqual(result["programme"], "Programme")
         self.templates.assert_not_called()
 
     def test_no_approved_template_returns_clear_empty_state(self):
@@ -293,6 +323,7 @@ class MigratedPreviewTests(SimpleTestCase):
         definition = self._patch("coach_api.views._imported_review_definition")
         for suffix, endpoint in (
             ("initialize", views.coach_review_instance_initialize),
+            ("book", views.coach_review_instance_book),
             ("local-status", views.coach_review_instance_local_status),
             ("answers", views.coach_review_instance_answers),
             ("complete", views.coach_review_instance_complete),
@@ -419,9 +450,18 @@ class MigratedWriteTests(TestCase):
             )
 
     def test_scheduled_review_starts_locally_then_submits_for_signature(self):
+        calendar = CoachCalendarEvent.objects.create(
+            event_key=self.overlay.event_key, owner_email=self.overlay.owner_email,
+            learner_id=self.overlay.learner_id, event_type="progress-review",
+            target_date=date(2026, 10, 20), scheduled_date=date(2026, 10, 20),
+            scheduled_time=time(10, 0), status="scheduled", sync_state="synced",
+            graph_event_id="graph-synthetic", meeting_link="https://example.invalid/teams",
+        )
         response = self._post(views.coach_review_instance_local_status, "local-status", {"status": "in-progress"})
         self.assertEqual(response.status_code, 200)
         self.overlay.refresh_from_db()
+        calendar.refresh_from_db()
+        self.assertEqual(calendar.status, "in-progress")
         self.assertEqual(self.overlay.status, "in-progress")
         self.assertEqual(self.definition["sourceStatus"], "scheduled")
         draft = {"section-0:comment": "Good progress"}
@@ -455,3 +495,196 @@ class MigratedWriteTests(TestCase):
         self.overlay.owner_email = "other@example.invalid"
         self.overlay.save(update_fields=["owner_email"])
         self.assertEqual(self._post(views.coach_review_instance_answers, "answers", {"answers": {}}).status_code, 409)
+
+
+class MigratedBookingTests(TestCase):
+    """Aptem booking uses one calendar identity and mocked Graph transport."""
+
+    def setUp(self):
+        self.template = MigratedReviewTemplate.objects.create(
+            programme_key="id:P-42", review_family="PR", name="Approved",
+            definition_json=candidate_definition(SOURCE), is_active=True,
+        )
+        self.overlay = ImportedReviewInstance.objects.create(
+            event_key="imported-review:A-9", owner_email="coach@example.invalid",
+            learner_id=21, source_review_id=409, migrated_template=self.template,
+            template_snapshot=candidate_definition(SOURCE), answers={}, status="not-scheduled",
+        )
+        self.definition = {
+            "migratedForm": True, "readOnly": False, "sourceStatus": "Not Scheduled",
+            "migratedProgrammeKey": "id:P-42", "localStatus": "not-scheduled",
+            "booking": {"conflict": False},
+            "instance": {"id": self.overlay.event_key, "learnerId": 21, "targetDate": "2026-10-30"},
+            "historicalReview": {"id": "409", "type": "Progress Review"},
+        }
+        self.slot = {"scheduledDate": (date.today() + timedelta(days=10)).isoformat(),
+                     "scheduledTime": "10:00", "durationMinutes": 60}
+        self.base_event = {"eventKey": self.overlay.event_key, "reviewSource": "aptem",
+                           "learnerId": "21", "source": "progress-review", "sequence": 1,
+                           "status": "not-scheduled", "sourceStatus": "Not Scheduled",
+                           "targetDate": "2026-10-30",
+                           "learner": "Synthetic learner", "email": "learner@example.invalid",
+                           "title": "Progress Review"}
+
+    def book(self, *, graph_warning="", slot=None, definition=None):
+        def graph_sync(record, _base_event):
+            if graph_warning:
+                return graph_warning
+            record.graph_event_id = "graph-event-9"
+            record.meeting_link = "https://example.invalid/teams/9"
+            record.graph_organizer_email = record.owner_email
+            record.save(update_fields=["graph_event_id", "meeting_link", "graph_organizer_email"])
+            return ""
+
+        with patch("coach_api.views.authenticated_coach_email", return_value="coach@example.invalid"), \
+             patch("coach_api.views._imported_review_definition", return_value=self.definition if definition is None else definition), \
+             patch("coach_api.views.find_generated_timetable_event", return_value=(self.base_event, "Coach")), \
+             patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[SimpleNamespace(id=21)]), \
+             patch("coach_api.views.coach_learner_personal_calendar_conflicts", return_value=False), \
+             patch("coach_api.views.england_non_delivery_reason", return_value=None), \
+             patch("coach_api.views.sync_calendar_event_to_graph", side_effect=graph_sync) as graph:
+            request = RequestFactory().post(
+                "/coach/reviews/imported-review:A-9/book",
+                data=json.dumps(slot or self.slot), content_type="application/json",
+            )
+            response = unwrap(views.coach_review_instance_book)(request, self.overlay.event_key)
+        return response, graph.call_count
+
+    def test_not_scheduled_books_once_and_replays_without_another_graph_meeting(self):
+        first, calls = self.book()
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(calls, 1)
+        replay, calls = self.book()
+        self.assertEqual(replay.status_code, 200)
+        self.assertEqual(calls, 0)
+        self.assertEqual(CoachCalendarEvent.objects.count(), 1)
+        calendar = CoachCalendarEvent.objects.get()
+        self.assertEqual(calendar.event_key, self.overlay.event_key)
+        self.assertEqual(calendar.graph_event_id, "graph-event-9")
+        self.assertEqual(calendar.sync_state, "synced")
+        self.assertFalse(calendar.review_instance_id)
+        self.assertFalse(calendar.review_template_id)
+        self.assertIsNone(calendar.occurrence_number)
+        displayed = views.overlay_calendar_record(self.base_event, calendar)
+        self.assertEqual(displayed["status"], "scheduled")
+        self.assertEqual(displayed["sourceStatus"], "Not Scheduled")
+        self.assertEqual(displayed["reviewSource"], "aptem")
+        self.assertFalse(displayed["reviewInstanceId"])
+        self.assertEqual(displayed["meetingLink"], "https://example.invalid/teams/9")
+        self.overlay.refresh_from_db()
+        self.assertEqual(self.overlay.status, "scheduled")
+        self.assertEqual(self.definition["sourceStatus"], "Not Scheduled")
+
+    def test_source_scheduled_without_local_booking_requires_explicit_post(self):
+        self.overlay.status = "scheduled"
+        self.overlay.save(update_fields=["status"])
+        self.definition["sourceStatus"] = "Scheduled"
+        self.assertEqual(CoachCalendarEvent.objects.count(), 0)
+        response, calls = self.book()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, 1)
+        self.assertEqual(CoachCalendarEvent.objects.count(), 1)
+
+    def test_verified_existing_booking_is_reused_without_graph_creation(self):
+        calendar = CoachCalendarEvent.objects.create(
+            event_key=self.overlay.event_key, owner_email=self.overlay.owner_email,
+            learner_id=21, event_type="progress-review", target_date=date(2026, 10, 30),
+            scheduled_date=date.fromisoformat(self.slot["scheduledDate"]), scheduled_time=time(10, 0),
+            duration_minutes=60, status="scheduled", sync_state="synced",
+            graph_event_id="existing-graph-event", meeting_link="https://example.invalid/teams/existing",
+        )
+        response, calls = self.book()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, 0)
+        self.assertEqual(CoachCalendarEvent.objects.count(), 1)
+        calendar.refresh_from_db()
+        self.assertEqual(calendar.graph_event_id, "existing-graph-event")
+        self.overlay.refresh_from_db()
+        self.assertEqual(self.overlay.status, "scheduled")
+
+    def test_future_mcm_uses_same_imported_identity_without_native_occurrence(self):
+        self.template.review_family = "MCM"
+        self.template.save(update_fields=["review_family"])
+        self.definition["historicalReview"]["type"] = "Monthly Coaching Meeting"
+        self.base_event["source"] = "mcr"
+        response, calls = self.book()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(calls, 1)
+        calendar = CoachCalendarEvent.objects.get()
+        self.assertEqual(calendar.event_type, "mcr")
+        self.assertEqual(calendar.event_key, self.overlay.event_key)
+        self.assertIsNone(calendar.occurrence_number)
+        self.assertFalse(calendar.review_instance_id)
+        with patch("coach_api.views.authenticated_coach_email", return_value="coach@example.invalid"), \
+             patch("coach_api.views._imported_review_definition", return_value=self.definition):
+            started = unwrap(views.coach_review_instance_local_status)(
+                RequestFactory().post("/coach/reviews/imported-review:A-9/local-status",
+                    data=json.dumps({"status": "in-progress"}), content_type="application/json"),
+                self.overlay.event_key,
+            )
+        self.assertEqual(started.status_code, 200)
+        self.overlay.refresh_from_db()
+        calendar.refresh_from_db()
+        self.assertEqual(self.overlay.status, "in-progress")
+        self.assertEqual(calendar.status, "in-progress")
+
+    def test_unconfirmed_graph_booking_cannot_start_review(self):
+        self.overlay.status = "scheduled"
+        self.overlay.save(update_fields=["status"])
+        self.definition["sourceStatus"] = "Scheduled"
+        self.book(graph_warning="Graph unavailable")
+        with patch("coach_api.views.authenticated_coach_email", return_value="coach@example.invalid"), \
+             patch("coach_api.views._imported_review_definition", return_value=self.definition):
+            response = unwrap(views.coach_review_instance_local_status)(
+                RequestFactory().post("/coach/reviews/imported-review:A-9/local-status",
+                    data=json.dumps({"status": "in-progress"}), content_type="application/json"),
+                self.overlay.event_key,
+            )
+        self.assertEqual(response.status_code, 409)
+        self.overlay.refresh_from_db()
+        self.assertEqual(self.overlay.status, "scheduled")
+
+    def test_unknown_review_cannot_book_or_create_calendar_row(self):
+        response, calls = self.book(definition={})
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(calls, 0)
+        self.assertEqual(CoachCalendarEvent.objects.count(), 0)
+
+    def test_different_slot_and_mismatched_existing_link_are_rejected(self):
+        self.book()
+        changed = {**self.slot, "scheduledTime": "11:00"}
+        response, calls = self.book(slot=changed)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(json.loads(response.content)["error"], "ALREADY_BOOKED")
+        self.assertEqual(calls, 0)
+        calendar = CoachCalendarEvent.objects.get()
+        calendar.learner_id = 99
+        calendar.save(update_fields=["learner_id"])
+        response, calls = self.book()
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(calls, 0)
+
+    def test_graph_failure_keeps_retry_reservation_but_not_successful_local_status(self):
+        response, calls = self.book(graph_warning="Graph unavailable")
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(calls, 1)
+        calendar = CoachCalendarEvent.objects.get()
+        self.assertEqual(calendar.sync_state, "failed")
+        self.assertFalse(calendar.graph_event_id)
+        displayed = views.overlay_calendar_record(self.base_event, calendar)
+        self.assertEqual(displayed["status"], "not-scheduled")
+        self.assertFalse(displayed["meetingLink"])
+        self.overlay.refresh_from_db()
+        self.assertEqual(self.overlay.status, "not-scheduled")
+        retry, calls = self.book()
+        self.assertEqual(retry.status_code, 200)
+        self.assertEqual(calls, 1)
+        self.assertEqual(CoachCalendarEvent.objects.count(), 1)
+
+    def test_historical_and_wrong_source_associations_cannot_book(self):
+        self.definition["sourceStatus"] = "Completed"
+        self.assertEqual(self.book()[0].status_code, 409)
+        self.definition["sourceStatus"] = "Not Scheduled"
+        self.definition["historicalReview"]["id"] = "410"
+        self.assertEqual(self.book()[0].status_code, 409)
+        self.assertEqual(CoachCalendarEvent.objects.count(), 0)

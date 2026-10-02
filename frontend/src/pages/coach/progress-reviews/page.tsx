@@ -1167,7 +1167,7 @@ export default function CoachProgressReviews() {
     setScheduleModalEvent(event);
   };
 
-  const schedulableReviews = selectedMonthEvents.filter(event => !['in-progress', 'completed', 'awaiting-signature'].includes(event.status));
+  const schedulableReviews = selectedMonthEvents.filter(event => event.reviewSource !== 'aptem' && !event.aptemReviewId && !['in-progress', 'completed', 'awaiting-signature'].includes(event.status));
 
   const openSchedulePicker = () => {
     const preferred = schedulableReviews.find(needsScheduling) || schedulableReviews[0];

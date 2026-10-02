@@ -6227,9 +6227,8 @@ def event_note_lines(base_event: dict, record: CoachCalendarEvent | None) -> lis
 
 def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None) -> dict:
     event = dict(base_event)
-    # Aptem owns the review lifecycle.  An LMS calendar row is only a booking
-    # overlay for those imported reviews; its absence (or booking status) must
-    # not erase the status imported from Aptem.
+    # Aptem's status remains provenance. A verified LMS meeting controls the
+    # calendar display status, while sourceStatus keeps the imported value.
     aptem_review = clean_text(base_event.get("reviewSource")).casefold() == "aptem"
     target_date = parse_date_value(base_event.get("targetDate"))
     if isinstance(target_date, datetime):
@@ -6257,12 +6256,20 @@ def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None)
         is_time_estimated = False
 
     if aptem_review:
-        status = clean_text(base_event.get("status")) or CoachCalendarEvent.STATUS_NOT_SCHEDULED
+        source_status = clean_text(base_event.get("status")) or CoachCalendarEvent.STATUS_NOT_SCHEDULED
+        historical_completed = source_status.casefold() == CoachCalendarEvent.STATUS_COMPLETED
+        verified_local_booking = bool(
+            not historical_completed and record and record.sync_state == CoachCalendarEvent.SYNC_SYNCED
+            and record.graph_event_id and calendar_record_has_launch_url(record)
+            and record.status in {CoachCalendarEvent.STATUS_SCHEDULED, CoachCalendarEvent.STATUS_IN_PROGRESS}
+        )
+        status = record.status if verified_local_booking else source_status
     else:
         status = record.status if record else CoachCalendarEvent.STATUS_NOT_SCHEDULED
-    meeting_link = clean_text(record.meeting_link) if record else ""
-    graph_web_link = clean_text(record.graph_web_link) if record else ""
-    meeting_provider = clean_text(record.meeting_provider) if record else ""
+    meeting_visible = bool(record and (not aptem_review or historical_completed or verified_local_booking))
+    meeting_link = clean_text(record.meeting_link) if meeting_visible else ""
+    graph_web_link = clean_text(record.graph_web_link) if meeting_visible else ""
+    meeting_provider = clean_text(record.meeting_provider) if meeting_visible else ""
 
     event.update(
         {
@@ -6278,7 +6285,7 @@ def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None)
             "timeLabel": time_label,
             "isTimeEstimated": is_time_estimated,
             "status": status,
-            "sourceStatus": schedule_status_label(status),
+            "sourceStatus": (base_event.get("sourceStatus") or schedule_status_label(source_status)) if aptem_review else schedule_status_label(status),
             "rawStatus": base_event.get("rawStatus") if aptem_review else schedule_status_label(status),
             "scheduledDate": (
                 record.scheduled_date.isoformat() if record and record.scheduled_date
@@ -10758,6 +10765,9 @@ def coach_timetable_schedule_event(request):
     except ValidationError as exc:
         return validation_error_response(exc)
 
+    if event_key.startswith("imported-review:"):
+        return coach_error(request, code="BOOKING_CONFLICT", message="Open the migrated review and use Book Meeting to schedule it.", status=409)
+
     catchup_record, owner_name = find_catchup_calendar_record(owner_email, event_key)
     if catchup_record:
         learner_rows = fetch_owner_active_learner_profiles(owner_email)
@@ -11152,6 +11162,9 @@ def coach_timetable_event_action(request):
         validator.check()
     except ValidationError as exc:
         return validation_error_response(exc)
+
+    if event_key.startswith("imported-review:"):
+        return coach_error(request, code="BOOKING_CONFLICT", message="Open the migrated review for its meeting actions.", status=409)
 
     owner_email = authenticated_coach_email(request)
 
@@ -13988,8 +14001,22 @@ def _review_instance_meeting_summary_source(instance_row, definition=None):
     return source
 
 
+def _review_learner_identity(learner):
+    """Display identity from the linked learner profile, never route labels."""
+    return {
+        "learnerName": clean_text(getattr(learner, "full_name", None)) or clean_text(getattr(learner, "username", None)),
+        "learnerEmail": clean_text(getattr(learner, "email", None)),
+        "programme": clean_text(getattr(learner, "programme", None)),
+        "programmeId": clean_text(getattr(learner, "programme_id", None)),
+    }
+
+
 def _coach_review_instance_definition(instance_row):
     definition = curriculum_review_instances.review_instance_form_definition(instance_row)
+    learner = LearnerProfile.objects.filter(pk=instance_row.get("learner_id")).only(
+        "full_name", "email", "programme", "programme_id",
+    ).first()
+    definition.update(_review_learner_identity(learner))
     source = _review_instance_meeting_summary_source(instance_row, definition)
     if source is not None:
         definition["meetingSummarySource"] = source
@@ -14423,6 +14450,7 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         else saved_instance.completed_at.isoformat() if saved_instance and saved_instance.completed_at else None
     )
     definition = {
+        **_review_learner_identity(learner),
         "readOnly": preview_only or summary_only or historical_completed or (
             migrated_form and saved_instance.status not in MIGRATED_EDITABLE_STATUSES
         ),
@@ -14481,6 +14509,47 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         "reason": "",
         "source": "aptem",
     })
+    if not historical_completed and (migrated_form or can_initialize or is_template_preview):
+        calendar_rows = list(CoachCalendarEvent.objects.filter(event_key=canonical_event_key)[:2])
+        calendar = calendar_rows[0] if calendar_rows else None
+        booking_template = getattr(saved_instance, "migrated_template", None) if saved_instance else None
+        association_valid = bool(
+            calendar and calendar.owner_email.casefold() == canonical_owner
+            and calendar.learner_id == profile_id
+            and not calendar.review_instance_id and not calendar.review_template_id
+            and calendar.event_type == ("mcr" if family == "MCM" else "progress-review")
+        )
+        booked = bool(
+            association_valid and calendar.sync_state == CoachCalendarEvent.SYNC_SYNCED
+            and calendar.graph_event_id and calendar_record_has_launch_url(calendar)
+            and calendar.status in {CoachCalendarEvent.STATUS_SCHEDULED, CoachCalendarEvent.STATUS_IN_PROGRESS}
+        )
+        definition["booking"] = {
+            "booked": booked,
+            "conflict": bool(calendar and not association_valid),
+            "canAttach": bool(
+                booked and migrated_form and saved_instance and booking_template
+                and booking_template.is_active and booking_template.review_family == family
+                and booking_template.programme_key == local_programme_key
+                and saved_instance.status == ImportedReviewInstance.STATUS_NOT_SCHEDULED
+                and not preview_only
+            ),
+            "canBook": bool(
+                migrated_form and saved_instance and booking_template
+                and booking_template.is_active and booking_template.review_family == family
+                and booking_template.programme_key == local_programme_key
+                and saved_instance.status in {
+                    ImportedReviewInstance.STATUS_NOT_SCHEDULED,
+                    ImportedReviewInstance.STATUS_SCHEDULED,
+                } and not booked and not preview_only and (not calendar or association_valid)
+            ),
+            "eventKey": canonical_event_key if association_valid else None,
+            "scheduledDate": calendar.scheduled_date.isoformat() if association_valid and calendar.scheduled_date else None,
+            "scheduledTime": format_time_value(calendar.scheduled_time) if association_valid and calendar.scheduled_time else None,
+            "durationMinutes": calendar.duration_minutes if association_valid else None,
+            "meetingLink": calendar.meeting_link if booked else None,
+            "syncState": calendar.sync_state if association_valid else None,
+        }
     return definition
 
 
@@ -14553,7 +14622,7 @@ def coach_review_instance_initialize(request, instance_id):
 
 @coach_access_required
 def coach_review_instance_local_status(request, instance_id):
-    """Phase B allows an explicit local scheduled -> in-progress transition."""
+    """Start an imported review only after its LMS meeting is verified."""
     if request.method != "POST":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
     if not instance_id.startswith("imported-review:"):
@@ -14576,8 +14645,122 @@ def coach_review_instance_local_status(request, instance_id):
             return JsonResponse({"detail": "Imported review association mismatch."}, status=409)
         if overlay.status != ImportedReviewInstance.STATUS_SCHEDULED:
             return JsonResponse({"detail": "Only a scheduled review can be started."}, status=409)
+        calendar = CoachCalendarEvent.objects.select_for_update().filter(event_key=instance_id).first()
+        if not calendar or calendar.owner_email.casefold() != owner_email or calendar.learner_id != overlay.learner_id or calendar.review_instance_id or calendar.review_template_id or calendar.sync_state != CoachCalendarEvent.SYNC_SYNCED or not calendar.graph_event_id or not calendar_record_has_launch_url(calendar):
+            return coach_error(request, code="BOOKING_CONFLICT", message="Book and confirm the Teams meeting before starting this review.", status=409)
         overlay.status = ImportedReviewInstance.STATUS_IN_PROGRESS
         overlay.save(update_fields=["status", "updated_at"])
+        calendar.status = CoachCalendarEvent.STATUS_IN_PROGRESS
+        calendar.save(update_fields=["status", "updated_at"])
+    return JsonResponse(_imported_review_definition(owner_email, instance_id))
+
+
+@coach_access_required
+def coach_review_instance_book(request, instance_id):
+    """Book one imported review by its Aptem identity, never by a native occurrence."""
+    if request.method != "POST":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+    if not instance_id.startswith("imported-review:"):
+        return coach_error(request, code="BOOKING_CONFLICT", message="Only imported reviews can use this booking action.", status=409)
+    owner_email = authenticated_coach_email(request).strip().casefold()
+    definition = _imported_review_definition(owner_email, instance_id)
+    if not definition:
+        return coach_error(request, code="UNAUTHORIZED", message="Imported review not found for this coach.", status=404)
+    if not initial_local_status(definition.get("sourceStatus")):
+        return coach_error(request, code="BOOKING_CONFLICT", message="Historical or unsupported Aptem reviews cannot be booked.", status=409)
+    if not definition.get("migratedProgrammeKey"):
+        return coach_error(request, code="MISSING_PROGRAMME", message="This learner's programme could not be resolved.", status=409)
+    if not definition.get("migratedForm") or definition.get("readOnly"):
+        return coach_error(request, code="NO_APPROVED_TEMPLATE", message="An approved migrated form is required before booking.", status=409)
+    overlay = _owned_migrated_overlay(owner_email, definition)
+    family = migrated_review_family((definition.get("historicalReview") or {}).get("type"))
+    if (not overlay or not family or not initial_local_status(definition.get("sourceStatus"))
+        or not overlay.migrated_template_id or not overlay.migrated_template.is_active
+        or overlay.migrated_template.review_family != family
+        or overlay.migrated_template.programme_key != definition.get("migratedProgrammeKey")):
+        return coach_error(request, code="NO_APPROVED_TEMPLATE", message="An approved migrated form is required before booking.", status=409)
+    if overlay.status not in {ImportedReviewInstance.STATUS_NOT_SCHEDULED, ImportedReviewInstance.STATUS_SCHEDULED}:
+        return coach_error(request, code="BOOKING_CONFLICT", message="Only an unstarted migrated review can be booked.", status=409)
+    if definition.get("booking", {}).get("conflict"):
+        return coach_error(request, code="BOOKING_CONFLICT", message="This imported review has an inconsistent calendar link.", status=409)
+    try:
+        payload = parse_json_body(request)
+        validator = ObjectValidator(payload)
+        scheduled_date = validator.iso_date("scheduledDate", required=True)
+        scheduled_time = validator.clock_time("scheduledTime", required=True)
+        duration_minutes = validator.integer("durationMinutes", default=TIMETABLE_DEFAULT_DURATION_MINUTES, minimum=15, maximum=480)
+        timezone_offset_minutes = validator.integer("timezoneOffsetMinutes", default=0, minimum=-840, maximum=840)
+        if scheduled_date and scheduled_date < date.today():
+            validator.error("scheduledDate", "Choose today or a future date.")
+        validator.check()
+    except ValidationError as exc:
+        return validation_error_response(exc)
+    base_event, owner_name = find_generated_timetable_event(owner_email, instance_id)
+    learner_id = definition["instance"]["learnerId"]
+    event_type = "mcr" if family == "MCM" else "progress-review" if family == "PR" else None
+    if not event_type or not base_event or base_event.get("reviewSource") != "aptem" or int(base_event.get("learnerId") or 0) != learner_id or base_event.get("source") != event_type:
+        return coach_error(request, code="BOOKING_CONFLICT", message="The imported calendar event could not be verified.", status=409)
+    learner = next((row for row in fetch_caseload_dashboard_profiles(owner_email) if int(getattr(row, "id", 0) or 0) == learner_id), None)
+    if learner is None:
+        return coach_error(request, code="MISSING_LEARNER", message="The learner could not be resolved.", status=409)
+    if coach_learner_personal_calendar_conflicts(learner, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes):
+        return coach_error(request, code="BOOKING_CONFLICT", message="This learner is busy at that time.", status=409)
+    target_date = parse_schedule_date(definition["instance"]["targetDate"])
+    if not target_date:
+        return coach_error(request, code="BOOKING_CONFLICT", message="This review has no valid target date.", status=409)
+    try:
+        with transaction.atomic():
+            lock_learner_calendar(learner_id)
+            record = CoachCalendarEvent.objects.select_for_update().filter(event_key=instance_id).first()
+            if record:
+                if (record.owner_email.casefold() != owner_email or record.learner_id != learner_id
+                    or record.event_type != event_type or record.review_instance_id or record.review_template_id):
+                    return coach_error(request, code="BOOKING_CONFLICT", message="This imported review has an inconsistent calendar link.", status=409)
+                if record.status != CoachCalendarEvent.STATUS_SCHEDULED:
+                    return coach_error(request, code="BOOKING_CONFLICT", message="This booking is no longer in a schedulable state.", status=409)
+                if (record.scheduled_date, record.scheduled_time, record.duration_minutes) != (scheduled_date, scheduled_time, duration_minutes):
+                    return coach_error(request, code="ALREADY_BOOKED", message="This review already has a different booking request.", status=409)
+                if record.sync_state in {CoachCalendarEvent.SYNC_SYNCING, CoachCalendarEvent.SYNC_RECONCILIATION}:
+                    return coach_error(request, code="BOOKING_CONFLICT", message="Calendar synchronization is in progress or needs reconciliation.", status=409)
+            else:
+                if england_non_delivery_reason(scheduled_date):
+                    return coach_error(request, code="BOOKING_CONFLICT", message=england_non_delivery_reason(scheduled_date), status=409)
+                ensure_learner_calendar_available(
+                    learner_id=learner_id, learner_email=clean_text(base_event.get("email")),
+                    scheduled_date=scheduled_date, scheduled_time=scheduled_time,
+                    duration_minutes=duration_minutes,
+                )
+                record = CoachCalendarEvent.objects.create(
+                    event_key=instance_id, idempotency_key=instance_id,
+                    owner_email=owner_email, owner_name=owner_name,
+                    learner_id=learner_id, learner_name=clean_text(base_event.get("learner")),
+                    learner_email=clean_text(base_event.get("email")), event_type=event_type,
+                    sequence=int(base_event.get("sequence") or 1), target_date=target_date,
+                    scheduled_date=scheduled_date, scheduled_time=scheduled_time,
+                    duration_minutes=duration_minutes, status=CoachCalendarEvent.STATUS_SCHEDULED,
+                    sync_state=CoachCalendarEvent.SYNC_PENDING,
+                )
+    except LearnerCalendarConflict as exc:
+        return coach_error(request, code="BOOKING_CONFLICT", message=str(exc), status=409)
+    except IntegrityError:
+        return coach_error(request, code="BOOKING_CONFLICT", message="A concurrent booking won. Reload this review.", status=409)
+    except Exception:
+        logger.exception("migrated_review_calendar_reservation_failed")
+        return coach_error(request, code="CALENDAR_CREATE_FAILED", message="The calendar operation could not be completed. Reload before retrying.", status=500)
+    try:
+        record, warning, _attempted = synchronize_reserved_calendar_event(record.pk, base_event)
+    except Exception:
+        logger.exception("migrated_review_graph_sync_failed")
+        return coach_error(request, code="GRAPH_CREATE_FAILED", message="The Teams meeting could not be confirmed. Reload before retrying with the same details.", status=502)
+    if warning or record.sync_state != CoachCalendarEvent.SYNC_SYNCED or not record.graph_event_id or not calendar_record_has_launch_url(record):
+        return coach_error(request, code="GRAPH_CREATE_FAILED", message="The Teams meeting could not be confirmed. The booking is safe to retry with the same details.", status=502)
+    with transaction.atomic():
+        saved = _owned_migrated_overlay(owner_email, definition, lock=True)
+        if not saved or saved.status not in {ImportedReviewInstance.STATUS_NOT_SCHEDULED, ImportedReviewInstance.STATUS_SCHEDULED}:
+            return coach_error(request, code="BOOKING_CONFLICT", message="The review changed during booking. Reload it.", status=409)
+        if saved.status != ImportedReviewInstance.STATUS_SCHEDULED:
+            saved.status = ImportedReviewInstance.STATUS_SCHEDULED
+            saved.save(update_fields=["status", "updated_at"])
     return JsonResponse(_imported_review_definition(owner_email, instance_id))
 
 

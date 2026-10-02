@@ -160,6 +160,11 @@ export interface ReviewInstanceFormDefinition {
   /** Historical adapters can reuse the Review Workspace without enabling writes. */
   readOnly?: boolean;
   source?: 'curriculum' | 'aptem' | string;
+  /** Display identity from the learner linked to this review. */
+  learnerName?: string | null;
+  learnerEmail?: string | null;
+  programme?: string | null;
+  programmeId?: string | null;
   /** Imported records can contain summary metadata without any form fields. */
   formAvailable?: boolean;
   summaryOnly?: boolean;
@@ -171,6 +176,18 @@ export interface ReviewInstanceFormDefinition {
   canInitialize?: boolean;
   sourceStatus?: string;
   localStatus?: string | null;
+  booking?: {
+    booked: boolean;
+    conflict: boolean;
+    canAttach?: boolean;
+    canBook: boolean;
+    eventKey: string | null;
+    scheduledDate: string | null;
+    scheduledTime: string | null;
+    durationMinutes: number | null;
+    meetingLink: string | null;
+    syncState: string | null;
+  };
   fieldWarnings?: { fieldKey: string; aptemType: number }[];
   pdf?: { available: boolean; reason: string; source?: string; originalAvailable?: boolean } | null;
   /** Progress Review only, and null until a coach calculates it. */
@@ -281,6 +298,23 @@ export async function startMigratedReview(instanceId: string) {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ status: 'in-progress' }),
   });
+  return readJsonResponse<ReviewInstanceFormDefinition>(response);
+}
+
+export async function bookMigratedReview(instanceId: string, slot: {
+  scheduledDate: string;
+  scheduledTime: string;
+  durationMinutes: number;
+  timezoneOffsetMinutes: number;
+}) {
+  const response = await coachFetch(`${instanceUrl(instanceId)}/book`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(slot),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.message || data.detail || 'The meeting could not be booked.');
+  }
   return readJsonResponse<ReviewInstanceFormDefinition>(response);
 }
 

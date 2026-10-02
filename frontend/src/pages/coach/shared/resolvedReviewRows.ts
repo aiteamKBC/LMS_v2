@@ -46,10 +46,10 @@ export function reviewActionMatrix(event: CoachCalendarEvent): ReviewActionMatri
   const status = normalizedReviewStatus(event);
   const formAvailable = Boolean(event.hasReviewForm || event.reviewInstanceId || event.reviewTemplateId);
   const importedActiveReview = Boolean(
-    event.aptemReviewId && status !== 'completed',
+    (event.reviewSource === 'aptem' || event.aptemReviewId) && status !== 'completed',
   );
   return {
-    schedule: status === 'not-scheduled' ? 'Schedule' : status === 'scheduled' ? 'Reschedule' : null,
+    schedule: importedActiveReview ? null : status === 'not-scheduled' ? 'Schedule' : status === 'scheduled' ? 'Reschedule' : null,
     view: true,
     // Imported reviews remain reachable through local progress and signature
     // stages even when the Aptem source still has summary metadata only.

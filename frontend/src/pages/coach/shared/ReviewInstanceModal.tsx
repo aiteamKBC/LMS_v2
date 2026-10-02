@@ -5,6 +5,7 @@ import { ReviewSignatures } from '@/components/reviews/ReviewSignatures';
 import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 import { ReviewProgressPanel } from '@/components/reviews/ReviewProgressPanel';
 import {
+  bookMigratedReview,
   calculateReviewInstanceProgress,
   completeReviewInstance,
   downloadReviewInstancePdf,
@@ -211,7 +212,7 @@ export function ReviewInstanceModal({
 }: {
   /** Only what the header shows -- deliberately structural so the timetable,
    *  meetings and progress-review pages can each pass their own event type. */
-  event: { learner?: string | null; programme?: string | null };
+  event?: { learner?: string | null; programme?: string | null };
   instanceId: string;
   onClose: () => void;
   /** Called with the instance's resulting status after a successful
@@ -238,6 +239,11 @@ export function ReviewInstanceModal({
   const [initializationRetry, setInitializationRetry] = useState(0);
   const initializationAttemptsRef = useRef(new Map<string, ReturnType<typeof initializeMigratedReview>>());
   const [saving, setSaving] = useState(false);
+  const [bookingOpen, setBookingOpen] = useState(false);
+  const [bookingDate, setBookingDate] = useState('');
+  const [bookingTime, setBookingTime] = useState('09:00');
+  const [bookingDuration, setBookingDuration] = useState(60);
+  const bookingInFlightRef = useRef(false);
   const [reopening, setReopening] = useState(false);
   const [showReopenConfirmation, setShowReopenConfirmation] = useState(false);
   const signatureSaveInFlightRef = useRef(false);
@@ -498,10 +504,35 @@ export function ReviewInstanceModal({
     setSaving(true);
     setError(null);
     try {
-      setDefinition(await startMigratedReview(definition.instance.id));
+      const updated = await startMigratedReview(definition.instance.id);
+      setDefinition(updated);
+      onStatusChanged?.(updated.localStatus || updated.instance.status);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to start this migrated review.');
     } finally {
+      setSaving(false);
+    }
+  };
+
+  const bookMigrated = async () => {
+    if (!definition?.migratedForm || !(definition.booking?.canBook || definition.booking?.canAttach) || isViewingAsCoach || bookingInFlightRef.current) return;
+    bookingInFlightRef.current = true;
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await bookMigratedReview(definition.instance.id, {
+        scheduledDate: definition.booking.canAttach ? definition.booking.scheduledDate || '' : bookingDate,
+        scheduledTime: definition.booking.canAttach ? definition.booking.scheduledTime || '' : bookingTime,
+        durationMinutes: definition.booking.canAttach ? definition.booking.durationMinutes || 60 : bookingDuration,
+        timezoneOffsetMinutes: new Date().getTimezoneOffset(),
+      });
+      setDefinition(updated);
+      setBookingOpen(false);
+      onStatusChanged?.(updated.localStatus || updated.instance.status);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to book this migrated review.');
+    } finally {
+      bookingInFlightRef.current = false;
       setSaving(false);
     }
   };
@@ -603,6 +634,14 @@ export function ReviewInstanceModal({
   const reviewName = definition
     ? `${definition.template.name}${definition.instance.occurrenceNumber == null ? '' : ` #${definition.instance.occurrenceNumber}`}`
     : '';
+  // A present backend field is authoritative. Route state only labels older
+  // responses that do not include identity metadata yet.
+  const learnerLabel = definition?.learnerName === undefined
+    ? event?.learner?.trim() || 'Learner unavailable'
+    : definition.learnerName?.trim() || 'Learner unavailable';
+  const programmeLabel = definition?.programme === undefined
+    ? event?.programme?.trim() || 'Programme unavailable'
+    : definition.programme?.trim() || 'Programme unavailable';
   const previousOccurrenceNumber = definition && typeof definition.instance.occurrenceNumber === 'number'
     ? definition.instance.occurrenceNumber - 1
     : null;
@@ -671,7 +710,7 @@ export function ReviewInstanceModal({
         <ModalHeader
           eyebrow="Complete review"
           icon="ri-chat-check-line"
-          title={definition ? `${event.learner || 'Learner'} · ${reviewName}` : 'Loading review...'}
+          title={definition ? `${learnerLabel} · ${reviewName}` : 'Loading review...'}
           subtitle={isViewingAsCoach
             ? 'Admin view-as mode is read-only.'
             : initializationFailed
@@ -746,7 +785,33 @@ export function ReviewInstanceModal({
                 Retry form initialization
               </button>
             ) : null}
-            {definition.migratedForm && definition.localStatus === 'scheduled' && !isViewingAsCoach ? (
+            {definition.migratedForm && definition.booking?.booked ? (
+              <section aria-label="Migrated review meeting" className="rounded-xl border border-primary-200 bg-primary-50 p-4 text-sm">
+                <p className="font-semibold text-primary-900">Meeting booked in LMS</p>
+                <p className="mt-1 text-primary-800">{definition.booking.scheduledDate} at {definition.booking.scheduledTime} · {definition.booking.durationMinutes} minutes</p>
+                {definition.booking.meetingLink ? <a href={definition.booking.meetingLink} target="_blank" rel="noopener noreferrer" className="mt-2 inline-block font-semibold text-primary-700 underline">Join Teams</a> : null}
+              </section>
+            ) : null}
+            {definition.migratedForm && definition.booking?.canAttach && !isViewingAsCoach ? (
+              <button type="button" onClick={() => { void bookMigrated(); }} disabled={busy} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">Use existing meeting</button>
+            ) : null}
+            {definition.migratedForm && definition.booking?.conflict ? (
+              <p role="alert" className="text-sm text-red-700">This review has a conflicting calendar association. Ask an administrator to resolve it before booking.</p>
+            ) : null}
+            {definition.migratedForm && definition.booking?.canBook && !isViewingAsCoach ? (
+              <section aria-label="Book migrated review meeting" className="rounded-xl border border-primary-200 bg-white p-4">
+                {!bookingOpen ? <button type="button" onClick={() => { setBookingDate(definition.booking?.scheduledDate || definition.instance.targetDate); setBookingOpen(true); }} disabled={busy} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">Book Meeting</button> : (
+                  <div className="flex flex-wrap items-end gap-3">
+                    <label className="text-xs font-semibold">Date<input aria-label="Meeting date" type="date" required value={bookingDate} onChange={(event) => setBookingDate(event.target.value)} className="mt-1 block rounded-lg border px-3 py-2" /></label>
+                    <label className="text-xs font-semibold">Time<input aria-label="Meeting time" type="time" required value={bookingTime} onChange={(event) => setBookingTime(event.target.value)} className="mt-1 block rounded-lg border px-3 py-2" /></label>
+                    <label className="text-xs font-semibold">Minutes<input aria-label="Meeting duration" type="number" min={15} max={480} value={bookingDuration} onChange={(event) => setBookingDuration(Number(event.target.value))} className="mt-1 block w-24 rounded-lg border px-3 py-2" /></label>
+                    <button type="button" onClick={() => { void bookMigrated(); }} disabled={busy || !bookingDate || !bookingTime || bookingDuration < 15 || bookingDuration > 480} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">{saving ? 'Booking...' : 'Confirm booking'}</button>
+                    <button type="button" onClick={() => setBookingOpen(false)} disabled={busy} className="rounded-lg border px-4 py-2 text-sm">Cancel</button>
+                  </div>
+                )}
+              </section>
+            ) : null}
+            {definition.migratedForm && definition.localStatus === 'scheduled' && definition.booking?.booked && !isViewingAsCoach ? (
               <button type="button" onClick={() => { void startMigrated(); }} disabled={busy}
                 className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
                 Start migrated review
@@ -802,8 +867,8 @@ export function ReviewInstanceModal({
 
             <div className="grid gap-3 rounded-2xl border border-background-200 bg-white p-3 shadow-sm sm:grid-cols-2 lg:grid-cols-4">
               {[
-                ['Learner', event.learner || 'Unknown learner'],
-                ['Programme', event.programme || '--'],
+                ['Learner', learnerLabel],
+                ['Programme', programmeLabel],
                 ['Review', reviewName],
                 ['Target date', formatDateLabel(definition.instance.targetDate)],
               ].map(([label, value]) => (
