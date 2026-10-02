@@ -212,8 +212,8 @@ export function ProgressTab({ data, onViewEvidence }: {
                   <tr key={item.id} className={styles.ksbParentRow}>
                     <td><strong className={styles.ksbCode}>{item.code}</strong></td>
                     <td>{item.description}</td>
-                    <td><StatusBadge tone={ksbCategoryTone(item.category)} label={item.category} size="sm" dot={false} /></td>
-                    <td><StatusBadge tone={item.linked ? 'positive' : 'neutral'} label={item.linked ? 'Completed' : 'Not completed'} size="sm" /></td>
+                    <td><StatusBadge tone={ksbCategoryTone(item.category)} label={item.category} className={styles.browserBadge} /></td>
+                    <td><StatusBadge tone={item.linked ? 'positive' : 'neutral'} label={item.linked ? 'Completed' : 'Not completed'} className={styles.browserBadge} /></td>
                     <td>{item.activityTitle}</td>
                     <td>
                       <button
