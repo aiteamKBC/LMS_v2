@@ -13,6 +13,7 @@ import { useLearnerNavGate } from '@/hooks/useLearnerNavGate';
 import { getRememberedLearner } from '@/hooks/useMyLearner';
 import { ArrowLeft } from 'lucide-react';
 import design from './WorkspaceDesign.module.css';
+import './CoachResponsive.css';
 import { activePersonalLearning } from '@/lib/personalLearning';
 import { PersonalLearningBanner } from './PersonalLearningBanner';
 import { bareLearnerPath, learnerHref, learnerIdentityFromPath, type LearnerRoutePage } from '@/lib/learnerRoutes';

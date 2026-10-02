@@ -103,6 +103,39 @@
 .metricLabel { color: #6f6888; font-size: 9px; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; }
 .metricValue { display: block; overflow: hidden; margin-top: 2px; color: #1c1748; font-size: 15px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
 
+/* Profile summary: identity, programme dates and compact progress cards. */
+.hero { padding: 24px 20px 18px; background: linear-gradient(120deg, #fdfcff, #f5f0ff); }
+.heroTop { padding: 0 12px 8px; }
+.avatar { width: 84px !important; height: 84px !important; flex-basis: 84px; border: 0; border-radius: 18px !important; background: #eee7ff !important; box-shadow: none; }
+.nameRow h1 { font-size: clamp(25px, 2.2vw, 34px); }
+.programmeLine { display: flex; flex-wrap: wrap; gap: 12px 24px; margin-top: 14px; color: #66688a; font-size: 15px; }
+.programmeLine span { display: inline-flex; align-items: center; gap: 10px; }
+.programmeLine span + span { padding-left: 24px; border-left: 1px solid #d9cef4; }
+.programmeLine svg { font-size: 22px; }
+.dateStrip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 22px; padding: 22px 12px; border: 1px solid #eee8fb; border-radius: 12px; background: white; }
+.dateStrip .info { grid-template-columns: 48px minmax(0, 1fr); align-items: center; gap: 18px; padding: 0 24px; }
+.dateStrip .info + .info { border-left: 1px solid #f0eafb; }
+.dateStrip .info > svg { display: grid; width: 48px; height: 48px; margin: 0; place-items: center; border-radius: 12px; background: #f2ecff; color: #6b2cff; font-size: 25px; }
+.dateStrip .infoLabel { font-size: 13px; }
+.dateStrip .infoValue { margin-top: 5px; font-size: 18px; }
+.summaryDetails { margin-top: 12px; color: var(--case-muted); font-size: 12px; }
+.summaryDetails summary { width: fit-content; cursor: pointer; padding: 4px; border-radius: 4px; }
+.summaryDetails summary:focus-visible { outline: 2px solid #6b2cff; outline-offset: 3px; }
+.metrics { margin-top: 16px; gap: 12px; }
+.metric { min-height: 110px; grid-template-columns: 46px minmax(0, 1fr); gap: 10px 14px; padding: 16px; border-color: #eee8fb; border-radius: 11px; }
+.metricIcon { width: 46px; height: 46px; border-radius: 12px; background: #f2ecff; color: #6b2cff; font-size: 25px; }
+.metricLabel { font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; }
+.metricValue { margin-top: 7px; font-size: 19px; }
+.metricTrack { grid-column: 1 / -1; height: 10px; overflow: hidden; border-radius: 999px; background: #eceaf4; }
+.metricTrack > div { height: 100%; border-radius: inherit; background: #6b2cff; }
+.metricTrack > div[data-tone="emerald"] { background: #00bf87; }
+.metricTrack > div[data-tone="blue"] { background: #3378ff; }
+@media (max-width: 760px) {
+  .dateStrip { grid-template-columns: 1fr; gap: 18px; }
+  .dateStrip .info + .info { border-left: 0; }
+  .programmeLine span + span { border-left: 0; padding-left: 0; }
+}
+
 .tabs {
   display: flex;
   min-width: 0;
@@ -132,6 +165,12 @@
 .tab i { font-size: 16px; }
 
 .content { min-width: 0; }
+
+/* Contain OTJH fills in the coach profile while keeping the target marker tall. */
+.content :global([role="progressbar"][aria-label="Overall off-the-job hours progress"]) {
+  clip-path: inset(-.3rem 0);
+}
+
 .stack { display: grid; gap: 14px; }
 .overviewGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 
@@ -381,4 +420,51 @@
   .activityRow > :last-child { grid-column: 2; }
   .timelineItem { grid-template-columns: 34px minmax(0, 1fr); }
   .timelineStatus { grid-column: 2; justify-self: start; }
+}
+
+/* Compact progress cards and KSB browser from the case-file reference. */
+.progressTab .panelTitle { font-size: 18px; }
+.progressTab .browserPanel { border-radius: 11px; background: #fff; }
+.progressTab .browserPanel .panelHeader { flex-wrap: wrap; gap: 14px; padding: 14px 18px 10px; }
+.progressTab .browserPanel .panelHeading { flex: 1 1 330px; }
+.progressTab .browserPanel .panelIcon { width: 44px; height: 44px; flex-basis: 44px; font-size: 24px; }
+.progressTab .browserPanel .panelTitle { font-size: 18px; }
+.progressTab .browserPanel .panelSubtitle { font-size: 12px; }
+.progressTab .browserPanel .panelBody { padding: 0 18px 14px; }
+.progressTab .browserToolbar { flex: 1 1 760px; grid-template-columns: minmax(220px, 1fr) auto; gap: 12px; }
+.progressTab .search input { height: 40px; padding-left: 40px; border-radius: 9px; font-size: 12px; }
+.progressTab .search svg { left: 13px; width: 17px; height: 17px; }
+.progressTab .filterPills { gap: 8px; }
+.progressTab .filterPill { height: 40px; padding: 0 14px; border-radius: 9px; font-size: 12px; }
+.progressTab .filterPillActive { box-shadow: none; }
+.progressTab .browserPanel .tableScroll { margin-top: 4px; border-radius: 8px; }
+.progressTab .ksbTable th { height: 34px; padding: 0 12px; background: #f0eaff; color: #28214e; font-size: 12px; }
+.progressTab .ksbTable td { height: 36px; padding: 4px 12px; font-size: 12px; }
+.progressTab .ksbParentRow td:nth-child(2) { font-weight: 500; }
+.progressTab .ksbTable th:nth-child(1), .progressTab .ksbTable td:nth-child(1) { width: 9%; }
+.progressTab .ksbTable th:nth-child(2), .progressTab .ksbTable td:nth-child(2) { width: 24%; }
+.progressTab .ksbTable th:nth-child(3), .progressTab .ksbTable td:nth-child(3) { width: 14%; }
+.progressTab .ksbTable th:nth-child(4), .progressTab .ksbTable td:nth-child(4) { width: 14%; }
+.progressTab .ksbTable th:nth-child(5), .progressTab .ksbTable td:nth-child(5) { width: 32%; }
+.progressTab .ksbTable th:nth-child(6), .progressTab .ksbTable td:nth-child(6) { width: 7%; }
+.progressTab .ksbCode { min-width: 60px; height: 25px; border-radius: 6px; font-size: 11px; }
+.progressTab .browserBadge { padding: 3px 8px; gap: 5px; font-size: 11px; }
+.progressTab .browserBadge > span { width: 6px; height: 6px; }
+.progressTab .tableButton { min-width: 70px; height: 27px; padding: 0 10px; border-radius: 7px; font-size: 11px; gap: 5px; }
+.progressTab .coverageGrid { margin-top: 5px; }
+.progressTab .coverageCard { padding: 8px 12px; }
+.ksbPagination { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 12px; }
+.ksbPagination > div { flex: 1 1 360px; border-top: 0; padding: 0; }
+.pageSize { display: flex; align-items: center; gap: 8px; color: #77718d; font-size: 12px; }
+.pageSize select { height: 32px; padding: 0 8px; border: 1px solid #ddd1ff; border-radius: 7px; background: #fff; color: #28214e; }
+.pageSize select:focus-visible { outline: 2px solid #7659c4; outline-offset: 2px; }
+@media (max-width: 1100px) {
+  .progressTab .browserToolbar { grid-template-columns: 1fr; }
+  .progressTab .filterPills { justify-content: flex-start; }
+}
+@media (max-width: 760px) {
+  .progressTab .browserPanel .panelHeader { padding: 14px; }
+  .progressTab .browserPanel .panelBody { padding: 0 14px 14px; }
+  .progressTab .browserPanel .panelHeading, .progressTab .browserToolbar { flex-basis: 100%; min-width: 0; }
+  .progressTab .filterPill { padding: 0 10px; font-size: 11px; }
 }

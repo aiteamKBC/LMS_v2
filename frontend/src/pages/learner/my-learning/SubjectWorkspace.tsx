@@ -504,8 +504,8 @@ export function nativeHref(entry: SubjectEntry, kind?: string, learnerId?: strin
   return path ? `/learner/${path}?week=${encodeURIComponent(entry.week || '')}` : null;
 }
 
-function ActivityRow({ entry, kind, learnerId, onProgress }: { entry: SubjectEntry; kind?: string; learnerId?: string; onProgress?: (result: SubjectAttemptResult) => void }) {
-  const [open, setOpen] = useState(false);
+function ActivityRow({ entry, kind, learnerId, onProgress, defaultOpen = false }: { defaultOpen?: boolean; entry: SubjectEntry; kind?: string; learnerId?: string; onProgress?: (result: SubjectAttemptResult) => void }) {
+  const [open, setOpen] = useState(defaultOpen);
   const contentId = useId();
   const href = nativeHref(entry, kind, learnerId);
   const legacy = entry.legacy;
@@ -539,12 +539,13 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   const location = useLocation();
   const navigate = useNavigate();
   const routeParams = new URLSearchParams(location.search);
+  const requestedActivity = routeParams.get('activity');
   const selected = routeParams.get('subject') || routeParams.get('module');
   const selectedWeek = routeParams.get('week');
   const continueCurrentWeek = selectedWeek === 'current';
   const select = (subject?: string, week?: string) => {
     const params = new URLSearchParams(location.search);
-    params.delete('module'); params.delete('week'); params.delete('subject');
+    params.delete('module'); params.delete('week'); params.delete('subject'); params.delete('activity');
     if (subject) params.set('subject', subject);
     if (week) params.set('week', week);
     navigate({ pathname: location.pathname, search: params.toString() });
@@ -600,6 +601,14 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   };
   const summary = useMemo(() => buildUnifiedLearningSummary(updatedData, real, metadata), [updatedData, real, metadata]);
   const subjects = summary.subjects;
+  // Canonical evidence IDs identify progress records, not source materials.
+  // Refuse ambiguous matches rather than opening a different course's material.
+  const activityMatches = requestedActivity ? subjects.flatMap(subject => subject.activities
+    .filter(entry => requestedActivity.startsWith('record:')
+      ? /^record:[^:]+:[^:]+$/.test(entry.id) && entry.id.slice(entry.id.lastIndexOf(':') + 1) === requestedActivity.slice(7)
+      : entry.id === requestedActivity || String(entry.legacy?.source_activity_id) === requestedActivity)
+    .map(entry => ({ subject, entry }))) : [];
+  const activityTarget = activityMatches.length === 1 ? activityMatches[0] : undefined;
   const deadlines = useMemo(() => learningDeadlines(subjects), [subjects]);
   // Assign colours from the full ID-sorted set, before display filters or sorts,
   // so finding, completing or renaming a subject does not change its colour.
@@ -621,7 +630,7 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   const currentSubject = recommendedLearningSubject(subjects, real, metadata, schedule);
   const defaultSubject = planSelection.status !== 'undated' ? planSelection.entries[0]?.subject : undefined;
   const continuedSubject = continueCurrentWeek ? defaultSubject || subjects.find(subject => currentLearningWeek(subject)) : undefined;
-  const active = resolveLearningSubject(subjects, selected, metadata, schedule)
+  const active = activityTarget?.subject || resolveLearningSubject(subjects, selected, metadata, schedule)
     || (!selected && !scheduleLoading ? (view === 'map' ? defaultSubject : continuedSubject) : undefined);
   const activePlan = planSelection.entries.find(entry => entry.subject.id === active?.id)?.module;
   const noScheduledModule = scheduleLoading ? 'Finding your current module…'
@@ -634,7 +643,8 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   // they published one for are in here, so a lookup that misses shows nothing.
   const holidayNotes = weekHolidayNotes(activePlan?.curriculumSlots
     || (active ? planModulesBySubject.get(active.id)?.curriculumSlots : undefined));
-  const activeWeek = continueCurrentWeek && active ? continuingLearningWeek(active)
+  const activeWeek = activityTarget ? weeks.find(week => week.activities.some(entry => entry.id === activityTarget.entry.id))
+    : continueCurrentWeek && active ? continuingLearningWeek(active)
     : selectedWeek ? weeks.find(week => week.id === selectedWeek) : undefined;
   const visibleActivities = active ? active.activities.filter((entry) => !term || active.title.toLocaleLowerCase().includes(term) || entry.title.toLocaleLowerCase().includes(term)) : [];
   const visibleActivityIds = new Set(visibleActivities.map((entry) => entry.id));
@@ -644,9 +654,10 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
   const percent = metrics !== undefined ? metrics?.programme.percent ?? null : summary.percent;
   if (!displayed && (error || imageError)) return <div role="alert" className="rounded-2xl border bg-white p-6"><p className="font-semibold">Could not load your subjects</p><p className="mt-2 text-sm text-foreground-500">{error || imageError}</p><button onClick={error ? onRetry : retryMetadata} className="mt-4 rounded-lg border px-4 py-2 text-sm font-semibold">Try again</button></div>;
   if (!displayed) return <SubjectCardsSkeleton />;
+  if (requestedActivity && !activityTarget) return <div role="alert" className={styles.empty}><p>{activityMatches.length > 1 ? 'This evidence matches more than one learning activity. Choose the correct module to review it.' : 'This evidence activity is not available in My Learning.'}</p><button onClick={() => select()}>View modules</button></div>;
   // Catalogue links open the existing player directly. Imported-only courses
   // and weeks awaiting content keep their material browser available.
-  const openingActivity = active && view === 'catalogue' && (!selectedWeek || activeWeek)
+  const openingActivity = !requestedActivity && active && view === 'catalogue' && (!selectedWeek || activeWeek)
     ? subjectOpeningActivity(active, activeWeek) : undefined;
   const openingHref = openingActivity ? nativeHref(openingActivity, kind, learnerId) : null;
   if (openingHref) return <Navigate to={openingHref} replace />;
@@ -668,7 +679,7 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
     {activeWeek ? <>
       <button onClick={() => select(active!.id)} className={styles.textLink}><ChevronLeft size={17} />{view === 'map' ? 'Back to timeline' : 'Back to subject'}</button>
       <section className={styles.weekMaterial} aria-label={`${activeWeek.label} materials`}><header><p className={styles.eyebrow}>{activeWeek.label}</p><h3>{activeWeek.title}</h3><HolidayNoteHint note={activeWeek.weekId ? holidayNotes.get(activeWeek.weekId) : undefined} className="mb-2" /><Progress done={activeWeek.activities.filter(a => a.completed).length} total={activeWeek.activities.length} label="Week progress" /></header>
-        {activeWeek.activities.filter(entry => !term || active!.title.toLowerCase().includes(term) || entry.title.toLowerCase().includes(term)).map(entry => <ActivityRow key={entry.id} entry={entry} kind={kind} learnerId={learnerId} onProgress={result => { if (entry.legacy) recordProgress(entry.legacy.activity_id, result); }} />)}
+        {activeWeek.activities.filter(entry => !term || active!.title.toLowerCase().includes(term) || entry.title.toLowerCase().includes(term)).map(entry => <ActivityRow key={entry.id} defaultOpen={entry.id === activityTarget?.entry.id} entry={entry} kind={kind} learnerId={learnerId} onProgress={result => { if (entry.legacy) recordProgress(entry.legacy.activity_id, result); }} />)}
         {!activeWeek.activities.length && <p className="p-6 text-sm text-foreground-500">Learning materials will appear here when they are added to this week.</p>}
         {activeWeek.activities.length > 0 && !activeWeek.activities.some(entry => !term || active!.title.toLowerCase().includes(term) || entry.title.toLowerCase().includes(term)) && <p className="p-6 text-sm text-foreground-500">No activities match your search.</p>}
       </section>
@@ -691,10 +702,10 @@ export function StudentActivityPanel({ data: incomingData, loading, error, onRet
           <div className="space-y-3 p-3 pt-0">{weeks.map(({ week, activities }, index) => {
             const visibleEntries = activities.filter((entry) => visibleActivityIds.has(entry.id));
             if (!visibleEntries.length) return null;
-            if (month === 'introduction') return visibleEntries.map((entry) => <ActivityRow key={entry.id} entry={entry} kind={kind} learnerId={learnerId} onProgress={(result) => { if (entry.legacy) recordProgress(entry.legacy.activity_id, result); }} />);
+            if (month === 'introduction') return visibleEntries.map((entry) => <ActivityRow key={entry.id} defaultOpen={entry.id === activityTarget?.entry.id} entry={entry} kind={kind} learnerId={learnerId} onProgress={(result) => { if (entry.legacy) recordProgress(entry.legacy.activity_id, result); }} />);
             const weekTitle = week === 'undated' ? 'Activities awaiting a date' : /^\d{4}-/.test(week) ? `Week ${index + 1} · ${week} – ${activities[0].schedule.week_end || ''}` : week;
             return <ActivityGroup key={week} title={weekTitle} label={`${monthTitle}, ${weekTitle}`} activities={activities} level={4}>
-              {visibleEntries.map((entry) => <ActivityRow key={entry.id} entry={entry} kind={kind} learnerId={learnerId} onProgress={(result) => { if (entry.legacy) recordProgress(entry.legacy.activity_id, result); }} />)}
+              {visibleEntries.map((entry) => <ActivityRow key={entry.id} defaultOpen={entry.id === activityTarget?.entry.id} entry={entry} kind={kind} learnerId={learnerId} onProgress={(result) => { if (entry.legacy) recordProgress(entry.legacy.activity_id, result); }} />)}
             </ActivityGroup>;
           })}</div>
         </ActivityGroup>;

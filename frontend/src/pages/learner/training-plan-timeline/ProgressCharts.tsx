@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { percent, type TimelineModule } from './model';
-import { moduleMeasures, moduleProgress, programmeReviewProgress } from './progress';
+import { moduleMeasures, moduleProgress } from './progress';
 import { monthlyHours, type MonthlyHours } from './monthlyHours';
 import styles from './ProgressCharts.module.css';
 
@@ -112,12 +112,11 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
   const expectedPercent = ratio(expectedTarget, progressTarget);
   const overallVariance = expectedTarget == null || totalCompleted == null ? null : totalCompleted - expectedTarget;
   const variancePercent = ratio(overallVariance, expectedTarget);
-  const programmeReviews = programmeReviewProgress(data.reviews);
   const activityDone = modules.reduce((sum, module) => sum + module.done, 0);
   const activityTotal = modules.reduce((sum, module) => sum + module.activityCount, 0);
   const wholeProgrammeProgress = programmeSnapshot ? {
     value: programmeSnapshot.overall,
-    available: 6,
+    available: 5,
     measures: [
       { label: 'Overall', value: programmeSnapshot.overall, detail: percentage(programmeSnapshot.overall) },
       { label: 'Attendance', value: programmeSnapshot.attendancePresent == null || programmeSnapshot.attendanceTotal == null
@@ -131,10 +130,6 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
         detail: programmeSnapshot.otjhActual == null || programmeSnapshot.otjhTarget == null
           ? 'Recorded hours unavailable' : `${hourNumber.format(programmeSnapshot.otjhActual)} / ${hourNumber.format(programmeSnapshot.otjhTarget)} hours` },
       { label: 'KSBs', value: programmeSnapshot.ksbAvailable === false ? null : programmeSnapshot.ksb, detail: programmeSnapshot.ksbAvailable === false ? 'KSB progress unavailable' : percentage(programmeSnapshot.ksb) },
-      { label: 'Reviews', value: programmeReviews.percent,
-        detail: programmeReviews.total
-          ? `${programmeReviews.completed} / ${programmeReviews.total} completed across the programme`
-          : 'No progress reviews' },
     ],
   } : null;
   const chartProgress = wholeProgrammeProgress || selectedProgress;
@@ -185,7 +180,7 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
         <dl className={styles.measures}>{chartProgress.measures.map((measure, index) => <div key={measure.label}>
           <dt><i style={{ background: colors[index] }} />{measure.label}</dt><dd>{measure.detail}</dd>
         </div>)}</dl>
-        <p className={styles.note}>Overall, OTJH, KSB and attendance match the case-file cards. Activities and reviews are aggregated across all learner modules.</p>
+        <p className={styles.note}>Overall, OTJH, KSB and attendance match the case-file cards. Activities are aggregated across all learner modules.</p>
       </> : <p className={styles.empty}>Select a module to see attendance, activities, hours and KSBs.</p>}
     </section> : <section className={`${styles.card} ${styles.moduleProgressCard}`} aria-label="Module progress">
       <header><div><p className={styles.eyebrow}>Selected module</p><h2>Module progress</h2></div>

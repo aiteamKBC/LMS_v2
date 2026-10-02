@@ -23,6 +23,7 @@ import {
 } from './data';
 import type { CaseFileReviewMeeting } from './types';
 import styles from './learnerCaseFile.module.css';
+import weeklyActivitiesStyles from './coachWeeklyActivities.module.css';
 import { CaseFileTabs } from './components/CaseFileTabs';
 import { LearnerCaseFileHeader } from './components/LearnerCaseFileHeader';
 import { AttendanceTab } from './tabs/AttendanceTab';
@@ -228,7 +229,7 @@ export default function LearnerCaseFile() {
 
         <CaseFileTabs activeTab={activeTab} onChange={setActiveTab} />
 
-        <section className={styles.content} role="tabpanel">
+        <section className={`${styles.content} ${weeklyActivitiesStyles.root}`} role="tabpanel">
           {renderTab()}
         </section>
       </main>
@@ -236,8 +237,13 @@ export default function LearnerCaseFile() {
         <EvidencePreviewModal
           evidence={evidencePreview}
           onClose={() => setEvidencePreview(null)}
-          onOpenAssignment={(componentId) => {
+          onOpenAssignment={(componentId, activityId) => {
             if (!data?.kind || !data.learnerId) return;
+            if (componentId.startsWith('journal:')) {
+              const target = activityId ? `record:${activityId}` : componentId;
+              navigate(`/learner/my-learning/${data.kind}/${data.learnerId}?activity=${encodeURIComponent(target)}`);
+              return;
+            }
             navigate(`/learner/monthly-submission/${data.kind}/${data.learnerId}/${encodeURIComponent(componentId)}`);
           }}
         />

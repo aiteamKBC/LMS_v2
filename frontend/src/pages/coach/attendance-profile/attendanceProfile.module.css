@@ -54,3 +54,12 @@
   .printFooter { display: flex; justify-content: space-between; margin-top: 4mm; padding-top: 2mm; border-top: .25mm solid #e2e5eb; color: #757d8d; font-size: 6.5pt; }
   .pageNumber::after { content: counter(page); }
 }
+@container coach-content (max-width: 900px) {
+  .hero { flex-direction: column; }
+  .actions { flex-wrap: wrap; }
+  .summary { grid-template-columns: minmax(0, 1fr); }
+  .addRecord { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container coach-content (max-width: 480px) {
+  .addRecord { grid-template-columns: minmax(0, 1fr); }
+}

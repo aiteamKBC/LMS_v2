@@ -243,5 +243,19 @@ button.metric:hover { border-color: var(--dashboard-accent); box-shadow: 0 10px 
   .donut { width: 106px; height: 106px; flex-basis: 106px; }
   .donutCenter { width: 78px; height: 78px; }
   .legend { font-size: 10px; }
-  .monthlyRisk { grid-template-columns: minmax(0, 1fr) 94px; gap: 8px; }
+  .monthlyRisk { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+}
+
+@container coach-content (max-width: 1050px) {
+  .riskLayout { grid-template-columns: minmax(0, 1fr); }
+  .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@container coach-content (max-width: 760px) {
+  .charts { grid-template-columns: minmax(0, 1fr); }
+  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container coach-content (max-width: 480px) {
+  .metrics { grid-template-columns: minmax(0, 1fr); }
+  .monthlyRisk { grid-template-columns: minmax(0, 1fr); }
+  .monthlyBars { grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 4px; }
 }
