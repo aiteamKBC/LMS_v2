@@ -192,3 +192,12 @@
 
 @media (max-width: 1000px) { .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); } .lowerGrid { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .page { padding: 14px 10px 22px; } .summary { grid-template-columns: 1fr; } .title h1 { font-size: 22px; } }
+
+@container coach-content (max-width: 1000px) {
+  .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lowerGrid { grid-template-columns: minmax(0, 1fr); }
+  .panelHeader { flex-wrap: wrap; }
+}
+@container coach-content (max-width: 480px) {
+  .summary { grid-template-columns: minmax(0, 1fr); }
+}

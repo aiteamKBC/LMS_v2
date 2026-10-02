@@ -170,7 +170,9 @@ describe('Dashboard training plan controls', () => {
     expect(chart.getByText('0 / 4 sessions attended')).toBeVisible();
     expect(chart.getByText('3 / 7 completed across all modules')).toBeVisible();
     expect(chart.getByText('22.5 / 80.4 hours')).toBeVisible();
-    expect(chart.getByText('1 / 4 completed across the programme')).toBeVisible();
+    expect(chart.queryByText('Reviews')).not.toBeInTheDocument();
+    expect(chart.getByRole('img')).not.toHaveAccessibleDescription(/reviews/i);
+    expect(chart.getByRole('img')).toHaveAttribute('viewBox', '0 0 400 235');
     expect(chart.getByText('Overall', { selector: 'dt' }).parentElement).toHaveTextContent('28%');
     expect(screen.queryByRole('region', { name: 'Module progress' })).not.toBeInTheDocument();
   });

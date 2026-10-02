@@ -284,6 +284,49 @@ function renderWorkspace(path: string, view: 'map' | 'catalogue' = 'map') {
 }
 
 describe('map and My Learning navigation', () => {
+  it('opens a canonical evidence record without confusing it with a source material ID', async () => {
+    vi.spyOn(api, 'subjectRequest').mockImplementation(async <T,>(url: string) => (url.includes('subject-covers') ? metadata : material) as T);
+    const recorded = { ...data, activities: [
+      { ...data.activities[0], activity_id: 'record:1:2', source_activity_id: 99 },
+      { ...data.activities[1], activity_id: 'record:1:88', source_activity_id: 2 },
+    ] };
+    render(<MemoryRouter initialEntries={['/learner/my-learning/commercial/132?activity=record%3A2']}><StudentActivityPanel view="catalogue" kind="commercial" learnerId="132" data={recorded} loading={false} error={null} onRetry={() => {}} /></MemoryRouter>);
+    expect(await screen.findByRole('region', { name: 'First reading content' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Second reading content' })).not.toBeInTheDocument();
+  });
+
+  it.each(['record%3A2', 'record%3A99'])('does not fall back to a coincident source ID or choose an ambiguous record (%s)', async target => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue(metadata);
+    const recorded = { ...data, activities: [
+      { ...data.activities[0], activity_id: 'record:1:99', source_activity_id: 2 },
+      { ...data.activities[1], activity_id: 'record:2:99', group_id: 2 },
+    ] };
+    render(<MemoryRouter initialEntries={[`/learner/my-learning/commercial/132?activity=${target}`]}><StudentActivityPanel view="catalogue" kind="commercial" learnerId="132" data={recorded} loading={false} error={null} onRetry={() => {}} /></MemoryRouter>);
+    expect(await screen.findByRole('alert')).toHaveTextContent(target.endsWith('99') ? 'This evidence matches more than one learning activity.' : 'This evidence activity is not available in My Learning.');
+    expect(screen.queryByRole('region', { name: /content/ })).not.toBeInTheDocument();
+  });
+
+  it('opens the evidence activity in its My Learning week', async () => {
+    renderWorkspace('/learner/my-learning/commercial/132?activity=2', 'catalogue');
+    expect(await screen.findByRole('region', { name: 'Second reading content' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Second reading' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.queryByRole('button', { name: 'First reading' })).not.toBeInTheDocument();
+  });
+
+  it('reports unavailable evidence instead of selecting another activity', async () => {
+    renderWorkspace('/learner/my-learning/commercial/132?activity=missing', 'catalogue');
+    expect(await screen.findByRole('alert')).toHaveTextContent('This evidence activity is not available in My Learning.');
+    expect(screen.queryByRole('region', { name: /content/ })).not.toBeInTheDocument();
+  });
+
+  it('refuses a source activity shared by different courses', async () => {
+    vi.spyOn(api, 'subjectRequest').mockResolvedValue(metadata);
+    const ambiguous = { ...data, activities: [...data.activities, { ...data.activities[1], activity_id: 'la:2:2', group_id: 2, group_name: 'Other course' }] };
+    render(<MemoryRouter initialEntries={['/learner/my-learning/commercial/132?activity=2']}><StudentActivityPanel kind="commercial" learnerId="132" data={ambiguous} loading={false} error={null} onRetry={() => {}} /></MemoryRouter>);
+    expect(await screen.findByRole('alert')).toHaveTextContent('This evidence matches more than one learning activity.');
+    expect(screen.queryByRole('region', { name: /content/ })).not.toBeInTheDocument();
+  });
+
   it.each(['legacy%3A1', 'current%3AM1', ''])('resolves a current-week Continue link from activity dates (%s)', async subject => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-09-15T12:00:00Z'));
