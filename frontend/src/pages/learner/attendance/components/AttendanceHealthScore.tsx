@@ -1,4 +1,5 @@
 import { ATTENDANCE_HEALTH } from '@/mocks/attendance';
+import { AnimatedProgressCircle } from '@/components/ui/AnimatedProgressCircle';
 
 const healthConfig: Record<string, { label: string; ring: string }> = {
   excellent: { label: 'Excellent', ring: 'text-emerald-500' },
@@ -30,7 +31,7 @@ export default function AttendanceHealthScore() {
           <div className="relative shrink-0">
             <svg className="w-16 h-16 -rotate-90">
               <circle cx="32" cy="32" r={r} fill="none" stroke="currentColor" strokeWidth="5" className="text-background-200" />
-              <circle cx="32" cy="32" r={r} fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round"
+              <AnimatedProgressCircle cx="32" cy="32" r={r} fill="none" stroke="currentColor" strokeWidth="5" strokeLinecap="round"
                 className={config.ring}
                 strokeDasharray={`${circ} ${circ}`}
                 strokeDashoffset={offset}

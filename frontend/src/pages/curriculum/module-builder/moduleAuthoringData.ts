@@ -2904,6 +2904,23 @@ export async function cancelWeekTeamsMeeting(moduleCatalogueId: string, liveSess
   });
 }
 
+/**
+ * Choose which calendar delivers one live session: the module's own series or an
+ * additional meeting. Records the choice only -- nothing is sent to Microsoft.
+ * The server refuses a live session either calendar has already booked.
+ */
+export async function setLiveSessionMeetingScope(
+  moduleCatalogueId: string, componentId: string, scope: 'main' | 'additional',
+) {
+  return apiJson<{ componentId: string; scope: 'main' | 'additional' }>(
+    `/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/live-session-meeting-scope/`,
+    { method: 'POST', body: JSON.stringify({ componentId, scope }) },
+  ).then(result => {
+    clearCurriculumGetCache();
+    return result;
+  });
+}
+
 export async function createTeamsMeeting(
   input: TeamsMeetingInput,
   options: { confirmUncertain?: boolean; onSubmitted?: () => void } = {},

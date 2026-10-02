@@ -1,5 +1,23 @@
 import type { OverviewWeek } from '@/api/learnerOverview';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
+import { learnerHref, type LearnerRoutePage } from '@/lib/learnerRoutes';
+
+// The learner pages Student Home links to.
+const HOME_LINK_PAGES: LearnerRoutePage[] = ['dashboard', 'my-learning', 'monthly-submission', 'monthly-coaching', 'attendance', 'calendar'];
+
+/**
+ * A home link for this learner: ``/learner/attendance`` becomes
+ * ``/learner/attendance/:kind/:id``. The workspace sidebar keeps its learner
+ * routing only when the URL names the learner (see WorkspaceShell), so every
+ * page opened from Student Home gets the same sidebar the Dashboard tile does.
+ */
+export function withLearner(href: string, kind?: string, learnerId?: string): string {
+  const [path, query] = href.split('?');
+  const page = HOME_LINK_PAGES.find(candidate => learnerHref(candidate) === path);
+  if (!page) return href;
+  const resolved = learnerHref(page, kind, learnerId);
+  return query ? `${resolved}?${query}` : resolved;
+}
 
 export const homeActions = [
   { title: 'Monthly Submission', text: 'Submit your work and keep on track', href: '/learner/monthly-submission', icon: 'file' },

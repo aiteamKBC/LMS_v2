@@ -31,7 +31,7 @@ from django.db.models import Max, Q
 from django.db.models.functions import Lower, Trim
 from django.http import HttpResponse, HttpResponseRedirect, JsonResponse, StreamingHttpResponse
 from django.utils import timezone
-from django.views.decorators.http import require_GET
+from django.views.decorators.http import require_GET, require_http_methods
 
 from coach_api.auth import (
     attributed_write_view,
@@ -48,7 +48,7 @@ from coach_api.cache.learners import (
     get_cached_caseload,
     release_caseload_lock,
 )
-from coach_api.models import CoachAbsenceReport, CoachCalendarEvent, CoachCalendarSequence, ImportedReviewInstance
+from coach_api.models import CoachAbsenceReport, CoachAttendanceSourceAdjustment, CoachCalendarEvent, CoachCalendarSequence, CoachManualAttendance, ImportedReviewInstance
 from coach_api.services.learners.context import CaseloadRequestContext
 from coach_api.validation import (
     ObjectValidator,
@@ -138,6 +138,7 @@ from curriculum_api.views import (
     get_training_rows,
     england_non_delivery_reason,
     group_authoring_detail_rows,
+    GROUPS_TABLE,
     is_operational_training_row,
     LIVE_SESSION_OCCURRENCES_TABLE,
     LIVE_SESSIONS_TABLE,
@@ -1089,6 +1090,63 @@ def normalize_program_status(raw_status: str | None) -> str:
     return "unknown"
 
 
+def apply_curriculum_attendance_placements(learners: list[dict], rows) -> None:
+    """Resolve non-Aptem caseload placements without changing learner ownership.
+
+    Curriculum and attendance share LearnerProfile identities. Legacy placements
+    may carry names alone; resolve those only within their programme and cohort,
+    and only when exactly one curriculum group matches. Existing ids take priority.
+    This enriches the overview response only, without rewriting stored placements.
+    """
+    rows = list(rows)
+    rows_by_id = {str(row.id): row for row in rows}
+    aptem_ids, conflicts = resolve_effective_aptem_ids(rows)
+    eligible = [learner for learner in learners
+                if int(learner['id']) not in aptem_ids
+                and int(learner['id']) not in conflicts]
+    if not eligible:
+        return
+    groups = authoring_fetch_all(GROUPS_TABLE, ensure_tables=False)
+    for learner in eligible:
+        row = rows_by_id.get(str(learner['id']))
+        if row is None:
+            continue
+        matches = []
+        for group in groups:
+            if clean_text(group.get('status')).casefold() in {'archived', 'deleted'}:
+                continue
+            group_id = clean_text(learner.get('groupId'))
+            programme_id = clean_text(learner.get('programmeId'))
+            cohort_id = clean_text(getattr(row, 'cohort_id', None))
+            if group_id:
+                if group_id != clean_text(group.get('group_id')):
+                    continue
+            elif clean_text(learner.get('groupName')).casefold() != clean_text(group.get('group_name')).casefold():
+                continue
+            if programme_id:
+                if programme_id != clean_text(group.get('programme_id')):
+                    continue
+            elif clean_text(learner.get('programmeName')).casefold() != clean_text(group.get('programme_name')).casefold():
+                continue
+            if cohort_id:
+                if cohort_id != clean_text(group.get('cohort_id')):
+                    continue
+            elif not group_id and clean_text(learner.get('cohortName')).casefold() != clean_text(group.get('cohort_name')).casefold():
+                continue
+            if clean_text(group.get('group_id')) and clean_text(group.get('programme_id')):
+                matches.append(group)
+        if len(matches) != 1:
+            continue
+        group = matches[0]
+        learner.update({
+            'programmeId': clean_text(group.get('programme_id')),
+            'programmeName': clean_text(group.get('programme_name')),
+            'groupId': clean_text(group.get('group_id')),
+            'groupName': clean_text(group.get('group_name')),
+            'group': clean_text(group.get('group_name')),
+        })
+
+
 def should_include_in_attendance_page(learner: dict) -> bool:
     return learner["enrollmentStatus"] in ATTENDANCE_INCLUDED_STATUSES
 
@@ -1994,11 +2052,15 @@ def serialize_case_file_shell(profile, source) -> dict:
     )
 
 
-def fetch_attendance_caseload_rows(owner_email: str) -> list[LearnerProfile]:
+def fetch_attendance_caseload_rows(owner_email: str, *, learner_id: str | None = None) -> list[LearnerProfile]:
     requested_owner = normalize_email(owner_email)
+    queryset = LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email"))).filter(
+        coach_email_key=requested_owner,
+    )
+    if learner_id:
+        queryset = queryset.filter(id=learner_id)
     queryset = (
-        LearnerProfile.objects.annotate(coach_email_key=Lower(Trim("coach_email")))
-        .filter(coach_email_key=requested_owner)
+        queryset
         .only(
             "id",
             "full_name",
@@ -2020,6 +2082,7 @@ def fetch_attendance_caseload_rows(owner_email: str) -> list[LearnerProfile]:
             "enrolment_id",
             "aptem_id",
             "start_date",
+            "end_date",
         )
         .prefetch_related("plan_modules__weeks__components")
         .order_by("full_name", "id")
@@ -2898,26 +2961,27 @@ def caseload_kbc_attendance_rates(rows) -> tuple[dict[int, int], dict[int, dict]
 
 
 def apply_canonical_learner_metrics(payload: dict, metrics: dict | None) -> dict:
-    """Overlay live learner-dashboard facts while preserving coach OTJH pacing."""
+    """Overlay the exact learner-profile metrics onto a coach learner row.
+
+    The caseload table and learner case file are two views of the same learner
+    facts. The Case File header prefers the canonical planned total, so the
+    table must use that same denominator after audit enrichment.
+    """
     if not metrics:
         return payload
     programme = metrics.get("programme") or {}
     ksb = metrics.get("ksb") or {}
     otjh = metrics.get("otjh") or {}
 
-    old_plan = to_number(payload.get("otjhPlanned"))
-    old_target = to_number(payload.get("otjhTarget"))
     canonical_plan = otjh.get("planned")
-    if metrics.get("migrated"):
-        # Aptem learners mirror the Learner Dashboard contract exactly,
-        # including an unavailable/null planned-hours value.
-        payload["otjhTarget"] = canonical_plan
-        payload["otjhPlanned"] = canonical_plan
-    elif canonical_plan is not None:
-        ratio = old_target / old_plan if old_plan > 0 else 0
-        if old_target > 1 and 0 < ratio <= 1:
-            payload["otjhTarget"] = max(round(to_number(canonical_plan) * ratio, 2), 1)
-        payload["otjhPlanned"] = to_number(canonical_plan)
+    # Match buildCoachLearnerCaseFileData's nullish fallback exactly:
+    # canonical planned hours first, then learner-detail target hours.
+    fallback_plan = payload.get("otjhPlanned")
+    if fallback_plan is None:
+        fallback_plan = payload.get("otjhTarget")
+    resolved_plan = canonical_plan if canonical_plan is not None else fallback_plan
+    payload["otjhTarget"] = resolved_plan
+    payload["otjhPlanned"] = resolved_plan
     completed_actual = otjh.get("completed_actual", otjh.get("actual"))
     if completed_actual is not None:
         payload["otjhCompleted"] = to_number(completed_actual)
@@ -3018,6 +3082,40 @@ def apply_canonical_ksb_evidence(payload: dict, metrics: dict | None, aptem_id) 
             })
             seen.add(key)
     payload["ksbCompletedDetailCount"] = len(details)
+    return payload
+
+
+def case_file_table_metrics_snapshot(row, payload: dict) -> dict:
+    """Capture the exact Case File header metrics before list enrichments."""
+    snapshot = {
+        key: payload.get(key)
+        for key in (
+            "otjhTarget", "otjhPlanned", "ksbCompleted", "ksbTarget",
+            "ksbProgress", "ksbProgressAvailable", "ksbStatus",
+        )
+    }
+    source = getattr(row, "_caseload_source", None)
+    source_plan = to_number(getattr(source, "planned_hours", None))
+    if source_plan > 0:
+        snapshot["otjhTarget"] = source_plan
+        snapshot["otjhPlanned"] = source_plan
+    return snapshot
+
+
+def restore_case_file_table_metrics(payload: dict, case_file_snapshot: dict) -> dict:
+    """Keep the caseload table aligned with the learner Case File header.
+
+    Canonical enrichment supplies programme activity and actual hours, but its
+    Restore the source learner's planned hours (the Case File fallback when the
+    canonical plan is unavailable) and its evidence-coverage KSB measure.
+    """
+    target = to_number(case_file_snapshot.get("otjhTarget"))
+    if target > 0:
+        payload["otjhTarget"] = target
+        payload["otjhPlanned"] = case_file_snapshot.get("otjhPlanned") or target
+    if case_file_snapshot.get("ksbProgressAvailable"):
+        for key in ("ksbCompleted", "ksbTarget", "ksbProgress", "ksbProgressAvailable", "ksbStatus"):
+            payload[key] = case_file_snapshot.get(key)
     return payload
 
 
@@ -11741,6 +11839,8 @@ def canonical_attendance_detail_rows(source) -> tuple[dict | None, list[dict]]:
             "learnerName": clean_text(summary.get("learnerName")) or "Learner",
             "learnerEmail": clean_text(summary.get("learnerEmail")),
             "sessionId": clean_text(item.get("id")) or "--",
+            "source": clean_text(item.get("source")) or "microsoft-teams",
+            "sourceId": clean_text(item.get("sourceId")),
             "sessionTitle": clean_text(item.get("title")) or "--",
             "sessionType": clean_text(item.get("sessionType")) or "--",
             "sessionDate": clean_text(item.get("date")),
@@ -11757,6 +11857,152 @@ def canonical_attendance_detail_rows(source) -> tuple[dict | None, list[dict]]:
     return summary, sessions
 
 
+def serialize_manual_attendance(row: CoachManualAttendance) -> dict:
+    return {
+        "learnerId": str(row.learner_id),
+        "sessionId": f"manual-{row.id}",
+        "manualId": str(row.id),
+        "sessionTitle": row.session_title,
+        "sessionType": row.module_name,
+        "sessionDate": row.session_date.isoformat(),
+        "sessionDateLabel": format_date_value(row.session_date),
+        "status": row.status,
+        "source": "coach-manual",
+    }
+
+
+def _manual_attendance_learner(owner_email: str, learner_id: str):
+    rows = fetch_attendance_caseload_rows(owner_email, learner_id=learner_id)
+    attach_caseload_source_rows(rows)
+    if not rows:
+        return None, None
+    row = rows[0]
+    return row, serialize_attendance_source_learner(row)
+
+
+@coach_access_required
+@require_http_methods(["POST", "PATCH", "DELETE"])
+def coach_manual_attendance(request, record_id=None):
+    owner_email = authenticated_coach_email(request)
+    if is_coach_view_as(request):
+        return JsonResponse({"detail": "Manual attendance changes are unavailable in read-only view-as mode."}, status=403)
+
+    record = None
+    if record_id is not None:
+        record = CoachManualAttendance.objects.filter(id=record_id, owner_email__iexact=owner_email).first()
+        if record is None:
+            return JsonResponse({"detail": "Manual attendance record not found."}, status=404)
+        if request.method == "DELETE":
+            record.delete()
+            return JsonResponse({}, status=204)
+
+    try:
+        payload = parse_json_object(request)
+    except ValidationError as exc:
+        return validation_error_response(exc)
+
+    learner_id = clean_text(payload.get("learnerId")) if record is None else str(record.learner_id)
+    if not learner_id.isdigit():
+        return JsonResponse({"detail": "Learner id must be a valid number."}, status=400)
+    profile, learner = _manual_attendance_learner(owner_email, learner_id)
+    if profile is None or learner is None:
+        return JsonResponse({"detail": "Learner not found in this coach caseload."}, status=404)
+
+    try:
+        session_date = date.fromisoformat(clean_text(payload.get("date")))
+    except (TypeError, ValueError):
+        return JsonResponse({"detail": "Date must be a valid ISO date."}, status=400)
+    module_name = clean_text(payload.get("module"))
+    session_title = clean_text(payload.get("sessionTitle"))
+    status = clean_text(payload.get("status")).lower()
+    errors = {}
+    if not module_name:
+        errors["module"] = ["Module is required."]
+    if not session_title:
+        errors["sessionTitle"] = ["Lecture / Session is required."]
+    if status not in {"present", "absent"}:
+        errors["status"] = ["Status must be present or absent."]
+    if errors:
+        return JsonResponse({"detail": "Please correct the highlighted fields.", "errors": errors}, status=400)
+
+    values = {
+        "session_date": session_date,
+        "module_name": module_name,
+        "session_title": session_title,
+        "status": status,
+    }
+    if record is None:
+        source = getattr(profile, "_caseload_source", None)
+        record = CoachManualAttendance.objects.create(
+            owner_email=owner_email,
+            learner_id=int(learner["id"]),
+            enrolment_id=getattr(source, "id", None),
+            learner_name=learner["name"],
+            learner_email=learner.get("email") or "",
+            created_by=owner_email,
+            **values,
+        )
+        status_code = 201
+    else:
+        for field, value in values.items():
+            setattr(record, field, value)
+        record.save(update_fields=[*values.keys(), "updated_at"])
+        status_code = 200
+    return JsonResponse(serialize_manual_attendance(record), status=status_code)
+
+
+@coach_access_required
+@require_http_methods(["PATCH", "DELETE"])
+def coach_source_attendance(request):
+    owner_email = authenticated_coach_email(request)
+    if is_coach_view_as(request):
+        return JsonResponse({"detail": "Attendance changes are unavailable in read-only view-as mode."}, status=403)
+    try:
+        payload = parse_json_object(request)
+    except ValidationError as exc:
+        return validation_error_response(exc)
+
+    learner_id = clean_text(payload.get("learnerId"))
+    source_name = clean_text(payload.get("source"))
+    source_id = clean_text(payload.get("sourceId"))
+    if not learner_id.isdigit() or source_name not in {"microsoft-teams", "kbc-attendance"} or not source_id:
+        return JsonResponse({"detail": "A valid learner and attendance source are required."}, status=400)
+    profile, learner = _manual_attendance_learner(owner_email, learner_id)
+    if profile is None or learner is None:
+        return JsonResponse({"detail": "Learner not found in this coach caseload."}, status=404)
+
+    lookup = {"learner_id": int(learner_id), "source": source_name, "source_id": source_id}
+    if request.method == "DELETE":
+        CoachAttendanceSourceAdjustment.objects.update_or_create(
+            **lookup,
+            defaults={"owner_email": owner_email, "updated_by": owner_email, "is_deleted": True},
+        )
+        return JsonResponse({}, status=204)
+
+    try:
+        session_date = date.fromisoformat(clean_text(payload.get("date")))
+    except (TypeError, ValueError):
+        return JsonResponse({"detail": "Date must be a valid ISO date."}, status=400)
+    module_name = clean_text(payload.get("module"))
+    session_title = clean_text(payload.get("sessionTitle"))
+    status = clean_text(payload.get("status")).lower()
+    if not module_name or not session_title or status not in {"present", "absent"}:
+        return JsonResponse({"detail": "Date, module, session and a valid status are required."}, status=400)
+    CoachAttendanceSourceAdjustment.objects.update_or_create(
+        **lookup,
+        defaults={
+            "owner_email": owner_email,
+            "session_date": session_date,
+            "module_name": module_name,
+            "session_title": session_title,
+            "status": status,
+            "is_deleted": False,
+            "updated_by": owner_email,
+        },
+    )
+    return JsonResponse({"ok": True})
+
+
 @coach_access_required
 @require_GET
 def coach_attendance_details(request):
@@ -11765,24 +12011,14 @@ def coach_attendance_details(request):
     learner_email = normalize_email(request.GET.get("learner_email"))
 
     try:
-        caseload_rows = fetch_attendance_caseload_rows(owner_email)
+        # The detail route needs one authorised learner, not the coach's whole
+        # caseload. Filtering before the schedule prefetch avoids repeating the
+        # expensive attendance overview work for every profile.
+        caseload_rows = fetch_attendance_caseload_rows(
+            owner_email, learner_id=learner_id or None,
+        )
         attach_caseload_source_rows(caseload_rows)
-        detail_audit_totals = caseload_audit_hour_totals(caseload_rows)
-        detail_ksb_counts = caseload_evidenced_ksb_counts(caseload_rows)
-        detail_canonical_metrics = caseload_canonical_metrics(caseload_rows)
-        learners = [
-            apply_canonical_learner_metrics(
-                apply_evidenced_ksb_count(
-                    apply_audit_hour_totals(
-                        serialize_attendance_source_learner(row),
-                        detail_audit_totals.get(int(row.id)),
-                    ),
-                    detail_ksb_counts.get(int(row.id)),
-                ),
-                detail_canonical_metrics.get(int(row.id)),
-            )
-            for row in caseload_rows
-        ]
+        learners = [serialize_attendance_source_learner(row) for row in caseload_rows]
         learner = next(
             (
                 item for item in learners
@@ -11799,6 +12035,14 @@ def coach_attendance_details(request):
         if source is None:
             return JsonResponse({"detail": "Learner attendance source is unavailable."}, status=404)
         summary, sessions = canonical_attendance_detail_rows(source)
+        manual_sessions = [
+            serialize_manual_attendance(row)
+            for row in CoachManualAttendance.objects.filter(
+                owner_email__iexact=owner_email, learner_id=int(learner["id"]),
+            )
+        ]
+        sessions.extend(manual_sessions)
+        sessions.sort(key=lambda item: item.get("sessionDate") or "", reverse=True)
     except Exception:
         logger.exception("coach_attendance_details_failed coach_account_id=%s learner_id=%s", owner_email, learner_id)
         return coach_error(
@@ -11808,19 +12052,28 @@ def coach_attendance_details(request):
             status=503,
         )
 
-    present = summary["present"] if summary else 0
-    absent = summary["absent"] if summary else 0
+    present = sum(1 for item in sessions if item.get("status") == "present")
+    absent = sum(1 for item in sessions if item.get("status") == "absent")
     return JsonResponse(
         {
             "learner": {
                 "id": learner["id"],
                 "name": learner["name"],
                 "email": learner.get("email"),
+                "programme": learner.get("programmeName"),
+                "programmeId": learner.get("programmeId"),
                 "cohort": learner.get("cohortName"),
                 "group": learner.get("group"),
+                "groupId": learner.get("groupId"),
+                "programStatus": learner.get("rawProgramStatus"),
+                "learnerType": learner.get("learnerType"),
+                "enrolmentId": learner.get("enrolmentId"),
+                "programmeStartDate": format_date(getattr(profile_row, "start_date", None)),
+                "programmeEndDate": format_date(getattr(profile_row, "end_date", None)),
+                "coachName": learner.get("coachName"),
             },
             "summary": {
-                "total": summary["sessions"] if summary else 0,
+                "total": present + absent,
                 "present": present,
                 "absent": absent,
                 "unknown": 0,
@@ -12389,12 +12642,15 @@ def coach_caseload(request):
         latest_activities = run_optional(caseload_latest_learning_activities) if paginated else {}
         aptem_by_profile = caseload_aptem_ids(rows)
         for row, learner in zip(rows, learners):
+            case_file_snapshot = case_file_table_metrics_snapshot(row, learner)
             apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
             apply_evidenced_ksb_count(learner, ksb_counts.get(int(row.id)))
             learner_metrics = canonical_metrics.get(int(row.id))
             apply_canonical_learner_metrics(learner, learner_metrics)
             apply_canonical_ksb_evidence(learner, learner_metrics, getattr(getattr(row, "_caseload_source", None), "aptem_id", None))
             apply_aptem_variance_status(learner, aptem_by_profile.get(int(row.id)))
+            if paginated:
+                restore_case_file_table_metrics(learner, case_file_snapshot)
             imported = review_history.get(int(row.id), {})
             last_mcm = _latest_completed_review_date(imported.get("mcm", []))
             last_pr = _latest_completed_review_date(imported.get("reviews", []))
@@ -12528,6 +12784,7 @@ def coach_attendance(request):
             ]
             if should_include_in_attendance_page(learner)
         ]
+        apply_curriculum_attendance_placements(caseload_learners, caseload_rows)
         active_learners = [
             learner for learner in caseload_learners if should_include_in_attendance_metrics(learner)
         ]

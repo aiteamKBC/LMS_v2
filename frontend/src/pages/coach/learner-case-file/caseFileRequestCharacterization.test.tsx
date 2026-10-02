@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const trace: string[] = [];
@@ -156,14 +156,33 @@ describe('Learner Case File request characterization', () => {
     expect(trace).toEqual([
       '/coach_api/coach/learners/316/case-file',
       'learner-detail:apprenticeship:5170',
-      'student-activity:apprenticeship:5170',
       'metrics:apprenticeship:5170',
+      'student-activity:apprenticeship:5170',
     ]);
     expect(new Set(trace).size).toBe(trace.length);
     expect(mocks.fetchLearnerAttendance).not.toHaveBeenCalled();
     expect(trace).not.toContain('/coach_api/coach/attendance');
     expect(trace).not.toContain('/coach_api/coach/timetable');
     expect(trace.some(item => item.startsWith('/coach_api/coach/marking-queue'))).toBe(false);
+  });
+
+  it('publishes the profile metrics without waiting for slow Aptem activity', async () => {
+    mocks.fetchLearnerDetail.mockResolvedValue(learnerDetail(true));
+    let finishActivity!: (value: { activities: never[]; subjects: never[]; activity_sources: object; activity_source_issues: object }) => void;
+    mocks.fetchStudentActivity.mockImplementation(() => new Promise(resolve => { finishActivity = resolve; }));
+
+    const { result } = renderHook(() => useCoachLearnerCaseFileData({
+      learnerId: '316', kind: 'apprenticeship', enrolmentId: '5170',
+    }));
+
+    await waitFor(() => expect(result.current.data?.overallProgress).toBe(75));
+    expect(result.current.loading).toBe(false);
+    expect(result.current.data?.otjhTarget).toBe(20);
+    expect(result.current.data?.ksbProgress).toBe(50);
+    expect(result.current.data?.reviewsLoading).toBe(true);
+
+    await act(async () => finishActivity({ activities: [], subjects: [], activity_sources: {}, activity_source_issues: {} }));
+    await waitFor(() => expect(result.current.data?.reviewsLoading).toBe(false));
   });
 
   it('does not attach coach-wide rows having the same name but different stable IDs', async () => {

@@ -2,7 +2,7 @@ import { finishTeamsCreation, finishTeamsUpdate } from '../creationResult';
 import { syncTeamsCalendarState } from '../calendarState';
 import { calendarAction } from '../calendarActions';
 import { compareTeamsAttendees } from '../attendeeComparison';
-import { loadTeamsMeetingArtifacts } from '../../module-builder/moduleAuthoringData';
+import { loadTeamsMeetingArtifacts, loadTeamsMeetingConfiguration } from '../../module-builder/moduleAuthoringData';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -584,7 +584,11 @@ describe('Teams Meetings page', () => {
       expect(dialog.getByRole('button', { name: 'Update Teams calendar' })).toBeInTheDocument();
       await waitFor(() => expect(probeModuleTeamsAttachment).toHaveBeenCalled());
       expect(dialog.queryByRole('button', { name: /missing live session/ })).not.toBeInTheDocument();
-      expect(dialog.getByRole('button', { name: 'Sync attendance & files' })).toBeInTheDocument();
+      // Collecting attendance and files is the durable worker's job, so the row
+      // does not offer a button whose only effect is to queue what is queued
+      // already. The sessions themselves are reached through a plain link.
+      expect(dialog.queryByRole('button', { name: 'Sync attendance & files' })).not.toBeInTheDocument();
+      expect(dialog.getByRole('button', { name: 'Sessions & Recordings' })).toHaveAttribute('aria-expanded', 'false');
       expect(dialog.getByRole('switch', { name: 'Auto-sync on' })).toHaveAttribute('aria-checked', 'true');
     });
 
@@ -599,7 +603,7 @@ describe('Teams Meetings page', () => {
       expect(await dialog.findByRole('button', { name: 'Add 3 missing live sessions' })).toBeInTheDocument();
     });
 
-    it('keeps the manual artifact sync available once sessions have ended', async () => {
+    it('leaves an ended session to the worker instead of offering a sync button', async () => {
       const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-01T09:00:00Z'));
       try {
         await renderPage();
@@ -608,24 +612,51 @@ describe('Teams Meetings page', () => {
 
         const dialog = within(await screen.findByRole('dialog'));
         expect(dialog.getAllByText('Session ended').length).toBeGreaterThan(0);
-        expect(dialog.getByRole('button', { name: 'Sync attendance & files' })).toBeInTheDocument();
+        // The session having ended is exactly when the old button looked most
+        // useful and did least: the worker polls every minute regardless.
+        expect(dialog.queryByRole('button', { name: 'Sync attendance & files' })).not.toBeInTheDocument();
+        expect(dialog.getByRole('button', { name: 'Sessions & Recordings' })).toBeInTheDocument();
       } finally {
         clock.mockRestore();
       }
     });
   });
 
-  it('syncs attendance, transcripts and recordings when the manual button is pressed', async () => {
+  /**
+   * Asking for attendance and files now lives beside the sessions, in the
+   * Sessions & Recordings panel, which queues the same durable job. The meeting
+   * dialog itself offers no control that reaches Graph for them.
+   */
+  it('offers nothing in the meeting dialog that queues artifact work', async () => {
     await renderPage();
     expect(await screen.findByText('Data Foundations')).toBeInTheDocument();
     await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
 
     const dialog = within(await screen.findByRole('dialog'));
-    await userEvent.click(dialog.getByRole('button', { name: 'Sync attendance & files' }));
+    expect(dialog.queryByRole('button', { name: 'Sync attendance & files' })).not.toBeInTheDocument();
+    // The calendar check is still here, because it is the one thing this dialog
+    // asks Microsoft that nothing else is already doing on a timer.
+    expect(dialog.getByRole('button', { name: 'Sync calendar status' })).toBeInTheDocument();
+    expect(syncTeamsMeetingArtifacts).not.toHaveBeenCalled();
+  });
 
-    await waitFor(() => expect(syncTeamsMeetingArtifacts).toHaveBeenCalledWith('LIVE-1'));
-    expect(await screen.findByText('Teams sync complete: 3 attendance records, 1 transcript, 1 recording.'))
-      .toBeInTheDocument();
+  /**
+   * The toggle used to stay green and clickable while the banner said the
+   * credentials were missing, so it claimed a sweep was running when the effect
+   * behind it returns on its first line.
+   */
+  it('says auto-sync is unavailable when Graph credentials are missing', async () => {
+    vi.mocked(loadTeamsMeetingConfiguration).mockResolvedValueOnce({
+      configured: false, defaultOrganizer: '', timeZone: 'GMT Standard Time', timeZoneIana: 'Europe/London',
+    } as never);
+    await renderPage();
+    expect(await screen.findByText('Data Foundations')).toBeInTheDocument();
+    await userEvent.click(within(rowFor('Data Foundations')).getByRole('button', { name: 'Detail' }));
+
+    const dialog = within(await screen.findByRole('dialog'));
+    const toggle = await dialog.findByRole('switch', { name: 'Auto-sync unavailable' });
+    expect(toggle).toBeDisabled();
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
   });
 
   it('checks calendar state but leaves artifact imports to the background worker', async () => {

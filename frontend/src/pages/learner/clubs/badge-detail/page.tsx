@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { AnimatedProgressCircle } from '@/components/ui/AnimatedProgressCircle';
 import { useParams, useNavigate } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
@@ -224,7 +225,7 @@ export default function ClubBadgeDetailPage() {
                   <div className="relative w-24 h-24 mx-auto mb-3">
                     <svg className="w-24 h-24 transform -rotate-90" viewBox="0 0 96 96">
                       <circle cx="48" cy="48" r="40" fill="none" stroke="oklch(var(--background-200))" strokeWidth="8" />
-                      <circle
+                      <AnimatedProgressCircle
                         cx="48" cy="48" r="40" fill="none"
                         stroke={`oklch(var(--${badge.color}-500))`}
                         strokeWidth="8" strokeLinecap="round"

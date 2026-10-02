@@ -154,6 +154,11 @@ def validate_password_strength(password, *, email=None, display_name=None):
     if lowered in _COMMON_PASSWORDS:
         raise PasswordPolicyError("That password is too common. Choose something less guessable.")
 
+    # The shared first-sign-in password (DEFAULT_LEARNER_PASSWORD, below) is
+    # public; keeping it would leave the account open to anyone.
+    if lowered == "changeme_password":
+        raise PasswordPolicyError("Choose a new password of your own, not the first-sign-in password.")
+
     # A single repeated character, however long ("aaaaaaaa").
     if len(set(password)) == 1:
         raise PasswordPolicyError("Password cannot be a single repeated character.")
@@ -361,3 +366,22 @@ def reset_requests_exhausted(email):
         event=EVENT_RESET_REQUESTED,
         only_failures=False,
     ) >= THROTTLE_MAX_RESETS_PER_EMAIL
+
+
+#: The first-sign-in password every learner can use until they set their own --
+#: for learners whose employer's mail filter blocks the invitation email.
+#:
+#: It is never stored on an account and never opens a session. Signing in with
+#: it, as a learner who has never set a password, only hands back that
+#: learner's single-use set-password link (see
+#: ``services.default_password_setup``); nothing in the account is reachable
+#: until they choose a password of their own, and from then on it no longer
+#: works for them. Known risk, accepted by the project owner: until a learner
+#: sets a password, anyone who knows their email address can set it first.
+DEFAULT_LEARNER_PASSWORD = "changeme_password"
+
+
+def is_default_learner_password(password):
+    import hmac
+
+    return hmac.compare_digest(str(password or "").encode("utf-8"), DEFAULT_LEARNER_PASSWORD.encode("utf-8"))

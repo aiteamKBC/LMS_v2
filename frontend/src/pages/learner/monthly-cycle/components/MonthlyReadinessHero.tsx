@@ -1,4 +1,5 @@
 import { MAY_READINESS, JUNE_READINESS, JULY_READINESS } from '@/mocks/monthly-cycle';
+import { AnimatedProgressCircle } from '@/components/ui/AnimatedProgressCircle';
 
 interface MonthlyReadinessHeroProps {
   month: string;
@@ -35,7 +36,7 @@ export default function MonthlyReadinessHero({ month }: MonthlyReadinessHeroProp
         <div className="relative w-40 h-40 flex items-center justify-center shrink-0">
           <svg className="w-full h-full -rotate-90" viewBox="0 0 140 140">
             <circle cx="70" cy="70" r={radius} fill="none" stroke="oklch(var(--primary-800))" strokeWidth="10" />
-            <circle
+            <AnimatedProgressCircle
               cx="70" cy="70" r={radius} fill="none"
               stroke="oklch(var(--accent-400))" strokeWidth="10" strokeLinecap="round"
               strokeDasharray={circumference} strokeDashoffset={offset}

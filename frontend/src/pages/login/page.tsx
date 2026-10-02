@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
-import { AuthError, apiAuthHealth, apiMicrosoftStart } from '@/api/auth';
+import { AuthError, PasswordSetupRequired, apiAuthHealth, apiMicrosoftStart } from '@/api/auth';
 import { AppIcon } from '@/components/feature/AppIcon';
 // Shared with RequireAuth, so the page you are sent to after signing in and
 // the page you are sent back to when refused are decided by one definition.
@@ -81,6 +81,10 @@ export default function LoginPage() {
       const account = await login(email, password, rememberMe);
       navigate(postLoginRouteFor(account), { replace: true });
     } catch (err) {
+      if (err instanceof PasswordSetupRequired) {
+        navigate(err.setPasswordPath, { replace: true, state: { firstSignIn: true } });
+        return;
+      }
       setError(
         err instanceof AuthError
           ? err.message
