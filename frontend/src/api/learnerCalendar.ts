@@ -232,12 +232,16 @@ export interface BookSessionInput {
   durationMinutes: number;
   notes?: string;
   timezoneOffsetMinutes?: number;
+  /** Catch-up only: the absence report the booking makes up, linked in the same request. */
+  absenceReportId?: number;
 }
 
 export interface BookSessionResponse {
   event: LearnerCalendarEvent;
   warning?: string;
   approvalRequired?: boolean;
+  /** Set when the server linked the catch-up to this absence report. */
+  linkedReportId?: number;
 }
 
 export async function bookLearnerCalendarSession(

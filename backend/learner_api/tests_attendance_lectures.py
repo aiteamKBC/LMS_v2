@@ -569,6 +569,34 @@ class AttendanceAbsenceTests(SimpleTestCase):
         self.assertNotIn('Catch-up session', send_mail.call_args.kwargs['text_body'])
         self.assertNotIn('Alternative group session', send_mail.call_args.kwargs['text_body'])
 
+    def test_a_catchup_report_can_be_saved_before_its_booking_links_to_it(self):
+        request = RequestFactory().post('/', {'sessionId': 'teams:future', 'sessionTitle': 'Lecture',
+                                             'sessionDate': '2026-10-01', 'reasonCategory': 'illness',
+                                             'recoveryMethod': 'catch-up', 'catchupPending': '1'})
+        source = SimpleNamespace(id=12, username='Learner', email='learner@example.test')
+        with patch('learner_api.absence_reports._source_learner', return_value=source), \
+             patch('learner_api.absence_reports._resolve_absent_attendance', return_value=8000000000000000001), \
+             patch('learner_api.absence_reports.CoachAbsenceReport.objects') as manager, \
+             patch('learner_api.absence_reports.learner_profile_for_source', return_value=SimpleNamespace(id=99)), \
+             patch('learner_api.absence_reports.record_reported_absence') as record_absence, \
+             patch('learner_api.absence_reports.transaction.atomic', return_value=nullcontext()), \
+             patch('learner_api.absence_reports._catchup_booking') as booking, \
+             patch('learner_api.absence_reports.email_azure.send_mail', return_value=(True, 'sent')), \
+             patch('learner_api.absence_reports._serialize', return_value={'id': 1}):
+            manager.filter.return_value.exists.return_value = False
+            manager.filter.return_value.count.return_value = 0
+            manager.create.return_value = SimpleNamespace(
+                id=1, owner_email='coach@example.test', owner_name='Coach', learner_name='Learner',
+                learner_email='learner@example.test', session_title='Lecture', recovery_method='catch-up',
+            )
+            response = inspect.unwrap(learner_absence_reports)(request, 'apprenticeship', 12)
+        self.assertEqual(response.status_code, 201)
+        booking.assert_not_called()
+        self.assertEqual(manager.create.call_args.kwargs['recovery_method'], 'catch-up')
+        self.assertIsNone(manager.create.call_args.kwargs['catchup_event_key'])
+        # The ledger gets the catch-up from the booking that links to this report.
+        self.assertEqual(record_absence.call_args.kwargs['recovery_method'], '')
+
     def test_duplicate_report_is_rejected_before_writing(self):
         request = RequestFactory().post('/', {'sessionId': 'same', 'sessionTitle': 'Lecture',
                                              'sessionDate': '2026-09-01', 'reasonCategory': 'illness',
