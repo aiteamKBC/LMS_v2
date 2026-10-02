@@ -256,8 +256,9 @@ function normalizeMonthlyRisk(points?: MonthlyRiskPoint[] | null): MonthlyRiskPo
   }));
 }
 
-function clampPercent(value?: number | string | null): number {
-  return Math.max(0, Math.min(100, Math.round(toNumber(value))));
+function clampPercent(value?: number | string | null, preservePrecision = false): number {
+  const percent = toNumber(value);
+  return Math.max(0, Math.min(100, preservePrecision ? percent : Math.round(percent)));
 }
 
 function statusFromApi(value?: string | null): PerformanceStatus {
@@ -374,7 +375,7 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     attendanceRate: (learner.attendanceAvailable ?? learner.attendanceRateAvailable) ? clampPercent(learner.attendanceRate) : 0,
     attendanceRateAvailable: Boolean(learner.attendanceAvailable ?? learner.attendanceRateAvailable),
     attendanceAvailable: Boolean(learner.attendanceAvailable ?? learner.attendanceRateAvailable),
-    activityProgress: learner.activityProgress == null ? null : clampPercent(learner.activityProgress),
+    activityProgress: learner.activityProgress == null ? null : clampPercent(learner.activityProgress, true),
     activityProgressAvailable: Boolean(learner.activityProgressAvailable),
     componentsCompleted: learner.componentsCompleted ?? null,
     componentsPlanned: learner.componentsPlanned ?? null,
@@ -389,7 +390,7 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     otjhStatus: displayValue(learner.otjhStatus),
     ksbCompleted: learner.ksbCompleted ?? null,
     ksbTarget: learner.ksbTarget ?? null,
-    ksbProgress: learner.ksbProgress == null ? null : clampPercent(learner.ksbProgress),
+    ksbProgress: learner.ksbProgress == null ? null : clampPercent(learner.ksbProgress, true),
     ksbProgressAvailable: learner.ksbProgressAvailable,
     ksbEvidencedCount: learner.ksbEvidencedCount ?? null,
     evidenceCount: toNumber(learner.evidenceCount),

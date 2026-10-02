@@ -1,6 +1,7 @@
 import type { CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
 import type { CoachReviewGenerationIssue } from '@/pages/coach/shared/calendarEvents';
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
+import type { KsbActivityPoint } from '@/api/learnerMetrics';
 import type { StudentActivityResponse } from '@/api/studentActivity';
 import type { JourneyModule } from '@/utils/learnerJourney';
 import type { CaseFileActivityStates } from './activityState';
@@ -236,6 +237,7 @@ export interface CoachLearnerCaseFileData {
   ksbTotalCount: number | null;
   mappedKsbCodes: string[];
   ksbCodeProgress: Array<{ code: string; completed: number; total: number }>;
+  ksbActivityPoints?: KsbActivityPoint[];
   evidenceCount: number | null;
   startDate: string;
   gatewayReviewDate: string;

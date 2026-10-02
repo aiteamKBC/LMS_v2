@@ -2664,7 +2664,7 @@ def caseload_audit_hour_totals(rows) -> dict[int, dict]:
     }
 
 
-def caseload_canonical_metrics(rows) -> dict[int, dict]:
+def caseload_canonical_metrics(rows, *, learner_workspace=False) -> dict[int, dict]:
     """Read the same live programme/KSB/OTJH facts as the learner dashboard.
 
     Coach list endpoints keep this server-side so clients do not issue one
@@ -2692,7 +2692,10 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
     }
     enrolment_ids = [int(source.pk) for _, source, _ in all_work]
     try:
-        canonical_by_enrolment = canonical_learning.metrics_bulk(enrolment_ids)
+        if learner_workspace:
+            canonical_by_enrolment = canonical_learning.metrics_bulk(enrolment_ids, learner_workspace=True)
+        else:
+            canonical_by_enrolment = canonical_learning.metrics_bulk(enrolment_ids)
     except DatabaseError as exc:
         # Keep the established partial-success fallback if the consolidated
         # projection is temporarily unavailable.
@@ -2864,7 +2867,17 @@ def caseload_canonical_attendance(rows) -> dict[int, dict]:
     ]
     if not work:
         return {}
-    from learner_api.attendance_lectures import _merge_register_duplicates
+    sources_by_profile = dict(work)
+    from learner_api.attendance_lectures import lecture_register
+
+    def summarize(profile_id, source, records=None):
+        try:
+            return _summarize_attendance(lecture_register(source, records=records))
+        except Exception as exc:
+            logger.warning("Could not read canonical coach attendance for learner %s: %s", profile_id, exc)
+            return None
+        finally:
+            close_old_connections()
 
     aptem_work = [
         (profile_id, source) for profile_id, source in work
@@ -2902,22 +2915,12 @@ def caseload_canonical_attendance(rows) -> dict[int, dict]:
                 previous = unique.get(key)
                 if previous is None or item.get("attendance_status") in {"present", "late"}:
                     unique[key] = item
-            summary = _summarize_attendance(_merge_register_duplicates(list(unique.values())))
+            summary = summarize(profile_id, sources_by_profile[profile_id], list(unique.values()))
             if summary is not None:
                 result[profile_id] = summary
 
-    def load(item):
-        profile_id, source = item
-        try:
-            # A lecture in both the KBC register and Teams counts once, as on learner pages.
-            return profile_id, _summarize_attendance(_merge_register_duplicates(combined_attendance_rows(source)))
-        except Exception as exc:
-            logger.warning("Could not read canonical coach attendance for learner %s: %s", profile_id, exc)
-            return profile_id, None
-        finally:
-            close_old_connections()
-
-    other_results = [load(item) for item in work if item not in aptem_work]
+    other_results = [(profile_id, summarize(profile_id, source))
+                     for profile_id, source in work if (profile_id, source) not in aptem_work]
     result.update({profile_id: summary for profile_id, summary in other_results if summary is not None})
     return result
 
@@ -2960,15 +2963,16 @@ def caseload_kbc_attendance_rates(rows) -> tuple[dict[int, int], dict[int, dict]
     }
 
 
-def apply_canonical_learner_metrics(payload: dict, metrics: dict | None) -> dict:
+def apply_canonical_learner_metrics(payload: dict, metrics: dict | None, *, learner_workspace=False) -> dict:
     """Overlay the exact learner-profile metrics onto a coach learner row.
 
     The caseload table and learner case file are two views of the same learner
     facts. The Case File header prefers the canonical planned total, so the
     table must use that same denominator after audit enrichment.
     """
-    if not metrics:
+    if not metrics and not learner_workspace:
         return payload
+    metrics = metrics or {}
     programme = metrics.get("programme") or {}
     ksb = metrics.get("ksb") or {}
     otjh = metrics.get("otjh") or {}
@@ -2979,11 +2983,19 @@ def apply_canonical_learner_metrics(payload: dict, metrics: dict | None) -> dict
     fallback_plan = payload.get("otjhPlanned")
     if fallback_plan is None:
         fallback_plan = payload.get("otjhTarget")
+    if learner_workspace:
+        # Overview prefers the Aptem programme plan and shows the canonical
+        # actual total, rather than the Case File's completed-only total.
+        if metrics.get("aptem_planned_total") is not None:
+            canonical_plan = metrics["aptem_planned_total"]
+        fallback_plan = None
     resolved_plan = canonical_plan if canonical_plan is not None else fallback_plan
     payload["otjhTarget"] = resolved_plan
     payload["otjhPlanned"] = resolved_plan
-    completed_actual = otjh.get("completed_actual", otjh.get("actual"))
-    if completed_actual is not None:
+    completed_actual = otjh.get("actual") if learner_workspace else otjh.get("completed_actual", otjh.get("actual"))
+    if learner_workspace:
+        payload["otjhCompleted"] = completed_actual
+    elif completed_actual is not None:
         payload["otjhCompleted"] = to_number(completed_actual)
     payload["otjhActual"] = otjh.get("actual")
 
@@ -2998,6 +3010,9 @@ def apply_canonical_learner_metrics(payload: dict, metrics: dict | None) -> dict
     # Preserve the established fallback when the canonical reader cannot
     # produce a complete KSB population. Dashboard payloads start unavailable,
     # so no ratio is invented here.
+    if learner_workspace and ksb.get("status") != "ready":
+        payload.update(ksbCompleted=None, ksbTarget=None, ksbProgress=None,
+                       ksbProgressAvailable=False, ksbStatus="Unavailable")
     if ksb.get("status") == "ready":
         payload["ksbCompleted"] = ksb.get("completed")
         payload["ksbTarget"] = ksb.get("total")
@@ -12642,7 +12657,10 @@ def coach_caseload(request):
 
         audit_totals = run_optional(caseload_audit_hour_totals)
         ksb_counts = run_optional(caseload_evidenced_ksb_counts)
-        canonical_metrics = run_optional(caseload_canonical_metrics)
+        if paginated:
+            canonical_metrics = run_optional(lambda rows: caseload_canonical_metrics(rows, learner_workspace=True))
+        else:
+            canonical_metrics = run_optional(caseload_canonical_metrics)
         # Paginated rows use the shared OLD/Aptem vs NEW/Curriculum resolver
         # below. Loading imported Aptem history here as well duplicated review
         # I/O and could not improve the selected source's result.
@@ -12650,15 +12668,12 @@ def coach_caseload(request):
         latest_activities = run_optional(caseload_latest_learning_activities) if paginated else {}
         aptem_by_profile = caseload_aptem_ids(rows)
         for row, learner in zip(rows, learners):
-            case_file_snapshot = case_file_table_metrics_snapshot(row, learner)
             apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
             apply_evidenced_ksb_count(learner, ksb_counts.get(int(row.id)))
             learner_metrics = canonical_metrics.get(int(row.id))
-            apply_canonical_learner_metrics(learner, learner_metrics)
+            apply_canonical_learner_metrics(learner, learner_metrics, learner_workspace=paginated)
             apply_canonical_ksb_evidence(learner, learner_metrics, getattr(getattr(row, "_caseload_source", None), "aptem_id", None))
             apply_aptem_variance_status(learner, aptem_by_profile.get(int(row.id)))
-            if paginated:
-                restore_case_file_table_metrics(learner, case_file_snapshot)
             imported = review_history.get(int(row.id), {})
             last_mcm = _latest_completed_review_date(imported.get("mcm", []))
             last_pr = _latest_completed_review_date(imported.get("reviews", []))

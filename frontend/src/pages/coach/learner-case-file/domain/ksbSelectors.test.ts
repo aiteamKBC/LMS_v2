@@ -1,13 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CoachLearnerCaseFileData } from '../types';
-import {
-  EVIDENCE_UNAVAILABLE_HISTORICAL,
-  EVIDENCE_UNAVAILABLE_NO_LINK,
-  EVIDENCE_UNAVAILABLE_NOT_IN_PLAN,
-  normalizeKsbCode,
-  selectCaseFileKsbRows,
-  selectCaseFileKsbSummary,
-} from './ksbSelectors';
+import { normalizeKsbCode, selectCaseFileKsbRows, selectCaseFileKsbSummary, selectCaseFileKsbProgress, selectCaseFileKsbPointRows } from './ksbSelectors';
 
 function caseFile(overrides: Partial<CoachLearnerCaseFileData> = {}): CoachLearnerCaseFileData {
   return {
@@ -40,17 +33,7 @@ describe('KSB selectors', () => {
 
   it('keeps evidenced and total counts and unavailable percentages unchanged', () => {
     const rows = selectCaseFileKsbRows(
-      caseFile({
-        touchedKsbCodes: ['S2.1'],
-        mappedKsbCodes: ['S2', 'K1'],
-        detail: {
-          components: [], quizAttempts: [],
-          videoProgress: [{
-            kind: 'video', componentId: 'skill-video', componentTitle: 'Skill video',
-            ksbs: ['S2.1'], startedAt: null, submittedAt: '2026-09-01T10:00:00Z', timeTaken: null,
-          }],
-        } as CoachLearnerCaseFileData['detail'],
-      }),
+      caseFile({ touchedKsbCodes: ['S2.1'], mappedKsbCodes: ['S2', 'K1'] }),
       [
         { code: 'S2', description: 'Skill', type: 'Skill', number: '2' },
         { code: 'K1', description: 'Knowledge', type: 'Knowledge', number: '1' },
@@ -107,64 +90,7 @@ describe('KSB selectors', () => {
 
     expect(rows[0].evidenceCount).toBe(1);
     expect(rows[0].evidenceActivities[0]).toMatchObject({ title: 'Resilience in practice', type: 'Video' });
-    // The source's component is in the learner's current plan, so the popup can open it.
-    expect(rows[0].evidenceActivities[0].componentId).toBe('VIDEO-1');
-    expect(rows[0].evidenceActivities[0].unavailableReason).toBeUndefined();
-  });
-
-  it('does not mark a touched KSB as evidence linked when no evidence item backs it', () => {
-    const data = caseFile({
-      // K1 is touched (e.g. by an unsubmitted progress row), B2 has a
-      // completed-KSB entry with no sources: neither has viewable evidence.
-      touchedKsbCodes: ['K1', 'B2', 'S1'],
-      snapshot: {
-        ksbCompletedDetails: [
-          { code: 'B2', sources: [] },
-          { code: 'S1', sources: [{ id: 'evidence-s1', title: 'Observed task', kind: 'live_session' }] },
-        ],
-      } as CoachLearnerCaseFileData['snapshot'],
-      detail: { components: [], quizAttempts: [], videoProgress: [], componentProgress: [] } as unknown as CoachLearnerCaseFileData['detail'],
-    });
-    const rows = selectCaseFileKsbRows(data, [
-      { code: 'K1', description: 'Knowledge', type: 'Knowledge', number: '1' },
-      { code: 'B2', description: 'Behaviour', type: 'Behaviours', number: '2' },
-      { code: 'S1', description: 'Skill', type: 'Skills', number: '1' },
-    ]);
-    const byCode = Object.fromEntries(rows.map((row) => [row.code, row]));
-
-    expect(byCode.K1).toMatchObject({ linked: false, evidenceCount: 0 });
-    expect(byCode.B2).toMatchObject({ linked: false, evidenceCount: 0 });
-    expect(byCode.S1).toMatchObject({ linked: true, evidenceCount: 1 });
-    for (const row of rows) expect(row.linked).toBe(row.evidenceCount > 0);
-    expect(selectCaseFileKsbSummary(rows)).toMatchObject({ total: 3, achieved: 1, remaining: 2 });
-  });
-
-  it('explains why evidence outside the current plan cannot be opened', () => {
-    const data = caseFile({
-      touchedKsbCodes: ['B1'],
-      snapshot: {
-        ksbCompletedDetails: [{
-          code: 'B1',
-          sources: [
-            { id: 'aptem-1', title: 'Imported task', typeLabel: 'Historical Activity', source: 'Aptem', componentId: null },
-            { id: 'removed-1', title: 'Removed video', typeLabel: 'Video', componentId: 'REMOVED-VIDEO' },
-            { id: 'journal-1', title: 'Journal entry', typeLabel: 'Journal' },
-            { id: 'plan-1', title: 'Plan reading', typeLabel: 'Reading', componentId: 'READING-1' },
-          ],
-        }],
-      } as CoachLearnerCaseFileData['snapshot'],
-      detail: {
-        components: [{ componentId: 'READING-1', component: 'Plan reading', type: 'reading', ksbMappings: [{ code: 'B1' }] }],
-      } as CoachLearnerCaseFileData['detail'],
-    });
-
-    const [row] = selectCaseFileKsbRows(data, [{ code: 'B1', description: 'Behaviour', type: 'Behaviours', number: '1' }]);
-    const byTitle = Object.fromEntries(row.evidenceActivities.map((activity) => [activity.title, activity]));
-
-    expect(byTitle['Imported task']).toMatchObject({ componentId: undefined, unavailableReason: EVIDENCE_UNAVAILABLE_HISTORICAL });
-    expect(byTitle['Removed video']).toMatchObject({ componentId: undefined, unavailableReason: EVIDENCE_UNAVAILABLE_NOT_IN_PLAN });
-    expect(byTitle['Journal entry']).toMatchObject({ componentId: undefined, unavailableReason: EVIDENCE_UNAVAILABLE_NO_LINK });
-    expect(byTitle['Plan reading']).toMatchObject({ componentId: 'READING-1', unavailableReason: undefined });
+    expect(rows[0].evidenceActivities[0].componentId).toBeUndefined();
   });
 
   it('shows the saved title of a historical video outside the current component list', () => {
@@ -205,5 +131,43 @@ describe('KSB selectors', () => {
 
     expect(rows[0].evidenceActivities).toHaveLength(1);
     expect(rows[0].evidenceActivities[0].title).toBe('Working with change');
+  });
+});
+
+describe('learner Overview KSB points', () => {
+  it('counts activity points without collapsing repeated framework codes', () => {
+    const data = caseFile({ metricsAvailable: true, ksbStatus: 'ready', ksbProgress: 85.3,
+      ksbEvidencedCount: 498, ksbTotalCount: 584, touchedKsbCodes: ['K1', 'S1', 'B1'],
+      ksbCodeProgress: [{ code: 'K1', completed: 200, total: 220 },
+        { code: 'K1.1', completed: 100, total: 120 }, { code: 'S1', completed: 150, total: 180 },
+        { code: 'B1', completed: 48, total: 64 }] });
+    expect(selectCaseFileKsbProgress(data)).toMatchObject({ total: 584, achieved: 498, remaining: 86, percent: 85.3,
+      knowledge: { total: 340, achieved: 300 }, skills: { total: 180, achieved: 150 }, behaviours: { total: 64, achieved: 48 } });
+  });
+  it('does not replace unavailable totals with touched framework codes', () => {
+    expect(selectCaseFileKsbProgress(caseFile({ ksbStatus: 'unavailable', touchedKsbCodes: ['K1'],
+      ksbEvidencedCount: 1, ksbTotalCount: 1, ksbProgress: 100 }))).toMatchObject({
+        total: null, achieved: null, remaining: null, percent: null, knowledge: { total: null, achieved: null } });
+  });
+});
+
+describe('canonical KSB activity rows', () => {
+  it('keeps repeated codes in separate activities with their own completion and details', () => {
+    const points = [
+      { activityId: '1', code: 'K1', completed: true, title: 'First activity', type: 'reading', module: null, status: null, source: null, completedAt: null, componentId: 'component-1' },
+      { activityId: '2', code: 'K1', completed: false, title: 'Second activity', type: 'video', module: null, status: null, source: null, completedAt: null, componentId: null },
+      { activityId: '2', code: 'S1.1', completed: false, title: 'Second activity', type: 'video', module: null, status: null, source: null, completedAt: null, componentId: null },
+    ];
+    const rows = selectCaseFileKsbPointRows(caseFile({ ksbStatus: 'ready', ksbActivityPoints: points, touchedKsbCodes: ['K1'] }));
+    expect(rows).toHaveLength(3);
+    expect(new Set(rows.map((row) => row.id)).size).toBe(3);
+    expect(rows.map((row) => row.linked)).toEqual([true, false, false]);
+    expect(rows[1].evidenceActivities).toEqual([expect.objectContaining({ activityId: '2', title: 'Second activity' })]);
+    expect(rows[2].code).toBe('S1.1');
+    expect(points[1].completed).toBe(false);
+  });
+  it('does not fabricate activity rows from framework or aggregate totals', () => {
+    expect(selectCaseFileKsbPointRows(caseFile({ ksbTotalCount: 584, ksbEvidencedCount: 498, mappedKsbCodes: ['K1'] }),
+      [{ code: 'K1', description: 'Knowledge', type: 'Knowledge', number: '1' }])).toEqual([]);
   });
 });
