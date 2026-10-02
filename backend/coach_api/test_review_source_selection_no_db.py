@@ -519,7 +519,10 @@ class AptemEventVerificationTests(SimpleTestCase):
         self.assertTrue(definition["readOnly"])
         self.assertEqual(definition["sections"], [])
         self.assertEqual(definition["instance"]["id"], "imported-review:R-SUMMARY")
-        imported_instances.assert_not_called()
+        imported_instances.assert_called_once_with(
+            owner_email__iexact="coach@example.invalid",
+            event_key="imported-review:R-SUMMARY",
+        )
 
     @patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[])
     def test_imported_definition_does_not_expose_review_outside_current_coach_caseload(self, _profiles):

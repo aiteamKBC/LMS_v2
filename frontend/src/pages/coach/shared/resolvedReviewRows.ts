@@ -45,16 +45,15 @@ export function normalizeResolvedReviews(events: CoachCalendarEvent[]) {
 export function reviewActionMatrix(event: CoachCalendarEvent): ReviewActionMatrix {
   const status = normalizedReviewStatus(event);
   const formAvailable = Boolean(event.hasReviewForm || event.reviewInstanceId || event.reviewTemplateId);
-  const importedPreStartReview = Boolean(
-    event.aptemReviewId && (status === 'not-scheduled' || status === 'scheduled'),
+  const importedActiveReview = Boolean(
+    event.aptemReviewId && status !== 'completed',
   );
   return {
     schedule: status === 'not-scheduled' ? 'Schedule' : status === 'scheduled' ? 'Reschedule' : null,
     view: true,
-    // Imported reviews must remain reachable before they start even when the
-    // import contains summary metadata only. The workspace decides whether it
-    // is an editable form or the protected summary-only presentation.
-    viewForm: formAvailable || importedPreStartReview,
+    // Imported reviews remain reachable through local progress and signature
+    // stages even when the Aptem source still has summary metadata only.
+    viewForm: formAvailable || importedActiveReview,
     presentation: Boolean(event.enrolmentId),
     join: canJoinMeeting({ ...event, status }),
   };

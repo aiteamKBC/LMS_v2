@@ -48,7 +48,15 @@ from coach_api.cache.learners import (
     get_cached_caseload,
     release_caseload_lock,
 )
-from coach_api.models import CoachAbsenceReport, CoachAttendanceSourceAdjustment, CoachCalendarEvent, CoachCalendarSequence, CoachManualAttendance, ImportedReviewInstance
+from coach_api.models import CoachAbsenceReport, CoachAttendanceSourceAdjustment, CoachCalendarEvent, CoachCalendarSequence, CoachManualAttendance, ImportedReviewInstance, MigratedReviewTemplate
+from coach_api.migrated_reviews import (
+    EDITABLE_STATUSES as MIGRATED_EDITABLE_STATUSES,
+    initial_local_status, programme_key as migrated_programme_key,
+    render_sections as render_migrated_sections,
+    review_family as migrated_review_family,
+    source_is_completed as migrated_source_is_completed,
+    validate_answers as validate_migrated_answers,
+)
 from coach_api.services.learners.context import CaseloadRequestContext
 from coach_api.validation import (
     ObjectValidator,
@@ -10848,6 +10856,11 @@ def coach_timetable_schedule_event(request):
     base_event, owner_name = find_generated_timetable_event(owner_email, event_key)
     if not base_event:
         return JsonResponse({"detail": "Calendar event not found for this coach."}, status=404)
+    if (
+        base_event.get("reviewSource") == "aptem"
+        and base_event.get("status") == CoachCalendarEvent.STATUS_COMPLETED
+    ):
+        return JsonResponse({"detail": "This historical imported review is read-only."}, status=409)
 
     target_date = parse_date_value(base_event.get("targetDate"))
     if isinstance(target_date, datetime):
@@ -11165,6 +11178,11 @@ def coach_timetable_event_action(request):
     base_event, owner_name = find_generated_timetable_event(owner_email, event_key)
     if not base_event:
         return JsonResponse({"detail": "Calendar event not found for this coach."}, status=404)
+    if (
+        base_event.get("reviewSource") == "aptem"
+        and base_event.get("status") == CoachCalendarEvent.STATUS_COMPLETED
+    ):
+        return JsonResponse({"detail": "This historical imported review is read-only."}, status=409)
 
     record = CoachCalendarEvent.objects.filter(owner_email__iexact=owner_email, event_key=event_key).first()
     if not record:
@@ -13677,6 +13695,34 @@ def coach_evidence_awaiting_review(request):
 # same ownership boundary every other coach/timetable endpoint enforces.
 
 @coach_access_required
+def coach_aptem_review_reconciliation_preview(request, learner_id):
+    """Inspect one owned Aptem learner without creating an instance or booking."""
+    from .aptem_review_reconciliation import build_aptem_review_reconciliation_preview
+
+    if request.method != "GET":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+    owner_email = authenticated_coach_email(request)
+    learner = next(
+        (row for row in fetch_owner_active_learner_profiles(owner_email) if row.id == learner_id),
+        None,
+    )
+    if learner is None:
+        return JsonResponse({"detail": "Learner not found in your caseload."}, status=404)
+    aptem_ids, conflicts = resolve_effective_aptem_ids([learner])
+    if learner_id in conflicts:
+        return JsonResponse({"detail": "Aptem learner identity is conflicting."}, status=409)
+    if learner_id not in aptem_ids:
+        return JsonResponse({"detail": "This learner has no Aptem review identity."}, status=404)
+    learner.effective_aptem_id = aptem_ids[learner_id]
+    try:
+        preview = build_aptem_review_reconciliation_preview(learner, owner_email)
+    except (DatabaseError, RuntimeError):
+        logger.exception("Aptem review reconciliation preview unavailable for learner %s", learner_id)
+        return JsonResponse({"detail": "Review reconciliation preview is unavailable."}, status=503)
+    return JsonResponse(preview)
+
+
+@coach_access_required
 def coach_review_learner_addition_templates(request):
     """Enabled Review templates a coach may add a learner-specific Review
     from, scoped to ONE learner's own programme.
@@ -14155,23 +14201,51 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
     learner = next((item for item in learners if int(item.id) == profile_id), None)
     if learner is None:
         return None
+    source_learner_id = clean_text(review.get("aptemLearnerId"))
+    if source_learner_id and source_learner_id != str(aptem_by_profile[profile_id]):
+        return None
 
     normalized_sections = sections.get(row["id"]) or []
     form_available = _imported_review_has_usable_form(
         review,
         has_normalized_sections=bool(normalized_sections),
     )
-    summary_only = not form_available
+    historical_completed = migrated_source_is_completed(review)
     canonical_event_key = f"{prefix}{aptem_review_id}"
-    saved_instance = (
-        ImportedReviewInstance.objects.filter(
-            owner_email__iexact=owner_email,
-            event_key=canonical_event_key,
-        ).first()
-        if form_available
-        else None
+    canonical_owner = owner_email.strip().casefold()
+    saved_instance = ImportedReviewInstance.objects.filter(
+        owner_email__iexact=canonical_owner, event_key=canonical_event_key,
+    ).first()
+    source_review_id = getattr(saved_instance, "source_review_id", None)
+    overlay_learner_id = getattr(saved_instance, "learner_id", None)
+    if saved_instance and isinstance(source_review_id, int):
+        if source_review_id != row["id"] or overlay_learner_id != profile_id:
+            return None
+    if saved_instance and isinstance(overlay_learner_id, int) and overlay_learner_id != profile_id:
+        return None
+    snapshot = getattr(saved_instance, "template_snapshot", None)
+    migrated_form = not historical_completed and isinstance(snapshot, dict) and bool(snapshot.get("sections"))
+    if migrated_form and not getattr(saved_instance, "source_review_id", None):
+        return None
+    family = migrated_review_family(review.get("type"))
+    local_programme_key = migrated_programme_key(
+        getattr(learner, "programme_id", None), getattr(learner, "programme", None),
     )
-    saved_answers = saved_instance.answers if saved_instance and isinstance(saved_instance.answers, dict) else {}
+    can_initialize = bool(
+        not saved_instance and not historical_completed and not form_available
+        and family and local_programme_key and initial_local_status(review.get("status"))
+    )
+    if can_initialize:
+        can_initialize = MigratedReviewTemplate.objects.filter(
+            programme_key=local_programme_key, review_family=family, is_active=True,
+        ).exists()
+    form_available = form_available or migrated_form
+    summary_only = not form_available
+    saved_answers = (
+        saved_instance.answers
+        if not historical_completed and saved_instance and isinstance(saved_instance.answers, dict)
+        else {}
+    )
 
     adapted_sections = []
     for section_index, section in enumerate((review.get("sections") or []) if form_available else []):
@@ -14226,6 +14300,12 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
             "enabled": True,
             "fields": fields,
         })
+    field_warnings = []
+    if migrated_form:
+        try:
+            adapted_sections, field_warnings = render_migrated_sections(snapshot, saved_answers)
+        except ValueError:
+            return None
 
     target_date = review.get("plannedDate") or review.get("completedDate") or ""
     review_type = clean_text(review.get("type"))
@@ -14242,25 +14322,33 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
     }
     instance_status = (
         clean_text(review.get("status")) or CoachCalendarEvent.STATUS_NOT_SCHEDULED
-        if summary_only
+        if summary_only or historical_completed
         else saved_instance.status if saved_instance else ImportedReviewInstance.STATUS_IN_PROGRESS
     )
     instance_completed_at = (
         review.get("completedDate")
-        if summary_only
+        if summary_only or historical_completed
         else saved_instance.completed_at.isoformat() if saved_instance and saved_instance.completed_at else None
     )
     definition = {
-        "readOnly": summary_only,
+        "readOnly": summary_only or historical_completed or (
+            migrated_form and saved_instance.status not in MIGRATED_EDITABLE_STATUSES
+        ),
         "source": "aptem",
         "formAvailable": form_available,
         "summaryOnly": summary_only,
+        "migratedForm": migrated_form,
+        "canInitialize": can_initialize,
+        "migratedProgrammeKey": local_programme_key if can_initialize or migrated_form else None,
+        "sourceStatus": clean_text(row.get("status")) or review.get("status"),
+        "localStatus": saved_instance.status if saved_instance else None,
+        "fieldWarnings": field_warnings,
         "instance": {
             "id": canonical_event_key,
             "reviewTemplateId": "",
             "learnerId": profile_id,
             "programmeId": clean_text(getattr(learner, "programme_id", None)),
-            "occurrenceNumber": 1,
+            "occurrenceNumber": None if migrated_form or can_initialize else 1,
             "targetDate": target_date,
             "status": instance_status,
             "startedAt": None,
@@ -14268,7 +14356,8 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
         },
         "template": {
             "id": "",
-            "name": clean_text(review.get("name")) or review_type or "Imported review",
+            "name": (clean_text(snapshot.get("name")) if migrated_form else "")
+                    or clean_text(review.get("name")) or review_type or "Imported review",
             "reviewTypeCode": review_type_code,
             "signatures": {role: False for role in curriculum_review_instances.SIGNATURE_ROLES},
             "visibleTo": {role: role == "advisor" for role in curriculum_review_instances.SIGNATURE_ROLES},
@@ -14287,12 +14376,113 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
         ),
         "historicalReview": review,
     }
-    definition["pdf"] = {
+    definition["pdf"] = ({
+        "available": False,
+        "reason": "LMS-generated migrated PDFs are not available yet.",
+        "source": "lms-migrated",
+    } if migrated_form else {
         "available": True,
         "reason": "",
         "source": "aptem",
-    }
+    })
     return definition
+
+
+def _owned_migrated_overlay(owner_email, definition, *, lock=False):
+    query = ImportedReviewInstance.objects.filter(
+        owner_email__iexact=owner_email.strip().casefold(),
+        event_key=definition["instance"]["id"],
+    )
+    if lock:
+        query = query.select_for_update()
+    overlay = query.first()
+    source = definition.get("historicalReview") or {}
+    if not overlay or not isinstance(overlay.template_snapshot, dict) or not overlay.template_snapshot.get("sections"):
+        return None
+    if overlay.learner_id != definition["instance"]["learnerId"] or overlay.source_review_id != int(source["id"]):
+        return None
+    return overlay
+
+
+@coach_access_required
+def coach_review_instance_initialize(request, instance_id):
+    """Explicitly snapshot one approved migrated template; GET never writes."""
+    if request.method != "POST":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+    if not instance_id.startswith("imported-review:"):
+        return JsonResponse({"detail": "This action is for imported reviews only."}, status=409)
+    owner_email = authenticated_coach_email(request).strip().casefold()
+    definition = _imported_review_definition(owner_email, instance_id)
+    if not definition:
+        return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
+    if not definition.get("canInitialize") or definition.get("readOnly") is False:
+        return JsonResponse({"detail": "This imported review cannot be initialized."}, status=409)
+    family = migrated_review_family((definition.get("historicalReview") or {}).get("type"))
+    local_status = initial_local_status(definition.get("sourceStatus"))
+    source_id = int(definition["historicalReview"]["id"])
+    with transaction.atomic():
+        template = MigratedReviewTemplate.objects.filter(
+            programme_key=definition["migratedProgrammeKey"],
+            review_family=family, is_active=True,
+        ).first()
+        if template is None:
+            return JsonResponse({"detail": "No approved migrated template is assigned."}, status=409)
+        try:
+            from coach_api.migrated_reviews import validate_definition
+            validate_definition(template.definition_json)
+        except ValueError as exc:
+            return JsonResponse({"detail": str(exc)}, status=409)
+        try:
+            with transaction.atomic():
+                overlay, created = ImportedReviewInstance.objects.get_or_create(
+                    owner_email=owner_email, event_key=definition["instance"]["id"],
+                    defaults={
+                        "learner_id": definition["instance"]["learnerId"],
+                        "source_review_id": source_id,
+                        "migrated_template": template,
+                        "template_snapshot": {"name": template.name, **json.loads(json.dumps(template.definition_json))},
+                        "answers": {}, "status": local_status,
+                    },
+                )
+        except IntegrityError:
+            return JsonResponse({"detail": "This source review is already associated with another overlay."}, status=409)
+        if not created and (
+            overlay.learner_id != definition["instance"]["learnerId"]
+            or overlay.source_review_id != source_id
+            or not overlay.template_snapshot
+        ):
+            return JsonResponse({"detail": "An existing overlay has a different source association."}, status=409)
+    return JsonResponse(_imported_review_definition(owner_email, instance_id))
+
+
+@coach_access_required
+def coach_review_instance_local_status(request, instance_id):
+    """Phase B allows an explicit local scheduled -> in-progress transition."""
+    if request.method != "POST":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+    if not instance_id.startswith("imported-review:"):
+        return JsonResponse({"detail": "This action is for imported reviews only."}, status=409)
+    owner_email = authenticated_coach_email(request)
+    definition = _imported_review_definition(owner_email, instance_id)
+    if not definition:
+        return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
+    if not definition.get("migratedForm") or definition.get("readOnly"):
+        return JsonResponse({"detail": "This imported review is read-only."}, status=409)
+    try:
+        payload = parse_json_body(request)
+    except ValidationError as exc:
+        return validation_error_response(exc)
+    if payload.get("status") != ImportedReviewInstance.STATUS_IN_PROGRESS:
+        return JsonResponse({"detail": "Only the in-progress transition is available in Phase B."}, status=400)
+    with transaction.atomic():
+        overlay = _owned_migrated_overlay(owner_email, definition, lock=True)
+        if not overlay:
+            return JsonResponse({"detail": "Imported review association mismatch."}, status=409)
+        if overlay.status != ImportedReviewInstance.STATUS_SCHEDULED:
+            return JsonResponse({"detail": "Only a scheduled review can be started."}, status=409)
+        overlay.status = ImportedReviewInstance.STATUS_IN_PROGRESS
+        overlay.save(update_fields=["status", "updated_at"])
+    return JsonResponse(_imported_review_definition(owner_email, instance_id))
 
 
 @coach_access_required
@@ -14315,6 +14505,11 @@ def coach_review_instance_for_event(request):
         return validation_error_response(exc)
 
     owner_email = authenticated_coach_email(request)
+    if event_key.startswith("imported-review:"):
+        base_event, _owner_name = find_generated_timetable_event(owner_email, event_key)
+        if not base_event:
+            return JsonResponse({"detail": "Calendar event not found for this coach."}, status=404)
+        return JsonResponse({"detail": "Imported reviews cannot be opened as native reviews."}, status=409)
     record = CoachCalendarEvent.objects.filter(event_key=event_key, owner_email__iexact=owner_email).first()
     if record and clean_text(record.review_instance_id):
         return JsonResponse({"instanceId": clean_text(record.review_instance_id)})
@@ -14555,11 +14750,12 @@ def coach_review_instance_answers(request, instance_id):
         return JsonResponse({"detail": "Method not allowed."}, status=405)
     owner_email = authenticated_coach_email(request)
     if instance_id.startswith("imported-review:"):
+        owner_email = owner_email.strip().casefold()
         definition = _imported_review_definition(owner_email, instance_id)
         if not definition:
             return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
-        if definition.get("summaryOnly"):
-            return JsonResponse({"detail": "This imported review has summary information only and cannot be edited."}, status=409)
+        if definition.get("readOnly"):
+            return JsonResponse({"detail": "This imported review is read-only."}, status=409)
         try:
             payload = parse_json_body(request)
         except ValidationError as exc:
@@ -14567,6 +14763,18 @@ def coach_review_instance_answers(request, instance_id):
         answers = payload.get("answers")
         if not isinstance(answers, dict):
             return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
+        if definition.get("migratedForm"):
+            with transaction.atomic():
+                imported = _owned_migrated_overlay(owner_email, definition, lock=True)
+                if not imported or imported.status not in MIGRATED_EDITABLE_STATUSES:
+                    return JsonResponse({"detail": "Imported review association or status mismatch."}, status=409)
+                try:
+                    validate_migrated_answers(imported.template_snapshot, answers)
+                except ValueError as exc:
+                    return JsonResponse({"detail": str(exc)}, status=400)
+                imported.answers = answers
+                imported.save(update_fields=["answers", "updated_at"])
+            return JsonResponse(_imported_review_definition(owner_email, imported.event_key))
         field_ids = {
             field["id"]
             for section in definition.get("sections", [])
@@ -14847,11 +15055,12 @@ def coach_review_instance_complete(request, instance_id):
         return JsonResponse({"detail": "Method not allowed."}, status=405)
     owner_email = authenticated_coach_email(request)
     if instance_id.startswith("imported-review:"):
+        owner_email = owner_email.strip().casefold()
         definition = _imported_review_definition(owner_email, instance_id)
         if not definition:
             return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
-        if definition.get("summaryOnly"):
-            return JsonResponse({"detail": "This imported review has summary information only and cannot be completed."}, status=409)
+        if definition.get("readOnly"):
+            return JsonResponse({"detail": "This imported review is read-only."}, status=409)
         payload = {}
         if request.body:
             try:
@@ -14863,6 +15072,20 @@ def coach_review_instance_complete(request, instance_id):
         answers = payload.get("answers", {})
         if not isinstance(answers, dict):
             return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
+        if definition.get("migratedForm"):
+            with transaction.atomic():
+                imported = _owned_migrated_overlay(owner_email, definition, lock=True)
+                if not imported or imported.status != ImportedReviewInstance.STATUS_IN_PROGRESS:
+                    return JsonResponse({"detail": "Only an in-progress migrated review can be submitted."}, status=409)
+                final_answers = payload.get("answers", imported.answers)
+                try:
+                    validate_migrated_answers(imported.template_snapshot, final_answers, completing=True)
+                except ValueError as exc:
+                    return JsonResponse({"detail": str(exc)}, status=400)
+                imported.answers = final_answers
+                imported.status = ImportedReviewInstance.STATUS_AWAITING_SIGNATURE
+                imported.save(update_fields=["answers", "status", "updated_at"])
+            return JsonResponse(_imported_review_definition(owner_email, imported.event_key))
         field_ids = {
             field["id"]
             for section in definition.get("sections", [])
@@ -15036,6 +15259,11 @@ def coach_review_instance_reopen(request, instance_id):
 def coach_review_instance_signature(request, instance_id):
     if request.method != "POST":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
+    if instance_id.startswith("imported-review:"):
+        definition = _imported_review_definition(authenticated_coach_email(request), instance_id)
+        if not definition:
+            return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
+        return JsonResponse({"detail": "Imported review signatures cannot be changed here."}, status=409)
     instance_row, error = _authorized_review_instance(request, instance_id)
     if error:
         return error

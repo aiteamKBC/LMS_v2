@@ -9,6 +9,19 @@ from coach_api.review_pdf import coach_mcm_pdf
 
 
 class ImportedReviewPdfTests(SimpleTestCase):
+    def test_migrated_continuation_cannot_be_mislabelled_as_original_aptem_pdf(self):
+        with (
+            patch("coach_api.views._imported_review_definition", return_value={"migratedForm": True}),
+            patch("coach_api.auth.authenticated_coach_email", return_value="coach@example.test"),
+            patch("learner_api.aptem_review_pdf.original_review_pdf") as original_pdf,
+        ):
+            response = unwrap(coach_mcm_pdf)(
+                RequestFactory().get("/coach/reviews/imported-review:A-7/pdf"),
+                "imported-review:A-7",
+            )
+        self.assertEqual(response.status_code, 409)
+        original_pdf.assert_not_called()
+
     def test_imported_review_pdf_uses_the_definition_learner_id(self):
         definition = {
             "instance": {"id": "imported-review:A-4399", "learnerId": 42},

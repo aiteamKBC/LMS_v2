@@ -23,6 +23,8 @@ def coach_mcm_pdf(request, instance_id):
         definition = _imported_review_definition(authenticated_coach_email(request), instance_id)
         if not definition:
             return JsonResponse({'detail': 'Imported review not found for this coach.'}, status=404)
+        if definition.get('migratedForm'):
+            return JsonResponse({'detail': 'LMS-generated migrated PDFs are not available yet.'}, status=409)
         instance = definition['instance']
     else:
         instance, error = _authorized_review_instance(request, instance_id)

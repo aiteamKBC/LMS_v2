@@ -163,6 +163,11 @@ export interface ReviewInstanceFormDefinition {
   /** Imported records can contain summary metadata without any form fields. */
   formAvailable?: boolean;
   summaryOnly?: boolean;
+  migratedForm?: boolean;
+  canInitialize?: boolean;
+  sourceStatus?: string;
+  localStatus?: string | null;
+  fieldWarnings?: { fieldKey: string; aptemType: number }[];
   pdf?: { available: boolean; reason: string; source?: string; originalAvailable?: boolean } | null;
   /** Progress Review only, and null until a coach calculates it. */
   progressSnapshot?: ReviewProgressSnapshot | null;
@@ -177,7 +182,7 @@ export interface ReviewInstanceFormDefinition {
     reviewTemplateId: string;
     learnerId: number;
     programmeId: string;
-    occurrenceNumber: number;
+    occurrenceNumber: number | null;
     targetDate: string;
     status: string;
     startedAt: string | null;
@@ -259,6 +264,19 @@ export async function openReviewInstanceForEvent(eventKey: string) {
 
 export async function fetchReviewInstanceForm(instanceId: string, signal?: AbortSignal) {
   const response = await coachFetch(instanceUrl(instanceId), { signal });
+  return readJsonResponse<ReviewInstanceFormDefinition>(response);
+}
+
+export async function initializeMigratedReview(instanceId: string) {
+  const response = await coachFetch(`${instanceUrl(instanceId)}/initialize`, { method: 'POST' });
+  return readJsonResponse<ReviewInstanceFormDefinition>(response);
+}
+
+export async function startMigratedReview(instanceId: string) {
+  const response = await coachFetch(`${instanceUrl(instanceId)}/local-status`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'in-progress' }),
+  });
   return readJsonResponse<ReviewInstanceFormDefinition>(response);
 }
 

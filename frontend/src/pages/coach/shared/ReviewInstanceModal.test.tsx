@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReviewInstanceModal } from './ReviewInstanceModal';
-import { calculateReviewInstanceProgress, completeReviewInstance, downloadReviewInstancePdf, fetchPreviousReviewSession, fetchReviewInstanceForm, generateReviewMeetingSummary, reopenReviewInstance, saveReviewInstanceAnswers, signReviewInstance, type ReviewInstanceFormDefinition, type ReviewProgressSnapshot } from '@/api/reviewInstances';
+import { calculateReviewInstanceProgress, completeReviewInstance, downloadReviewInstancePdf, fetchPreviousReviewSession, fetchReviewInstanceForm, generateReviewMeetingSummary, initializeMigratedReview, reopenReviewInstance, saveReviewInstanceAnswers, signReviewInstance, startMigratedReview, type ReviewInstanceFormDefinition, type ReviewProgressSnapshot } from '@/api/reviewInstances';
 
 const account = vi.hoisted(() => ({ name: 'Sam Coach' }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { user: { fullName: account.name } } }) }));
@@ -9,6 +9,7 @@ vi.mock('@/api/reviewInstances', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/api/reviewInstances')>(),
   fetchReviewInstanceForm: vi.fn(), saveReviewInstanceAnswers: vi.fn(), completeReviewInstance: vi.fn(), reopenReviewInstance: vi.fn(), signReviewInstance: vi.fn(),
   downloadReviewInstancePdf: vi.fn(), calculateReviewInstanceProgress: vi.fn(), generateReviewMeetingSummary: vi.fn(), fetchPreviousReviewSession: vi.fn(),
+  initializeMigratedReview: vi.fn(), startMigratedReview: vi.fn(),
 }));
 vi.mock('@/pages/users/wizard/steps/SignaturePad', () => ({
   SignaturePad: ({ signatoryName, onCommit }: { signatoryName: string; onCommit: (signature: string) => void }) => <div>
@@ -79,6 +80,108 @@ beforeEach(() => {
 });
 
 describe('review reopen flow', () => {
+  it('initializes an approved imported form explicitly and shows its typed fields', async () => {
+    const pending: ReviewInstanceFormDefinition = {
+      ...definition('not-scheduled'), source: 'aptem', readOnly: true, summaryOnly: true,
+      canInitialize: true, formAvailable: false, sourceStatus: 'Not Scheduled',
+      instance: { ...definition('not-scheduled').instance, id: 'imported-review:future', occurrenceNumber: null, reviewTemplateId: '' },
+      sections: [],
+    };
+    const initialized: ReviewInstanceFormDefinition = {
+      ...pending, readOnly: false, summaryOnly: false, canInitialize: false,
+      migratedForm: true, formAvailable: true, localStatus: 'not-scheduled',
+      fieldWarnings: [{ fieldKey: 'unknown', aptemType: 99 }],
+      sections: [{ id: 'migrated-section', title: 'Migrated questions', displayOrder: 0, enabled: true, estimatedMinutes: 0,
+        fields: [{ id: 'outcome', title: 'Outcome', fieldType: 'list_item', required: true, displayOrder: 0,
+          configuration: { options: ['Good', 'Needs work'] } }],
+      }],
+    };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(pending);
+    vi.mocked(initializeMigratedReview).mockResolvedValue(initialized);
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Initialize approved migrated form' }));
+    await waitFor(() => expect(initializeMigratedReview).toHaveBeenCalledWith('imported-review:future'));
+    expect(await screen.findByText('Migrated questions')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Good' })).toBeVisible();
+    expect(screen.getByText(/Aptem field type\(s\) are unverified/)).toBeVisible();
+    expect(screen.getByText(/Aptem source:/)).toHaveTextContent('Not Scheduled');
+    expect(screen.getByText(/LMS continuation:/)).toHaveTextContent('not scheduled');
+    expect(screen.queryByText('Complete the Curriculum-defined review before closing it.')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Complete review' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save draft' })).toBeVisible();
+  });
+
+  it('starts a scheduled migrated form without touching native review flow', async () => {
+    const scheduled: ReviewInstanceFormDefinition = {
+      ...definition('scheduled'), source: 'aptem', migratedForm: true,
+      localStatus: 'scheduled', readOnly: false,
+      instance: { ...definition('scheduled').instance, id: 'imported-review:scheduled', occurrenceNumber: null, reviewTemplateId: '' },
+    };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(scheduled);
+    vi.mocked(startMigratedReview).mockResolvedValue({ ...scheduled, localStatus: 'in-progress', instance: { ...scheduled.instance, status: 'in-progress' } });
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Start migrated review' }));
+    await waitFor(() => expect(startMigratedReview).toHaveBeenCalledWith('imported-review:scheduled'));
+    expect(await screen.findByRole('button', { name: 'Send for signatures' })).toBeVisible();
+  });
+
+  it('clears migrated conditional answers when the coach changes branches', async () => {
+    const migrated: ReviewInstanceFormDefinition = {
+      ...definition(), source: 'aptem', migratedForm: true, localStatus: 'in-progress', readOnly: false,
+      instance: { ...definition().instance, id: 'imported-review:conditional', occurrenceNumber: null, reviewTemplateId: '' },
+      sections: [{ id: 'conditional-section', title: 'Conditional questions', estimatedMinutes: 0, displayOrder: 0, enabled: true,
+        fields: [{ id: 'check', title: 'Any concern?', fieldType: 'boolean_case_block', required: true, displayOrder: 0,
+          configuration: {}, answer: 'yes', yesFields: [{ id: 'detail', title: 'Details', fieldType: 'text', required: true,
+            displayOrder: 0, configuration: {}, answer: 'Earlier concern' }], noFields: [] }],
+      }],
+    };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(migrated);
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: /^no$/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(saveReviewInstanceAnswers).toHaveBeenCalledWith(
+      'imported-review:conditional', { check: 'no' },
+    ));
+  });
+
+  it('shows separate statuses at the migrated signature boundary without native controls', async () => {
+    const pending: ReviewInstanceFormDefinition = {
+      ...definition('awaiting-signature'), source: 'aptem', migratedForm: true,
+      sourceStatus: 'Scheduled', localStatus: 'awaiting-signature', readOnly: true,
+      instance: { ...definition('awaiting-signature').instance, id: 'imported-review:pending', occurrenceNumber: null, reviewTemplateId: '' },
+      template: { ...definition().template, reviewTypeCode: 'aptem_mcm' },
+      signatures: {
+        advisor: { required: false, signed: false }, participant: { required: false, signed: false },
+        employer: { required: false, signed: false }, referrer: { required: false, signed: false },
+      },
+      pdf: { available: false, reason: 'LMS-generated migrated PDFs are not available yet.' },
+    };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(pending);
+    mount();
+    expect(await screen.findByText(/Aptem source:/)).toHaveTextContent('Scheduled');
+    expect(screen.getByText(/LMS continuation:/)).toHaveTextContent('awaiting signature');
+    expect(screen.getByText(/Signing will be available in a later phase/)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Confirm coach signature' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Download signed PDF' })).not.toBeInTheDocument();
+  });
+
+  it('keeps migrated required-field feedback before submission', async () => {
+    const migrated: ReviewInstanceFormDefinition = {
+      ...definition('in-progress'), source: 'aptem', migratedForm: true,
+      sourceStatus: 'Scheduled', localStatus: 'in-progress', readOnly: false,
+      instance: { ...definition().instance, id: 'imported-review:required', occurrenceNumber: null, reviewTemplateId: '' },
+      sections: [{ id: 'migrated-section', title: 'Migrated questions', estimatedMinutes: 0, displayOrder: 0, enabled: true,
+        fields: [{ id: 'required-answer', title: 'Required answer', fieldType: 'text_multiline', required: true,
+          displayOrder: 0, configuration: {}, answer: null }],
+      }],
+    };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(migrated);
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Send for signatures' }));
+    expect(screen.getByText('Please complete every required field before finishing the review.')).toBeVisible();
+    expect(completeReviewInstance).not.toHaveBeenCalled();
+  });
+
   it('renders an imported Aptem table as accessible columns and rows', async () => {
     const importedDefinition: ReviewInstanceFormDefinition = {
       ...definition('in-progress'),

@@ -32,12 +32,15 @@ from .views import (
     coach_review_instance_complete,
     coach_review_instance_progress,
     coach_review_instance_detail,
+    coach_review_instance_initialize,
+    coach_review_instance_local_status,
     coach_review_instance_previous,
     coach_review_instance_for_event,
     coach_review_instance_mark_in_progress_manually,
     coach_review_instance_meeting_summary,
     coach_review_instance_reopen,
     coach_review_instance_signature,
+    coach_aptem_review_reconciliation_preview,
     coach_review_learner_addition_templates,
     coach_review_learner_additions_create,
     coach_timetable_event_artifact_content,
@@ -97,6 +100,8 @@ urlpatterns = [
     # Review, saving its answers, signing and completing it -- the question
     # set/signature rules were resolved by Curriculum, not hard-coded here.
     path('coach/reviews/open', coach_review_instance_for_event, name='coach-review-instance-open'),
+    path('coach/reviews/learners/<int:learner_id>/aptem-reconciliation-preview',
+         coach_aptem_review_reconciliation_preview, name='coach-aptem-review-reconciliation-preview'),
     # Learner-specific additional Reviews (coach "Create session" -> Review):
     # one canonical occurrence for ONE learner, never a standalone calendar
     # row and never a new programme-wide template. Declared before the
@@ -109,6 +114,8 @@ urlpatterns = [
     ),
     path('coach/reviews/learner-additions', coach_review_learner_additions_create, name='coach-review-learner-additions-create'),
     path('coach/reviews/<str:instance_id>', coach_review_instance_detail, name='coach-review-instance-detail'),
+    path('coach/reviews/<str:instance_id>/initialize', coach_review_instance_initialize, name='coach-review-instance-initialize'),
+    path('coach/reviews/<str:instance_id>/local-status', coach_review_instance_local_status, name='coach-review-instance-local-status'),
     path('coach/reviews/<str:instance_id>/previous', coach_review_instance_previous, name='coach-review-instance-previous'),
     path('coach/reviews/<str:instance_id>/answers', coach_review_instance_answers, name='coach-review-instance-answers'),
     path('coach/reviews/<str:instance_id>/meeting-summary', coach_review_instance_meeting_summary, name='coach-review-instance-meeting-summary'),

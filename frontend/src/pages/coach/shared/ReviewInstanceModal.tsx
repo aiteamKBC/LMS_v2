@@ -12,9 +12,11 @@ import {
   fetchReviewInstanceForm,
   flattenReviewFields,
   generateReviewMeetingSummary,
+  initializeMigratedReview,
   reopenReviewInstance,
   saveReviewInstanceAnswers,
   signReviewInstance,
+  startMigratedReview,
   type PreviousReviewSession,
   type ReviewInstanceFormDefinition,
 } from '@/api/reviewInstances';
@@ -353,6 +355,28 @@ export function ReviewInstanceModal({
     if (formReadOnly) return;
     setAnswers((current) => {
       const next = { ...current, [fieldId]: value };
+      if (definition?.migratedForm && current[fieldId] !== value) {
+        const findField = (fields: typeof definition.sections[number]['fields']): typeof fields[number] | undefined => {
+          for (const field of fields) {
+            if (field.id === fieldId) return field;
+            const nested = findField([...(field.yesFields || []), ...(field.noFields || [])]);
+            if (nested) return nested;
+          }
+          return undefined;
+        };
+        const clearChildren = (fields: typeof definition.sections[number]['fields']) => {
+          for (const field of fields) {
+            delete next[field.id];
+            clearChildren(field.yesFields || []);
+            clearChildren(field.noFields || []);
+          }
+        };
+        const changedField = definition.sections.map(section => findField(section.fields)).find(Boolean);
+        if (changedField?.fieldType === 'boolean_case_block') {
+          clearChildren(changedField.yesFields || []);
+          clearChildren(changedField.noFields || []);
+        }
+      }
       answersRef.current = next;
       return next;
     });
@@ -409,6 +433,36 @@ export function ReviewInstanceModal({
     } catch (err) {
       if (isAbortError(err)) return;
       setError(err instanceof Error ? err.message : 'This review cannot be completed yet.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const initializeMigrated = async () => {
+    if (!definition?.canInitialize) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const updated = await initializeMigratedReview(definition.instance.id);
+      setDefinition(updated);
+      setAnswers({});
+      answersRef.current = {};
+      setOpenSectionId(updated.sections[0]?.id || '');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to initialize this migrated review.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const startMigrated = async () => {
+    if (!definition?.migratedForm) return;
+    setSaving(true);
+    setError(null);
+    try {
+      setDefinition(await startMigratedReview(definition.instance.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to start this migrated review.');
     } finally {
       setSaving(false);
     }
@@ -508,6 +562,9 @@ export function ReviewInstanceModal({
   const busy = saving || calculating || generatingSummary || uploadingTranscript || reopening;
   const pageMode = presentation === 'page';
   const headingLabel = definition ? reviewTypeLabel(definition) : '';
+  const reviewName = definition
+    ? `${definition.template.name}${definition.instance.occurrenceNumber == null ? '' : ` #${definition.instance.occurrenceNumber}`}`
+    : '';
   const previousOccurrenceNumber = definition && typeof definition.instance.occurrenceNumber === 'number'
     ? definition.instance.occurrenceNumber - 1
     : null;
@@ -548,9 +605,13 @@ export function ReviewInstanceModal({
             <div className="min-w-0">
               <p className="text-[12px] font-bold uppercase tracking-[0.16em] text-secondary-200">Complete review</p>
               <h1 className="mt-1 max-w-4xl text-xl font-bold leading-tight text-white sm:text-2xl lg:text-[28px]">
-                {definition ? `${headingLabel} #${definition.instance.occurrenceNumber}` : 'Loading review...'}
+                {definition ? (definition.source === 'aptem' && definition.instance.occurrenceNumber == null ? reviewName : `${headingLabel} #${definition.instance.occurrenceNumber}`) : 'Loading review...'}
               </h1>
-              <p className="mt-1 text-[13px] text-white/60">{isSummaryOnly
+              <p className="mt-1 text-[13px] text-white/60">{definition?.canInitialize
+                ? 'Initialize the approved Aptem migrated form to begin working in LMS.'
+                : definition?.migratedForm
+                ? 'Work through this migrated form and save your answers in LMS.'
+                : isSummaryOnly
                 ? 'Review the summary information retained from the imported Aptem record.'
                 : 'Work through each Curriculum-defined step, then save or complete the review.'}</p>
             </div>
@@ -568,8 +629,10 @@ export function ReviewInstanceModal({
         <ModalHeader
           eyebrow="Complete review"
           icon="ri-chat-check-line"
-          title={definition ? `${event.learner || 'Learner'} · ${definition.template.name} #${definition.instance.occurrenceNumber}` : 'Loading review...'}
-          subtitle="Complete the Curriculum-defined review before closing it."
+          title={definition ? `${event.learner || 'Learner'} · ${reviewName}` : 'Loading review...'}
+          subtitle={definition?.migratedForm || definition?.canInitialize
+            ? 'Review the migrated Aptem form and save answers in LMS.'
+            : 'Complete the Curriculum-defined review before closing it.'}
           busy={busy}
           onClose={onClose}
           progressPercent={requiredCount ? Math.round((answeredCount / requiredCount) * 100) : undefined}
@@ -606,6 +669,26 @@ export function ReviewInstanceModal({
                 </div>
               </section>
             ) : null}
+            {definition.canInitialize ? (
+              <button type="button" onClick={() => { void initializeMigrated(); }} disabled={busy}
+                className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
+                Initialize approved migrated form
+              </button>
+            ) : null}
+            {definition.migratedForm && definition.localStatus === 'scheduled' ? (
+              <button type="button" onClick={() => { void startMigrated(); }} disabled={busy}
+                className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
+                Start migrated review
+              </button>
+            ) : null}
+            {definition.migratedForm && definition.localStatus === 'not-scheduled' ? (
+              <p className="text-sm text-amber-800">This form can be saved as a draft. Starting the review requires a scheduled state.</p>
+            ) : null}
+            {definition.migratedForm && definition.fieldWarnings?.length ? (
+              <p role="status" className="text-sm text-amber-800">
+                {definition.fieldWarnings.length} Aptem field type(s) are unverified and use text entry.
+              </p>
+            ) : null}
             {showReopenConfirmation ? (
               <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground-950/50 p-4" role="presentation">
                 <div role="dialog" aria-modal="true" aria-labelledby="reopen-confirmation-title" className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
@@ -625,18 +708,28 @@ export function ReviewInstanceModal({
             ) : null}
             <div className="flex items-start gap-3 rounded-xl border border-primary-100 bg-primary-50/80 px-4 py-3 text-[13px] leading-5 text-primary-800 shadow-sm">
               <AppIcon className="ri-information-line mt-0.5 shrink-0 text-primary-600"></AppIcon>
-              <span>{isSummaryOnly
+              <span>{definition.canInitialize
+                ? 'An approved migrated form is available. Initialize it to keep a fixed copy with this review.'
+                : isSummaryOnly
                 ? 'The imported summary remains available for reference, but there is no form to edit or complete.'
                 : isImportedReadOnly
-                ? 'These historical answers are displayed from the imported Aptem review and cannot be changed here.'
+                ? definition.migratedForm ? 'This migrated review is awaiting signatures. Signing will be available in a later phase.' : 'These historical answers are displayed from the imported Aptem review and cannot be changed here.'
+                : definition.migratedForm ? 'Answers are saved in LMS continuation state; the original Aptem record is unchanged.'
                 : `These answers are saved to this ${definition.template.name} and follow the sections/questions configured in Curriculum.`}</span>
             </div>
+
+            {definition.migratedForm || definition.canInitialize ? (
+              <div className="flex flex-wrap gap-x-6 gap-y-1 text-[12px] text-foreground-600">
+                <span>Aptem source: <strong>{definition.sourceStatus || 'Unknown'}</strong></span>
+                <span>LMS continuation: <strong>{definition.localStatus ? definition.localStatus.replaceAll('-', ' ') : 'Not initialized'}</strong></span>
+              </div>
+            ) : null}
 
             <div className="grid gap-3 rounded-2xl border border-background-200 bg-white p-3 shadow-sm sm:grid-cols-2 lg:grid-cols-4">
               {[
                 ['Learner', event.learner || 'Unknown learner'],
                 ['Programme', event.programme || '--'],
-                ['Review', `${definition.template.name} #${definition.instance.occurrenceNumber}`],
+                ['Review', reviewName],
                 ['Target date', formatDateLabel(definition.instance.targetDate)],
               ].map(([label, value]) => (
                 <div key={label} className="rounded-xl bg-[#f7f5fc] px-4 py-3.5 ring-1 ring-inset ring-primary-100/70">
@@ -918,7 +1011,7 @@ export function ReviewInstanceModal({
                 same components/API the learner side already uses, reading the
                 same signatures/pdf-availability this same fetch already
                 returned. */}
-            {(isHistoricalPdfAvailable || (EXPORTABLE_REVIEW_TYPES.includes(definition.template.reviewTypeCode || '') && isSignatureStage)) ? (
+            {!definition.migratedForm && (isHistoricalPdfAvailable || (EXPORTABLE_REVIEW_TYPES.includes(definition.template.reviewTypeCode || '') && isSignatureStage)) ? (
               <>
                 {!isHistoricalPdfAvailable && <ReviewSignatures signatures={definition.signatures} />}
                 <ReviewPdfDownload
@@ -943,10 +1036,10 @@ export function ReviewInstanceModal({
           <button type="button" onClick={saveDraft} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-background-300 bg-white px-5 text-xs font-bold text-foreground-700 shadow-sm transition hover:bg-background-100 disabled:opacity-60">
             <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-save-line'}></AppIcon>Save draft
           </button>
-          <button type="button" onClick={complete} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-600 px-5 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60">
+          {(!definition?.migratedForm || definition.localStatus === 'in-progress') ? <button type="button" onClick={complete} disabled={busy || loading} className="inline-flex h-10 items-center justify-center gap-2 rounded-lg bg-primary-600 px-5 text-xs font-bold text-white shadow-sm transition hover:bg-primary-700 disabled:opacity-60">
             <AppIcon className={saving ? 'ri-loader-4-line animate-spin' : 'ri-check-double-line'}></AppIcon>
-            {saving ? 'Saving...' : requiredSignatures.length ? 'Send for signatures' : 'Complete review'}
-          </button>
+            {saving ? 'Saving...' : definition?.migratedForm || requiredSignatures.length ? 'Send for signatures' : 'Complete review'}
+          </button> : null}
         </div> : null}
       </footer>
     </>
