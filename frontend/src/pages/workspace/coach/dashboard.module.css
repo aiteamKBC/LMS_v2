@@ -1,11 +1,11 @@
 .dashboard {
-  --dashboard-accent: #6834db;
-  --dashboard-heading: #1e1555;
-  --kbc-text: #29234e;
-  --kbc-muted: #746e91;
-  --kbc-border: #ece7fa;
-  --kbc-purple-wash: #f7f5ff;
-  --kbc-purple-soft: #eee7ff;
+  --dashboard-accent: #4f2d7f;
+  --dashboard-heading: #362055;
+  --kbc-text: #1e293b;
+  --kbc-muted: #64748b;
+  --kbc-border: #e2e8f0;
+  --kbc-purple-wash: #f7f8fb;
+  --kbc-purple-soft: #f2eafb;
   --kbc-table-text: var(--kbc-text);
   display: grid;
   gap: 18px;
@@ -15,39 +15,22 @@
   background: var(--kbc-purple-wash);
 }
 
-/* The header treatment belongs only to this dashboard route. */
-:global(.workspace-shell[data-workspace-role="coach"]):has(.dashboard) :global(.kbc-workspace-topbar) {
-  background: var(--kbc-purple-wash) !important;
-  border-color: transparent;
-  border-radius: 8px;
-  box-shadow: none;
-}
-
-:global(.workspace-shell[data-workspace-role="coach"]):has(.dashboard) :is(:global(.kbc-topbar-title), :global(.kbc-topbar-user-name), :global(.kbc-navigation-menu)) {
-  color: var(--kbc-text) !important;
-}
-
-:global(.workspace-shell[data-workspace-role="coach"]):has(.dashboard) :global(.kbc-topbar-title) { font-size: 24px; color: #211637 !important; }
-:global(.workspace-shell[data-workspace-role="coach"]):has(.dashboard) :global(.kbc-topbar-subtitle) { color: var(--kbc-muted) !important; }
-:global(.workspace-shell[data-workspace-role="coach"]):has(.dashboard) :global(.kbc-workspace-topbar) span[aria-hidden="true"]:has(> svg) {
-  display: none;
-}
-:global(.workspace-shell[data-workspace-role="coach"]):has(.dashboard) :is(:global(.kbc-topbar-profile) > svg, :global(.kbc-workspace-switcher-button), :global(.kbc-workspace-switcher-button) *) { color: var(--kbc-text) !important; }
+/* The shared learner style chrome now frames the coach dashboard too. */
 :global([data-theme="dark"]) .dashboard { --dashboard-accent: #c4b5fd; --dashboard-heading: #eee8fa; --kbc-text: #eee8fa; --kbc-muted: #b8aecb; --kbc-border: #443456; --kbc-purple-wash: #241b35; --kbc-purple-soft: #392955; }
 :global([data-theme="dark"]) .primaryButton { color: #241b35; }
 :global([data-theme="dark"]) .primaryButton:hover { background: #ddd1fb; }
 
 .metrics {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 14px;
 }
 /* Loading skeleton: sits on the loaded layout classes and only sizes the placeholders. */
 .loadingDashboard { display: grid; gap: 18px; min-width: 0; }
-.metricSkeletonIcon { grid-row: span 3; align-self: start; width: 100%; height: 48px; border-radius: 13px; }
-.metricSkeletonLabel { width: 68%; height: 15px; margin-block: 3px 4px; }
-.metricSkeletonValue { width: 38%; height: 34px; margin-block: 4px; }
-.metricSkeletonNote { width: 80%; height: 13px; margin-block: 4px; }
+.metricSkeletonIcon { grid-area: icon; width: 44px; height: 44px; border-radius: 11px; }
+.metricSkeletonLabel { grid-area: label; width: 78%; height: 15px; }
+.metricSkeletonValue { grid-area: value; width: 58%; height: 38px; }
+.metricSkeletonNote { grid-area: note; width: 88%; height: 13px; }
 .meetingDateSkeleton { width: 108px; height: 58px; }
 .donutSkeleton { background: var(--kbc-border); }
 .monthlyBarSkeleton { width: min(28px, 72%); border-radius: 5px 5px 2px 2px; }
@@ -64,35 +47,40 @@
 .metric {
   position: relative;
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
-  align-content: center;
-  gap: 5px 12px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: 44px minmax(20px, auto) 44px minmax(16px, auto);
+  grid-template-areas: 'icon' 'label' 'value' 'note';
+  align-content: space-between;
+  gap: 6px;
   min-width: 0;
-  min-height: 132px;
-  padding: 22px 30px 22px 18px;
+  min-height: 184px;
+  padding: 18px;
   border: 1px solid var(--kbc-border);
-  border-radius: 12px;
+  border-radius: 14px;
   background: var(--kbc-surface);
-  box-shadow: 0 4px 16px rgb(55 28 107 / 4%);
+  box-shadow: 0 6px 22px rgb(55 28 107 / 6%);
   text-align: left;
 }
 
-button.metric:hover { border-color: var(--dashboard-accent); }
+button.metric:hover { border-color: var(--dashboard-accent); box-shadow: 0 10px 26px rgb(55 28 107 / 10%); }
 .dashboard :is(button, a, summary):focus-visible { outline: 2px solid var(--dashboard-accent); outline-offset: 3px; }
-.metricIcon { display: grid; place-items: center; align-self: start; width: 42px; height: 48px; grid-row: span 3; border-radius: 13px; background: var(--kbc-purple-soft); color: var(--dashboard-accent); }
-.metricIcon svg { width: 26px; height: 26px; }
-.metricLabel { font-size: 15px; line-height: 1.45; font-weight: 700; color: var(--dashboard-heading); }
-.metricValue { color: var(--dashboard-heading); font-size: 38px; line-height: 1.1; font-weight: 750; font-variant-numeric: tabular-nums; }
-.metricNote { font-size: 14px; line-height: 1.5; color: var(--kbc-muted); }
-.metricChevron { position: absolute; right: 7px; top: calc(50% - 9px); width: 18px; height: 18px; color: var(--kbc-muted); }
-.metricChevron svg { width: 100%; height: 100%; }
+.metricIcon { grid-area: icon; display: grid; place-items: center; width: 44px; height: 44px; border-radius: 11px; background: #eee7ff; color: #7137ca; }
+.metricIcon svg { width: 24px; height: 24px; }
+.metricLabel { grid-area: label; align-self: end; font-size: 14px; line-height: 1.3; font-weight: 700; color: var(--dashboard-heading); }
+.metricValue { grid-area: value; align-self: center; color: var(--dashboard-heading); font-size: 40px; line-height: 1.1; font-weight: 750; font-variant-numeric: tabular-nums; }
+.metricNote { grid-area: note; align-self: end; font-size: 12px; line-height: 1.35; color: var(--kbc-muted); }
+.metric[data-kind="caseload"] { background: linear-gradient(155deg, var(--kbc-surface) 70%, #f0fdf8); }
+.metric[data-kind="marking"] { background: linear-gradient(155deg, var(--kbc-surface) 70%, #fff1f8); }
+.metric[data-kind="pr"] .metricIcon { color: #159a79; background: #dff7ef; }
+.metric[data-kind="mcm"] .metricIcon,
+.metric[data-kind="catchup"] .metricIcon { color: #946012; background: #fff1df; }
 .metric[data-unavailable="true"] .metricValue { color: var(--kbc-muted); }
 .metric[data-tone="critical"] { background: linear-gradient(110deg, var(--kbc-surface), #fff8fa); }
 .metric[data-tone="critical"] .metricIcon { color: #e51e50; background: #fde7ed; }
-.metric[data-tone="caution"] .metricIcon { color: #d89905; background: #fdf3dc; }
 :global([data-theme="dark"]) .metric[data-tone="critical"] { background: var(--kbc-surface); }
 :global([data-theme="dark"]) .metric[data-tone="critical"] .metricIcon { color: #ff94b0; background: #492338; }
-:global([data-theme="dark"]) .metric[data-tone="caution"] .metricIcon { color: #f3c763; background: #463a26; }
+:global([data-theme="dark"]) .metric[data-kind="caseload"],
+:global([data-theme="dark"]) .metric[data-kind="marking"] { background: var(--kbc-surface); }
 
 .riskLayout { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(340px, 1fr); gap: 16px; align-items: stretch; }
 .fullWidthCaseload { width: 100%; min-width: 0; scroll-margin-top: 1rem; }
@@ -143,7 +131,8 @@ button.metric:hover { border-color: var(--dashboard-accent); }
 .sectionLink { border-color: transparent; background: var(--kbc-purple-wash); padding-inline: 14px; }
 .primaryButton { background: var(--dashboard-accent); border-color: var(--dashboard-accent); color: white; }
 .primaryButton:hover { background: var(--kbc-primary-secondary); }
-:global(body) :global(.workspace-shell[data-workspace-role="coach"]) .dashboard :is(.metric, .panel) { border-radius: 12px !important; }
+:global(body) :global(.workspace-shell[data-workspace-role="coach"]) .dashboard .metric { border-radius: 14px !important; }
+:global(body) :global(.workspace-shell[data-workspace-role="coach"]) .dashboard .panel { border-radius: 12px !important; }
 :global(body) :global(.workspace-shell[data-workspace-role="coach"]) .dashboard .textButton { border-radius: 6px !important; }
 :global(body) :global(.workspace-shell[data-workspace-role="coach"]) .dashboard .identity > :first-child { border-radius: 50% !important; }
 .iconButton { display: grid; place-items: center; width: 44px; height: 44px; color: var(--kbc-muted); border-radius: 8px; }
@@ -208,9 +197,6 @@ button.metric:hover { border-color: var(--dashboard-accent); }
 
 @media (max-width: 1350px) {
   .metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .metric { grid-template-columns: 48px minmax(0, 1fr); min-height: 104px; }
-  .metricIcon { width: 48px; height: 50px; }
-  .metricSkeletonIcon { height: 50px; }
   .riskLayout { grid-template-columns: minmax(0, 1.55fr) minmax(330px, 1fr); }
   .distribution { gap: 14px; margin-inline: 0; }
   .donut { width: 118px; height: 118px; flex-basis: 118px; }
@@ -225,6 +211,7 @@ button.metric:hover { border-color: var(--dashboard-accent); }
 }
 
 @media (max-width: 800px) {
+  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .charts { grid-template-columns: minmax(0, 1fr); }
   .donut { width: 142px; height: 142px; flex-basis: 142px; }
   .donutCenter { width: 104px; height: 104px; }
@@ -238,12 +225,8 @@ button.metric:hover { border-color: var(--dashboard-accent); }
   .welcome > div > p { font-size: 15px; }
   .metrics { grid-template-columns: minmax(0, 1fr); }
   .loadingDashboard { gap: 14px; }
-  .metric { grid-template-columns: 48px minmax(0, 1fr); gap: 6px 12px; min-height: 118px; padding: 18px 30px 18px 16px; }
-  .metricIcon { width: 48px; height: 50px; border-radius: 11px; }
-  .metricIcon svg { width: 25px; height: 25px; }
-  .metricLabel { font-size: 15px; }
+  .metric { min-height: 168px; padding: 16px; }
   .metricValue { font-size: 34px; }
-  .metricNote { font-size: 14px; }
   :global(.workspace-shell[data-workspace-role="coach"]) :global(.workspace-main) .dashboard .panel { padding: 14px 12px; }
   .dashboard .panel :global(.section-header) { flex-wrap: wrap; }
   .dashboard .panel :global(.section-header) > div:first-child { flex-basis: 100%; }
@@ -256,7 +239,6 @@ button.metric:hover { border-color: var(--dashboard-accent); }
 
 @media (max-width: 380px) {
   .metrics { grid-template-columns: minmax(0, 1fr); }
-  .metric { grid-template-columns: 42px minmax(0, 1fr); min-height: 98px; }
   .distribution { gap: 12px; }
   .donut { width: 106px; height: 106px; flex-basis: 106px; }
   .donutCenter { width: 78px; height: 78px; }

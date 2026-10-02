@@ -102,7 +102,7 @@ export default function CurriculumTeamsMeetingsPage() {
   const workspace = useTeamsMeetingsWorkspace({ initialSelectedId: searchParams.get('module') || '' });
   const {
     programmes, cohorts, groups, modules, loading, loaded, refreshing, error, reload,
-    teamsLoading, teamsLoaded, teamsError, graphConfigured, timeZoneLabel,
+    teamsLoading, teamsLoaded, teamsError, graphStatus, checkGraphConfiguration, timeZoneLabel,
     selectedId, setSelectedId, notice, setNotice, rows, selected, stats, loadTeamsState,
   } = workspace;
 
@@ -225,10 +225,20 @@ export default function CurriculumTeamsMeetingsPage() {
 
         {error && <InlineError message={error} onRetry={() => void reload()} />}
         {teamsError && <InlineError message={teamsError} onRetry={() => void loadTeamsState()} />}
-        {!graphConfigured && (
+        {graphStatus === 'unconfigured' && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-[12px] font-semibold text-amber-800">
             <AppIcon className="ri-information-line mr-1"></AppIcon>
             Microsoft Graph credentials are missing from the backend, so nothing here can reach the Teams calendar. The dates and attendance already stored are still shown.
+          </div>
+        )}
+        {graphStatus === 'unknown' && (
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-background-200 bg-background-50 px-4 py-3 text-[12px] font-semibold text-foreground-600">
+            <AppIcon className="ri-information-line mr-1"></AppIcon>
+            The Teams calendar check did not finish, so this page could not confirm the backend is set up for Microsoft.
+            Everything here still works &mdash; if the setup is missing, the action itself will say so.
+            <button type="button" onClick={() => void checkGraphConfiguration()} className="font-bold text-primary-700 underline hover:text-primary-800">
+              Check again
+            </button>
           </div>
         )}
         {notice && !selected && (

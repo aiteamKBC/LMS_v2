@@ -13,6 +13,9 @@ const viewer = vi.hoisted(() => ({
   // administrator who is ALSO a learner (login/learner_enrolment.py).
   learnerRecordId: null as number | null,
   learnerRecordKind: null as string | null,
+  // A learner's own sign-in (role 'learner'): their enrolment id and type.
+  subjectId: null as number | null,
+  learnerType: null as string | null,
 }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({
   auth: {
@@ -20,6 +23,8 @@ vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({
       role: viewer.role,
       learnerRecordId: viewer.learnerRecordId,
       learnerRecordKind: viewer.learnerRecordKind,
+      subjectId: viewer.subjectId,
+      learnerType: viewer.learnerType,
     },
     user: { fullName: 'Reviewer' },
     roles: [],
@@ -53,6 +58,8 @@ beforeEach(() => {
   viewer.denied.clear();
   viewer.learnerRecordId = null;
   viewer.learnerRecordKind = null;
+  viewer.subjectId = null;
+  viewer.learnerType = null;
 });
 
 it.each([
@@ -155,3 +162,36 @@ it('can collapse the learner sidebar and restore it from its top toggle', async 
 
   expect(sidebar().getByRole('link', { name: /^My Learning/ })).toBeVisible();
 });
+
+it.each([
+  ['/learner/monthly-submission/commercial/101', '/learner/monthly-submission'],
+  ['/learner/my-learning/commercial/101?subject=M1', '/learner/my-learning?subject=M1'],
+  ['/workspace/learner/dashboard/commercial/101', '/workspace/learner/dashboard'],
+])("hides a signed-in learner's own type and id from %s", async (start, expected) => {
+  viewer.role = 'learner';
+  viewer.subjectId = 101;
+  viewer.learnerType = 'commercial';
+  vi.mocked(fetchLearnerSummary).mockResolvedValue({ learnerType: 'commercial', programmeStatus: 'Active', studentActivityAvailable: false } as Awaited<ReturnType<typeof fetchLearnerSummary>>);
+  render(<MemoryRouter initialEntries={[start]}><LearnerPage /><SearchProbe /></MemoryRouter>);
+  await waitFor(() => expect(screen.getByTestId('url')).toHaveTextContent(expected));
+  expect(screen.getByTestId('url').textContent).toBe(expected);
+});
+
+it.each([
+  ['a staff preview', 'admin', null],
+  ["another learner's id", 'learner', 101],
+] as const)('keeps the ids in the address for %s', async (_case, role, subjectId) => {
+  viewer.role = role;
+  viewer.subjectId = subjectId;
+  viewer.learnerType = 'commercial';
+  vi.mocked(fetchLearnerSummary).mockResolvedValue({ learnerType: 'commercial', programmeStatus: 'Active', studentActivityAvailable: false } as Awaited<ReturnType<typeof fetchLearnerSummary>>);
+  render(<MemoryRouter initialEntries={['/learner/monthly-submission/commercial/202']}><LearnerPage /><SearchProbe /></MemoryRouter>);
+  await screen.findByTestId('path');
+  await act(async () => { await Promise.resolve(); });
+  expect(screen.getByTestId('url')).toHaveTextContent('/learner/monthly-submission/commercial/202');
+});
+
+function SearchProbe() {
+  const { pathname, search } = useLocation();
+  return <output data-testid="url">{pathname}{search}</output>;
+}

@@ -14,7 +14,7 @@
  * chosen and typed a password twice.
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { BrandLockup } from '@/components/BrandLockup';
 import {
   AuthError,
@@ -95,6 +95,8 @@ export default function SetPasswordPage({ mode }: { mode: Mode }) {
   const navigate = useNavigate();
   const [params] = useSearchParams();
   const token = params.get('token') || '';
+  // Arrived from signing in with the shared first-sign-in password.
+  const firstSignIn = (useLocation().state as { firstSignIn?: boolean } | null)?.firstSignIn === true;
 
   const [info, setInfo] = useState<TokenInfo | null>(null);
   const [tokenError, setTokenError] = useState<string>('');
@@ -238,6 +240,11 @@ export default function SetPasswordPage({ mode }: { mode: Mode }) {
         {copy.heading}
       </h1>
       <p className="text-[13px] text-foreground-500 mb-1">{copy.intro}</p>
+      {firstSignIn && (
+        <p role="status" className="mt-2 mb-3 rounded-lg border border-primary-200 bg-primary-50 px-3 py-2 text-[12.5px] text-primary-800">
+          You signed in with the first-sign-in password. Choose your own password to finish signing in.
+        </p>
+      )}
       {info && (
         <p className="text-[13px] text-foreground-700 font-medium mb-6">
           {info.displayName ? `${info.displayName} — ` : ''}

@@ -68,6 +68,8 @@ EVENT_TITLES = {
     "workspace": "RPL And Experience",
     "training-plan": "Workplace Health & Safety Declaration",
     "uln-privacy": "ULN Privacy Notice & Learner Acknowledgement",
+    # Requested from the account invitation (login.lms_introduction).
+    "lms-introduction": "LMS Introduction",
 }
 
 # JSON `type` vocabulary shared with the coach timetable frontend.

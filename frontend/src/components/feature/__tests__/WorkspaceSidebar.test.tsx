@@ -186,6 +186,7 @@ it('keeps an administrator in the selected coach workspace', () => {
   viewer.isAdmin = true;
   const { sidebar, rail } = showWorkspace('coach', '/workspace/coach');
   expect(sidebar.closest('.workspace-shell')).toHaveAttribute('data-workspace-role', 'coach');
+  expect(within(sidebar).getByRole('img', { name: 'Kent Business College' })).toBeVisible();
   expect(within(rail).getAllByRole('link').slice(0, 3).map(link => link.textContent)).toEqual(['Dashboard', 'Attendance', 'Marking']);
   expect(within(rail).queryByRole('link', { name: 'Notifications' })).toBeNull();
   expect(within(rail).getByRole('button', { name: 'Meetings' })).toBeVisible();
@@ -227,7 +228,7 @@ describe.each(Object.keys(roleNavMap))('%s shared workspace sidebar', role => {
       expect(sidebar).toHaveAttribute('data-collapsed', 'false');
       fireEvent.click(within(sidebar).getByRole('button', { name: 'Collapse coach sidebar' }));
       expect(sidebar).toHaveAttribute('data-collapsed', 'true');
-      expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('76px');
+      expect(shell.style.getPropertyValue('--kbc-sidebar-width')).toBe('64px');
       expect(localStorage.getItem('kbc_coach_sidebar_collapsed')).toBe('true');
       const group = roleNavMap.coach.items.find(item => item.children?.length)!;
       const toggle = within(sidebar).getByRole('button', { name: group.label });

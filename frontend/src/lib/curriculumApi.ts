@@ -3243,6 +3243,15 @@ export function fetchComponentLibrary(options: {
   origins?: LibraryComponentOrigin[];
   page?: number;
   pageSize?: number;
+  /**
+   * Force a server-side rebuild. Only a caller that has just written a
+   * component needs it; the modal opening is not that caller, and paying for a
+   * rebuild there cost seconds on a list nobody had just changed. Left off,
+   * the read still revalidates -- this tab's cache is ignored and the server
+   * answers from its own, which is current for anything written through it.
+   */
+  skipCache?: boolean;
+  revalidate?: boolean;
 } = {}, signal?: AbortSignal): Promise<LibraryComponent[]> {
   const query = new URLSearchParams();
   const search = (options.search || '').trim();
@@ -3256,18 +3265,28 @@ export function fetchComponentLibrary(options: {
   if (options.page) query.set('page', String(options.page));
   if (options.pageSize) query.set('page_size', String(options.pageSize));
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchCollection<LibraryComponent>(`/curriculum/components/library/${suffix}`, { signal, skipCache: true });
+  return fetchCollection<LibraryComponent>(
+    `/curriculum/components/library/${suffix}`,
+    { signal, skipCache: options.skipCache, revalidate: options.revalidate ?? !options.skipCache },
+  );
 }
 
 /**
  * Full authoring detail for specific components — `settings` and `ksbMappings`
  * included. Call this with the ids being copied, never with a whole page.
  */
-export function fetchComponentLibraryDetail(ids: string[], signal?: AbortSignal): Promise<LibraryComponent[]> {
+export function fetchComponentLibraryDetail(
+  ids: string[],
+  signal?: AbortSignal,
+  options: { skipCache?: boolean; revalidate?: boolean } = {},
+): Promise<LibraryComponent[]> {
   const wanted = ids.filter(Boolean);
   if (!wanted.length) return Promise.resolve([]);
   const query = new URLSearchParams({ ids: wanted.join(',') });
-  return fetchCollection<LibraryComponent>(`/curriculum/components/library/?${query.toString()}`, { signal, skipCache: true });
+  return fetchCollection<LibraryComponent>(
+    `/curriculum/components/library/?${query.toString()}`,
+    { signal, skipCache: options.skipCache, revalidate: options.revalidate ?? !options.skipCache },
+  );
 }
 
 export function fetchCurriculumStats(signal?: AbortSignal): Promise<CurriculumOverview['stats']> {
@@ -4209,16 +4228,20 @@ export interface CurriculumArchivedModuleStructure {
  * every week and component under it. This one returns the set a restore would
  * bring back. Read-only -- there is no PATCH beside it.
  *
- * `skipCache`: the archive is opened in order to act on it, and a module read
- * here is one the reader is about to restore or delete.
+ * `revalidate` by default, matching the three archived-list reads above: the
+ * archive is opened in order to act on it, so this tab's cache must not answer
+ * -- but this endpoint reads its tables directly rather than through the cached
+ * overview payload, so there is no server-side build for `skipCache` to force.
+ * A caller that has just written may still ask for one.
  */
 export function fetchArchivedModuleStructure(
   id: string,
   signal?: AbortSignal,
+  options: { skipCache?: boolean } = {},
 ): Promise<CurriculumArchivedModuleStructure> {
   return fetchJson<CurriculumArchivedModuleStructure>(
     `/curriculum/modules/${encodeURIComponent(id)}/archived-structure/`,
-    { signal, skipCache: true, timeoutMs: 30000 },
+    { signal, skipCache: options.skipCache, revalidate: !options.skipCache, timeoutMs: 30000 },
   );
 }
 
@@ -4534,14 +4557,25 @@ export function archiveCurriculumHoliday(id: string | number) {
  * was last looked at. Deliberately a separate call from the holidays themselves:
  * it is a log, it is only read on that one page, and it must never be cached
  * alongside the dates.
+ *
+ * `revalidate` rather than `skipCache` by default: the log has to be current,
+ * which means not answering from this tab's cache -- but it is read straight
+ * from its table, so forcing a server rebuild bought nothing and made opening
+ * the page wait for one. The caller that has just pressed "check GOV.UK now"
+ * passes `skipCache` for itself.
  */
-export function fetchEnglandHolidaySyncs(signal?: AbortSignal, limit = 20): Promise<{
+export function fetchEnglandHolidaySyncs(
+  signal?: AbortSignal,
+  limit = 20,
+  options: { skipCache?: boolean } = {},
+): Promise<{
   status: EnglandHolidaySyncStatus;
   results: EnglandHolidaySync[];
 }> {
   return fetchJson(`/curriculum/england-holidays/syncs/?limit=${encodeURIComponent(String(limit))}`, {
     signal,
-    skipCache: true,
+    skipCache: options.skipCache,
+    revalidate: !options.skipCache,
   });
 }
 

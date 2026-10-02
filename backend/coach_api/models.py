@@ -288,6 +288,73 @@ class CoachAbsenceReport(models.Model):
         return f"{self.learner_name}: {self.session_title} ({self.status})"
 
 
+class CoachManualAttendance(models.Model):
+    STATUS_PRESENT = "present"
+    STATUS_ABSENT = "absent"
+    STATUS_CHOICES = [(STATUS_PRESENT, "Present"), (STATUS_ABSENT, "Absent")]
+
+    owner_email = models.EmailField(max_length=255, db_index=True)
+    learner_id = models.IntegerField(db_index=True)
+    enrolment_id = models.IntegerField(null=True, blank=True)
+    learner_name = models.CharField(max_length=255)
+    learner_email = models.EmailField(max_length=255, blank=True)
+    session_date = models.DateField(db_index=True)
+    module_name = models.CharField(max_length=255)
+    session_title = models.CharField(max_length=255)
+    status = models.CharField(max_length=16, choices=STATUS_CHOICES)
+    created_by = models.EmailField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = _table_name("coach_test_manual_attendance", 'Coach"."coach_manual_attendance')
+        ordering = ["-session_date", "-id"]
+        indexes = [
+            models.Index(fields=["owner_email", "learner_id", "-session_date"], name="coach_manual_att_owner_idx"),
+        ]
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(status__in=["present", "absent"]),
+                name="coach_manual_att_status_valid",
+            ),
+        ]
+
+
+class CoachAttendanceSourceAdjustment(models.Model):
+    """Coach correction for one learner's source attendance row.
+
+    The scheduled occurrence and its Teams evidence remain intact for every
+    other learner; this row is the authoritative per-learner correction read by
+    both the learner and coach registers.
+    """
+
+    owner_email = models.EmailField(max_length=255)
+    learner_id = models.IntegerField(db_index=True)
+    source = models.CharField(max_length=40)
+    source_id = models.CharField(max_length=255)
+    session_date = models.DateField(null=True, blank=True)
+    module_name = models.CharField(max_length=255, blank=True)
+    session_title = models.CharField(max_length=255, blank=True)
+    status = models.CharField(max_length=16, choices=CoachManualAttendance.STATUS_CHOICES, blank=True)
+    is_deleted = models.BooleanField(default=False)
+    updated_by = models.EmailField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = _table_name("coach_test_attendance_adjustment", 'Coach"."coach_attendance_adjustment')
+        constraints = [
+            models.UniqueConstraint(
+                fields=["learner_id", "source", "source_id"],
+                name="coach_attendance_adjustment_source_uniq",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(status__in=["", "present", "absent"]),
+                name="coach_attendance_adjustment_status_valid",
+            ),
+        ]
+
+
 class CoachCalendarColorPreference(models.Model):
     """Per-coach timetable colours: one row per category default or per
     single-event override. Never read by the timetable event builders in

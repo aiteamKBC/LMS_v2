@@ -356,6 +356,8 @@ def _summarize_attendance(rows, *, now=None):
     session_history = [
         {
             'id': f"{row.get('session_id', '')}-{row['session_date'].isoformat()}",
+            'source': row.get('source', 'kbc-attendance'),
+            'sourceId': str(row.get('session_id') or ''),
             'date': row['session_date'].isoformat(),
             'title': row.get('session_title', '') or '',
             'sessionType': row.get('session_type', '') or '',

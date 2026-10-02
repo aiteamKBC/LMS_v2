@@ -11,7 +11,7 @@ import { overviewSchedule, overviewHome } from '@/api/learnerOverview';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { LearnerLoadError } from '@/components/feature/LearnerLoadError';
 import { learnerHref } from '@/lib/learnerRoutes';
-import { homeActions, greeting, upcomingEvents } from './homeData';
+import { homeActions, greeting, upcomingEvents, withLearner } from './homeData';
 import { ReferenceIcon } from './ReferenceIcon';
 import { ProgressCard } from './ProgressCard';
 import { ShieldAction, ShieldCrest } from './ShieldArtwork';
@@ -19,7 +19,7 @@ import { ContinueLearning } from './ContinueLearning';
 import { StudentHomeHeader } from './StudentHomeHeader';
 import styles from './studentHome.module.css';
 
-function LearningShield({ dashboardHref, children }: { dashboardHref: string; children: ReactNode }) {
+function LearningShield({ link, children }: { link: (href: string) => string; children: ReactNode }) {
   return <section className={styles.shield} aria-label="Learning actions">
     <svg className={styles.shieldShape} viewBox="0 0 1000 1270" aria-hidden="true">
       <defs>
@@ -32,7 +32,7 @@ function LearningShield({ dashboardHref, children }: { dashboardHref: string; ch
     </svg>
     <ShieldCrest/>
     {homeActions.map((action, index) => <ShieldAction
-      key={action.title} index={index} href={action.icon === 'chart' ? dashboardHref : action.href} label={action.title}>
+      key={action.title} index={index} href={link(action.href)} label={action.title}>
       <ReferenceIcon name={action.icon} className={styles.actionIcon}/><strong>{index === 2
         ? <>Attend or<br/>Report Absence</> : index === 3
           ? <>Book for Monthly<br/>Coaching Session</> : action.title}</strong>
@@ -74,7 +74,11 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
   const now = new Date();
   const account = auth.account!;
   const homeHref = preview && kind && id ? `/workspace/learner/${kind}/${id}` : '/workspace/learner';
-  const dashboardHref = learnerHref('dashboard', kind, id);
+  // A staff preview names the learner in every link, so the workspace sidebar
+  // keeps routing to that learner. A learner's own links stay bare: their
+  // pages resolve them from the session, and the address bar shows no ids.
+  const dashboardHref = preview ? learnerHref('dashboard', kind, id) : learnerHref('dashboard');
+  const link = (href: string) => (preview ? withLearner(href, kind, id) : href);
   const profile = useLearnerSummaryParam(kind, id);
   const ready = !!profile.real && !profile.loadError;
   // The landing page remains the entry at every programme stage. Existing
@@ -102,23 +106,25 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
   if (beforeActive) return <Navigate to={beforeActive} replace />;
   const name = profile.real.name?.trim() || (!preview && account.displayName?.trim()) || 'Learner';
   const firstName = name.split(/\s+/)[0];
-  const events = upcomingEvents(schedule.error ? null : schedule.data, week.error ? null : week.data, now);
+  const events = upcomingEvents(schedule.error ? null : schedule.data, week.error ? null : week.data, now)
+    .map(event => ({ ...event, href: link(event.href) }));
   return <div className={styles.home}>
     <a href="#student-main" className={styles.skip}>Skip to main content</a>
     <StudentHomeHeader key={`${account.id}:${kind}:${id}`} name={name} homeHref={homeHref}
       identity={`${account.id}:${kind}:${id}`} events={events} loading={schedule.loading || week.loading}
-      error={!!schedule.error || !!week.error} onRetry={() => { schedule.refresh(); week.refresh(); }}/>
+      error={!!schedule.error || !!week.error} onRetry={() => { schedule.refresh(); week.refresh(); }}
+      supportHref={link('/learner/monthly-coaching')}/>
     <main id="student-main" className={styles.scene}>
       <section className={styles.hero} aria-labelledby="welcome-heading"><p>{greeting(now)}</p>
         <h1 id="welcome-heading">{firstName} <span aria-hidden="true">👋</span></h1>
         <h2>Welcome to Kent Business College</h2><p className={styles.intro}>Your learning journey, your goals, our support.<br/>Let’s make progress together.</p>
       </section>
       <blockquote className={styles.quote}><p>“A brighter future<br/>belongs to those who keep learning.”</p><cite>KENT BUSINESS COLLEGE</cite></blockquote>
-      <LearningShield dashboardHref={dashboardHref}>
-        <ContinueLearning kind={kind} learnerId={id} enabled={loadCards} week={week.data}
+      <LearningShield link={link}>
+        <ContinueLearning kind={kind} learnerId={id} enabled={loadCards} week={week.data} linkIdentity={preview}
           loading={week.loading} error={week.error} onRetry={week.refresh}/>
       </LearningShield>
-      <ProgressCard data={week.data?.homeProgress} loading={week.loading} error={week.error} refresh={week.refresh} dashboardHref={dashboardHref}/>
+      <ProgressCard data={week.data?.homeProgress} loading={week.loading} error={week.error} refresh={week.refresh} dashboardHref={dashboardHref} link={link}/>
       <div className={styles.kent} aria-hidden="true"><span>Kent</span><p>Always a step ahead</p></div>
       <div className={styles.sideActions}>
         <a className={styles.safeguarding} href={import.meta.env.VITE_SAFEGUARDING_URL || (import.meta.env.DEV ? 'http://127.0.0.1:5173/' : 'https://safeguarding.kentbusinesscollege.net/')}>
@@ -127,7 +133,7 @@ function LearnerHome({ kind, id, preview = false }: { kind?: LearnerKind; id?: s
         <div className={styles.location}><p><MapPin aria-hidden="true"/>Canterbury, Kent</p><em>“History inspires progress.”</em></div>
       </div>
       <aside className={`${styles.card} ${styles.upcoming}`} aria-labelledby="home-upcoming-heading">
-        <div className={styles.cardHeading}><h2 id="home-upcoming-heading"><CalendarCheck2 aria-hidden="true"/>Upcoming</h2><Link to="/learner/calendar" aria-label="View all upcoming events">View all</Link></div>
+        <div className={styles.cardHeading}><h2 id="home-upcoming-heading"><CalendarCheck2 aria-hidden="true"/>Upcoming</h2><Link to={link('/learner/calendar')} aria-label="View all upcoming events">View all</Link></div>
         <ul>{events.map(event => {
           const source = event.kind === 'assignment' ? week : schedule;
           const detail = !event.date && source.loading ? 'Loading upcoming activity…'

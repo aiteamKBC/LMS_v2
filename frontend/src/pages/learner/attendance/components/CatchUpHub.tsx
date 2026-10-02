@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { CATCH_UP_QUEUE } from '@/mocks/attendance';
+import { AnimatedProgressCircle } from '@/components/ui/AnimatedProgressCircle';
 
 type TabKey = 'outstanding' | 'completed';
 
@@ -151,7 +152,7 @@ export default function CatchUpHub({ onStartCatchUp }: CatchUpHubProps) {
                       <div className="relative w-10 h-10 flex items-center justify-center">
                         <svg width="40" height="40" viewBox="0 0 40 40" className="-rotate-90">
                           <circle cx="20" cy="20" r="16" fill="none" stroke="oklch(var(--background-200))" strokeWidth="3" />
-                          <circle cx="20" cy="20" r="16" fill="none"
+                          <AnimatedProgressCircle cx="20" cy="20" r="16" fill="none"
                             stroke={item.progress === 100 ? 'oklch(var(--accent-400))' : item.progress >= 50 ? 'var(--learner-warning, #f59e0b)' : 'var(--learner-danger, #ef4444)'}
                             strokeWidth="3" strokeLinecap="round"
                             strokeDasharray={2 * Math.PI * 16}

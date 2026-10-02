@@ -501,6 +501,15 @@ body .dashboard-theme[data-workspace-role="learner"] [aria-busy="true"] .kbc-ske
   background: #4f2d7f;
 }
 
+html[data-theme="dark"] .kbc-learner-route-skeleton-sidebar {
+  background: #111f32;
+}
+
+html[data-theme="dark"] .kbc-learner-route-skeleton-header {
+  background: #162740;
+  border-bottom: 1px solid #3b526c;
+}
+
 .kbc-learner-route-skeleton-sidebar .kbc-skeleton,
 .kbc-learner-route-skeleton-header .kbc-skeleton {
   background: rgb(255 255 255 / 0.18);
@@ -802,4 +811,31 @@ html[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] .wo
 
 html[data-theme="dark"] body .dashboard-theme[data-workspace-role="learner"] .workspace-breadcrumb-step.is-current {
   background: #4a3e66 !important;
+}
+
+@property --kbc-ring-progress {
+  syntax: '<percentage>';
+  inherits: false;
+  initial-value: 0%;
+}
+
+@property --kbc-ring-submitted {
+  syntax: '<percentage>';
+  inherits: false;
+  initial-value: 0%;
+}
+
+.kbc-animated-conic-ring {
+  --kbc-ring-progress: var(--kbc-ring-target, 0%);
+  --kbc-ring-submitted: var(--kbc-ring-submitted-target, 0%);
+  animation: kbc-ring-reveal 900ms cubic-bezier(.22, 1, .36, 1) both;
+}
+
+@keyframes kbc-ring-reveal {
+  from { --kbc-ring-progress: 0%; --kbc-ring-submitted: 0%; }
+  to { --kbc-ring-progress: var(--kbc-ring-target, 0%); --kbc-ring-submitted: var(--kbc-ring-submitted-target, 0%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kbc-animated-conic-ring { animation: none; }
 }
