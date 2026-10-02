@@ -57,6 +57,7 @@ function LearnerRowSkeleton() {
           </span>
         </div>
       </td>
+      <td><SkeletonBlock className="h-5 w-16 rounded-md" /></td>
       {Array.from({ length: 4 }).map((_, index) => <td key={index} className={styles.progressCell}><ProgressSkeleton /></td>)}
       <td>
         <div className="space-y-2">
@@ -114,7 +115,7 @@ export function CaseloadLoading({ rows = 12 }: { rows?: number }) {
           <caption className="sr-only">Learners are loading</caption>
           <thead>
             <tr className={styles.primaryHead}>
-              <th rowSpan={2}>Learner</th><th colSpan={4}>Progress</th><th rowSpan={2}>Last Activity</th>
+              <th rowSpan={2}>Learner</th><th rowSpan={2}>Status</th><th colSpan={4}>Progress</th><th rowSpan={2}>Last Activity</th>
               <th rowSpan={2}>Last PR</th><th rowSpan={2}>Last MCM</th><th rowSpan={2}>Actions</th>
             </tr>
             <tr className={styles.progressHead}><th>OTJH</th><th>KSBs</th><th>Activities</th><th>Attendance</th></tr>

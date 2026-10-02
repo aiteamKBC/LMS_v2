@@ -9931,7 +9931,15 @@ def collect_generated_timetable(
                 owner_email,
                 owner_name,
                 start_date=start_date,
+                # When the caller asks for an explicit date window, that window
+                # is the intended bound -- the extra "drop anything before
+                # today" guard (collect_live_session_events' default) would
+                # silently hide in-window sessions already delivered earlier in
+                # the requested range (e.g. the all-coaches week grid on a
+                # Wednesday losing Monday's live session). The windowless
+                # timetable keeps its forward-looking default.
                 end_date=end_date,
+                include_past=bool(start_date or end_date),
             )
         except Exception as exc:
             logger.warning("Could not collect live session events for %s: %s", owner_email, exc)
@@ -13965,6 +13973,38 @@ def _imported_review_field(field, *, section_id, index):
     }
 
 
+# Intended step order of an imported Aptem Monthly Coaching Meeting, matched
+# by title prefix (casefolded). Aptem's exported ``section_order`` puts
+# "Previous Meeting Summary" last and, for some records, runs the whole form
+# backwards; the LMS MCM form (pages/shared/monthlyCoachingForm.ts and the
+# seeded Curriculum template) opens with the previous meeting's summary and
+# then walks the agenda. Sections not listed keep their Aptem relative order
+# after the known ones.
+_IMPORTED_MCM_SECTION_ORDER = (
+    "learner information",
+    "previous meeting summary",
+    "opening the meeting",
+    "learner presentation",
+    "reflection on knowledge",
+    "preparing for next month",
+    "learning resources",
+    "wellbeing",
+    "learner feedback",
+    "additional comments",
+    "confirm next meeting",
+    "meeting details",
+    "meeting summary",
+)
+
+
+def _imported_mcm_section_rank(title: str) -> int | None:
+    normalized = " ".join(clean_text(title).casefold().split())
+    for rank, prefix in enumerate(_IMPORTED_MCM_SECTION_ORDER):
+        if normalized.startswith(prefix):
+            return rank
+    return None
+
+
 def _imported_review_has_usable_form(review: dict, *, has_normalized_sections: bool = False) -> bool:
     """Return whether an import contains a real form rather than metadata only."""
     if has_normalized_sections:
@@ -14187,6 +14227,10 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
         else None
     )
     saved_answers = saved_instance.answers if saved_instance and isinstance(saved_instance.answers, dict) else {}
+    review_type = clean_text(review.get("type"))
+    monthly_types = {clean_text(value).casefold() for value in REVIEW_TYPES["monthly-coaching"]}
+    review_type_code = "aptem_mcm" if review_type.casefold() in monthly_types else "aptem_progress_review"
+    is_mcm = review_type_code == "aptem_mcm"
 
     adapted_sections = []
     for section_index, section in enumerate((review.get("sections") or []) if form_available else []):
@@ -14216,11 +14260,16 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
                 "yesFields": [],
                 "noFields": [],
             })
+        section_title = clean_text(section.get("name")) or "Review section"
         raw_text = clean_text(section.get("rawText"))
-        if raw_text:
+        # An Aptem MCM section's raw text is the verbatim text dump of the same
+        # label/value pairs already shown as its questions; repeating it as a
+        # display card duplicated every answer. Keep it only when it is the
+        # section's sole content, labelled with the section it belongs to.
+        if raw_text and not (is_mcm and fields):
             fields.append({
                 "id": f"aptem-text:{section_id}",
-                "title": "Imported text",
+                "title": section_title,
                 "fieldType": "title_description",
                 "required": False,
                 "displayOrder": len(fields),
@@ -14235,17 +14284,27 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
                 field["answer"] = saved_answers[field["id"]]
         adapted_sections.append({
             "id": f"aptem-section:{section_id}",
-            "title": clean_text(section.get("name")) or "Review section",
+            "title": section_title,
             "estimatedMinutes": 0,
             "displayOrder": section.get("order") if section.get("order") is not None else section_index,
             "enabled": True,
             "fields": fields,
         })
 
+    if is_mcm and adapted_sections:
+        def _mcm_sort_key(item):
+            index, section = item
+            rank = _imported_mcm_section_rank(section["title"])
+            unknown = len(_IMPORTED_MCM_SECTION_ORDER)
+            return (unknown if rank is None else rank, section["displayOrder"], index)
+
+        adapted_sections = [
+            section for _index, section in sorted(enumerate(adapted_sections), key=_mcm_sort_key)
+        ]
+        for display_order, section in enumerate(adapted_sections):
+            section["displayOrder"] = display_order
+
     target_date = review.get("plannedDate") or review.get("completedDate") or ""
-    review_type = clean_text(review.get("type"))
-    monthly_types = {clean_text(value).casefold() for value in REVIEW_TYPES["monthly-coaching"]}
-    review_type_code = "aptem_mcm" if review_type.casefold() in monthly_types else "aptem_progress_review"
     progress_snapshot = (
         _imported_review_progress_snapshot(learner, review, calculated_by=owner_email)
         if review_type_code == "aptem_progress_review"
