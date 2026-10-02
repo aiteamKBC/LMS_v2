@@ -543,12 +543,15 @@ class AptemEventVerificationTests(SimpleTestCase):
             "/coach_api/coach/reviews/imported-review%3AR-SUMMARY",
             {"viewAsCoach": "selected-coach@example.invalid"},
         )
+        # The test bypasses coach_access_required, which normally sets this.
+        request.coach_view_as = True
 
         response = unwrap(views.coach_review_instance_detail)(request, "imported-review:R-SUMMARY")
 
         self.assertEqual(response.status_code, 200)
         imported_definition.assert_called_once_with(
             "selected-coach@example.invalid", "imported-review:R-SUMMARY",
+            preview_only=True,
         )
 
     @patch("coach_api.views.authenticated_coach_email", return_value="coach@example.invalid")

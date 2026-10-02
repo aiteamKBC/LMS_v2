@@ -137,6 +137,165 @@ class MigratedDefinitionTests(SimpleTestCase):
         self.assertIsNone(views._imported_review_definition("coach@example.invalid", "imported-review:A-7"))
 
 
+class MigratedPreviewTests(SimpleTestCase):
+    """The GET path is exercised with database access disabled by SimpleTestCase."""
+
+    def setUp(self):
+        self.definition_json = candidate_definition(SOURCE)
+        self.profile = SimpleNamespace(
+            id=21, aptem_id=101, _caseload_source=SimpleNamespace(aptem_id=101),
+            programme_id="P-42", programme="Programme", username="Synthetic learner",
+        )
+        self._patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[self.profile])
+        connections = self._patch("coach_api.views.connections")
+        cursor = connections["default"].cursor.return_value.__enter__.return_value
+        columns = ["id", "learner_id", "aptem_review_id", "review_name", "review_type",
+                   "reviewer_name", "learner_name", "planned_scheduled_date", "completed_date",
+                   "status", "review_data", "extraction_status", "last_error"]
+        cursor.description = [(column,) for column in columns]
+        self.cursor = cursor
+        self._set_source_status("Scheduled")
+        self._patch("coach_api.views._sections_by_review", return_value={})
+        self.overlays = self._patch("coach_api.views.ImportedReviewInstance.objects.filter")
+        self.overlays.return_value.first.return_value = None
+        self.templates = self._patch("coach_api.views.MigratedReviewTemplate.objects.filter")
+        self.templates.return_value.first.return_value = SimpleNamespace(
+            name="Approved template", definition_json=self.definition_json,
+        )
+        self._patch("coach_api.views.authenticated_coach_email", return_value="coach@example.invalid")
+        self.view_as = self._patch("coach_api.views.is_coach_view_as", return_value=True)
+
+    def _patch(self, target, **kwargs):
+        patcher = patch(target, **kwargs)
+        mocked = patcher.start()
+        self.addCleanup(patcher.stop)
+        return mocked
+
+    def _set_source_status(self, status):
+        self.cursor.fetchall.return_value = [(
+            407, 21, "A-7", "Monthly Coaching Meeting", "Monthly Coaching Meeting",
+            "Coach", "Synthetic learner", None, None, status,
+            {"sections": []}, "partial", None,
+        )]
+
+    def _get(self):
+        request = RequestFactory().get(
+            "/coach_api/coach/reviews/imported-review%3AA-7",
+            {"viewAsCoach": "coach@example.invalid"},
+        )
+        response = unwrap(views.coach_review_instance_detail)(request, "imported-review:A-7")
+        self.assertEqual(response.status_code, 200)
+        return json.loads(response.content)
+
+    def test_view_as_get_previews_approved_template_without_any_database_write(self):
+        result = self._get()
+        self.assertTrue(result["previewOnly"])
+        self.assertTrue(result["readOnly"])
+        self.assertTrue(result["formAvailable"])
+        self.assertFalse(result["summaryOnly"])
+        self.assertFalse(result["migratedForm"])
+        self.assertFalse(result["canInitialize"])
+        self.assertIsNone(result["localStatus"])
+        self.assertEqual(result["sourceStatus"], "Scheduled")
+        self.assertEqual(result["migratedProgrammeKey"], "id:P-42")
+        self.assertEqual(result["template"]["name"], "Approved template")
+        self.assertEqual(result["sections"][0]["displayOrder"], 0)
+        fields = result["sections"][0]["fields"]
+        self.assertEqual([field["id"] for field in fields[:3]], [
+            "section-0:comment", "section-0:choice", "section-0:check",
+        ])
+        self.assertEqual(fields[0]["fieldType"], "text_multiline")
+        self.assertTrue(fields[0]["required"])
+        self.assertEqual(fields[0]["configuration"]["description"], "Describe progress")
+        self.assertEqual(fields[1]["configuration"]["options"], ["Good", "Needs work"])
+        self.assertEqual(fields[2]["yesFields"][0]["id"], "section-0:check:yes:detail")
+        self.assertTrue(all(field["answer"] is None for field in fields))
+        self.assertNotIn("learner-specific secret", json.dumps(result["sections"]))
+        self.templates.assert_called_once_with(
+            programme_key="id:P-42", review_family="MCM", is_active=True,
+        )
+        self.overlays.return_value.first.assert_called_once()
+        self.assertEqual(self.cursor.execute.call_count, 1)
+        self.assertTrue(self.cursor.execute.call_args.args[0].lstrip().startswith("SELECT"))
+
+    def test_view_as_initialized_review_uses_stored_snapshot_and_answers(self):
+        self.overlays.return_value.first.return_value = SimpleNamespace(
+            learner_id=21, source_review_id=407, template_snapshot=self.definition_json,
+            answers={"section-0:comment": "Saved LMS answer"},
+            status="in-progress", completed_at=None,
+        )
+        result = self._get()
+        self.assertFalse(result["previewOnly"])
+        self.assertTrue(result["migratedForm"])
+        self.assertTrue(result["readOnly"])
+        self.assertEqual(result["localStatus"], "in-progress")
+        self.assertEqual(result["sections"][0]["fields"][0]["answer"], "Saved LMS answer")
+        self.templates.assert_not_called()
+
+    def test_normal_coach_get_still_offers_explicit_initialization(self):
+        self.view_as.return_value = False
+        result = self._get()
+        self.assertFalse(result["previewOnly"])
+        self.assertTrue(result["canInitialize"])
+        self.assertFalse(result["formAvailable"])
+        self.assertTrue(result["summaryOnly"])
+        self.assertEqual(result["sections"], [])
+
+    def test_historical_completed_source_never_uses_future_template(self):
+        self._set_source_status("Completed")
+        result = self._get()
+        self.assertFalse(result["previewOnly"])
+        self.assertFalse(result["canInitialize"])
+        self.assertTrue(result["summaryOnly"])
+        self.assertEqual(result["sections"], [])
+        self.assertEqual(result["pdf"]["source"], "aptem")
+        self.templates.assert_not_called()
+
+    def test_no_approved_template_returns_clear_empty_state(self):
+        self.templates.return_value.first.return_value = None
+        result = self._get()
+        self.assertTrue(result["noApprovedMigratedTemplate"])
+        self.assertFalse(result["previewOnly"])
+        self.assertFalse(result["formAvailable"])
+        self.assertTrue(result["summaryOnly"])
+        self.assertEqual(result["sections"], [])
+
+    def test_invalid_active_template_is_not_shown_as_a_form(self):
+        self.templates.return_value.first.return_value.definition_json = {"sections": []}
+        result = self._get()
+        self.assertTrue(result["migratedPreviewError"])
+        self.assertFalse(result["noApprovedMigratedTemplate"])
+        self.assertFalse(result["previewOnly"])
+        self.assertTrue(result["summaryOnly"])
+        self.assertEqual(result["sections"], [])
+
+    def test_admin_view_as_migrated_writes_are_forbidden_before_view_body(self):
+        account = SimpleNamespace(subject_type="staff", subject_id=1, role="admin")
+        def authenticate(request):
+            request.login_account = account
+            return account
+        self._patch("login.permissions.authenticate_request", side_effect=authenticate)
+        self._patch("login.permissions._accesses_of", return_value=frozenset({"super-admin"}))
+        admin_staff = SimpleNamespace(id=1, email="admin@example.invalid", access="super-admin")
+        self._patch("coach_api.auth.StaffUser.objects.filter").return_value.only.return_value.first.return_value = admin_staff
+        definition = self._patch("coach_api.views._imported_review_definition")
+        for suffix, endpoint in (
+            ("initialize", views.coach_review_instance_initialize),
+            ("local-status", views.coach_review_instance_local_status),
+            ("answers", views.coach_review_instance_answers),
+            ("complete", views.coach_review_instance_complete),
+            ("signatures", views.coach_review_instance_signature),
+        ):
+            with self.subTest(suffix=suffix):
+                request = RequestFactory().post(
+                    f"/coach_api/coach/reviews/imported-review%3AA-7/{suffix}?viewAsCoach=coach@example.invalid",
+                )
+                response = endpoint(request, "imported-review:A-7")
+                self.assertEqual(response.status_code, 403)
+                self.assertEqual(json.loads(response.content)["code"], "coach_view_as_read_only")
+        definition.assert_not_called()
+
+
 class MigratedModelTests(TestCase):
     def test_one_active_assignment_per_programme_family(self):
         first = MigratedReviewTemplate.objects.create(

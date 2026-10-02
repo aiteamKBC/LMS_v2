@@ -164,6 +164,10 @@ export interface ReviewInstanceFormDefinition {
   formAvailable?: boolean;
   summaryOnly?: boolean;
   migratedForm?: boolean;
+  /** Approved template rendered for admin view-as without an LMS overlay. */
+  previewOnly?: boolean;
+  noApprovedMigratedTemplate?: boolean;
+  migratedPreviewError?: boolean;
   canInitialize?: boolean;
   sourceStatus?: string;
   localStatus?: string | null;

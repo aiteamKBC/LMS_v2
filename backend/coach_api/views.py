@@ -14152,11 +14152,12 @@ def _imported_review_progress_snapshot(learner, review: dict, *, calculated_by: 
         return None
 
 
-def _imported_review_definition(owner_email: str, event_key: str) -> dict | None:
+def _imported_review_definition(owner_email: str, event_key: str, *, preview_only=False) -> dict | None:
     """Adapt one owned Aptem review to the native form-definition contract.
 
-    Summary-only imports remain read-only. Imports with a real form can store
-    LMS-local answers without changing the original Aptem data.
+    Summary-only imports remain read-only. An admin view-as may preview an
+    approved template without creating an overlay. Imports with a real form
+    can store LMS-local answers without changing the original Aptem data.
     ``event_key`` is the same stable identity used by the timetable row.
     """
     prefix = "imported-review:"
@@ -14231,15 +14232,30 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
     local_programme_key = migrated_programme_key(
         getattr(learner, "programme_id", None), getattr(learner, "programme", None),
     )
-    can_initialize = bool(
+    eligible_for_template = bool(
         not saved_instance and not historical_completed and not form_available
         and family and local_programme_key and initial_local_status(review.get("status"))
     )
-    if can_initialize:
-        can_initialize = MigratedReviewTemplate.objects.filter(
+    approved_template = None
+    if eligible_for_template:
+        approved_template = MigratedReviewTemplate.objects.filter(
             programme_key=local_programme_key, review_family=family, is_active=True,
-        ).exists()
-    form_available = form_available or migrated_form
+        ).first()
+    can_initialize = bool(eligible_for_template and approved_template and not preview_only)
+    no_approved_template = bool(eligible_for_template and not approved_template)
+    preview_sections = []
+    preview_warnings = []
+    preview_error = False
+    if preview_only and approved_template:
+        try:
+            preview_sections, preview_warnings = render_migrated_sections(
+                approved_template.definition_json, {},
+            )
+        except ValueError:
+            # An invalid active definition must never be presented as a usable form.
+            preview_error = True
+    is_template_preview = bool(preview_sections)
+    form_available = form_available or migrated_form or is_template_preview
     summary_only = not form_available
     saved_answers = (
         saved_instance.answers
@@ -14306,6 +14322,8 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
             adapted_sections, field_warnings = render_migrated_sections(snapshot, saved_answers)
         except ValueError:
             return None
+    elif is_template_preview:
+        adapted_sections, field_warnings = preview_sections, preview_warnings
 
     target_date = review.get("plannedDate") or review.get("completedDate") or ""
     review_type = clean_text(review.get("type"))
@@ -14322,24 +14340,27 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
     }
     instance_status = (
         clean_text(review.get("status")) or CoachCalendarEvent.STATUS_NOT_SCHEDULED
-        if summary_only or historical_completed
+        if summary_only or historical_completed or is_template_preview
         else saved_instance.status if saved_instance else ImportedReviewInstance.STATUS_IN_PROGRESS
     )
     instance_completed_at = (
         review.get("completedDate")
-        if summary_only or historical_completed
+        if summary_only or historical_completed or is_template_preview
         else saved_instance.completed_at.isoformat() if saved_instance and saved_instance.completed_at else None
     )
     definition = {
-        "readOnly": summary_only or historical_completed or (
+        "readOnly": preview_only or summary_only or historical_completed or (
             migrated_form and saved_instance.status not in MIGRATED_EDITABLE_STATUSES
         ),
         "source": "aptem",
         "formAvailable": form_available,
         "summaryOnly": summary_only,
         "migratedForm": migrated_form,
+        "previewOnly": is_template_preview,
+        "noApprovedMigratedTemplate": no_approved_template,
+        "migratedPreviewError": preview_error,
         "canInitialize": can_initialize,
-        "migratedProgrammeKey": local_programme_key if can_initialize or migrated_form else None,
+        "migratedProgrammeKey": local_programme_key if can_initialize or migrated_form or is_template_preview else None,
         "sourceStatus": clean_text(row.get("status")) or review.get("status"),
         "localStatus": saved_instance.status if saved_instance else None,
         "fieldWarnings": field_warnings,
@@ -14348,7 +14369,7 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
             "reviewTemplateId": "",
             "learnerId": profile_id,
             "programmeId": clean_text(getattr(learner, "programme_id", None)),
-            "occurrenceNumber": None if migrated_form or can_initialize else 1,
+            "occurrenceNumber": None if migrated_form or can_initialize or is_template_preview else 1,
             "targetDate": target_date,
             "status": instance_status,
             "startedAt": None,
@@ -14357,6 +14378,7 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
         "template": {
             "id": "",
             "name": (clean_text(snapshot.get("name")) if migrated_form else "")
+                    or (clean_text(approved_template.name) if is_template_preview else "")
                     or clean_text(review.get("name")) or review_type or "Imported review",
             "reviewTypeCode": review_type_code,
             "signatures": {role: False for role in curriculum_review_instances.SIGNATURE_ROLES},
@@ -14615,7 +14637,10 @@ def coach_review_instance_detail(request, instance_id):
     if request.method != "GET":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
     if instance_id.startswith("imported-review:"):
-        definition = _imported_review_definition(authenticated_coach_email(request), instance_id)
+        definition = _imported_review_definition(
+            authenticated_coach_email(request), instance_id,
+            preview_only=is_coach_view_as(request),
+        )
         if not definition:
             return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
         return JsonResponse(definition)
