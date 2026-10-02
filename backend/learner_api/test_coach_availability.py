@@ -53,6 +53,24 @@ class CoachAvailabilityTests(SimpleTestCase):
         self.assertNotIn('08:45', slots)
         self.assertNotIn('16:45', slots)
 
+    def test_catchup_slots_start_at_least_an_hour_from_now(self):
+        from datetime import datetime as real_datetime, timezone as dt_timezone
+        schedule = {'scheduleId': 'coach@example.com', 'availabilityView': '0' * 96,
+                    'workingHours': {'daysOfWeek': ['monday'], 'startTime': '09:00:00',
+                                     'endTime': '12:00:00', 'timeZone': {'name': 'GMT Standard Time'}}}
+        manager = Mock()
+        manager.filter.return_value.exclude.return_value = ()
+
+        class FrozenDatetime(real_datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return real_datetime(2030, 7, 1, 9, 0, tzinfo=dt_timezone.utc)  # 10:00 UK summer time
+
+        with patch('coach_api.views.microsoft_graph_request', return_value={'value': [schedule]}),              patch('coach_api.models.CoachCalendarEvent.objects', manager),              patch('learner_api.booking_calendar.booking_date_restriction', return_value=None),              patch('learner_api.coach_availability.datetime', FrozenDatetime):
+            slots = free_slots('coach@example.com', date(2030, 7, 1), -60, duration=30, uk_working_hours=True)
+        self.assertEqual(slots[0], '11:15')
+        self.assertNotIn('11:00', slots)
+
     def test_unavailable_or_incomplete_calendar_is_not_treated_as_free(self):
         with self.assertRaises(AvailabilityUnavailable):
             self.read(error=True)

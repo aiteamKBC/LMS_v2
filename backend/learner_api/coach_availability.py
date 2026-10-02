@@ -23,6 +23,9 @@ def working_zone(name):
 
 # Catch-ups are held in the UK working day: start from 09:00 and finish by 17:00.
 CATCHUP_WORKING_HOURS = (time(9, 0), time(17, 0))
+# ...and are booked at least an hour ahead, leaving time for the Teams meeting
+# to be created and for the coach to see it.
+CATCHUP_MIN_LEAD_MINUTES = 60
 
 
 def uk_offset_minutes(day):
@@ -87,6 +90,7 @@ def free_slots(owner_email, day, offset, *, exclude_event_key='', duration=60, u
         at = datetime.combine(record.scheduled_date, record.scheduled_time, ZoneInfo('Europe/London'))
         busy.append((at, at + timedelta(minutes=record.duration_minutes or 60)))
     now = datetime.now(timezone.utc)
+    earliest = now + timedelta(minutes=CATCHUP_MIN_LEAD_MINUTES) if uk_working_hours else now
     slots = []
     # The meeting occupies whole 15-minute blocks of the free/busy view.
     blocks = max(1, -(-int(duration) // 15))
@@ -95,7 +99,7 @@ def free_slots(owner_email, day, offset, *, exclude_event_key='', duration=60, u
         until = at + timedelta(minutes=int(duration))
         local = at.astimezone(zone)
         finish = until.astimezone(zone)
-        if at <= now or any(v != '0' for v in view[index:index + blocks]):
+        if at <= earliest or any(v != '0' for v in view[index:index + blocks]):
             continue
         if local.strftime('%A').lower() not in days or local.date() != finish.date():
             continue
