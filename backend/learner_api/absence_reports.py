@@ -391,6 +391,9 @@ def learner_absence_reports(request, kind, learner_id):
     evidence_text = request.POST.get("explanation", "").strip()
     recovery_method = request.POST.get("recoveryMethod", "").strip()
     catchup_event_key = request.POST.get("catchupEventKey", "").strip()
+    # The form books a new catch-up after the report is saved, linking it in that
+    # same booking request; until then the report has no catch-up to hold.
+    catchup_pending = request.POST.get("catchupPending") == "1" and not catchup_event_key
     target_occurrence_id = request.POST.get("targetOccurrenceId", "").strip()
     recording_date_text = request.POST.get("recordingDate", "").strip()
     recording_time_text = request.POST.get("recordingTime", "").strip()
@@ -406,7 +409,7 @@ def learner_absence_reports(request, kind, learner_id):
         return _error('Report the meeting absence, then reschedule the meeting with your coach.')
     if not meeting_absence and recovery_method not in {'recorded', 'catch-up', ALTERNATIVE_METHOD}:
         return _error('Choose another cohort session, a coach catch-up, or the recording.')
-    if recovery_method == 'catch-up' and (not catchup_event_key or len(catchup_event_key) > 255):
+    if recovery_method == 'catch-up' and not catchup_pending and (not catchup_event_key or len(catchup_event_key) > 255):
         return _error('Book or select a catch-up session before submitting your absence report.')
     if recovery_method == 'recorded' and catchup_event_key:
         return _error('A recording recovery plan cannot include a catch-up booking.')
@@ -494,7 +497,7 @@ def learner_absence_reports(request, kind, learner_id):
             return _error('That alternative session is no longer eligible. Choose another option.', 409)
         catchup_event_key = alternative_event_key(target_occurrence_id)
     catchup_booking = None
-    if recovery_method == 'catch-up':
+    if recovery_method == 'catch-up' and not catchup_pending:
         try:
             catchup_booking = _catchup_booking(learner, active, catchup_event_key, parsed_date)
         except RecoveryPlanError as exc:
@@ -532,7 +535,7 @@ def learner_absence_reports(request, kind, learner_id):
 
     try:
         with transaction.atomic():
-            if recovery_method == 'catch-up':
+            if recovery_method == 'catch-up' and not catchup_pending:
                 catchup_booking = _catchup_booking(
                     learner, active, catchup_event_key, parsed_date, lock=True,
                 )
@@ -577,7 +580,8 @@ def learner_absence_reports(request, kind, learner_id):
                     source_learner_id=learner_id,
                     learner_email=learner_email,
                     learner_name=learner_name,
-                    recovery_method=recovery_method,
+                    # No catch-up yet: the booking that follows records it (link_report_to_catchup).
+                    recovery_method='' if catchup_pending else recovery_method,
                     recovery_reference=catchup_event_key or '',
                 )
             if recovery_method == 'recorded':
@@ -620,6 +624,8 @@ def learner_absence_reports(request, kind, learner_id):
     recovery_details = ""
     if recovery_method == 'recorded':
         recovery_details = f"{recording_date.isoformat()} at {recording_time.strftime('%H:%M')}"
+    elif recovery_method == 'catch-up' and catchup_pending:
+        recovery_details = "Catch-up being booked by the learner"
     elif recovery_method == 'catch-up':
         recovery_details = (
             f"{catchup_booking.scheduled_date.isoformat()} at "

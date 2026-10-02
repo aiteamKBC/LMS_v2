@@ -1294,6 +1294,40 @@ def _serialize_live_session_event(event):
     }
 
 
+def _catchup_link_precheck(learner_id, report_id, scheduled_date):
+    """Refuse, before booking, a catch-up the absence report could not take."""
+    from .absence_reports import RecoveryPlanError
+    from .session_recovery import ReportNotFound, check_report_can_take_catchup
+    try:
+        report = check_report_can_take_catchup(learner_id, report_id)
+    except ReportNotFound:
+        return _error("Absence report not found.", 404)
+    except RecoveryPlanError as exc:
+        return _error(str(exc), 409)
+    if report.session_date and scheduled_date < report.session_date:
+        return _error("Choose a catch-up on or after the lecture date.", 400)
+    return None
+
+
+def _link_booked_catchup(record, learner, mirror, learner_id, report_id):
+    """Link the new booking to the absence; if that fails, cancel the booking again."""
+    from .absence_reports import RecoveryPlanError
+    from .session_recovery import ReportNotFound, link_report_to_catchup
+    try:
+        link_report_to_catchup(learner, mirror, learner_id, report_id, record.event_key)
+        return None
+    except (ReportNotFound, RecoveryPlanError, DatabaseError) as exc:
+        message = str(exc) if isinstance(exc, RecoveryPlanError) else "The catch-up could not be linked to your absence."
+        logger.warning("learner_calendar_book: linking %s to report %s failed: %s", record.event_key, report_id, exc)
+    try:
+        from coach_api.views import cancel_reserved_calendar_event
+        cancel_reserved_calendar_event(record)
+    except Exception:
+        logger.exception("learner_calendar_book: could not cancel unlinked catch-up %s", record.event_key)
+        return _error(f"{message} The booking was kept; please link or cancel it from your calendar.", 409)
+    return _error(f"{message} The booking was cancelled. Please choose another time.", 409)
+
+
 def _annotate_linked_catchups(events):
     """``linkedReportId``: the absence report a catch-up already makes up (one lecture per catch-up)."""
     from coach_api.models import CoachAbsenceReport
@@ -1606,6 +1640,18 @@ def learner_calendar_book(request, kind, pk):
         busy_error = _catchup_time_error(owner_email, scheduled_date, scheduled_time, duration_minutes)
         if busy_error:
             return busy_error
+    # Booking a catch-up for a reported absence links it in the same request, and
+    # the link is checked before anything is booked, so a refused link never
+    # leaves a stray booking (and its invitation) behind.
+    link_report_id = None
+    if session_type == "catch-up" and payload.get("absenceReportId") not in (None, ""):
+        try:
+            link_report_id = int(payload.get("absenceReportId"))
+        except (TypeError, ValueError):
+            return _error("absenceReportId must be a number.", 400)
+        link_error = _catchup_link_precheck(pk, link_report_id, scheduled_date)
+        if link_error:
+            return link_error
 
     notes = _s(payload.get("notes"))[:500]
     # An onboarding learner has no mirror row yet, so fall back to the source.
@@ -1946,8 +1992,13 @@ def learner_calendar_book(request, kind, pk):
             replay, warning, _attempted = synchronize_reserved_calendar_event(
                 replay.pk, build_booked_calendar_event(replay)
             )
+            if link_report_id is not None:
+                link_error = _link_booked_catchup(replay, learner, mirror, pk, link_report_id)
+                if link_error:
+                    return link_error
             return JsonResponse(
-                {"event": _serialize_event(replay), "warning": _friendly_sync_warning(warning)},
+                {"event": _serialize_event(replay), "warning": _friendly_sync_warning(warning),
+                 **({"linkedReportId": link_report_id} if link_report_id is not None else {})},
                 status=200,
             )
 
@@ -2024,8 +2075,13 @@ def learner_calendar_book(request, kind, pk):
     # scheduling reads, and the enrolment header states it.
     _follow_first_session_start_date(kind, pk, record, scheduled_date)
 
+    if link_report_id is not None:
+        link_error = _link_booked_catchup(record, learner, mirror, pk, link_report_id)
+        if link_error:
+            return link_error
     return JsonResponse(
-        {"event": _serialize_event(record), "warning": _friendly_sync_warning(warning)},
+        {"event": _serialize_event(record), "warning": _friendly_sync_warning(warning),
+         **({"linkedReportId": link_report_id} if link_report_id is not None else {})},
         status=201 if created else 200,
     )
 

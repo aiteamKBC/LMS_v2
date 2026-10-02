@@ -271,8 +271,10 @@ class LinkedCatchupLedgerTests(SimpleTestCase):
 
     def test_link_catchup_updates_the_absence_ledger(self):
         from . import session_recovery
+        # link_catchup and catch-up booking share link_report_to_catchup.
+        self.assertIn('link_report_to_catchup(', inspect.getsource(session_recovery.link_catchup))
         self.assertIn('_record_linked_catchup(learner_id, report.attendance_id, event_key)',
-                      inspect.getsource(session_recovery.link_catchup))
+                      inspect.getsource(session_recovery.link_report_to_catchup))
 
     def test_linking_a_catchup_approves_the_report_without_coach_approval(self):
         from unittest.mock import MagicMock

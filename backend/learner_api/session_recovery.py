@@ -90,8 +90,7 @@ def refresh_catchup_attendance(event_key):
 @csrf_protect
 @learner_self_or_admin(kwarg='learner_id')
 def link_catchup(request, kind, learner_id):
-    from coach_api.models import CoachAbsenceReport, CoachCalendarEvent
-    from .absence_reports import _source_learner, _catchup_booking, RecoveryPlanError
+    from .absence_reports import _source_learner, RecoveryPlanError
     from .models import LearnerProfile
     try:
         payload = json.loads(request.body)
@@ -105,29 +104,55 @@ def link_catchup(request, kind, learner_id):
     if not learner:
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     try:
-        with transaction.atomic():
-            report = CoachAbsenceReport.objects.select_for_update().filter(pk=report_id, learner_id=learner_id).first()
-            if not report or report.status == 'declined':
-                return JsonResponse({'error': 'Absence report not found.'}, status=404)
-            # A completed catch-up the learner missed can be replaced by a new booking.
-            from .catchup_outcomes import learner_attended_catchup
-            if (report.catchup_event_key
-                    and CoachCalendarEvent.objects.filter(event_key=report.catchup_event_key, status='completed').exists()
-                    and learner_attended_catchup(report.catchup_event_key)):
-                return JsonResponse({'error': 'A completed catch-up cannot be replaced.'}, status=409)
-            mirror = LearnerProfile.objects.filter(enrolment_id=learner_id).first()
-            _catchup_booking(learner, mirror, event_key, report.session_date, lock=True, for_report_id=report.pk)
-            report.catchup_event_key = event_key
-            report.recovery_method = 'catch-up'
-            # A learner's recovery choice needs no coach approval, as when reporting.
-            report.status = CoachAbsenceReport.STATUS_APPROVED
-            report.save(update_fields=['catchup_event_key', 'recovery_method', 'status', 'updated_at'])
-            _record_linked_catchup(learner_id, report.attendance_id, event_key)
-        return JsonResponse({'saved': True, 'message': 'Catch-up linked. The absence is made up once your coach confirms the catch-up is completed.'})
+        mirror = LearnerProfile.objects.filter(enrolment_id=learner_id).first()
+        link_report_to_catchup(learner, mirror, learner_id, report_id, event_key)
+        return JsonResponse({'saved': True, 'message': LINKED_MESSAGE})
+    except ReportNotFound:
+        return JsonResponse({'error': 'Absence report not found.'}, status=404)
     except RecoveryPlanError as error:
         return JsonResponse({'error': str(error)}, status=409)
     except DatabaseError:
         return JsonResponse({'error': 'Catch-up could not be linked. Please retry.'}, status=503)
+
+
+LINKED_MESSAGE = 'Catch-up linked. The absence is made up once your coach confirms the catch-up is completed.'
+
+
+class ReportNotFound(Exception):
+    pass
+
+
+def check_report_can_take_catchup(learner_id, report_id, *, lock=False):
+    """The learner's live absence report a catch-up may (re)make up, or raise."""
+    from coach_api.models import CoachAbsenceReport, CoachCalendarEvent
+    from .absence_reports import RecoveryPlanError
+    from .catchup_outcomes import learner_attended_catchup
+    query = CoachAbsenceReport.objects.select_for_update() if lock else CoachAbsenceReport.objects
+    report = query.filter(pk=report_id, learner_id=learner_id).first()
+    if not report or report.status == 'declined':
+        raise ReportNotFound()
+    # A completed catch-up the learner missed can be replaced by a new booking.
+    if (report.catchup_event_key
+            and CoachCalendarEvent.objects.filter(event_key=report.catchup_event_key, status='completed').exists()
+            and learner_attended_catchup(report.catchup_event_key)):
+        raise RecoveryPlanError('A completed catch-up cannot be replaced.')
+    return report
+
+
+def link_report_to_catchup(learner, mirror, learner_id, report_id, event_key):
+    """Make ``event_key`` the catch-up that recovers this absence report (one transaction)."""
+    from coach_api.models import CoachAbsenceReport
+    from .absence_reports import _catchup_booking
+    with transaction.atomic():
+        report = check_report_can_take_catchup(learner_id, report_id, lock=True)
+        _catchup_booking(learner, mirror, event_key, report.session_date, lock=True, for_report_id=report.pk)
+        report.catchup_event_key = event_key
+        report.recovery_method = 'catch-up'
+        # A learner's recovery choice needs no coach approval, as when reporting.
+        report.status = CoachAbsenceReport.STATUS_APPROVED
+        report.save(update_fields=['catchup_event_key', 'recovery_method', 'status', 'updated_at'])
+        _record_linked_catchup(learner_id, report.attendance_id, event_key)
+    return report
 
 
 def _record_linked_catchup(learner_id, attendance_id, event_key):

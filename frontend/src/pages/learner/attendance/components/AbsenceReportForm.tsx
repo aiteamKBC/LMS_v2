@@ -96,6 +96,7 @@ export default function AbsenceReportForm({
   // The catch-up time is booked by the submit button itself ("Book catch-up & submit").
   const bookCatchup = useRef<CatchupBookAction | null>(null);
   const [catchupDraftReady, setCatchupDraftReady] = useState(false);
+  const [catchupLinkError, setCatchupLinkError] = useState('');
   const [confirmed, setConfirmed] = useState(false);
   const selectedBooking = catchupBooking?.sessionId === sessionId ? catchupBooking.event : null;
   const recoveryApproved = Boolean(submittedReport?.recoveryMethod)
@@ -214,13 +215,15 @@ export default function AbsenceReportForm({
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
-  const submitReport = async (bookingOverride?: LearnerCalendarEvent): Promise<boolean> => {
+  // Saves the report. `catchupPending` saves a catch-up report whose new booking
+  // is made right after, linked to this report by the server in that same request.
+  const saveReport = async (bookingOverride?: LearnerCalendarEvent, catchupPending = false): Promise<LearnerAbsenceReport | null> => {
     const activeBooking = bookingOverride || selectedBooking;
     const ready = Boolean(sessionId && hasReason && confirmed
       && (scope === 'meetings' || (recoveryMethod === 'recorded' && recordingDate && recordingTime)
-        || (recoveryMethod === 'catch-up' && activeBooking)
+        || (recoveryMethod === 'catch-up' && (activeBooking || catchupPending))
         || (recoveryMethod === 'alternative' && targetOccurrenceId)));
-    if (!ready || !selectedSession || submitting) return false;
+    if (!ready || !selectedSession || submitting) return null;
     setSubmitting(true);
     setRequestError('');
     const payload = new FormData();
@@ -233,6 +236,7 @@ export default function AbsenceReportForm({
     payload.append('explanation', explanation.trim());
     payload.append('recoveryMethod', recoveryMethod);
     if (recoveryMethod === 'catch-up' && activeBooking) payload.append('catchupEventKey', activeBooking.eventKey);
+    if (recoveryMethod === 'catch-up' && !activeBooking && catchupPending) payload.append('catchupPending', '1');
     if (recoveryMethod === 'alternative' && targetOccurrenceId) payload.append('targetOccurrenceId', targetOccurrenceId);
     if (recoveryMethod === 'recorded') {
       const start = new Date(`${selectedSession.dateIso}T${selectedSession.startTime || '00:00'}`);
@@ -244,26 +248,40 @@ export default function AbsenceReportForm({
     }
     if (file) payload.append('evidence', file);
     try {
-      const created = await submitAbsenceReport(myLearner.kind, myLearner.id, payload);
-      setReports((current) => [created, ...current]);
-      setSubmittedReport(created);
-      setSubmitted(true);
-      onSubmitted?.(created);
-      return true;
+      return await submitAbsenceReport(myLearner.kind, myLearner.id, payload);
     } catch (error) {
       setRequestError(error instanceof Error ? error.message : 'Could not submit the absence report.');
-      return false;
+      return null;
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const finishSubmitted = (created: LearnerAbsenceReport) => {
+    setReports((current) => [created, ...current]);
+    setSubmittedReport(created);
+    setSubmitted(true);
+    onSubmitted?.(created);
+  };
+
+  const submitReport = async (bookingOverride?: LearnerCalendarEvent): Promise<boolean> => {
+    const created = await saveReport(bookingOverride);
+    if (created) finishSubmitted(created);
+    return Boolean(created);
   };
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!canSubmit) return;
     if (booksOnSubmit) {
-      const booked = await bookCatchup.current?.();
-      if (booked) await submitReport(booked);
+      // 1) Save the report; 2) book the catch-up linked to it in one server request.
+      // A booking that fails leaves the report without a catch-up, never a stray booking.
+      const created = await saveReport(undefined, true);
+      if (!created) return;
+      const booked = await bookCatchup.current?.(created.id);
+      if (booked) setCatchupBooking({ sessionId, event: booked });
+      else setCatchupLinkError('Your absence report is saved, but the catch-up could not be booked. Use Book Catchup Session on this lecture to choose another time.');
+      finishSubmitted(created);
       return;
     }
     await submitReport();
@@ -336,8 +354,9 @@ export default function AbsenceReportForm({
           <p className="mx-auto mb-5 max-w-lg text-[13px] leading-6 text-foreground-500">
             Your report for <strong className="text-foreground-800">{submittedReport?.sessionTitle}</strong> has been saved{recoveryApproved ? submittedReport?.recoveryMethod === 'alternative' ? ' and your alternative session is ready to join.' : ' and your recovery plan is confirmed.' : ' for your coach to review.'}
           </p>
+          {catchupLinkError && <p role="alert" className="mx-auto mb-5 max-w-lg rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">{catchupLinkError}</p>}
           <div className="mx-auto mb-5 grid max-w-xl gap-3 rounded-xl bg-background-100/70 p-4 text-left sm:grid-cols-2">
-            {submittedReport?.recoveryMethod && <div><p className="text-[10px] uppercase tracking-wide text-foreground-400">Recovery plan</p><p className="text-[13px] font-semibold text-foreground-800">{submittedReport.recoveryMethod === 'recorded' ? 'Watch the recording / confirmed (attendance stays absent)' : submittedReport.recoveryMethod === 'alternative' ? 'Alternative cohort session / confirmed' : 'Coach catch-up booked / confirmed'}</p></div>}
+            {submittedReport?.recoveryMethod && <div><p className="text-[10px] uppercase tracking-wide text-foreground-400">Recovery plan</p><p className="text-[13px] font-semibold text-foreground-800">{submittedReport.recoveryMethod === 'recorded' ? 'Watch the recording / confirmed (attendance stays absent)' : submittedReport.recoveryMethod === 'alternative' ? 'Alternative cohort session / confirmed' : catchupLinkError ? 'Coach catch-up / not booked yet' : 'Coach catch-up booked / confirmed'}</p></div>}
             {recoverySchedule && <div><p className="text-[10px] uppercase tracking-wide text-foreground-400">Recovery time</p><p className="text-[13px] font-semibold text-foreground-800">{recoverySchedule}</p></div>}
             <div><p className="text-[10px] uppercase tracking-wide text-foreground-400">Reference</p><p className="text-[13px] font-semibold text-foreground-800">{submittedReport?.reference}</p></div>
             <div><p className="text-[10px] uppercase tracking-wide text-foreground-400">Current status</p><p className={`text-[13px] font-semibold ${recoveryApproved ? 'text-emerald-600' : 'text-amber-600'}`}>{recoveryApproved ? 'Confirmed' : 'Pending review'}</p></div>

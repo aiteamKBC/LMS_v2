@@ -4,11 +4,12 @@ import type { MissedAttendanceSession } from '@/api/absenceReports';
 import { useMyLearner } from '@/hooks/useMyLearner';
 import styles from '../attendance.module.css';
 
-/** Books the chosen time for a parent that submits the booking with its own button. */
-export type CatchupBookAction = () => Promise<LearnerCalendarEvent | null>;
+/** Books the chosen time for a parent that submits the booking with its own button.
+ * `linkReportId` links the new booking to that absence report in the same server request. */
+export type CatchupBookAction = (linkReportId?: number) => Promise<LearnerCalendarEvent | null>;
 
 export default function CatchupBooking({ lecture, selectedKey, onSelect, onBooked, onBusyChange, disabled = false, standalone = false,
-  bookRef, onDraftChange, reportId }: {
+  bookRef, onDraftChange, reportId, onLinked }: {
   lecture: MissedAttendanceSession;
   selectedKey: string;
   onSelect: (event: LearnerCalendarEvent | null) => void;
@@ -22,6 +23,8 @@ export default function CatchupBooking({ lecture, selectedKey, onSelect, onBooke
   onDraftChange?: (ready: boolean) => void;
   /** The absence report being made up; a catch-up linked to another report is not offered. */
   reportId?: number;
+  /** With `reportId`: a new booking is linked to that report by the server in the same request. */
+  onLinked?: (event: LearnerCalendarEvent) => void;
 }) {
   const learner = useMyLearner();
   const [events, setEvents] = useState<LearnerCalendarEvent[]>([]);
@@ -91,8 +94,11 @@ export default function CatchupBooking({ lecture, selectedKey, onSelect, onBooke
 
   useEffect(() => { onDraftChange?.(draftReady); }, [draftReady, onDraftChange]);
 
-  const book: CatchupBookAction = async () => {
-    if (busy || disabled) return null;
+  const book: CatchupBookAction = async (linkReportId) => {
+    const linkTo = linkReportId ?? (onLinked ? reportId : undefined);
+    // A parent booking for the report it just saved calls this from the same submit,
+    // while its own "saving" state still disables the fields; that call goes ahead.
+    if (busy || (disabled && linkReportId === undefined)) return null;
     setError('');
     setNotice('');
     if (!draftReady) { setError('Choose a date and one of your coach’s available times.'); return null; }
@@ -102,6 +108,7 @@ export default function CatchupBooking({ lecture, selectedKey, onSelect, onBooke
         sessionType: 'catch-up', scheduledDate: date, scheduledTime: time, durationMinutes: Number(duration),
         // Coach bookings are stored in UK time, which is what the available times are listed in.
         timezoneOffsetMinutes: ukOffsetForDate(date),
+        ...(linkTo ? { absenceReportId: linkTo } : {}),
         notes: `Catch-up for lecture: ${lecture.title}\nLecture date: ${lecture.dateIso}`,
       });
       if (!result.event?.eventKey || result.event.source !== 'catch-up'
@@ -109,6 +116,12 @@ export default function CatchupBooking({ lecture, selectedKey, onSelect, onBooke
         || !result.event.scheduledDate || !result.event.scheduledTime) throw new Error('The session was not booked. Please refresh your bookings before retrying.');
       setEvents(current => [...current.filter(event => event.eventKey !== result.event.eventKey), result.event]);
       onSelect(result.event);
+      if (linkTo) {
+        if (result.linkedReportId !== linkTo) throw new Error('The catch-up was not linked to your absence report. Please refresh before retrying.');
+        setNotice('Catch-up session booked and linked to your absence report.');
+        onLinked?.(result.event);
+        return result.event;
+      }
       const reportLinked = onBooked ? await onBooked(result.event) : false;
       setNotice(result.warning || (reportLinked
         ? 'Catch-up session booked and linked to your absence report.'
