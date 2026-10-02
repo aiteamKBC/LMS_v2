@@ -1,6 +1,7 @@
 """Persist the complete seven-step learner reflection for tutor review."""
 
 import json
+import math
 import logging
 import uuid
 from datetime import date
@@ -249,8 +250,25 @@ def _submit_reflection(request):
         quality_score = 0
 
     submission_id = uuid.uuid4()
+    from .assignment_topics import topic_id
+    try:
+        assignment_topic = topic_id(payload.get("assignmentTopicId"))
+    except ValueError as exc:
+        return _error(str(exc))
+    if "assignmentElapsedSeconds" in payload:
+        try:
+            elapsed = float(payload["assignmentElapsedSeconds"])
+            if not math.isfinite(elapsed) or elapsed < 0:
+                raise ValueError()
+            payload["assignmentElapsedSeconds"] = int(elapsed)
+        except (TypeError, ValueError, OverflowError):
+            return _error("assignmentElapsedSeconds must be a non-negative number.")
     full_submission = dict(payload)
+    full_submission.pop("selectAssignmentTopic", None)
     lineage = _reflection_lineage(learner_id, activity_id)
+    if assignment_topic and submission_mode == "draft":
+        # An optional draft must never claim the previous topic\'s progress entry.
+        lineage["progress_entry_id"] = None
     ksb_weights = _dict(payload.get("ksbWeights"))
     if not ksb_weights and lineage.get("component_ref"):
         ksb_weights = _component_ksb_weights(lineage["component_ref"])
@@ -259,6 +277,13 @@ def _submit_reflection(request):
     try:
         with transaction.atomic(using="enrolment"):
             with connections["enrolment"].cursor() as cur:
+                if activity_type == "assignment":
+                    from .assignment_hours import lock_assignment_hours
+                    lock_assignment_hours(cur, learner_kind, learner_id)
+                if assignment_topic:
+                    from .assignment_topics import prepare_topic_save
+                    prepare_topic_save(cur, payload)
+                    full_submission.update({key: payload[key] for key in ("assignmentTopicId", "assignmentTopicName", "assignmentQuestion", "monthlyAssignment") if key in payload})
                 cur.execute(
                     """
                     select status, full_submission, coach_feedback, reviewed_by, reviewed_at, submitted_at
@@ -267,9 +292,10 @@ def _submit_reflection(request):
                       and learner_id = %s
                       and activity_type = %s
                       and activity_id = %s
+                      and assignment_topic_id = %s
                     for update
                     """,
-                    [learner_kind, learner_id, activity_type, activity_id],
+                    [learner_kind, learner_id, activity_type, activity_id, assignment_topic],
                 )
                 existing = cur.fetchone()
                 # Provenance is server-owned. A learner cannot bypass the new
@@ -300,6 +326,11 @@ def _submit_reflection(request):
                         409,
                     )
 
+                if assignment_topic and existing and existing[0] == "partial":
+                    return _error("This topic has already been reviewed and is locked.", 409)
+                if assignment_topic and existing and payload.get("selectAssignmentTopic") is True:
+                    return JsonResponse({"status": existing[0], "assignmentTopicId": assignment_topic})
+
                 if is_assignment_form:
                     preserve_attempts(
                         full_submission, stored,
@@ -309,6 +340,19 @@ def _submit_reflection(request):
                         reviewed_at=existing[4] if existing else None,
                         submitted_at=existing[5] if existing else None,
                     )
+
+                if activity_type == "assignment":
+                    from .assignment_hours import validate_saved_daily_hours
+                    monthly = _dict(payload.get("monthlyAssignment"))
+                    previous_monthly = _dict(stored.get("monthlyAssignment"))
+                    # An omitted field must not release a saved daily claim.
+                    # New forms require dated entries before final submission;
+                    # existing aggregate-only legacy forms retain their data.
+                    if "timeEntries" not in monthly and ("timeEntries" in previous_monthly or not existing or assignment_topic):
+                        monthly = {**monthly, "timeEntries": previous_monthly.get("timeEntries", [])}
+                        payload["monthlyAssignment"] = monthly
+                        full_submission["monthlyAssignment"] = monthly
+                    validate_saved_daily_hours(cur, payload)
 
                 if is_assignment_form and submission_mode == "submit":
                     from .monthly_assignment import assignment_checks
@@ -337,7 +381,7 @@ def _submit_reflection(request):
                     completed_during_paid_hours, date_completed, otjh_confirmed,
                     signed_declaration, quality_score, full_submission,
                     progress_entry_id, component_ref, programme_ref, cohort_ref,
-                    group_ref, module_ref, week_ref
+                    group_ref, module_ref, week_ref, assignment_topic_id
                 ) values (
                     %s, %s, %s, %s, %s,
                     %s, %s, %s, %s,
@@ -349,9 +393,9 @@ def _submit_reflection(request):
                     %s, %s, %s,
                     %s, %s, %s::jsonb,
                     %s, %s, %s, %s,
-                    %s, %s, %s
+                    %s, %s, %s, %s
                 )
-                on conflict (learner_kind, learner_id, activity_type, activity_id)
+                on conflict (learner_kind, learner_id, activity_type, activity_id, assignment_topic_id)
                 do update set
                     learner_name = excluded.learner_name,
                     programme_name = excluded.programme_name,
@@ -400,7 +444,7 @@ def _submit_reflection(request):
                     _text(payload.get("programmeName")),
                     activity_type,
                     activity_id,
-                    _text(payload.get("activityTitle")),
+                    _text(payload.get("activityTitle")) + (f" - Topic {assignment_topic}: " + payload.get("assignmentTopicName", "") if assignment_topic else ""),
                     _text(payload.get("moduleTitle")),
                     _text(payload.get("weekTitle")),
                     _text(payload.get("plannedOtjh")),
@@ -431,6 +475,7 @@ def _submit_reflection(request):
                     lineage.get("group_ref") or None,
                     lineage.get("module_ref") or None,
                     lineage.get("week_ref") or None,
+                    assignment_topic,
                     ],
                 )
                 stored = cur.fetchone()
@@ -438,6 +483,8 @@ def _submit_reflection(request):
                 # by widening the clause.
                 stored_id = stored[0]
                 record_submission_row(stored)
+    except ValueError as exc:
+        return _error(str(exc), 409)
     except DatabaseError:
         logger.exception("Could not save learner reflection submission.")
         return _error("Could not save the reflection for tutor review.", 502)
@@ -467,12 +514,31 @@ def get_reflection_submission(request):
     if bool(activity_type) != bool(activity_id):
         return _error("activityType and activityId must be provided together.")
 
+    from .assignment_topics import topic_id, aggregate_statuses
+    try:
+        selected_topic = topic_id(request.GET.get("assignmentTopicId"))
+    except ValueError as exc:
+        return _error(str(exc))
+
     try:
         if ((not activity_type and request.GET.get('view') == 'assignments')
                 or (activity_type == 'assignment' and activity_id.startswith('aptem:'))):
             from .legacy_assignments import classified_response
             return classified_response(learner_kind, learner_id, activity_id)
         with connections["enrolment"].cursor() as cur:
+            if activity_type == "assignment" and request.GET.get("view") == "topics":
+                cur.execute('''SELECT assignment_topic_id, status, full_submission, submitted_at
+                    FROM "Learner".learning_reflection_submissions
+                    WHERE learner_kind=%s AND learner_id=%s AND activity_type=\'assignment\' AND activity_id=%s
+                    ORDER BY assignment_topic_id''', [learner_kind, learner_id, activity_id])
+                states = []
+                for identity, status, content, submitted_at in cur.fetchall():
+                    content = json.loads(content) if isinstance(content, str) else content or {}
+                    states.append({"topicId": identity, "status": status, "elapsedSeconds": content.get("assignmentElapsedSeconds", 0),
+                                   "month": _dict(content.get("monthlyAssignment")).get("month"),
+                                   "meetingKey": _dict(content.get("monthlyAssignment")).get("meetingKey") or "",
+                                   "submittedAt": submitted_at.isoformat() if submitted_at else None})
+                return JsonResponse({"topics": states})
             if not activity_type:
                 cur.execute(
                     """
@@ -485,16 +551,7 @@ def get_reflection_submission(request):
                 )
                 return JsonResponse(
                     {
-                        "statuses": [
-                            {
-                                "activityType": row[0],
-                                "activityId": row[1],
-                                "status": row[2],
-                                **({"submissionCount": len((json.loads(row[3]) if isinstance(row[3], str) else row[3]) or []) + int(bool(row[2]) and row[2] != "draft")}
-                                   if row[0] == "assignment" else {}),
-                            }
-                            for row in cur.fetchall()
-                        ]
+                        "statuses": aggregate_statuses(cur.fetchall())
                     }
                 )
 
@@ -507,9 +564,12 @@ def get_reflection_submission(request):
                   and learner_id = %s
                   and activity_type = %s
                   and activity_id = %s
+                  and (%s::text IS NULL OR assignment_topic_id = %s)
+                order by case status when \'accepted\' then 0 when \'submitted_for_tutor_review\' then 1 else 2 end, submitted_at desc
                 limit 1
                 """,
-                [learner_kind, learner_id, activity_type, activity_id],
+                [learner_kind, learner_id, activity_type, activity_id,
+                 selected_topic if "assignmentTopicId" in request.GET else None, selected_topic],
             )
             row = cur.fetchone()
     except DatabaseError:

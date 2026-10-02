@@ -1072,9 +1072,8 @@ COMPONENT_UPLOAD_EXTENSIONS = {
     'podcast': {'.mp3', '.m4a', '.mp4', '.wav', '.aac', '.ogg', '.oga', '.webm'},
     'powerpoint': {'.ppt', '.pptx', '.pps', '.ppsx', '.pdf'},
     'reading': {'.txt', '.doc', '.docx', '.pdf', '.rtf', '.odt'},
-    # Assignment briefs are authored like reading material — a written brief or
-    # an uploaded document (same document formats as reading).
-    'assignment': {'.txt', '.doc', '.docx', '.pdf', '.rtf', '.odt'},
+    # Topic instructions can contain written briefs, documents and videos.
+    'assignment': {'.txt', '.doc', '.docx', '.pdf', '.rtf', '.odt', '.ppt', '.pptx', '.mp4', '.webm', '.mov', '.m4v'},
 }
 
 
@@ -15559,6 +15558,7 @@ COMPONENT_SETTINGS_SCHEMA = {
     'assignment': {
         **BASE_COMPONENT_SETTINGS,
         'assignmentBrief': '',
+        'assignmentTopics': '',
         'submissionInstructions': '',
         'dueTiming': 'End of week',
         'markingRubric': '',
@@ -24148,7 +24148,8 @@ def curriculum_component_upload(request, component_id):
     if error:
         return json_error(error, status=400)
 
-    saved_to_component = update_component_upload_settings(component_id, component_type, metadata)
+    # Topic uploads are attached by the editor on Save, preserving other resources.
+    saved_to_component = False if component_type == 'assignment' and request.POST.get('topicResource') == 'true' else update_component_upload_settings(component_id, component_type, metadata)
     return JsonResponse({
         'uploaded': True,
         'savedToComponent': saved_to_component,

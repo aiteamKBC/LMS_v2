@@ -224,7 +224,8 @@ class AssignmentFormReadinessTests(SimpleTestCase):
         self.assertEqual(checks.call_args.args[0]["learnerId"], "19")
 
         params = cursor.execute.call_args.args[1]
-        self.assertEqual(params, ["commercial", "19", "COMP-1"])
+        self.assertEqual(params, ["commercial", "19", "COMP-1", ""])
+        self.assertIn("assignment_topic_id = %s", cursor.execute.call_args.args[0])
 
 
 class LearnerProgressionTests(SimpleTestCase):

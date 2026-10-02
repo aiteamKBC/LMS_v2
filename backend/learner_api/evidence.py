@@ -451,7 +451,8 @@ def _marking_status(kind, learner_id, section_ref):
                  where activity_id = %s
                    and learner_kind = %s
                    and learner_id::text = any(%s)
-                 order by submitted_at desc nulls last
+                 order by case status when 'accepted' then 0 when 'submitted_for_tutor_review' then 1 else 2 end,
+                     submitted_at desc nulls last
                  limit 1
                 """,
                 [section_ref, kind, candidates],

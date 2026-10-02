@@ -1,3 +1,4 @@
+import { assignmentTopics } from '@/lib/assignmentTopics';
 import type { JourneyComponent } from '@/utils/learnerJourney';
 import { embeddedSrc } from '@/components/feature/VideoPlayer';
 import type { ModuleComponent } from './moduleAuthoringData';
@@ -23,6 +24,7 @@ export function previewComponent(component: ModuleComponent): JourneyComponent {
     contentHtml: setting('readingContent'), hasReadingContent: Boolean(setting('readingContent')),
     resourceUrl: resource,
     fileName: setting('fileName') || setting('uploadedFileName') || setting('assignmentFileName'),
+    assignmentTopics: assignmentTopics(component.settings.assignmentTopics),
     assignmentBrief: setting('assignmentBrief') || (!assignmentHtml ? assignmentContent : ''), assignmentBriefHtml: assignmentHtml,
     downloadAllowed: Boolean(component.settings.downloadAllowed),
     reflectionPrompt: setting('reflectionPrompt') || setting('podcastReflectionQuestion') || setting('readingReflectionPrompts') || component.description,
