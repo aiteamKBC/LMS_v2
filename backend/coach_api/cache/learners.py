@@ -8,9 +8,8 @@ from django.core.cache import cache
 from coach_api.auth import normalize_email
 
 
-# v12 uses the source learner's Case File planned OTJH denominator and KSB
-# evidence coverage in the detailed caseload table.
-CASELOAD_CACHE_VERSION = 12
+# v13 uses learner Overview metrics and the full learner attendance register.
+CASELOAD_CACHE_VERSION = 13
 logger = logging.getLogger(__name__)
 
 

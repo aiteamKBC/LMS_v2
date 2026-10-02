@@ -218,6 +218,18 @@ class MigratedPreviewTests(SimpleTestCase):
         self.assertEqual(self.cursor.execute.call_count, 1)
         self.assertTrue(self.cursor.execute.call_args.args[0].lstrip().startswith("SELECT"))
 
+    def test_mcm_preview_keeps_approved_template_section_order(self):
+        self.templates.return_value.first.return_value.definition_json = {"sections": [
+            {"key": "summary", "title": "Meeting Summary", "order": 0, "fields": []},
+            {"key": "learner", "title": "Learner information", "order": 1, "fields": []},
+        ]}
+        result = self._get()
+        self.assertTrue(result["previewOnly"])
+        self.assertEqual(
+            [(section["title"], section["displayOrder"]) for section in result["sections"]],
+            [("Meeting Summary", 0), ("Learner information", 1)],
+        )
+
     def test_view_as_initialized_review_uses_stored_snapshot_and_answers(self):
         self.overlays.return_value.first.return_value = SimpleNamespace(
             learner_id=21, source_review_id=407, template_snapshot=self.definition_json,

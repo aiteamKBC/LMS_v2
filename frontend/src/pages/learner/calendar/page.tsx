@@ -40,7 +40,7 @@ import { meetingBookingWarning } from '../reviews/meetingBooking';
 import { useImportedMeetingBooking } from '../reviews/useImportedMeetingBooking';
 import { importedReviewsToEvents, mergeCompletedReviewHistory } from '../reviews/useReviewSessions';
 import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/LearnerReviewInstanceForm';
-import { firstAvailableBookingDate } from '../reviews/bookingDates';
+import { firstAvailableBookingDate, parseBookingDay } from '../reviews/bookingDates';
 import CoachSessionTypePicker, { COACH_APPROVAL_SESSION_TYPES } from './CoachSessionTypePicker';
 
 /** The header's secondary-actions menu — everything that isn't booking a
@@ -954,16 +954,19 @@ function LearnerCalendarBody() {
   }, [calendarConnections.length, viewYear, viewMonth, myLearner.kind, myLearner.id]);
 
   useEffect(() => {
-    if (!showBookModal || calendarConnections.length === 0 || !bookDate) {
+    // An unparseable day has no instant (toISOString would throw and take the
+    // page down); bookDateRestriction already asks for a valid date.
+    const day = parseBookingDay(bookDate);
+    if (!showBookModal || calendarConnections.length === 0 || !day) {
       setBusySlots([]);
       return;
     }
-    const start = new Date(`${bookDate}T00:00:00`).toISOString();
-    const end = new Date(`${bookDate}T23:59:59`).toISOString();
+    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0).toISOString();
+    const end = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59).toISOString();
     let cancelled = false;
     setAvailabilityLoading(true);
     fetchPersonalCalendarAvailability(myLearner.kind, myLearner.id, start, end)
-      .then((result) => { if (!cancelled) setBusySlots(result.busy); })
+      .then((result) => { if (!cancelled) setBusySlots(Array.isArray(result?.busy) ? result.busy : []); })
       .catch(() => { if (!cancelled) setBusySlots([]); })
       .finally(() => { if (!cancelled) setAvailabilityLoading(false); });
     return () => { cancelled = true; };

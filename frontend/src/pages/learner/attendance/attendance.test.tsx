@@ -303,7 +303,7 @@ describe('Attendance lecture workspace', () => {
     expect(screen.queryByText('Unable to initialise request verification.')).not.toBeInTheDocument();
   });
 
-  it('links a catch-up booked from the dialog to the reported absence without another click', async () => {
+  it('books a catch-up for a reported absence and links it in the same request', async () => {
     payload.lectures = [lecture({ id: 'missed', sessionId: 'teams:missed', title: 'Reported lecture', date: '2026-09-11',
       status: 'absent', catchupStatus: 'missed', canReportAbsence: false, absenceReport: { id: 7, status: 'approved' } })];
     const booked = { id: 'catch-up:12:9', eventKey: 'catch-up:12:9', title: 'Catch-up Session', source: 'catch-up', type: 'coaching',
@@ -315,7 +315,7 @@ describe('Attendance lecture workspace', () => {
       if (url.includes('/coach-availability/')) return new Response(JSON.stringify({ times: ['11:00'] }));
       if (url.includes('/calendar/') && init?.method === 'POST') {
         posts.push({ url, body: init.body });
-        return new Response(JSON.stringify({ event: booked }), { status: 201 });
+        return new Response(JSON.stringify({ event: booked, linkedReportId: 7 }), { status: 201 });
       }
       if (url.includes('/calendar/')) return new Response(JSON.stringify({ events: [],
         bookingCalendar: { division: 'england-and-wales', today: '2026-09-30', coveredYears: [2099], bankHolidays: [] } }));
@@ -329,10 +329,11 @@ describe('Attendance lecture workspace', () => {
     await within(within(dialog).getByLabelText('Catch-up time')).findByRole('option', { name: '11:00' });
     fireEvent.change(within(dialog).getByLabelText('Catch-up time'), { target: { value: '11:00' } });
     fireEvent.click(within(dialog).getByRole('button', { name: 'Book Catch-up Session' }));
-    // Booked, then linked to report 7 straight away -- no "Link catch-up" click.
-    await waitFor(() => expect(posts.some(post => post.url.includes('/session-catchup/'))).toBe(true));
-    const link = posts.find(post => post.url.includes('/session-catchup/'))!;
-    expect(JSON.parse(String(link.body))).toEqual({ reportId: 7, eventKey: booked.eventKey });
+    // One booking request carries the absence; the server links it, so no separate link call.
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Book Catchup Session' })).not.toBeInTheDocument());
+    const booking = posts.find(post => post.url.includes('/calendar/') && post.url.endsWith('/book/'))!;
+    expect(JSON.parse(String(booking.body))).toMatchObject({ sessionType: 'catch-up', absenceReportId: 7 });
+    expect(posts.some(post => post.url.includes('/session-catchup/'))).toBe(false);
   });
 
   it('starts a linked absence report when booking recovery for an unreported missed lecture', async () => {

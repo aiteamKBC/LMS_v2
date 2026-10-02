@@ -489,6 +489,72 @@ class AptemEventVerificationTests(SimpleTestCase):
         ])
 
     @patch("coach_api.views.ImportedReviewInstance.objects.filter")
+    @patch("coach_api.views._sections_by_review")
+    @patch("coach_api.views.connections")
+    @patch("coach_api.views.fetch_caseload_dashboard_profiles")
+    def test_imported_mcm_steps_follow_the_form_order_without_raw_text_duplicates(
+        self, fetch_profiles, connections, sections_by_review, imported_instances,
+    ):
+        imported_instances.return_value.first.return_value = None
+        fetch_profiles.return_value = [learner(1, aptem_id=101, source_aptem_id=101)]
+        cursor = connections["default"].cursor.return_value.__enter__.return_value
+        columns = [
+            "id", "learner_id", "aptem_review_id", "review_name", "review_type",
+            "reviewer_name", "learner_name", "planned_scheduled_date", "completed_date",
+            "status", "review_data", "extraction_status", "last_error",
+        ]
+        cursor.description = [(column,) for column in columns]
+        cursor.fetchall.return_value = [
+            (21, 1, "R-MCM", "Monthly Coaching Meeting", "Monthly Coaching Meeting", "Coach",
+             "Learner 1", date(2026, 9, 23), None, "Scheduled", {}, "complete", None),
+        ]
+
+        def section(section_id, name, order, fields=(), raw_text=""):
+            return {
+                "id": section_id, "name": name, "order": order,
+                "fields": [{"label": label, "value": value} for label, value in fields],
+                "tables": [], "rawText": raw_text,
+            }
+
+        # Aptem's exported order: Previous Meeting Summary last, Preparing
+        # before the Reflection it follows on the form, and an unknown section.
+        sections_by_review.return_value = {21: [
+            section(1, "Learner information", 1, [("Programme", "Example")], "Programme\nExample"),
+            section(2, "Opening the Meeting (5 minutes)", 2),
+            section(3, "Preparing for Next Month (10 minutes)", 3, [("Next Month Focus", "Unit 4")], "Next Month Focus\nUnit 4"),
+            section(4, "Reflection on Knowledge, Skills, and Behaviours (10 minutes)", 4, [("Knowledge reflection", "Applied")]),
+            section(5, "Custom Aptem Section", 5, raw_text="Free text only"),
+            section(6, "Meeting Summary", 6, [("Summary", "Discussed progress")], "Summary\nDiscussed progress"),
+            section(7, "Previous Meeting Summary", 7, [("Summary", "Last month")], "Summary\nLast month"),
+        ]}
+
+        definition = views._imported_review_definition(
+            "coach@example.invalid", "imported-review:R-MCM",
+        )
+
+        self.assertEqual(definition["template"]["reviewTypeCode"], "aptem_mcm")
+        ordered = sorted(definition["sections"], key=lambda item: item["displayOrder"])
+        self.assertEqual([item["title"] for item in ordered], [
+            "Learner information",
+            "Previous Meeting Summary",
+            "Opening the Meeting (5 minutes)",
+            "Reflection on Knowledge, Skills, and Behaviours (10 minutes)",
+            "Preparing for Next Month (10 minutes)",
+            "Meeting Summary",
+            "Custom Aptem Section",
+        ])
+        self.assertEqual([item["displayOrder"] for item in ordered], list(range(7)))
+        all_titles = [field["title"] for item in ordered for field in item["fields"]]
+        self.assertNotIn("Imported text", all_titles)
+        previous = ordered[1]
+        self.assertEqual([field["title"] for field in previous["fields"]], ["Summary"])
+        self.assertEqual(previous["fields"][0]["answer"], "Last month")
+        # A section whose only content is raw text keeps it, under its own name.
+        custom = ordered[-1]
+        self.assertEqual(custom["fields"][0]["title"], "Custom Aptem Section")
+        self.assertEqual(custom["fields"][0]["configuration"]["description"], "Free text only")
+
+    @patch("coach_api.views.ImportedReviewInstance.objects.filter")
     @patch("coach_api.views._sections_by_review", return_value={})
     @patch("coach_api.views.connections")
     @patch("coach_api.views.fetch_caseload_dashboard_profiles")

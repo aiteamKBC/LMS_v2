@@ -45,6 +45,7 @@ export const LearnerToolbar = memo(function LearnerToolbar({
   onFilterChange,
   onStatusFilterChange,
   onClearAll,
+  dashboardFilters,
 }: {
   filters: CaseloadFilterState;
   options: CaseloadFilterOptions;
@@ -52,11 +53,14 @@ export const LearnerToolbar = memo(function LearnerToolbar({
   onFilterChange: (patch: Partial<CaseloadFilterState>) => void;
   onStatusFilterChange: (next: StatusFilter) => void;
   onClearAll: () => void;
+  dashboardFilters?: { otjhStatus: string; onStatusChange: (value: string) => void };
 }) {
   const chips: { key: keyof CaseloadFilterState; label: string; value: string }[] = [];
-  if (filters.cohort !== 'all') chips.push({ key: 'cohort', label: 'Cohort', value: optionLabel(options.cohort, filters.cohort) });
-  if (filters.group !== 'all') chips.push({ key: 'group', label: 'Group', value: optionLabel(options.group, filters.group) });
+  if (filters.cohort !== 'all') chips.push({ key: 'cohort', label: dashboardFilters ? 'Cohort / group' : 'Cohort', value: optionLabel(options.cohort, filters.cohort) });
+  if (!dashboardFilters && filters.group !== 'all') chips.push({ key: 'group', label: 'Group', value: optionLabel(options.group, filters.group) });
   if (filters.search.trim()) chips.push({ key: 'search', label: 'Search', value: filters.search.trim() });
+  if (dashboardFilters && filters.programStatus !== 'all') chips.push({ key: 'programStatus', label: 'Programme status', value: optionLabel(options.programStatus, filters.programStatus) });
+  const hasOtjhStatus = dashboardFilters && dashboardFilters.otjhStatus !== 'all';
 
   return (
     <div className="space-y-2">
@@ -73,31 +77,47 @@ export const LearnerToolbar = memo(function LearnerToolbar({
           />
         </div>
 
-        <MenuSelect
+        {!dashboardFilters ? <MenuSelect
           value={statusFilter}
           onChange={(value) => onStatusFilterChange(value as StatusFilter)}
           options={STATUS_OPTIONS}
           widthClass="w-[150px]"
           tone={statusFilter !== 'all' ? 'active' : 'default'}
-        />
+        /> : null}
 
         <MenuSelect
           value={filters.cohort}
           onChange={(value) => onFilterChange({ cohort: value })}
-          options={withAllOption('All cohorts', options.cohort)}
-          widthClass="w-[150px]"
+          options={withAllOption(dashboardFilters ? 'All cohorts / groups' : 'All cohorts', options.cohort)}
+          widthClass={dashboardFilters ? "w-[220px]" : "w-[150px]"}
           tone={filters.cohort !== 'all' ? 'active' : 'default'}
         />
-        <MenuSelect
+        {dashboardFilters ? <>
+          <MenuSelect
+            value={dashboardFilters.otjhStatus}
+            onChange={dashboardFilters.onStatusChange}
+            options={STATUS_OPTIONS.map(option => option.value === 'all' ? { ...option, label: 'All OTJH statuses' } : option)}
+            widthClass="w-[180px]"
+            tone={hasOtjhStatus ? 'active' : 'default'}
+          />
+          <MenuSelect
+            value={filters.programStatus}
+            onChange={(value) => onFilterChange({ programStatus: value })}
+            options={withAllOption('All programme statuses', options.programStatus)}
+            widthClass="w-[190px]"
+            tone={filters.programStatus !== 'all' ? 'active' : 'default'}
+          />
+        </> : null}
+        {!dashboardFilters ? <MenuSelect
           value={filters.group}
           onChange={(value) => onFilterChange({ group: value })}
           options={withAllOption('All groups', options.group)}
           widthClass="w-[140px]"
           tone={filters.group !== 'all' ? 'active' : 'default'}
-        />
+        /> : null}
       </div>
 
-      {chips.length > 0 ? (
+      {chips.length > 0 || hasOtjhStatus ? (
         <div className="flex flex-wrap items-center gap-1.5">
           {chips.map((chip) => (
             <FilterChip
@@ -107,6 +127,7 @@ export const LearnerToolbar = memo(function LearnerToolbar({
               onRemove={() => onFilterChange({ [chip.key]: chip.key === 'search' ? '' : 'all' } as Partial<CaseloadFilterState>)}
             />
           ))}
+          {hasOtjhStatus ? <FilterChip label="OTJH status" value={STATUS_OPTIONS.find(option => option.value === dashboardFilters.otjhStatus)?.label ?? dashboardFilters.otjhStatus} onRemove={() => dashboardFilters.onStatusChange('all')} /> : null}
           <button
             type="button"
             onClick={onClearAll}

@@ -29,7 +29,7 @@ import { AttendanceTab } from './tabs/AttendanceTab';
 import { ReviewsTab } from './tabs/ReviewsTab';
 import { EnrolmentDocumentsTab } from './tabs/EnrolmentDocumentsTab';
 import { EvidencePreviewModal, ProgressTab } from './tabs/ProgressTab';
-import { selectCaseFileKsbRows, selectCaseFileKsbSummary, type EvidencePreviewTarget } from './domain/ksbSelectors';
+import { selectCaseFileKsbProgress, type EvidencePreviewTarget } from './domain/ksbSelectors';
 import { formatAttendanceFraction } from './formatters';
 import { useLearnerProfile } from '@/features/coach/learner-profile/hooks/useLearnerProfile';
 import { useLearnerProfileTabs } from '@/features/coach/learner-profile/hooks/useLearnerProfileTabs';
@@ -82,7 +82,7 @@ export default function LearnerCaseFile() {
   const pageSubtitle = subtitle || 'Live learner view for coaching support';
   const nextLiveSession = caseFileNextSession.data;
   const headerOtjh = data ? selectCaseFileOtjh(data) : null;
-  const headerKsb = data?.metricsAvailable === false ? null : data ? selectCaseFileKsbSummary(selectCaseFileKsbRows(data)) : null;
+  const headerKsb = data?.metricsAvailable === false ? null : data ? selectCaseFileKsbProgress(data) : null;
 
   const handleOpenReviewMeeting = (item: CaseFileReviewMeeting) => {
     const returnParams = new URLSearchParams(location.search);

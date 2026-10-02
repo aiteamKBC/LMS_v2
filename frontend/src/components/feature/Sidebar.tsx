@@ -621,7 +621,7 @@ export function Sidebar({
           <nav
             id={`${role}-${instance}-primary-navigation`}
             aria-label="Learner primary navigation"
-            className="relative z-10 min-h-0 flex-1 space-y-3 overflow-y-auto px-2 py-5 [scrollbar-width:none]"
+            className="relative z-10 min-h-0 flex-1 space-y-3 overflow-y-auto px-2 py-5 [scrollbar-width:thin] [scrollbar-color:rgb(255_255_255/0.32)_transparent]"
           >
             {filteredNavItems.map(item => hasChildren(item) ? (
               <ExpandedGroup
@@ -653,7 +653,7 @@ export function Sidebar({
         <nav
           id={`${role}-${instance}-primary-navigation`}
           aria-label="Learner primary navigation"
-          className="relative z-10 min-h-0 flex-1 space-y-2 overflow-y-auto px-5 py-7 [scrollbar-width:none]"
+          className="relative z-10 min-h-0 flex-1 space-y-2 overflow-y-auto px-5 py-7 [scrollbar-width:thin] [scrollbar-color:rgb(255_255_255/0.32)_transparent]"
         >
           {filteredNavItems.map(item => hasChildren(item) ? (
             <ExpandedGroup
@@ -728,7 +728,7 @@ export function Sidebar({
                 <Menu className="h-6 w-6" aria-hidden="true" />
               </button>
             )}
-            <nav aria-label={`${roleLabel} primary navigation`} className="mt-7 min-h-0 w-full flex-1 space-y-4 overflow-y-auto px-5 [scrollbar-width:none]">
+            <nav aria-label={`${roleLabel} primary navigation`} className="mt-7 min-h-0 w-full flex-1 space-y-4 overflow-y-auto px-5 [scrollbar-width:thin] [scrollbar-color:rgb(255_255_255/0.32)_transparent]">
               {filteredNavItems.map(item => (
                 <div key={item.id} onMouseEnter={() => { if (hasChildren(item)) setPreviewId(item.id); }} onFocus={() => { if (hasChildren(item)) setPreviewId(item.id); }}>
                 {hasChildren(item) ? (
@@ -762,7 +762,7 @@ export function Sidebar({
               <p className="font-heading text-xl font-bold tracking-tight">{roleLabel}</p>
               <p className="mt-1 text-[11px] text-white/65">Kent Business College</p>
             </div>
-            <nav aria-label={`${roleLabel} secondary navigation`} className="min-h-0 w-[250px] flex-1 space-y-7 overflow-y-auto px-5 pb-8 [scrollbar-width:thin]">
+            <nav aria-label={`${roleLabel} secondary navigation`} className="min-h-0 w-[250px] flex-1 space-y-7 overflow-y-auto px-5 pb-8 [scrollbar-width:thin] [scrollbar-color:rgb(255_255_255/0.32)_transparent]">
               {previewItem && (
                 hasChildren(previewItem) ? (
                   <ExpandedGroup

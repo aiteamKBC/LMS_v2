@@ -165,6 +165,8 @@ describe('restored monthly coaching list', () => {
     ]);
     const sort = screen.getByRole('combobox', { name: 'Sort by' });
     expect(sort).toHaveValue('date-desc');
+    expect(within(sort).getByRole('option', { name: 'Date (earliest first)' })).toHaveValue('date-asc');
+    expect(within(sort).queryByRole('option', { name: /soonest/i })).not.toBeInTheDocument();
     fireEvent.change(sort, { target: { value: 'date-asc' } });
     expect(within(screen.getByRole('table')).getAllByRole('row')[1]).toHaveTextContent('Overdue Learner');
   });

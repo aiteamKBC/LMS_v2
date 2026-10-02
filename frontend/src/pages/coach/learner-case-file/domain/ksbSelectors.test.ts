@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CoachLearnerCaseFileData } from '../types';
-import { normalizeKsbCode, selectCaseFileKsbRows, selectCaseFileKsbSummary } from './ksbSelectors';
+import { normalizeKsbCode, selectCaseFileKsbRows, selectCaseFileKsbSummary, selectCaseFileKsbProgress, selectCaseFileKsbPointRows } from './ksbSelectors';
 
 function caseFile(overrides: Partial<CoachLearnerCaseFileData> = {}): CoachLearnerCaseFileData {
   return {
@@ -131,5 +131,43 @@ describe('KSB selectors', () => {
 
     expect(rows[0].evidenceActivities).toHaveLength(1);
     expect(rows[0].evidenceActivities[0].title).toBe('Working with change');
+  });
+});
+
+describe('learner Overview KSB points', () => {
+  it('counts activity points without collapsing repeated framework codes', () => {
+    const data = caseFile({ metricsAvailable: true, ksbStatus: 'ready', ksbProgress: 85.3,
+      ksbEvidencedCount: 498, ksbTotalCount: 584, touchedKsbCodes: ['K1', 'S1', 'B1'],
+      ksbCodeProgress: [{ code: 'K1', completed: 200, total: 220 },
+        { code: 'K1.1', completed: 100, total: 120 }, { code: 'S1', completed: 150, total: 180 },
+        { code: 'B1', completed: 48, total: 64 }] });
+    expect(selectCaseFileKsbProgress(data)).toMatchObject({ total: 584, achieved: 498, remaining: 86, percent: 85.3,
+      knowledge: { total: 340, achieved: 300 }, skills: { total: 180, achieved: 150 }, behaviours: { total: 64, achieved: 48 } });
+  });
+  it('does not replace unavailable totals with touched framework codes', () => {
+    expect(selectCaseFileKsbProgress(caseFile({ ksbStatus: 'unavailable', touchedKsbCodes: ['K1'],
+      ksbEvidencedCount: 1, ksbTotalCount: 1, ksbProgress: 100 }))).toMatchObject({
+        total: null, achieved: null, remaining: null, percent: null, knowledge: { total: null, achieved: null } });
+  });
+});
+
+describe('canonical KSB activity rows', () => {
+  it('keeps repeated codes in separate activities with their own completion and details', () => {
+    const points = [
+      { activityId: '1', code: 'K1', completed: true, title: 'First activity', type: 'reading', module: null, status: null, source: null, completedAt: null, componentId: 'component-1' },
+      { activityId: '2', code: 'K1', completed: false, title: 'Second activity', type: 'video', module: null, status: null, source: null, completedAt: null, componentId: null },
+      { activityId: '2', code: 'S1.1', completed: false, title: 'Second activity', type: 'video', module: null, status: null, source: null, completedAt: null, componentId: null },
+    ];
+    const rows = selectCaseFileKsbPointRows(caseFile({ ksbStatus: 'ready', ksbActivityPoints: points, touchedKsbCodes: ['K1'] }));
+    expect(rows).toHaveLength(3);
+    expect(new Set(rows.map((row) => row.id)).size).toBe(3);
+    expect(rows.map((row) => row.linked)).toEqual([true, false, false]);
+    expect(rows[1].evidenceActivities).toEqual([expect.objectContaining({ activityId: '2', title: 'Second activity' })]);
+    expect(rows[2].code).toBe('S1.1');
+    expect(points[1].completed).toBe(false);
+  });
+  it('does not fabricate activity rows from framework or aggregate totals', () => {
+    expect(selectCaseFileKsbPointRows(caseFile({ ksbTotalCount: 584, ksbEvidencedCount: 498, mappedKsbCodes: ['K1'] }),
+      [{ code: 'K1', description: 'Knowledge', type: 'Knowledge', number: '1' }])).toEqual([]);
   });
 });

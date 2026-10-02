@@ -2672,7 +2672,7 @@ def caseload_audit_hour_totals(rows) -> dict[int, dict]:
     }
 
 
-def caseload_canonical_metrics(rows) -> dict[int, dict]:
+def caseload_canonical_metrics(rows, *, learner_workspace=False) -> dict[int, dict]:
     """Read the same live programme/KSB/OTJH facts as the learner dashboard.
 
     Coach list endpoints keep this server-side so clients do not issue one
@@ -2700,7 +2700,10 @@ def caseload_canonical_metrics(rows) -> dict[int, dict]:
     }
     enrolment_ids = [int(source.pk) for _, source, _ in all_work]
     try:
-        canonical_by_enrolment = canonical_learning.metrics_bulk(enrolment_ids)
+        if learner_workspace:
+            canonical_by_enrolment = canonical_learning.metrics_bulk(enrolment_ids, learner_workspace=True)
+        else:
+            canonical_by_enrolment = canonical_learning.metrics_bulk(enrolment_ids)
     except DatabaseError as exc:
         # Keep the established partial-success fallback if the consolidated
         # projection is temporarily unavailable.
@@ -2872,7 +2875,17 @@ def caseload_canonical_attendance(rows) -> dict[int, dict]:
     ]
     if not work:
         return {}
-    from learner_api.attendance_lectures import _merge_register_duplicates
+    sources_by_profile = dict(work)
+    from learner_api.attendance_lectures import lecture_register
+
+    def summarize(profile_id, source, records=None):
+        try:
+            return _summarize_attendance(lecture_register(source, records=records))
+        except Exception as exc:
+            logger.warning("Could not read canonical coach attendance for learner %s: %s", profile_id, exc)
+            return None
+        finally:
+            close_old_connections()
 
     aptem_work = [
         (profile_id, source) for profile_id, source in work
@@ -2910,22 +2923,12 @@ def caseload_canonical_attendance(rows) -> dict[int, dict]:
                 previous = unique.get(key)
                 if previous is None or item.get("attendance_status") in {"present", "late"}:
                     unique[key] = item
-            summary = _summarize_attendance(_merge_register_duplicates(list(unique.values())))
+            summary = summarize(profile_id, sources_by_profile[profile_id], list(unique.values()))
             if summary is not None:
                 result[profile_id] = summary
 
-    def load(item):
-        profile_id, source = item
-        try:
-            # A lecture in both the KBC register and Teams counts once, as on learner pages.
-            return profile_id, _summarize_attendance(_merge_register_duplicates(combined_attendance_rows(source)))
-        except Exception as exc:
-            logger.warning("Could not read canonical coach attendance for learner %s: %s", profile_id, exc)
-            return profile_id, None
-        finally:
-            close_old_connections()
-
-    other_results = [load(item) for item in work if item not in aptem_work]
+    other_results = [(profile_id, summarize(profile_id, source))
+                     for profile_id, source in work if (profile_id, source) not in aptem_work]
     result.update({profile_id: summary for profile_id, summary in other_results if summary is not None})
     return result
 
@@ -2968,15 +2971,16 @@ def caseload_kbc_attendance_rates(rows) -> tuple[dict[int, int], dict[int, dict]
     }
 
 
-def apply_canonical_learner_metrics(payload: dict, metrics: dict | None) -> dict:
+def apply_canonical_learner_metrics(payload: dict, metrics: dict | None, *, learner_workspace=False) -> dict:
     """Overlay the exact learner-profile metrics onto a coach learner row.
 
     The caseload table and learner case file are two views of the same learner
     facts. The Case File header prefers the canonical planned total, so the
     table must use that same denominator after audit enrichment.
     """
-    if not metrics:
+    if not metrics and not learner_workspace:
         return payload
+    metrics = metrics or {}
     programme = metrics.get("programme") or {}
     ksb = metrics.get("ksb") or {}
     otjh = metrics.get("otjh") or {}
@@ -2987,11 +2991,19 @@ def apply_canonical_learner_metrics(payload: dict, metrics: dict | None) -> dict
     fallback_plan = payload.get("otjhPlanned")
     if fallback_plan is None:
         fallback_plan = payload.get("otjhTarget")
+    if learner_workspace:
+        # Overview prefers the Aptem programme plan and shows the canonical
+        # actual total, rather than the Case File's completed-only total.
+        if metrics.get("aptem_planned_total") is not None:
+            canonical_plan = metrics["aptem_planned_total"]
+        fallback_plan = None
     resolved_plan = canonical_plan if canonical_plan is not None else fallback_plan
     payload["otjhTarget"] = resolved_plan
     payload["otjhPlanned"] = resolved_plan
-    completed_actual = otjh.get("completed_actual", otjh.get("actual"))
-    if completed_actual is not None:
+    completed_actual = otjh.get("actual") if learner_workspace else otjh.get("completed_actual", otjh.get("actual"))
+    if learner_workspace:
+        payload["otjhCompleted"] = completed_actual
+    elif completed_actual is not None:
         payload["otjhCompleted"] = to_number(completed_actual)
     payload["otjhActual"] = otjh.get("actual")
 
@@ -3006,6 +3018,9 @@ def apply_canonical_learner_metrics(payload: dict, metrics: dict | None) -> dict
     # Preserve the established fallback when the canonical reader cannot
     # produce a complete KSB population. Dashboard payloads start unavailable,
     # so no ratio is invented here.
+    if learner_workspace and ksb.get("status") != "ready":
+        payload.update(ksbCompleted=None, ksbTarget=None, ksbProgress=None,
+                       ksbProgressAvailable=False, ksbStatus="Unavailable")
     if ksb.get("status") == "ready":
         payload["ksbCompleted"] = ksb.get("completed")
         payload["ksbTarget"] = ksb.get("total")
@@ -9924,7 +9939,15 @@ def collect_generated_timetable(
                 owner_email,
                 owner_name,
                 start_date=start_date,
+                # When the caller asks for an explicit date window, that window
+                # is the intended bound -- the extra "drop anything before
+                # today" guard (collect_live_session_events' default) would
+                # silently hide in-window sessions already delivered earlier in
+                # the requested range (e.g. the all-coaches week grid on a
+                # Wednesday losing Monday's live session). The windowless
+                # timetable keeps its forward-looking default.
                 end_date=end_date,
+                include_past=bool(start_date or end_date),
             )
         except Exception as exc:
             logger.warning("Could not collect live session events for %s: %s", owner_email, exc)
@@ -12652,7 +12675,10 @@ def coach_caseload(request):
 
         audit_totals = run_optional(caseload_audit_hour_totals)
         ksb_counts = run_optional(caseload_evidenced_ksb_counts)
-        canonical_metrics = run_optional(caseload_canonical_metrics)
+        if paginated:
+            canonical_metrics = run_optional(lambda rows: caseload_canonical_metrics(rows, learner_workspace=True))
+        else:
+            canonical_metrics = run_optional(caseload_canonical_metrics)
         # Paginated rows use the shared OLD/Aptem vs NEW/Curriculum resolver
         # below. Loading imported Aptem history here as well duplicated review
         # I/O and could not improve the selected source's result.
@@ -12660,15 +12686,12 @@ def coach_caseload(request):
         latest_activities = run_optional(caseload_latest_learning_activities) if paginated else {}
         aptem_by_profile = caseload_aptem_ids(rows)
         for row, learner in zip(rows, learners):
-            case_file_snapshot = case_file_table_metrics_snapshot(row, learner)
             apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
             apply_evidenced_ksb_count(learner, ksb_counts.get(int(row.id)))
             learner_metrics = canonical_metrics.get(int(row.id))
-            apply_canonical_learner_metrics(learner, learner_metrics)
+            apply_canonical_learner_metrics(learner, learner_metrics, learner_workspace=paginated)
             apply_canonical_ksb_evidence(learner, learner_metrics, getattr(getattr(row, "_caseload_source", None), "aptem_id", None))
             apply_aptem_variance_status(learner, aptem_by_profile.get(int(row.id)))
-            if paginated:
-                restore_case_file_table_metrics(learner, case_file_snapshot)
             imported = review_history.get(int(row.id), {})
             last_mcm = _latest_completed_review_date(imported.get("mcm", []))
             last_pr = _latest_completed_review_date(imported.get("reviews", []))
@@ -13996,6 +14019,38 @@ def _imported_review_field(field, *, section_id, index):
     }
 
 
+# Intended step order of an imported Aptem Monthly Coaching Meeting, matched
+# by title prefix (casefolded). Aptem's exported ``section_order`` puts
+# "Previous Meeting Summary" last and, for some records, runs the whole form
+# backwards; the LMS MCM form (pages/shared/monthlyCoachingForm.ts and the
+# seeded Curriculum template) opens with the previous meeting's summary and
+# then walks the agenda. Sections not listed keep their Aptem relative order
+# after the known ones.
+_IMPORTED_MCM_SECTION_ORDER = (
+    "learner information",
+    "previous meeting summary",
+    "opening the meeting",
+    "learner presentation",
+    "reflection on knowledge",
+    "preparing for next month",
+    "learning resources",
+    "wellbeing",
+    "learner feedback",
+    "additional comments",
+    "confirm next meeting",
+    "meeting details",
+    "meeting summary",
+)
+
+
+def _imported_mcm_section_rank(title: str) -> int | None:
+    normalized = " ".join(clean_text(title).casefold().split())
+    for rank, prefix in enumerate(_IMPORTED_MCM_SECTION_ORDER):
+        if normalized.startswith(prefix):
+            return rank
+    return None
+
+
 def _imported_review_has_usable_form(review: dict, *, has_normalized_sections: bool = False) -> bool:
     """Return whether an import contains a real form rather than metadata only."""
     if has_normalized_sections:
@@ -14262,6 +14317,10 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         if not historical_completed and saved_instance and isinstance(saved_instance.answers, dict)
         else {}
     )
+    review_type = clean_text(review.get("type"))
+    monthly_types = {clean_text(value).casefold() for value in REVIEW_TYPES["monthly-coaching"]}
+    review_type_code = "aptem_mcm" if review_type.casefold() in monthly_types else "aptem_progress_review"
+    is_mcm = review_type_code == "aptem_mcm"
 
     adapted_sections = []
     for section_index, section in enumerate((review.get("sections") or []) if form_available else []):
@@ -14291,11 +14350,16 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
                 "yesFields": [],
                 "noFields": [],
             })
+        section_title = clean_text(section.get("name")) or "Review section"
         raw_text = clean_text(section.get("rawText"))
-        if raw_text:
+        # An Aptem MCM section's raw text is the verbatim text dump of the same
+        # label/value pairs already shown as its questions; repeating it as a
+        # display card duplicated every answer. Keep it only when it is the
+        # section's sole content, labelled with the section it belongs to.
+        if raw_text and not (is_mcm and fields):
             fields.append({
                 "id": f"aptem-text:{section_id}",
-                "title": "Imported text",
+                "title": section_title,
                 "fieldType": "title_description",
                 "required": False,
                 "displayOrder": len(fields),
@@ -14310,7 +14374,7 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
                 field["answer"] = saved_answers[field["id"]]
         adapted_sections.append({
             "id": f"aptem-section:{section_id}",
-            "title": clean_text(section.get("name")) or "Review section",
+            "title": section_title,
             "estimatedMinutes": 0,
             "displayOrder": section.get("order") if section.get("order") is not None else section_index,
             "enabled": True,
@@ -14325,10 +14389,20 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
     elif is_template_preview:
         adapted_sections, field_warnings = preview_sections, preview_warnings
 
+    if is_mcm and adapted_sections and not migrated_form and not is_template_preview:
+        def _mcm_sort_key(item):
+            index, section = item
+            rank = _imported_mcm_section_rank(section["title"])
+            unknown = len(_IMPORTED_MCM_SECTION_ORDER)
+            return (unknown if rank is None else rank, section["displayOrder"], index)
+
+        adapted_sections = [
+            section for _index, section in sorted(enumerate(adapted_sections), key=_mcm_sort_key)
+        ]
+        for display_order, section in enumerate(adapted_sections):
+            section["displayOrder"] = display_order
+
     target_date = review.get("plannedDate") or review.get("completedDate") or ""
-    review_type = clean_text(review.get("type"))
-    monthly_types = {clean_text(value).casefold() for value in REVIEW_TYPES["monthly-coaching"]}
-    review_type_code = "aptem_mcm" if review_type.casefold() in monthly_types else "aptem_progress_review"
     progress_snapshot = (
         _imported_review_progress_snapshot(learner, review, calculated_by=owner_email)
         if review_type_code == "aptem_progress_review"

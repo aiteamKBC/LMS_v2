@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from 'react';
+import { Component, useEffect, useId, useRef, useState, type ErrorInfo, type FormEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Link } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -9,7 +9,7 @@ import {
   rescheduleLearnerCalendarSession, type BookingCalendarRules, type BookSessionResponse,
   type CalendarBusySlot, type LearnerCalendarEvent, type PersonalCalendarConnection,
 } from '@/api/learnerCalendar';
-import { bookingDateRestrictionMessage, firstAvailableBookingDate, isoDate } from './bookingDates';
+import { bookingDateRestrictionMessage, firstAvailableBookingDate, isoDate, parseBookingDay } from './bookingDates';
 import styles from './meetingBooking.module.css';
 
 type Props = {
@@ -31,8 +31,55 @@ function overlaps(start: number, end: number, otherStart: number, otherEnd: numb
   return start < otherEnd && end > otherStart;
 }
 
+/** Keeps a failure inside the booking form from taking the whole page down
+ * (RouteErrorBoundary would otherwise replace the page). Mirrors that
+ * boundary's pattern; the fallback is an inline dialog the learner can close. */
+class BookingFormBoundary extends Component<{ children: ReactNode; onClose: () => void }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('Unhandled error in the meeting booking form', error, info.componentStack);
+  }
+
+  render() {
+    return this.state.failed ? <BookingFormFailure onClose={this.props.onClose} /> : this.props.children;
+  }
+}
+
+function BookingFormFailure({ onClose }: { onClose: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
+  useEffect(() => {
+    const element = dialog.current!;
+    const previousOverflow = document.body.style.overflow;
+    if (!element.open) element.showModal();
+    document.body.style.overflow = 'hidden';
+    return () => {
+      element.close();
+      document.body.style.overflow = previousOverflow;
+    };
+  }, []);
+  return createPortal(<dialog ref={dialog} aria-labelledby={titleId} className={styles.dialog}
+    onCancel={event => { event.preventDefault(); onClose(); }}>
+    <header className={styles.header}>
+      <div><p className={styles.eyebrow}>Meeting booking</p><h2 id={titleId}>Booking form unavailable</h2></div>
+      <button type="button" aria-label="Close booking dialog" className={styles.close} onClick={onClose}><AppIcon className="ri-close-line" /></button>
+    </header>
+    <p role="alert" className={styles.error}>Something went wrong in the booking form. Close this window and refresh the page to check your meeting before trying again.</p>
+    <footer className={styles.footer}><button type="button" onClick={onClose}>Close</button></footer>
+  </dialog>, document.body);
+}
+
 /** The compact Book session form shared by the two meeting lists. */
-export default function MeetingBookingDialog({ session, title, learner, rules, attendance, onClose, onBooked }: Props) {
+export default function MeetingBookingDialog(props: Props) {
+  return <BookingFormBoundary onClose={props.onClose}><MeetingBookingForm {...props} /></BookingFormBoundary>;
+}
+
+function MeetingBookingForm({ session, title, learner, rules, attendance, onClose, onBooked }: Props) {
   const dialog = useRef<HTMLDialogElement>(null);
   const titleId = useId();
   const descriptionId = useId();
@@ -109,7 +156,7 @@ export default function MeetingBookingDialog({ session, title, learner, rules, a
       setTarget(resolved);
       setCalendarRules(nextRules);
       setCalendarEvents(calendar.events);
-      setConnections(calendarConnections.connections);
+      setConnections(Array.isArray(calendarConnections?.connections) ? calendarConnections.connections : []);
       if (!edited.current.date) setDate(resolved.scheduledDate || firstAvailableBookingDate(resolved.targetDate || resolved.date, nextRules));
       if (!edited.current.time) setTime(resolved.scheduledTime || '09:00');
       if (!edited.current.duration) setDuration(String(resolved.durationMinutes || 60));
@@ -121,21 +168,25 @@ export default function MeetingBookingDialog({ session, title, learner, rules, a
   }, [learner.kind, learner.id, initialBooking, revision]);
 
   useEffect(() => {
-    if (!connections.length || !date) {
+    // An unparseable day (e.g. a five-digit year typed into the date field)
+    // has no instant; `toISOString()` would throw and blank the page. The
+    // inline date restriction already tells the learner to fix it.
+    const day = parseBookingDay(date);
+    if (!connections.length || !day) {
       setBusySlots([]);
       setAvailabilityError('');
       return;
     }
-    const start = new Date(`${date}T00:00:00`).toISOString();
-    const end = new Date(`${date}T23:59:59`).toISOString();
+    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0).toISOString();
+    const end = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59).toISOString();
     let cancelled = false;
     setAvailabilityLoading(true);
     setAvailabilityError('');
     void fetchPersonalCalendarAvailability(learner.kind, learner.id, start, end)
       .then(result => {
         if (cancelled) return;
-        setBusySlots(result.busy);
-        if (result.errors.length) setAvailabilityError('Some connected calendars could not be checked. The server will check again before booking.');
+        setBusySlots(Array.isArray(result?.busy) ? result.busy : []);
+        if (!Array.isArray(result?.busy) || result.errors?.length) setAvailabilityError('Some connected calendars could not be checked. The server will check again before booking.');
       })
       .catch(() => {
         if (!cancelled) {
