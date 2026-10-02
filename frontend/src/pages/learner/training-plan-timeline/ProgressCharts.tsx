@@ -134,7 +134,7 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
       { label: 'Reviews', value: programmeReviews.percent,
         detail: programmeReviews.total
           ? `${programmeReviews.completed} / ${programmeReviews.total} completed across the programme`
-          : 'No programme reviews' },
+          : 'No progress reviews' },
     ],
   } : null;
   const chartProgress = wholeProgrammeProgress || selectedProgress;

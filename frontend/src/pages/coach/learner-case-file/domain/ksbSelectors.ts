@@ -5,8 +5,27 @@ export type EvidencePreviewTarget = {
   title: string;
   category?: string;
   linked?: boolean;
-  activities: Array<{ title: string; type: string; componentId?: string; source?: string; activityId?: string; completedAt?: string; status?: string; module?: string }>;
+  activities: Array<{
+    title: string;
+    type: string;
+    /**
+     * Set only when the evidence resolves to a component in the learner's
+     * current learning plan, i.e. when the existing activity viewer can open it.
+     */
+    componentId?: string;
+    /** Why the evidence cannot be opened, when `componentId` is absent. */
+    unavailableReason?: string;
+    source?: string;
+    activityId?: string;
+    completedAt?: string;
+    status?: string;
+    module?: string;
+  }>;
 };
+
+export const EVIDENCE_UNAVAILABLE_HISTORICAL = 'Historical Aptem record. There is no LMS copy of this activity to open.';
+export const EVIDENCE_UNAVAILABLE_NOT_IN_PLAN = "This activity is no longer in the learner's current learning plan, so it cannot be opened here.";
+export const EVIDENCE_UNAVAILABLE_NO_LINK = 'No LMS activity is linked to this evidence record.';
 
 export type CaseFileKsbBrowserRow = {
   code: string;
@@ -52,7 +71,12 @@ export function selectCaseFileKsbRows(
         category: ksbCategoryFromCode(code),
         evidenceActivities,
         evidenceCount: evidenceActivities.length,
-        linked: touched.has(code),
+        // "Evidence linked" must be backed by evidence the coach can see in
+        // the View popup. A touched code can come from progress rows that are
+        // not evidence (e.g. an unsubmitted reading) or from a completed-KSB
+        // entry with no sources; showing it as linked with an Evidence count
+        // of 0 contradicted the popup.
+        linked: touched.has(code) && evidenceActivities.length > 0,
       };
     })
     .sort((left, right) => left.code.localeCompare(right.code, undefined, { numeric: true, sensitivity: 'base' }));
@@ -86,17 +110,30 @@ function ksbLearningActivities(data: CoachLearnerCaseFileData, code: string): Ev
   const normalizedCode = normalizeKsbCode(code);
   const activities: EvidencePreviewTarget['activities'] = [];
   const seen = new Set<string>();
-  const add = (title: string | null | undefined, type: string | null | undefined, key: string, componentId?: string | null, metadata?: Partial<EvidencePreviewTarget['activities'][number]>) => {
+  // The activity viewer resolves a component inside the learner's current plan
+  // (`detail.components`), so only those ids can be opened from the popup.
+  const planComponentIds = new Set(
+    (data.detail?.components || []).map((component) => String(component.componentId || '').trim()).filter(Boolean),
+  );
+  const add = (title: string | null | undefined, type: string | null | undefined, key: string, candidateComponentId?: string | null, metadata?: Partial<EvidencePreviewTarget['activities'][number]>) => {
     if (!title || seen.has(key)) return;
     seen.add(key);
     const normalizedType = String(type || '').trim().toLowerCase().replace(/[_-]+/g, ' ');
+    const candidate = String(candidateComponentId || '').trim();
+    const componentId = candidate && planComponentIds.has(candidate) ? candidate : undefined;
+    const historical = String(metadata?.source || '').trim().toLowerCase() === 'aptem'
+      || normalizedType === 'historical activity';
     activities.push({
       ...metadata,
       title,
       type: normalizedType === 'live session' ? 'Live session'
         : normalizedType ? normalizedType.charAt(0).toUpperCase() + normalizedType.slice(1)
           : 'Activity type unavailable',
-      componentId: componentId || undefined,
+      componentId,
+      unavailableReason: componentId ? undefined
+        : historical ? EVIDENCE_UNAVAILABLE_HISTORICAL
+          : candidate ? EVIDENCE_UNAVAILABLE_NOT_IN_PLAN
+            : EVIDENCE_UNAVAILABLE_NO_LINK,
     });
   };
 
@@ -110,7 +147,7 @@ function ksbLearningActivities(data: CoachLearnerCaseFileData, code: string): Ev
       ? detailComponentTitle(data, source.componentId)
       : '';
     add(componentTitle || sourceTitle || source.id || 'Aptem evidence', source.typeLabel || source.kind,
-      source.id || `completed-source:${normalizedCode}:${index}`, undefined, source);
+      source.id || `completed-source:${normalizedCode}:${index}`, source.componentId, source);
   }
   if (activities.length > 0) return activities;
 
@@ -123,17 +160,17 @@ function ksbLearningActivities(data: CoachLearnerCaseFileData, code: string): Ev
   for (const attempt of detail.quizAttempts) {
     if (!(attempt.ksbs || []).some((ksb) => normalizeKsbCode(ksb) === normalizedCode)) continue;
     const component = detail.components.find((item) => item.componentId === attempt.componentId || item.quizMeta?.quizId === attempt.quizId);
-    add(attempt.componentTitle || component?.component || `Quiz ${attempt.quizId}`, 'quiz', attempt.componentId || component?.componentId || `quiz:${attempt.quizId}`);
+    add(attempt.componentTitle || component?.component || `Quiz ${attempt.quizId}`, 'quiz', attempt.componentId || component?.componentId || `quiz:${attempt.quizId}`, attempt.componentId || component?.componentId);
   }
   for (const progress of detail.videoProgress || []) {
     if (!(progress.ksbs || []).some((ksb) => normalizeKsbCode(ksb) === normalizedCode)) continue;
     const component = detail.components.find((item) => item.componentId === progress.componentId);
-    add(progress.componentTitle || component?.component || 'Video', 'video', progress.componentId);
+    add(progress.componentTitle || component?.component || 'Video', 'video', progress.componentId, progress.componentId);
   }
   for (const progress of detail.componentProgress || []) {
     if (!(progress.ksbs || []).some((ksb) => normalizeKsbCode(ksb) === normalizedCode)) continue;
     const component = detail.components.find((item) => item.componentId === progress.componentId);
-    add(progress.componentTitle || component?.component || progress.componentType, progress.componentType || component?.type, progress.componentId);
+    add(progress.componentTitle || component?.component || progress.componentType, progress.componentType || component?.type, progress.componentId, progress.componentId);
   }
   return activities;
 }

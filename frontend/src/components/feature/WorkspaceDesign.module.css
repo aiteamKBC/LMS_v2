@@ -24,30 +24,20 @@
 }
 :global([data-theme="dark"]) :global(.workspace-shell[data-workspace-role="coach"]).shell :global(.kbc-workspace-topbar) { background: #162740 !important; border-bottom: 1px solid #3b526c; }
 :global([data-theme="dark"]) :global(.workspace-shell[data-workspace-role="coach"]).shell :is(:global(.kbc-topbar-title), :global(.kbc-topbar-user-name), :global(.kbc-navigation-menu)) { color: #f6f8fb !important; }
-/* Scrolling stays enabled by each panel's overflow rules; only the visible
-   scrollbar and its reserved gutter are removed, across all workspaces. */
-:global(.dashboard-theme[data-workspace-role]).shell,
-:global(.dashboard-theme[data-workspace-role]).shell * {
-  scrollbar-width: none !important;
-  scrollbar-gutter: auto !important;
-}
-
-:global(.dashboard-theme[data-workspace-role]).shell::-webkit-scrollbar,
-:global(.dashboard-theme[data-workspace-role]).shell *::-webkit-scrollbar {
-  display: none !important;
-  width: 0 !important;
-  height: 0 !important;
-}
+/* Scrollbars inside the workspace shell are deliberately visible: learners
+   need a visible cue that a page or panel holds more content. The thin,
+   themed scrollbar style is defined globally in index.css ("Scrollbar"). A
+   blanket rule here used to hide every scrollbar and gutter in all
+   workspaces; do not reintroduce it. Hide a scrollbar only on a specific
+   control that offers its own scroll affordance. */
 
 :global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) {
   padding: 0;
   background-image: none !important;
 }
 
-/* Module Builder's catalogue list is long enough that a hidden scrollbar
-   leaves no sign there is more to scroll to. Opt this one panel back into a
-   visible scrollbar without touching the hidden-scrollbar default anywhere
-   else. */
+/* Module Builder's catalogue list keeps its wider, always-reserved scrollbar
+   so its long list reads as scrollable at a glance. */
 :global(.dashboard-theme[data-workspace-role]).shell :global(.module-catalogue-scroll) {
   scrollbar-width: thin !important;
   scrollbar-color: oklch(var(--foreground-400)) oklch(var(--background-100)) !important;

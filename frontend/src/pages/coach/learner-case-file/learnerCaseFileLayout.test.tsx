@@ -2,6 +2,7 @@ import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CaseFileReviewMeeting, CoachLearnerCaseFileData } from './types';
+import type { LearnerVideoProgress } from '@/api/learnerDetail';
 import LearnerCaseFile from './page';
 
 const mocks = vi.hoisted(() => ({
@@ -137,6 +138,14 @@ const caseFileData = {
   reviewGenerationIssues: [],
   reviewsLoading: false,
 } satisfies CoachLearnerCaseFileData;
+
+/** A completed video carrying KSB codes: real evidence behind an "Evidence linked" row. */
+function completedVideo(componentId: string, ksbs: string[]): LearnerVideoProgress {
+  return {
+    kind: 'video', componentId, componentTitle: `Video ${componentId}`, ksbs,
+    startedAt: null, submittedAt: '2026-09-01T10:00:00Z', timeTaken: null,
+  };
+}
 
 function LocationProbe() {
   const location = useLocation();
@@ -378,7 +387,13 @@ describe('Learner Case File design', () => {
   });
 
   it('uses browser evidence rather than canonical KSB status for the header metric', () => {
-    mocks.data = { ...caseFileData, ksbStatus: 'unavailable', ksbProgress: null, touchedKsbCodes: ['K1'] };
+    mocks.data = {
+      ...caseFileData,
+      ksbStatus: 'unavailable',
+      ksbProgress: null,
+      touchedKsbCodes: ['K1'],
+      detail: { ...caseFileData.detail, videoProgress: [completedVideo('video-k1', ['K1'])] },
+    };
     render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
     const summary = screen.getByRole('region', { name: 'Learner profile summary' });
     const ksbMetric = within(summary).getByText('KSB', { selector: 'span' }).parentElement;
@@ -391,9 +406,11 @@ describe('Learner Case File design', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
     expect(screen.getByRole('heading', { name: 'Off-the-Job Hours (OTJH)' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'KSB Detailed Breakdown' })).toBeInTheDocument();
-    expect(screen.getByText('Total KSB points').parentElement).toHaveTextContent('1');
-    expect(screen.getByText('Points achieved').parentElement).toHaveTextContent('0');
-    expect(screen.getByText('Points remaining').parentElement).toHaveTextContent('1');
+    expect(screen.getByText('Total KSBs').parentElement).toHaveTextContent('1');
+    expect(screen.getByText('KSBs achieved').parentElement).toHaveTextContent('0');
+    expect(screen.getByText('KSBs remaining').parentElement).toHaveTextContent('1');
+    expect(screen.getByText('KSBs by category')).toBeInTheDocument();
+    expect(screen.queryAllByText(/KSB points|Points achieved|Points remaining/i)).toHaveLength(0);
     for (const label of ['KSB Code', 'Title', 'Category', 'Status', 'Evidence']) {
       expect(screen.getByRole('button', { name: `Sort by ${label}` }).querySelector('svg')).toBeInTheDocument();
     }
@@ -420,7 +437,7 @@ describe('Learner Case File design', () => {
     const totals = [4, 4, 4, 4, 4, 4, 2, 2, 2, 2, 2, 2, 2, 2];
     mocks.data = {
       ...caseFileData,
-      detail: { ...caseFileData.detail, ksbs },
+      detail: { ...caseFileData.detail, ksbs, videoProgress: [completedVideo('video-1', ksbs.slice(0, 10).map((item) => item.code))] },
       mappedKsbCodes: ksbs.map((item) => item.code),
       touchedKsbCodes: ksbs.slice(0, 10).map((item) => item.code),
       ksbCodeProgress: ksbs.map((item, index) => ({ code: item.code, completed: 1, total: totals[index] })),
@@ -429,9 +446,9 @@ describe('Learner Case File design', () => {
     render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
 
     fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
-    expect(screen.getByText('Total KSB points').parentElement).toHaveTextContent('14');
-    expect(screen.getByText('Points achieved').parentElement).toHaveTextContent('10');
-    expect(screen.getByText('Points remaining').parentElement).toHaveTextContent('4');
+    expect(screen.getByText('Total KSBs').parentElement).toHaveTextContent('14');
+    expect(screen.getByText('KSBs achieved').parentElement).toHaveTextContent('10');
+    expect(screen.getByText('KSBs remaining').parentElement).toHaveTextContent('4');
     expect(screen.getAllByText('Knowledge')[0].parentElement).toHaveTextContent('6 / 6');
     expect(screen.getByRole('button', { name: 'All (14)' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Knowledge (6)' })).toBeInTheDocument();
@@ -458,7 +475,11 @@ describe('Learner Case File design', () => {
     ));
     mocks.data = {
       ...caseFileData,
-      detail: { ...caseFileData.detail, ksbs },
+      detail: {
+        ...caseFileData.detail,
+        ksbs,
+        videoProgress: [completedVideo('video-1', ['K1', 'K2', 'K3', 'K4', 'S1', 'S2', 'S3', 'S4', 'S5', 'S6'])],
+      },
       ksbStatus: 'unavailable',
       ksbProgress: null,
       ksbEvidencedCount: null,
@@ -471,9 +492,9 @@ describe('Learner Case File design', () => {
     const header = screen.getByRole('region', { name: 'Learner profile summary' });
     expect(within(header).getByText('KSB', { selector: 'span' }).parentElement?.querySelector('strong')).toHaveTextContent('63%');
     fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
-    expect(screen.getByText('Total KSB points').parentElement).toHaveTextContent('16');
-    expect(screen.getByText('Points achieved').parentElement).toHaveTextContent('10');
-    expect(screen.getByText('Points remaining').parentElement).toHaveTextContent('6');
+    expect(screen.getByText('Total KSBs').parentElement).toHaveTextContent('16');
+    expect(screen.getByText('KSBs achieved').parentElement).toHaveTextContent('10');
+    expect(screen.getByText('KSBs remaining').parentElement).toHaveTextContent('6');
     expect(screen.getAllByText('Knowledge')[0].parentElement).toHaveTextContent('4 / 4');
     expect(screen.getAllByText('Skills')[0].parentElement).toHaveTextContent('6 / 8');
     expect(screen.getAllByText('Behaviours')[0].parentElement).toHaveTextContent('0 / 4');
@@ -745,6 +766,97 @@ describe('Learner Case File design', () => {
     fireEvent.click(screen.getByRole('button', { name: 'View' }));
     fireEvent.click(screen.getByRole('button', { name: /Assignment Assignment 2/ }));
     expect(screen.getByTestId('location')).toHaveTextContent('/learner/monthly-submission/apprenticeship/42/assignment-2');
+  });
+
+  it('opens completed KSB evidence from its card and explains evidence that cannot be opened', () => {
+    mocks.data = {
+      ...caseFileData,
+      detail: {
+        ...caseFileData.detail,
+        ksbs: [{ code: 'B6', type: 'Behaviours', number: '6', description: 'Works collaboratively' }],
+        components: [
+          { module: 'Module 1', week: 'Week 1', component: 'Part 2: Delphi Technique', expectedOtjh: null, componentId: 'video-delphi', type: 'video', ksbMappings: [{ code: 'B6', description: null, classification: 'main', weight: 1 }] },
+        ],
+      },
+      touchedKsbCodes: ['B6'],
+      snapshot: {
+        ...caseFileData.snapshot,
+        ksbCompletedDetails: [{
+          code: 'B6',
+          sources: [
+            { id: 'component:video-delphi', title: 'Video', typeLabel: 'Video', kind: 'video', componentId: 'video-delphi' },
+            { id: 'aptem:1', title: 'Imported workshop', typeLabel: 'Historical Activity', source: 'Aptem', componentId: null },
+          ],
+        }],
+      },
+    };
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LocationProbe /><LearnerCaseFile /></MemoryRouter>);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View' }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('2 evidence items')).toBeInTheDocument();
+
+    const historical = within(dialog).getByText('Imported workshop').closest('[aria-disabled="true"]');
+    expect(historical).not.toBeNull();
+    expect(historical).toHaveAccessibleDescription(/Historical Aptem record/);
+    expect(within(dialog).queryByRole('button', { name: /Imported workshop/ })).not.toBeInTheDocument();
+
+    const card = within(dialog).getByRole('button', { name: 'Open Video Part 2: Delphi Technique' });
+    card.focus();
+    expect(card).toHaveFocus();
+    fireEvent.click(card);
+    expect(screen.getByTestId('location')).toHaveTextContent('/learner/monthly-submission/apprenticeship/42/video-delphi');
+  });
+
+  it('shows Not evidenced, not Evidence linked, when a touched KSB has no evidence items', () => {
+    mocks.data = {
+      ...caseFileData,
+      detail: { ...caseFileData.detail, components: [], quizAttempts: [], videoProgress: [], componentProgress: [] },
+      touchedKsbCodes: ['K1'],
+      snapshot: { ...caseFileData.snapshot, ksbCompletedDetails: [{ code: 'K1', sources: [] }] },
+    };
+    render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
+    const row = screen.getByText('K1', { selector: 'strong' }).closest('tr');
+    expect(within(row!).getByText('0')).toBeInTheDocument();
+    expect(within(row!).getByText('Not evidenced')).toBeInTheDocument();
+    expect(within(row!).queryByText('Evidence linked')).not.toBeInTheDocument();
+    expect(screen.getByText('KSBs achieved').parentElement).toHaveTextContent('0');
+
+    fireEvent.click(within(row!).getByRole('button', { name: 'View' }));
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByText('Not evidenced')).toBeInTheDocument();
+    expect(within(dialog).getByText('0 evidence items')).toBeInTheDocument();
+  });
+
+  it('gives Knowledge, Skills and Behaviours distinct category colours', () => {
+    mocks.data = {
+      ...caseFileData,
+      detail: {
+        ...caseFileData.detail,
+        ksbs: [
+          { code: 'K1', type: 'Knowledge', number: '1', description: 'Knowledge 1' },
+          { code: 'S1', type: 'Skills', number: '1', description: 'Skill 1' },
+          { code: 'B1', type: 'Behaviours', number: '1', description: 'Behaviour 1' },
+        ],
+      },
+    };
+    const { container } = render(<MemoryRouter initialEntries={['/coach/learner-case-file?id=42']}><LearnerCaseFile /></MemoryRouter>);
+
+    fireEvent.click(screen.getByRole('tab', { name: 'OTJH & KSB Progress' }));
+    const barTone = (category: string) => {
+      const heading = screen.getAllByText(category)[0];
+      const card = heading.parentElement?.parentElement;
+      expect(card).toContainElement(heading);
+      return card?.querySelector('[data-tone]')?.getAttribute('data-tone');
+    };
+    expect([barTone('Knowledge'), barTone('Skills'), barTone('Behaviours')]).toEqual(['primary', 'sky', 'behaviours']);
+    expect(container.querySelectorAll('[data-tone="sky"]')).toHaveLength(1);
+    const skillsChip = screen.getAllByText('Skills').find((element) => element.classList.contains('ui-status-badge'));
+    expect(skillsChip).toHaveClass('bg-sky-50');
+    expect(skillsChip).not.toHaveClass('bg-primary-50');
   });
 
   it('keeps View available for a KSB without evidence', () => {

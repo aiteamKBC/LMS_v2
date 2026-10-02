@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { CoachLearnerCaseFileData } from '../types';
-import { normalizeKsbCode, selectCaseFileKsbRows, selectCaseFileKsbSummary } from './ksbSelectors';
+import {
+  EVIDENCE_UNAVAILABLE_HISTORICAL,
+  EVIDENCE_UNAVAILABLE_NO_LINK,
+  EVIDENCE_UNAVAILABLE_NOT_IN_PLAN,
+  normalizeKsbCode,
+  selectCaseFileKsbRows,
+  selectCaseFileKsbSummary,
+} from './ksbSelectors';
 
 function caseFile(overrides: Partial<CoachLearnerCaseFileData> = {}): CoachLearnerCaseFileData {
   return {
@@ -33,7 +40,17 @@ describe('KSB selectors', () => {
 
   it('keeps evidenced and total counts and unavailable percentages unchanged', () => {
     const rows = selectCaseFileKsbRows(
-      caseFile({ touchedKsbCodes: ['S2.1'], mappedKsbCodes: ['S2', 'K1'] }),
+      caseFile({
+        touchedKsbCodes: ['S2.1'],
+        mappedKsbCodes: ['S2', 'K1'],
+        detail: {
+          components: [], quizAttempts: [],
+          videoProgress: [{
+            kind: 'video', componentId: 'skill-video', componentTitle: 'Skill video',
+            ksbs: ['S2.1'], startedAt: null, submittedAt: '2026-09-01T10:00:00Z', timeTaken: null,
+          }],
+        } as CoachLearnerCaseFileData['detail'],
+      }),
       [
         { code: 'S2', description: 'Skill', type: 'Skill', number: '2' },
         { code: 'K1', description: 'Knowledge', type: 'Knowledge', number: '1' },
@@ -90,7 +107,64 @@ describe('KSB selectors', () => {
 
     expect(rows[0].evidenceCount).toBe(1);
     expect(rows[0].evidenceActivities[0]).toMatchObject({ title: 'Resilience in practice', type: 'Video' });
-    expect(rows[0].evidenceActivities[0].componentId).toBeUndefined();
+    // The source's component is in the learner's current plan, so the popup can open it.
+    expect(rows[0].evidenceActivities[0].componentId).toBe('VIDEO-1');
+    expect(rows[0].evidenceActivities[0].unavailableReason).toBeUndefined();
+  });
+
+  it('does not mark a touched KSB as evidence linked when no evidence item backs it', () => {
+    const data = caseFile({
+      // K1 is touched (e.g. by an unsubmitted progress row), B2 has a
+      // completed-KSB entry with no sources: neither has viewable evidence.
+      touchedKsbCodes: ['K1', 'B2', 'S1'],
+      snapshot: {
+        ksbCompletedDetails: [
+          { code: 'B2', sources: [] },
+          { code: 'S1', sources: [{ id: 'evidence-s1', title: 'Observed task', kind: 'live_session' }] },
+        ],
+      } as CoachLearnerCaseFileData['snapshot'],
+      detail: { components: [], quizAttempts: [], videoProgress: [], componentProgress: [] } as unknown as CoachLearnerCaseFileData['detail'],
+    });
+    const rows = selectCaseFileKsbRows(data, [
+      { code: 'K1', description: 'Knowledge', type: 'Knowledge', number: '1' },
+      { code: 'B2', description: 'Behaviour', type: 'Behaviours', number: '2' },
+      { code: 'S1', description: 'Skill', type: 'Skills', number: '1' },
+    ]);
+    const byCode = Object.fromEntries(rows.map((row) => [row.code, row]));
+
+    expect(byCode.K1).toMatchObject({ linked: false, evidenceCount: 0 });
+    expect(byCode.B2).toMatchObject({ linked: false, evidenceCount: 0 });
+    expect(byCode.S1).toMatchObject({ linked: true, evidenceCount: 1 });
+    for (const row of rows) expect(row.linked).toBe(row.evidenceCount > 0);
+    expect(selectCaseFileKsbSummary(rows)).toMatchObject({ total: 3, achieved: 1, remaining: 2 });
+  });
+
+  it('explains why evidence outside the current plan cannot be opened', () => {
+    const data = caseFile({
+      touchedKsbCodes: ['B1'],
+      snapshot: {
+        ksbCompletedDetails: [{
+          code: 'B1',
+          sources: [
+            { id: 'aptem-1', title: 'Imported task', typeLabel: 'Historical Activity', source: 'Aptem', componentId: null },
+            { id: 'removed-1', title: 'Removed video', typeLabel: 'Video', componentId: 'REMOVED-VIDEO' },
+            { id: 'journal-1', title: 'Journal entry', typeLabel: 'Journal' },
+            { id: 'plan-1', title: 'Plan reading', typeLabel: 'Reading', componentId: 'READING-1' },
+          ],
+        }],
+      } as CoachLearnerCaseFileData['snapshot'],
+      detail: {
+        components: [{ componentId: 'READING-1', component: 'Plan reading', type: 'reading', ksbMappings: [{ code: 'B1' }] }],
+      } as CoachLearnerCaseFileData['detail'],
+    });
+
+    const [row] = selectCaseFileKsbRows(data, [{ code: 'B1', description: 'Behaviour', type: 'Behaviours', number: '1' }]);
+    const byTitle = Object.fromEntries(row.evidenceActivities.map((activity) => [activity.title, activity]));
+
+    expect(byTitle['Imported task']).toMatchObject({ componentId: undefined, unavailableReason: EVIDENCE_UNAVAILABLE_HISTORICAL });
+    expect(byTitle['Removed video']).toMatchObject({ componentId: undefined, unavailableReason: EVIDENCE_UNAVAILABLE_NOT_IN_PLAN });
+    expect(byTitle['Journal entry']).toMatchObject({ componentId: undefined, unavailableReason: EVIDENCE_UNAVAILABLE_NO_LINK });
+    expect(byTitle['Plan reading']).toMatchObject({ componentId: 'READING-1', unavailableReason: undefined });
   });
 
   it('shows the saved title of a historical video outside the current component list', () => {
