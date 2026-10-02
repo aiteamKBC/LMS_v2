@@ -245,6 +245,15 @@ export interface CoachMeetingSummary {
 }
 
 export interface CoachMeetingArtifactsResponse {
+  intelligence?: {
+    lastCheckedAt?: string | null;
+    attendanceStatus: string;
+    recordingStatus: string;
+    transcriptStatus: string;
+    summaryStatus: string;
+    transcriptArtifactId?: string | null;
+    errorCodes: string[];
+  };
   event?: {
     eventKey: string;
     source: string;

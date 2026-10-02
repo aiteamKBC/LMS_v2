@@ -210,7 +210,7 @@ describe('restored monthly coaching list', () => {
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/monthly-coaching');
   });
 
-  it('restores Schedule and Reschedule popups for imported Aptem meetings', async () => {
+  it('routes imported Aptem meetings to their own booking form', async () => {
     fetchEvents.mockResolvedValue({ events: [
       meeting(20, { id: 'imported-review:20', eventKey: 'imported-review:20', learner: 'Imported Unscheduled', status: 'not-scheduled', reviewSource: 'aptem', aptemReviewId: '20', hasReviewForm: false, reviewTemplateId: undefined }),
       meeting(21, { id: 'imported-review:21', eventKey: 'imported-review:21', learner: 'Imported Scheduled', status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00', reviewSource: 'aptem', aptemReviewId: '21', hasReviewForm: false, reviewTemplateId: undefined }),
@@ -220,17 +220,12 @@ describe('restored monthly coaching list', () => {
 
     const unscheduledRow = within(screen.getByText('Imported Unscheduled').closest('tr')!);
     expect(unscheduledRow.getByRole('button', { name: 'View Form' })).toBeVisible();
-    fireEvent.click(unscheduledRow.getByRole('button', { name: 'Schedule' }));
-    expect(screen.getByRole('dialog', { name: 'Schedule meeting' })).toBeVisible();
-    fireEvent.click(within(screen.getByRole('dialog', { name: 'Schedule meeting' })).getByRole('button', { name: 'Cancel' }));
-
-    fireEvent.click(within(screen.getByText('Imported Scheduled').closest('tr')!).getByRole('button', { name: 'Reschedule' }));
-    expect(within(screen.getByRole('dialog', { name: 'Schedule meeting' })).getByLabelText('Date')).toHaveValue('2026-09-23');
-    fireEvent.click(within(screen.getByRole('dialog', { name: 'Schedule meeting' })).getByRole('button', { name: 'Cancel' }));
+    expect(unscheduledRow.queryByRole('button', { name: 'Schedule' })).not.toBeInTheDocument();
+    expect(within(screen.getByText('Imported Scheduled').closest('tr')!).queryByRole('button', { name: 'Reschedule' })).not.toBeInTheDocument();
 
     const scheduledRow = within(screen.getByText('Imported Scheduled').closest('tr')!);
     expect(scheduledRow.getAllByRole('button').map(button => button.textContent)).toEqual([
-      'Reschedule', 'View', 'View Form', 'View Slides',
+      'View', 'View Form', 'View Slides',
     ]);
     fireEvent.click(scheduledRow.getByRole('button', { name: 'View Form' }));
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A21');
@@ -408,5 +403,37 @@ describe('restored monthly coaching list', () => {
     mount();
     expect(screen.getByText('Coach access is required to load coaching meetings.')).toBeVisible();
     expect(fetchEvents).not.toHaveBeenCalled();
+  });
+
+  it('collapses a learner\'s many pending MCR occurrences into a single option in the generic Schedule-meeting dropdown', async () => {
+    fetchEvents.mockResolvedValue({ events: [
+      meeting(30, { learner: 'Repeat Learner', learnerId: '30', targetDate: '2026-09-20', status: 'not-scheduled' }),
+      meeting(31, { learner: 'Repeat Learner', learnerId: '30', targetDate: '2026-11-05', status: 'not-scheduled', eventKey: 'mcr:31', id: 'meeting-31' }),
+      meeting(32, { learner: 'Repeat Learner', learnerId: '30', targetDate: '2026-08-05', status: 'scheduled', scheduledDate: '2026-08-05', scheduledTime: '10:00', eventKey: 'mcr:32', id: 'meeting-32' }),
+    ] });
+    mount();
+    await screen.findByText('Repeat Learner');
+    fireEvent.click(screen.getByRole('button', { name: 'Schedule meeting' }));
+    const dialog = screen.getByRole('dialog', { name: 'Schedule meeting' });
+    const options = Array.from(within(dialog).getByRole('combobox', { name: 'Learner' }).querySelectorAll('option'))
+      .filter(option => option.textContent?.includes('Repeat Learner'));
+    expect(options).toHaveLength(1);
+    expect(options[0]).toHaveValue('mcr:30');
+  });
+
+  it.each([
+    ['the later occurrence', /05\s*Nov\s*2026/, 'mcr:31'],
+    ['the sooner occurrence', /20\s*Sept?\s*2026/, 'mcr:30'],
+  ])('still lets %s be scheduled individually from its own row even though the generic dropdown collapses them', async (_label, dateMatcher, expectedValue) => {
+    fetchEvents.mockResolvedValue({ events: [
+      meeting(30, { learner: 'Repeat Learner', learnerId: '30', targetDate: '2026-09-20', status: 'not-scheduled' }),
+      meeting(31, { learner: 'Repeat Learner', learnerId: '30', targetDate: '2026-11-05', status: 'not-scheduled', eventKey: 'mcr:31', id: 'meeting-31' }),
+    ] });
+    mount('/coach/monthly-coaching?filter=all&months=all');
+    await screen.findAllByText('Repeat Learner');
+
+    const row = screen.getByText(dateMatcher).closest('tr')!;
+    fireEvent.click(within(row).getByRole('button', { name: 'Schedule' }));
+    expect(within(screen.getByRole('dialog', { name: 'Schedule meeting' })).getByRole('combobox', { name: 'Learner' })).toHaveValue(expectedValue);
   });
 });

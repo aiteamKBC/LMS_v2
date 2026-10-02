@@ -361,27 +361,44 @@ class AptemEventVerificationTests(SimpleTestCase):
 
         self.assertEqual(event["status"], CoachCalendarEvent.STATUS_NOT_SCHEDULED)
 
-    def test_linked_calendar_booking_overlays_the_same_aptem_event_identity(self):
+    def test_verified_calendar_booking_overlays_the_same_aptem_event_identity(self):
         base = {
             "eventKey": "imported-review:R-1", "id": "imported-review:R-1",
-            "source": "mcr", "reviewSource": "aptem", "status": "in-progress",
-            "rawStatus": "In Progress", "targetDate": "2026-09-23", "title": "MCM",
+            "source": "mcr", "reviewSource": "aptem", "status": "not-scheduled",
+            "sourceStatus": "Not Scheduled", "rawStatus": "Not Scheduled", "targetDate": "2026-09-23", "title": "MCM",
         }
         record = CoachCalendarEvent(
             event_key="imported-review:R-1", owner_email="coach@example.invalid",
             learner_id=1, event_type="mcr", target_date=date(2026, 9, 23),
             scheduled_date=date(2026, 9, 24), scheduled_time=time(11, 0),
             duration_minutes=60, status=CoachCalendarEvent.STATUS_SCHEDULED,
+            sync_state=CoachCalendarEvent.SYNC_SYNCED, graph_event_id="graph-synthetic",
             meeting_provider="Microsoft Teams", meeting_link="https://teams.example.invalid/join",
         )
 
         event = views.overlay_calendar_record(base, record)
 
         self.assertEqual(event["eventKey"], "imported-review:R-1")
-        self.assertEqual(event["status"], "in-progress")
+        self.assertEqual(event["status"], "scheduled")
+        self.assertEqual(event["sourceStatus"], "Not Scheduled")
         self.assertEqual(event["scheduledDate"], "2026-09-24")
         self.assertEqual(event["scheduledTime"], "11:00")
         self.assertEqual(event["meetingLink"], "https://teams.example.invalid/join")
+
+    def test_historical_completed_aptem_status_is_not_replaced_by_local_booking(self):
+        base = {"eventKey": "imported-review:H-1", "source": "mcr", "reviewSource": "aptem",
+                "status": "completed", "sourceStatus": "Completed", "targetDate": "2026-09-23"}
+        record = CoachCalendarEvent(
+            event_key=base["eventKey"], owner_email="coach@example.invalid", learner_id=1,
+            event_type="mcr", target_date=date(2026, 9, 23),
+            scheduled_date=date(2026, 9, 24), scheduled_time=time(11, 0),
+            status=CoachCalendarEvent.STATUS_SCHEDULED, sync_state=CoachCalendarEvent.SYNC_SYNCED,
+            graph_event_id="historical-graph", meeting_link="https://teams.example.invalid/historical",
+        )
+        event = views.overlay_calendar_record(base, record)
+        self.assertEqual(event["status"], "completed")
+        self.assertEqual(event["sourceStatus"], "Completed")
+        self.assertEqual(event["meetingLink"], "https://teams.example.invalid/historical")
 
     @patch("coach_api.views.connections")
     def test_only_matching_source_learner_id_is_emitted_and_ids_are_deduplicated(self, connections):
@@ -585,7 +602,10 @@ class AptemEventVerificationTests(SimpleTestCase):
         self.assertTrue(definition["readOnly"])
         self.assertEqual(definition["sections"], [])
         self.assertEqual(definition["instance"]["id"], "imported-review:R-SUMMARY")
-        imported_instances.assert_not_called()
+        imported_instances.assert_called_once_with(
+            owner_email__iexact="coach@example.invalid",
+            event_key="imported-review:R-SUMMARY",
+        )
 
     @patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[])
     def test_imported_definition_does_not_expose_review_outside_current_coach_caseload(self, _profiles):
@@ -606,12 +626,15 @@ class AptemEventVerificationTests(SimpleTestCase):
             "/coach_api/coach/reviews/imported-review%3AR-SUMMARY",
             {"viewAsCoach": "selected-coach@example.invalid"},
         )
+        # The test bypasses coach_access_required, which normally sets this.
+        request.coach_view_as = True
 
         response = unwrap(views.coach_review_instance_detail)(request, "imported-review:R-SUMMARY")
 
         self.assertEqual(response.status_code, 200)
         imported_definition.assert_called_once_with(
             "selected-coach@example.invalid", "imported-review:R-SUMMARY",
+            preview_only=True,
         )
 
     @patch("coach_api.views.authenticated_coach_email", return_value="coach@example.invalid")

@@ -23,6 +23,12 @@ export function isReviewSessionWrite(path: string) {
   return path.includes('/reviews/');
 }
 
+/** The server identifies an LMS overlay by its owned calendar event. A source
+ * history row can have the same key prefix but must keep its Aptem rendering. */
+export function isMigratedContinuationEvent(event: LearnerCalendarEvent | null): boolean {
+  return Boolean(event?.migratedForm && event.eventKey.startsWith('imported-review:'));
+}
+
 /** Imported completed records remain history; Curriculum owns upcoming work. */
 export function mergeCompletedReviewHistory(events: LearnerCalendarEvent[], history: LearnerCalendarEvent[]) {
   const linkedIds = new Set(events.map(event => event.reviewId).filter(Boolean));

@@ -42,7 +42,8 @@ from .review_form import (
     sections_for,
 )
 from .views import _error, _parse_body
-from coach_api.models import CoachAbsenceReport, CoachCalendarEvent
+from coach_api.models import CoachAbsenceReport, CoachCalendarEvent, ImportedReviewInstance
+from coach_api.migrated_completion import signature_states
 from curriculum_api import review_instances
 
 logger = logging.getLogger(__name__)
@@ -158,6 +159,33 @@ def _review_signing_rows(kind, learner_id, *, employer_only=True):
             "signedAt": employer_state.get('signedAt'),
             "learnerSigned": bool(signatures.get('participant', {}).get('signed')),
             "adminSigned": bool(signatures.get('advisor', {}).get('signed')),
+        })
+    # Imported Aptem continuations have their own overlay and signature store.
+    # Only this learner's profile ids are queried; native review rows above
+    # keep their existing behavior and document identity.
+    for overlay in ImportedReviewInstance.objects.select_related("migrated_template").filter(
+        learner_id__in=[int(value) for value in instance_learner_ids],
+        source_review_id__isnull=False,
+        status__in=[ImportedReviewInstance.STATUS_AWAITING_SIGNATURE, ImportedReviewInstance.STATUS_COMPLETED],
+    ):
+        if not overlay.migrated_template_id or overlay.migrated_template.review_family != "PR":
+            continue
+        signatures = signature_states(overlay)
+        employer_state = signatures["employer"]
+        rows.append({
+            "kind": "review", "eventKey": overlay.event_key,
+            "reviewInstanceId": overlay.event_key, "migratedForm": True,
+            "reviewType": "aptem_progress_review",
+            "label": overlay.template_snapshot.get("name") or "Migrated Progress Review",
+            "scheduledDate": "", "signable": overlay.status == ImportedReviewInstance.STATUS_AWAITING_SIGNATURE,
+            "completed": overlay.status == ImportedReviewInstance.STATUS_COMPLETED,
+            "sectionsTotal": len(overlay.template_snapshot.get("sections") or []),
+            "employerSignatureRequired": True,
+            "signed": employer_state["signed"],
+            "signedName": employer_state["signedName"] or "",
+            "signedAt": employer_state["signedAt"],
+            "learnerSigned": signatures["participant"]["signed"],
+            "adminSigned": signatures["advisor"]["signed"],
         })
     return rows
 

@@ -1,5 +1,6 @@
 from django.conf import settings
 from django.db import models
+from django.db.models.functions import Lower
 import uuid
 
 
@@ -144,20 +145,68 @@ class CoachCalendarEvent(models.Model):
         return f"{self.event_type} #{self.sequence} for {self.learner_name or self.learner_id}"
 
 
+class MigratedReviewTemplate(models.Model):
+    """Approved Aptem continuation form, separate from Curriculum templates."""
+
+    FAMILY_MCM = "MCM"
+    FAMILY_PR = "PR"
+    FAMILY_CHOICES = [(FAMILY_MCM, "Monthly Coaching Meeting"), (FAMILY_PR, "Progress Review")]
+
+    programme_key = models.CharField(max_length=255)
+    review_family = models.CharField(max_length=3, choices=FAMILY_CHOICES)
+    name = models.CharField(max_length=255)
+    definition_json = models.JSONField(default=dict)
+    is_active = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = _table_name('coach_test_migrated_review_templates', 'Coach"."coach_migrated_review_template')
+        constraints = [
+            models.UniqueConstraint(
+                fields=["programme_key", "review_family"], condition=models.Q(is_active=True),
+                name="coach_migrated_template_one_active",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(review_family__in=["MCM", "PR"]),
+                name="coach_migrated_template_family_valid",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.programme_key} / {self.review_family}: {self.name}"
+
+
 class ImportedReviewInstance(models.Model):
     """Editable coach-owned state layered over an immutable Aptem review."""
 
     STATUS_IN_PROGRESS = "in-progress"
+    STATUS_NOT_SCHEDULED = "not-scheduled"
+    STATUS_SCHEDULED = "scheduled"
+    STATUS_AWAITING_SIGNATURE = "awaiting-signature"
     STATUS_COMPLETED = "completed"
     STATUS_CHOICES = [
+        (STATUS_NOT_SCHEDULED, "Not Scheduled"),
+        (STATUS_SCHEDULED, "Scheduled"),
         (STATUS_IN_PROGRESS, "In Progress"),
+        (STATUS_AWAITING_SIGNATURE, "Awaiting Signature"),
         (STATUS_COMPLETED, "Completed"),
     ]
 
     event_key = models.CharField(max_length=255)
     owner_email = models.EmailField(max_length=255, db_index=True)
     learner_id = models.IntegerField(db_index=True)
+    source_review_id = models.BigIntegerField(null=True, blank=True, db_index=True)
+    migrated_template = models.ForeignKey(
+        MigratedReviewTemplate, null=True, blank=True, on_delete=models.PROTECT,
+        related_name="review_overlays",
+    )
+    template_snapshot = models.JSONField(default=dict, blank=True)
+    signature_requirements = models.JSONField(default=dict, blank=True)
     answers = models.JSONField(default=dict, blank=True)
+    # Phase E metadata only. Full transcripts and attendance remain in the
+    # existing Teams snapshot tables keyed by this overlay's calendar event.
+    meeting_intelligence = models.JSONField(default=dict, blank=True)
     status = models.CharField(
         max_length=32,
         choices=STATUS_CHOICES,
@@ -178,11 +227,51 @@ class ImportedReviewInstance(models.Model):
                 fields=["owner_email", "event_key"],
                 name="coach_imported_review_owner_event_unique",
             ),
+            models.UniqueConstraint(
+                Lower("owner_email"), models.F("event_key"),
+                name="coach_imported_review_owner_event_ci_unique",
+            ),
+            models.UniqueConstraint(
+                fields=["source_review_id"], condition=models.Q(source_review_id__isnull=False),
+                name="coach_imported_review_source_unique",
+            ),
             models.CheckConstraint(
-                condition=models.Q(status__in=["in-progress", "completed"]),
+                condition=models.Q(status__in=[
+                    "not-scheduled", "scheduled", "in-progress", "awaiting-signature", "completed",
+                ]),
                 name="coach_imported_review_status_valid",
             ),
         ]
+
+class MigratedReviewSignature(models.Model):
+    """One immutable LMS sign-off for an imported review and participant role."""
+
+    overlay = models.ForeignKey(ImportedReviewInstance, on_delete=models.PROTECT, related_name="migrated_signatures")
+    role = models.CharField(max_length=16)
+    signer_account_id = models.BigIntegerField()
+    signer_name = models.CharField(max_length=255)
+    signer_email = models.EmailField(max_length=255, blank=True)
+    signature = models.TextField()
+    signed_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = _table_name('coach_test_migrated_review_signatures', 'Coach"."coach_migrated_review_signature')
+        constraints = [models.UniqueConstraint(fields=["overlay", "role"], name="coach_migrated_signature_role_unique")]
+
+
+class MigratedReviewDocument(models.Model):
+    """Authoritative final LMS PDF; never stored among original Aptem documents."""
+
+    overlay = models.OneToOneField(ImportedReviewInstance, on_delete=models.PROTECT, related_name="migrated_document")
+    pdf_bytes = models.BinaryField()
+    sha256 = models.CharField(max_length=64)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = _table_name('coach_test_migrated_review_documents', 'Coach"."coach_migrated_review_document')
+
 
 class CoachCalendarSequence(models.Model):
     """Cross-process sequence allocator for a learner/session-type scope."""

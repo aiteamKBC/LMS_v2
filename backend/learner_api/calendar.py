@@ -31,7 +31,7 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
-from coach_api.models import CoachCalendarEvent
+from coach_api.models import CoachCalendarEvent, ImportedReviewInstance
 
 from .learner_detail import SOURCE_MODELS
 from .identity import learner_profile_for_source
@@ -433,12 +433,18 @@ def _serialize_event(record, *, review_types_by_template=None, templates_by_id=N
         and event_type in {"mcr", "progress-review"}
         and booking_parts[2] in SOURCE_MODELS and booking_parts[5].isdigit()
     )
+    migrated_form = (record.event_key.startswith("imported-review:")
+                     and ImportedReviewInstance.objects.filter(
+                         event_key=record.event_key, learner_id=record.learner_id,
+                         source_review_id__isnull=False,
+                     ).exists())
     return {
         "id": record.event_key,
         "eventKey": record.event_key,
         "title": (template or {}).get('name') or EVENT_TITLES.get(event_type, "Coaching Session"),
         "reviewTemplateId": template_id or None,
         "reviewInstanceId": _s(getattr(record, 'review_instance_id', '')) or None,
+        "migratedForm": migrated_form,
         "occurrenceNumber": getattr(record, 'occurrence_number', None) or record.sequence,
         **review_type_event_fields({
             'reviewTypeId': type_row.get('id'), 'reviewTypeCode': type_row.get('code'),
@@ -1111,7 +1117,24 @@ def _learner_visible_review_definition(definition, learner_id=None):
 
 @learner_self_or_staff(kwarg="pk")
 def learner_calendar_event_review_pdf(request, kind, pk, event_key):
-    """Download the signed MCM PDF for a learner-visible calendar review."""
+    """Download a PDF for a learner-visible current or imported review."""
+    if event_key.startswith('imported-review:'):
+        from curriculum_api.review_pdf import historical_pdf_response, learner_information
+        from .aptem_review_pdf import imported_review_for_source, original_review_pdf
+
+        model = SOURCE_MODELS.get(kind)
+        source = model.all_learners.filter(pk=pk).first() if model else None
+        review = imported_review_for_source(source, event_key.split(':', 1)[-1], kind=kind)
+        if not review:
+            return _error("Imported review not found for this learner.", 404)
+        information = learner_information(source, name=review.get('learnerName', ''), programme='')
+        return historical_pdf_response(
+            review,
+            information,
+            identifier=event_key.split(':', 1)[-1],
+            original_content=original_review_pdf(review),
+        )
+
     # The review view has its own learner_self_or_staff decorator, which reads
     # ``pk`` from keyword arguments. Preserve that contract when delegating so
     # the nested authorization gate can identify the learner as well.

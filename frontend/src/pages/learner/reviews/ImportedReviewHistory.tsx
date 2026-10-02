@@ -8,6 +8,7 @@ import {
   type ReviewHistoryCategory,
 } from '@/api/reviewHistory';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
+import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 
 interface ImportedReviewHistoryProps {
   kind: LearnerKind;
@@ -15,6 +16,7 @@ interface ImportedReviewHistoryProps {
   category: ReviewHistoryCategory;
   hideHeader?: boolean;
   reviewId?: string;
+  downloadPdf?: (review: ImportedReview) => Promise<void>;
 }
 
 const monthOptions = [
@@ -127,7 +129,7 @@ function ReviewSection({ section, open, onToggle }: { section: ImportedReviewSec
   );
 }
 
-export function ImportedReviewHistory({ kind, learnerId, category, hideHeader = false, reviewId }: ImportedReviewHistoryProps) {
+export function ImportedReviewHistory({ kind, learnerId, category, hideHeader = false, reviewId, downloadPdf }: ImportedReviewHistoryProps) {
   const [reviews, setReviews] = useState<ImportedReview[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -237,7 +239,7 @@ export function ImportedReviewHistory({ kind, learnerId, category, hideHeader = 
             <div className="min-w-0 bg-background-100/25 p-4 sm:p-5">
                 <div className="space-y-4">
                   <div className="rounded-2xl border border-primary-100 bg-white p-4 shadow-sm">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-wide text-primary-600">Imported review</p><h3 className="mt-1 text-lg font-bold text-foreground-900">{selected.name}</h3><p className="mt-1 text-xs text-foreground-500">{selected.type}</p></div><span className={`w-fit rounded-full border px-3 py-1 text-[10px] font-bold ${statusStyle(selected.status)}`}>{statusLabel(selected.status)}</span></div>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-wide text-primary-600">Imported review</p><h3 className="mt-1 text-lg font-bold text-foreground-900">{selected.name}</h3><p className="mt-1 text-xs text-foreground-500">{selected.type}</p></div><div className="flex flex-wrap items-center gap-2"><span className={`w-fit rounded-full border px-3 py-1 text-[10px] font-bold ${statusStyle(selected.status)}`}>{statusLabel(selected.status)}</span>{downloadPdf && <ReviewPdfDownload availability={{ available: true, reason: '' }} label="Download PDF" onDownload={() => downloadPdf(selected)} />}</div></div>
                     <div className="mt-4 grid gap-2 sm:grid-cols-3"><div className="rounded-xl bg-background-100 p-3"><p className="text-[9px] uppercase text-foreground-400">Reviewer</p><p className="mt-1 text-xs font-bold text-foreground-800">{selected.reviewerName || '-'}</p></div><div className="rounded-xl bg-background-100 p-3"><p className="text-[9px] uppercase text-foreground-400">Planned</p><p className="mt-1 text-xs font-bold text-foreground-800">{formatDate(selected.plannedDate)}{selected.plannedTime ? ` at ${selected.plannedTime}` : ''}</p></div><div className="rounded-xl bg-background-100 p-3"><p className="text-[9px] uppercase text-foreground-400">Completed</p><p className="mt-1 text-xs font-bold text-foreground-800">{formatDate(selected.completedDate)}</p></div></div>
                     {!['success', 'complete'].includes(selected.extractionStatus.toLowerCase()) && <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-800"><AppIcon className="ri-information-line mr-1" />Some details may not have been available in the imported Aptem record.</p>}
                   </div>

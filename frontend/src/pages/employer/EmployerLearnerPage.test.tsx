@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   fetchEmployerEnrolmentReview: vi.fn(() => Promise.resolve({ eventKey: 'enrol-eligibility-1' })),
   fetchReviewForm: vi.fn(() => Promise.resolve({})),
   downloadReviewPdf: vi.fn(),
+  fetchMigratedReviewForParty: vi.fn(() => Promise.resolve(null)),
+  signMigratedReviewAsParty: vi.fn(() => Promise.resolve({ signed: true, role: 'employer' })),
 }));
 
 vi.mock('@/hooks/useAuth', () => ({ useAuth: mocks.useAuth }));
@@ -35,6 +37,11 @@ vi.mock('@/api/employerPortal', () => ({
   fetchEmployerEnrolmentReview: mocks.fetchEmployerEnrolmentReview,
 }));
 vi.mock('@/api/reviewForm', () => ({ fetchReviewForm: mocks.fetchReviewForm }));
+vi.mock('@/api/learnerCalendar', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/api/learnerCalendar')>(),
+  fetchMigratedReviewForParty: mocks.fetchMigratedReviewForParty,
+  signMigratedReviewAsParty: mocks.signMigratedReviewAsParty,
+}));
 vi.mock('@/pages/learner/onboarding/reviews/reviewDocument', () => ({ downloadReviewPdf: mocks.downloadReviewPdf }));
 // The pad's own behaviour is covered by savedSignaturePad.test.tsx; here it
 // only needs to hand a signature to the page.
@@ -188,6 +195,14 @@ describe('EmployerLearnerPage review signing', () => {
     await waitFor(() => expect(mocks.signReviewAsEmployer).toHaveBeenCalledWith(
       '7', 'commercial', '499', 'cal-1', { name: 'Test Employer', signature: 'data:image/png;base64,SIG' },
     ));
+    expect(mocks.signEnrolmentReviewAsEmployer).not.toHaveBeenCalled();
+  });
+
+  it('signs a migrated PR through the dedicated employer endpoint', async () => {
+    mocks.fetchEmployerLearner.mockResolvedValue(detail([{ ...review, eventKey: 'imported-review:C5-TEST-PR', reviewInstanceId: 'imported-review:C5-TEST-PR', migratedForm: true }]));
+    await signFirstReview();
+    await waitFor(() => expect(mocks.signMigratedReviewAsParty).toHaveBeenCalledWith('imported-review:C5-TEST-PR', 'data:image/png;base64,SIG'));
+    expect(mocks.signReviewAsEmployer).not.toHaveBeenCalled();
     expect(mocks.signEnrolmentReviewAsEmployer).not.toHaveBeenCalled();
   });
 
