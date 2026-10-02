@@ -2360,7 +2360,7 @@ export default function CoachTimetablePage() {
 
             {/* WEEK VIEW */}
             {viewMode === 'week' && (
-              <div className="bg-background-50 rounded-lg border border-foreground-200/60 overflow-hidden">
+              <div className="coach-week-scroll bg-background-50 rounded-lg border border-foreground-200/60">
                 <div className="grid grid-cols-8 border-b border-foreground-200/60">
                   <div className="px-2 py-2.5 bg-background-100/50"></div>
                   {weekDates.map(wd => {

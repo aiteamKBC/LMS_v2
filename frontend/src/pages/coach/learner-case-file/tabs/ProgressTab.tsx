@@ -5,6 +5,7 @@ import { RowsSkeleton } from '@/components/feature/Skeletons';
 import { fetchKsbProfile } from '@/api/curriculum';
 import { cn } from '@/lib/cn';
 import type { StatusTone } from '@/lib/statusTone';
+import { Pagination } from '@/components/ui/Pagination';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { formatHours, selectCaseFileOtjh } from '../data';
 import type { CoachLearnerCaseFileData } from '../types';
@@ -24,6 +25,8 @@ export function ProgressTab({ data, onViewEvidence }: {
 }) {
   const [activeKsbCategory, setActiveKsbCategory] = useState('All');
   const [ksbSearch, setKsbSearch] = useState('');
+  const [ksbPage, setKsbPage] = useState(1);
+  const [ksbPageSize, setKsbPageSize] = useState(10);
   const [ksbSortKey, setKsbSortKey] = useState<KsbSortKey>('code');
   const [ksbSortDirection, setKsbSortDirection] = useState<SortDirection>('asc');
   const [fallbackKsbs, setFallbackKsbs] = useState<Array<{ code: string; description: string; type: string; number: string }>>([]);
@@ -131,9 +134,13 @@ export function ProgressTab({ data, onViewEvidence }: {
     return (ksbSortDirection === 'asc' ? delta : -delta)
       || left.code.localeCompare(right.code, undefined, { numeric: true, sensitivity: 'base' });
   });
+  const totalPages = Math.max(1, Math.ceil(filteredKsbs.length / ksbPageSize));
+  const currentPage = Math.min(ksbPage, totalPages);
+  const paginatedKsbs = filteredKsbs.slice((currentPage - 1) * ksbPageSize, currentPage * ksbPageSize);
   const sortKsbs = (key: KsbSortKey) => {
     setKsbSortDirection((current) => ksbSortKey === key ? (current === 'asc' ? 'desc' : 'asc') : 'asc');
     setKsbSortKey(key);
+    setKsbPage(1);
   };
   const ksbSortHeader = (label: string, key: KsbSortKey) => {
     const active = ksbSortKey === key;
@@ -143,8 +150,8 @@ export function ProgressTab({ data, onViewEvidence }: {
     </button>;
   };
   return (
-    <div className={styles.stack}>
-      <ReferencePanel title="Off-the-Job Hours (OTJH)" subtitle="Track on-the-job learning hours against your programme requirements." icon="ri-time-line" tone="primary">
+    <div className={cn(styles.stack, styles.progressTab)}>
+      <ReferencePanel title="Off-the-Job Hours (OTJH)" subtitle="Track off-the-job learning hours against your programme requirements." icon="ri-time-line" tone="primary">
         <div className={styles.metricGrid}>
           <BigMetric value={formatHours(otjh.logged)} label="Actual" tone="primary" />
           <BigMetric value={formatHours(otjh.target)} label="Target Hours" tone="muted" />
@@ -155,7 +162,7 @@ export function ProgressTab({ data, onViewEvidence }: {
       </ReferencePanel>
       <ReferencePanel title="KSB Detailed Breakdown" subtitle="View your KSB progress and browse evidence coverage by framework code." icon="ri-stack-line" tone="primary">
         {fallbackKsbsLoading && ksbs.length === 0 && ksbSummary.total === null ? <div className="p-2"><RowsSkeleton rows={4} avatar={false} /></div> : (
-          <div className="space-y-5">
+          <div className="space-y-3">
             <div className={styles.ksbSummary}>
               <KsbOverviewCard icon="ri-stack-line" label="Total KSB points" value={ksbSummary.total === null ? '--' : String(ksbSummary.total)} tone="primary" />
               <KsbOverviewCard icon="ri-links-line" label="Points achieved" value={ksbSummary.achieved === null ? '--' : String(ksbSummary.achieved)} tone="emerald" />
@@ -164,7 +171,6 @@ export function ProgressTab({ data, onViewEvidence }: {
 
             <div>
               <p className="text-[12px] font-bold text-foreground-900">KSB points by category</p>
-              <p className="mt-1 text-[11px] text-foreground-500">Each activity linked to a KSB counts as one point. The browser below lists the same points used by learner Overview.</p>
               <div className={styles.coverageGrid}>
                 {categorySummary.map((group) => (
                   <div key={group.category} className={styles.coverageCard}>
@@ -181,21 +187,20 @@ export function ProgressTab({ data, onViewEvidence }: {
         )}
       </ReferencePanel>
 
-      <ReferencePanel title="KSB Browser" subtitle="One row per activity and KSB point, using the same progress data as learner Overview." icon="ri-book-open-line" tone="primary" className={styles.browserPanel}>
-        <div className={styles.browserToolbar}>
+      <ReferencePanel title="KSB Browser" subtitle="One row per activity and KSB point, using the same progress data as learner Overview." icon="ri-book-open-line" tone="primary" className={styles.browserPanel} actions={<div className={styles.browserToolbar}>
           <label className={styles.search}>
             <span className="sr-only">Search KSBs</span>
             <AppIcon className="ri-search-line" />
-            <input value={ksbSearch} onChange={(event) => setKsbSearch(event.target.value)} placeholder="Search KSBs by code, title or activity..." />
+            <input value={ksbSearch} onChange={(event) => { setKsbSearch(event.target.value); setKsbPage(1); }} placeholder="Search KSBs by code, title or activity..." />
           </label>
           <div className={styles.filterPills}>
             {['All', ...categoryOptions].map((category) => (
-              <button key={category} type="button" className={cn(styles.filterPill, activeKsbCategory === category && styles.filterPillActive)} onClick={() => setActiveKsbCategory(category)}>
+              <button key={category} type="button" className={cn(styles.filterPill, activeKsbCategory === category && styles.filterPillActive)} aria-pressed={activeKsbCategory === category} onClick={() => { setActiveKsbCategory(category); setKsbPage(1); }}>
                 {category} ({category === 'All' ? ksbs.length : categoryCodeCounts.get(category) || 0})
               </button>
             ))}
           </div>
-        </div>
+        </div>}>
         {filteredKsbs.length === 0 ? <ProfileEmpty text={data.metricsAvailable === false || data.ksbStatus === 'unavailable' ? 'KSB activity points are unavailable. Please reload to try again.' : 'No KSB activity points matched the current filter.'} /> : (
           <div className={styles.tableScroll}>
             <table className={styles.ksbTable}>
@@ -208,7 +213,7 @@ export function ProgressTab({ data, onViewEvidence }: {
                 <th>Actions</th>
               </tr></thead>
               <tbody>
-                {filteredKsbs.map((item) => (
+                {paginatedKsbs.map((item) => (
                   <tr key={item.id} className={styles.ksbParentRow}>
                     <td><strong className={styles.ksbCode}>{item.code}</strong></td>
                     <td>{item.description}</td>
@@ -230,12 +235,20 @@ export function ProgressTab({ data, onViewEvidence }: {
             </table>
           </div>
         )}
+        <div className={styles.ksbPagination}>
+          <label className={styles.pageSize}>Rows per page
+            <select value={ksbPageSize} onChange={(event) => { setKsbPageSize(Number(event.target.value)); setKsbPage(1); }}>
+              {[10, 25, 50].map((size) => <option key={size} value={size}>{size}</option>)}
+            </select>
+          </label>
+          <Pagination page={currentPage} totalPages={totalPages} total={filteredKsbs.length} pageSize={ksbPageSize} onPageChange={setKsbPage} noun="KSB points" />
+        </div>
       </ReferencePanel>
     </div>
   );
 }
 
-export function EvidencePreviewModal({ evidence, onClose, onOpenAssignment }: { evidence: EvidencePreviewTarget; onClose: () => void; onOpenAssignment: (componentId: string) => void }) {
+export function EvidencePreviewModal({ evidence, onClose, onOpenAssignment }: { evidence: EvidencePreviewTarget; onClose: () => void; onOpenAssignment: (componentId: string, activityId?: string) => void }) {
   return (
     <div
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4"
@@ -272,7 +285,7 @@ export function EvidencePreviewModal({ evidence, onClose, onOpenAssignment }: { 
               key={`${activity.title}-${activity.type}-${index}`}
               className="rounded-xl border border-background-200 bg-background-50 p-4"
             >
-              <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-wide text-primary-600">{activity.type}</p><p className="mt-1 break-words text-sm font-semibold text-foreground-900">{activity.title || 'Aptem evidence'}</p></div>{activity.componentId && <button type="button" aria-label={`${activity.type} ${activity.title}`} onClick={() => onOpenAssignment(activity.componentId!)} className="shrink-0 rounded-md border border-primary-200 px-2 py-1 text-[10px] font-semibold text-primary-700 hover:bg-primary-50">View Details</button>}</div>
+              <div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-wide text-primary-600">{activity.type}</p><p className="mt-1 break-words text-sm font-semibold text-foreground-900">{activity.title || 'Aptem evidence'}</p></div>{activity.componentId && <button type="button" aria-label={`${activity.type} ${activity.title}`} onClick={() => onOpenAssignment(activity.componentId!, activity.activityId)} className="shrink-0 rounded-md border border-primary-200 px-2 py-1 text-[10px] font-semibold text-primary-700 hover:bg-primary-50">View Details</button>}</div>
               <p className="mt-3 text-xs text-foreground-500">{activity.type === 'Historical Activity' ? 'Historical Activity' : `Source: ${activity.source || activity.type}`}</p>
               {activity.source && <p className="mt-1 text-[11px] text-foreground-500">Source: {activity.source}</p>}
               {activity.completedAt && <p className="mt-1 text-[11px] text-foreground-500">Completed: {activity.completedAt}</p>}
