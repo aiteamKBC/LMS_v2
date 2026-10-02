@@ -11,8 +11,8 @@ const RewardsTab = lazy(() => import('./tabs/DashboardRewardsTab'));
 
 export type DashboardTabId = 'overview' | 'weekly' | 'monthly' | 'training' | 'rewards';
 const tabs: { id: DashboardTabId; label: string }[] = [
-  { id: 'overview', label: 'Overview' }, { id: 'weekly', label: 'Weekly Learning' }, { id: 'monthly', label: 'Monthly Plan' },
-  { id: 'training', label: 'Training Plan' }, { id: 'rewards', label: 'Rewards' },
+  { id: 'weekly', label: 'Weekly Learning' }, { id: 'monthly', label: 'Monthly Plan' }, { id: 'training', label: 'Training Plan' },
+  { id: 'overview', label: 'Overview' }, { id: 'rewards', label: 'Rewards' },
 ];
 
 export type DashboardTabsProps = {
@@ -30,7 +30,7 @@ function initialTab(): DashboardTabId {
   if (params.has('subject') || params.has('month') || window.location.hash === '#module-timeline' || window.location.hash === '#training-plan-details') {
     return window.location.hash === '#module-timeline' || window.location.hash === '#training-plan-details' ? 'training' : 'monthly';
   }
-  return tabs[0].id;
+  return 'weekly';
 }
 
 export function DashboardTabs(props: DashboardTabsProps) {
