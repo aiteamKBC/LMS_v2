@@ -13,23 +13,11 @@ const props = { kind: 'apprenticeship', learnerId: '1', plan: {}, canSeeNavItem:
 afterEach(cleanup);
 
 describe('learner dashboard tabs', () => {
-  it('orders Overview first and opens on Overview by default', async () => {
+  it('orders Overview just before Rewards and opens on Weekly Learning by default', async () => {
     render(<DashboardTabs {...props} />);
-    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual(['Overview', 'Weekly Learning', 'Monthly Plan', 'Training Plan', 'Rewards']);
-    expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true');
-    expect(await screen.findByText('Overview panel')).toBeVisible();
-    expect(screen.queryByText('Weekly panel')).not.toBeInTheDocument();
-  });
-
-  it('still honours an explicit tab deep link', async () => {
-    window.history.replaceState(null, '', '/?tab=weekly');
-    try {
-      render(<DashboardTabs {...props} />);
-      expect(screen.getByRole('tab', { name: 'Weekly Learning' })).toHaveAttribute('aria-selected', 'true');
-      expect(await screen.findByText('Weekly panel')).toBeVisible();
-      expect(screen.queryByText('Overview panel')).not.toBeInTheDocument();
-    } finally {
-      window.history.replaceState(null, '', '/');
-    }
+    expect(screen.getAllByRole('tab').map(tab => tab.textContent)).toEqual(['Weekly Learning', 'Monthly Plan', 'Training Plan', 'Overview', 'Rewards']);
+    expect(screen.getByRole('tab', { name: 'Weekly Learning' })).toHaveAttribute('aria-selected', 'true');
+    expect(await screen.findByText('Weekly panel')).toBeVisible();
+    expect(screen.queryByText('Overview panel')).not.toBeInTheDocument();
   });
 });
