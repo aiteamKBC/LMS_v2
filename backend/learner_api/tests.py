@@ -769,8 +769,9 @@ class LearnerAttendanceEndpointTests(SimpleTestCase):
     @patch('learner_api.attendance.fetch_verified_teams_attendance_rows', return_value=[])
     @patch('learner_api.attendance.fetch_kbc_attendance_rows', return_value=[])
     def test_reads_kbc_register_with_the_enrolments_aptem_id(self, fetch_rows, fetch_teams, scheduled, confirmations):
+        enrolment_id, learner_profile_id = 19, 315
         source = SimpleNamespace(
-            id=19,
+            id=enrolment_id,
             username='Test Learner',
             email='learner@example.com',
             aptem_id='92',
@@ -779,11 +780,16 @@ class LearnerAttendanceEndpointTests(SimpleTestCase):
         source_model.DoesNotExist = type('SourceDoesNotExist', (Exception,), {})
         source_model.all_learners.only.return_value.get.return_value = source
 
-        with patch.dict(
+        with patch('learner_api.catchup_outcomes.sync_catchup_outcomes') as sync, \
+             patch('learner_api.attendance_lectures._completed_catchup_occurrences', return_value=set()), \
+             patch('learner_api.models.LearnerProfile.objects') as profiles, \
+             patch('coach_api.models.CoachAttendanceSourceAdjustment.objects') as adjustments, patch.dict(
             attendance_module.SOURCE_MODELS,
             {'apprenticeship': source_model},
             clear=True,
         ):
+            profiles.filter.return_value.values_list.return_value = [learner_profile_id]
+            adjustments.filter.return_value = []
             response = learner_attendance.__wrapped__(
                 RequestFactory().get('/learner_api/attendance/apprenticeship/19/'),
                 'apprenticeship',
@@ -791,6 +797,12 @@ class LearnerAttendanceEndpointTests(SimpleTestCase):
             )
 
         self.assertEqual(response.status_code, 200)
+        profiles.filter.assert_called_once_with(enrolment_id=enrolment_id)
+        profiles.filter.return_value.values_list.assert_called_once_with('id', flat=True)
+        adjustments.filter.assert_called_once_with(learner_id=learner_profile_id)
+        sync.assert_called_once_with(learner_email=source.email)
+        scheduled.assert_called_once_with(source, module_ids=None)
+        confirmations.assert_called_once_with(enrolment_id)
         fetch_rows.assert_called_once_with(
             aptem_id='92',
             learner_id=19,
@@ -874,7 +886,11 @@ class TeamsAttendanceSyncTests(SimpleTestCase):
             count = sync_verified_teams_attendance_reporting(module_refs=['MOD-1'])
 
         self.assertEqual(count, 0)
-        ensure_schema.assert_called_once_with('default')
+        # Synchronization validates existing columns; it must never run schema DDL.
+        ensure_schema.assert_not_called()
+        statements = [call.args[0] for call in cursor.execute.call_args_list]
+        self.assertTrue(any('SELECT attended_seconds, occurrence_id, is_expected, catchup_completed' in sql for sql in statements))
+        self.assertFalse(any(sql.lstrip().upper().startswith(('ALTER ', 'CREATE ', 'DROP ')) for sql in statements))
         cursor.executemany.assert_not_called()
         sql, params = cursor.execute.call_args.args
         self.assertIn('module_catalogue_id = ANY(%s)', sql)
