@@ -14,7 +14,11 @@ import {
 import { EmptyState, FieldRow, YesNoRadio, inputClass } from '../../components/ui';
 import { LabeledInput, LabeledSelect, StepHeading } from './fields';
 import { FieldError, invalidClass, requiredMessage, useMissing, useMissingCheck } from '../stepErrors';
-import { CvJobText, fieldQualificationLabels } from './cvJobText';
+import { CvJobText, fieldQualificationLabels, programmeField } from './cvJobText';
+import { StepItems, type ItemRenderer } from '../layout/StepItems';
+import { useStepTitle } from '../layout/useLayout';
+import { useText } from '../layout/textsContext';
+import { TEXT_SLOTS } from '../layout/texts';
 
 const ACCEPT = '.pdf,.png,.jpg,.jpeg,.doc,.docx';
 
@@ -162,72 +166,117 @@ export default function CvJob() {
   const kind: LearnerKind = isCommercial ? 'commercial' : 'apprenticeship';
   const store = useCvDocuments(kind, userId);
   const has = (docKind: CvDocKind) => store.docs.some((d) => d.docKind === docKind);
-  const fieldLabels = fieldQualificationLabels(board.programme?.name);
+  const t = useText();
+  // The field questions name the learner's programme field. Edited wording
+  // marks the spot with {field}; the standard wording keeps its own phrasing,
+  // including the neutral one for programmes without a field.
+  const standardField = fieldQualificationLabels(board.programme?.name);
+  const field = programmeField(board.programme?.name) ?? 'your programme';
+  const fieldText = (key: string, standard: string) => {
+    const text = t(key);
+    return text === TEXT_SLOTS[key]?.default ? standard : text.split('{field}').join(field);
+  };
+  const fieldLabels = {
+    hasFieldQualification: fieldText('cv.fieldQualification.label', standardField.hasFieldQualification),
+    highestFieldQualification: fieldText('cv.fieldQualification.named', standardField.highestFieldQualification),
+  };
 
   // Red rows once Next is pressed with them unanswered.
   const missing = useMissingCheck();
   const yn = (key: string) => (missing(key) ? requiredMessage('', 'choose') : undefined);
   const experienceMissing = Boolean(useMissing('Previous experience (or N/A)'));
+  const title = useStepTitle('cv-job', 'CV/Job Description');
+
+  // One renderer per item in layout/registry.ts; the layout decides order,
+  // which are shown and which are required.
+  const renderers: Record<string, ItemRenderer> = {
+    'cv.h.experience': ({ children }) => (
+      <Section title={t('cv.h.experience.title')}>
+        <p className="text-[12px] text-foreground-500 mb-3 leading-relaxed">{t('cv.h.experience.intro')}</p>
+        {children}
+      </Section>
+    ),
+    'cv.cvUpload': () => <DocumentField label={t('cv.cvUpload.label')} docKind="cv" store={store} />,
+    'cv.experience': ({ required }) => (
+      <FieldRow label={t('cv.experience.label')} required={required}>
+        <textarea
+          rows={4}
+          value={cv.experienceText ?? ''}
+          onChange={(e) => set({ experienceText: e.target.value })}
+          aria-invalid={experienceMissing || undefined}
+          className={`${inputClass}${experienceMissing ? invalidClass : ''}`}
+        />
+        {experienceMissing && <FieldError message="Please describe your experience, or write N/A if you uploaded your CV." />}
+      </FieldRow>
+    ),
+    'cv.highestQualification': ({ required }) => <LabeledInput label={t('cv.highestQualification.label')} required={required} missingKey="Highest-level qualification" value={cv.highestQualification ?? ''} onChange={(v) => set({ highestQualification: v })} />,
+    'cv.highestQualificationField': ({ required }) => <LabeledInput label={t('cv.highestQualificationField.label')} required={required} missingKey="Field of highest qualification" value={cv.highestQualificationField ?? ''} onChange={(v) => set({ highestQualificationField: v })} />,
+    'cv.fieldQualification': ({ required }) => (
+      <>
+        {/* Answering No clears the named qualification, so a hidden answer is never saved. */}
+        <YesNoRadio
+          legend={fieldLabels.hasFieldQualification}
+          name="cv-field-qual"
+          error={yn('Qualifications in your programme field')}
+          value={cv.hasFieldQualification ?? null}
+          onChange={(v) => set({ hasFieldQualification: v, ...(v ? {} : { highestFieldQualification: '' }) })}
+        />
+        {cv.hasFieldQualification === true && (
+          <LabeledInput label={fieldLabels.highestFieldQualification} required={required} missingKey="Highest qualification in your programme field" value={cv.highestFieldQualification ?? ''} onChange={(v) => set({ highestFieldQualification: v })} />
+        )}
+        {/* Shown while it holds a file too, so an upload is never hidden by a changed answer. */}
+        {(cv.hasFieldQualification === true || has('transcript')) && (
+          <DocumentField label={t('cv.fieldQualification.transcript')} docKind="transcript" store={store} />
+        )}
+      </>
+    ),
+
+    'cv.h.gcse': ({ children }) => (
+      <Section title={t('cv.h.gcse.title')}>
+        <p className="text-[12px] text-foreground-500 mb-3 leading-relaxed">{t('cv.h.gcse.note')}</p>
+        {children}
+      </Section>
+    ),
+    'cv.gcseEnglish': () => (
+      <>
+        <YesNoRadio legend={t('cv.gcseEnglish.label')} name="cv-gcse-english" error={yn('GCSE in English')} value={cv.gcseEnglish ?? null} onChange={(v) => set({ gcseEnglish: v })} />
+        {(cv.gcseEnglish === true || has('gcse-english')) && (
+          <DocumentField label={t('cv.gcseEnglish.upload')} docKind="gcse-english" store={store} />
+        )}
+      </>
+    ),
+    'cv.gcseMaths': () => (
+      <>
+        <YesNoRadio legend={t('cv.gcseMaths.label')} name="cv-gcse-maths" error={yn('GCSE in Maths')} value={cv.gcseMaths ?? null} onChange={(v) => set({ gcseMaths: v })} />
+        {(cv.gcseMaths === true || has('gcse-maths')) && (
+          <DocumentField label={t('cv.gcseMaths.upload')} docKind="gcse-maths" store={store} />
+        )}
+      </>
+    ),
+
+    'cv.h.functionalSkills': ({ children }) => (
+      <Section title={t('cv.h.functionalSkills.title')}>
+        <p className="text-[12px] text-foreground-500 mb-3 leading-relaxed">{t('cv.h.functionalSkills.note')}</p>
+        {children}
+      </Section>
+    ),
+    'cv.functionalSkills': ({ required }) => (
+      <LabeledSelect
+        label={t('cv.functionalSkills.label')}
+        required={required}
+        missingKey="Functional Skills enrolment"
+        value={cv.functionalSkillsEnrol ?? ''}
+        options={[...CvJobText.functionalSkillsOptions]}
+        onChange={(v) => set({ functionalSkillsEnrol: v })}
+      />
+    ),
+  };
 
   return (
     <div>
-      <StepHeading title="CV/Job Description" />
+      <StepHeading title={title} />
       <div className="max-w-3xl">
-        <Section title="Your Work Experience">
-          <p className="text-[12px] text-foreground-500 mb-3 leading-relaxed">{CvJobText.intro}</p>
-          <DocumentField label={CvJobText.cvUpload} docKind="cv" store={store} />
-          <FieldRow label={CvJobText.experience} required>
-            <textarea
-              rows={4}
-              value={cv.experienceText ?? ''}
-              onChange={(e) => set({ experienceText: e.target.value })}
-              aria-invalid={experienceMissing || undefined}
-              className={`${inputClass}${experienceMissing ? invalidClass : ''}`}
-            />
-            {experienceMissing && <FieldError message="Please describe your experience, or write N/A if you uploaded your CV." />}
-          </FieldRow>
-          <LabeledInput label={CvJobText.highestQualification} required missingKey="Highest-level qualification" value={cv.highestQualification ?? ''} onChange={(v) => set({ highestQualification: v })} />
-          <LabeledInput label={CvJobText.highestQualificationField} required missingKey="Field of highest qualification" value={cv.highestQualificationField ?? ''} onChange={(v) => set({ highestQualificationField: v })} />
-          {/* Answering No clears the named qualification, so a hidden answer is never saved. */}
-          <YesNoRadio
-            legend={fieldLabels.hasFieldQualification}
-            name="cv-field-qual"
-            error={yn('Qualifications in your programme field')}
-            value={cv.hasFieldQualification ?? null}
-            onChange={(v) => set({ hasFieldQualification: v, ...(v ? {} : { highestFieldQualification: '' }) })}
-          />
-          {cv.hasFieldQualification === true && (
-            <LabeledInput label={fieldLabels.highestFieldQualification} required missingKey="Highest qualification in your programme field" value={cv.highestFieldQualification ?? ''} onChange={(v) => set({ highestFieldQualification: v })} />
-          )}
-          {/* Shown while it holds a file too, so an upload is never hidden by a changed answer. */}
-          {(cv.hasFieldQualification === true || has('transcript')) && (
-            <DocumentField label={CvJobText.transcript} docKind="transcript" store={store} />
-          )}
-        </Section>
-
-        <Section title="GCSEs">
-          <p className="text-[12px] text-foreground-500 mb-3 leading-relaxed">{CvJobText.gcseNote}</p>
-          <YesNoRadio legend={CvJobText.gcseEnglish} name="cv-gcse-english" error={yn('GCSE in English')} value={cv.gcseEnglish ?? null} onChange={(v) => set({ gcseEnglish: v })} />
-          {(cv.gcseEnglish === true || has('gcse-english')) && (
-            <DocumentField label={CvJobText.gcseEnglishUpload} docKind="gcse-english" store={store} />
-          )}
-          <YesNoRadio legend={CvJobText.gcseMaths} name="cv-gcse-maths" error={yn('GCSE in Maths')} value={cv.gcseMaths ?? null} onChange={(v) => set({ gcseMaths: v })} />
-          {(cv.gcseMaths === true || has('gcse-maths')) && (
-            <DocumentField label={CvJobText.gcseMathsUpload} docKind="gcse-maths" store={store} />
-          )}
-        </Section>
-
-        <Section title="Functional Skills">
-          <p className="text-[12px] text-foreground-500 mb-3 leading-relaxed">{CvJobText.functionalSkillsNote}</p>
-          <LabeledSelect
-            label={CvJobText.functionalSkills}
-            required
-            missingKey="Functional Skills enrolment"
-            value={cv.functionalSkillsEnrol ?? ''}
-            options={[...CvJobText.functionalSkillsOptions]}
-            onChange={(v) => set({ functionalSkillsEnrol: v })}
-          />
-        </Section>
+        <StepItems slug="cv-job" renderers={renderers} />
       </div>
     </div>
   );

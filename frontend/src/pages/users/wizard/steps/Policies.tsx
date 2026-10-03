@@ -1,10 +1,12 @@
 import { useWizard } from '../WizardContext';
 import { POLICY_DOCS_KBC } from '@/mocks/enrolment-console';
 import { StepHeading } from './fields';
+import { useText } from '../layout/textsContext';
 import { useShowStepErrors } from '../stepErrors';
 
 export default function Policies() {
   const { draft, setSection } = useWizard();
+  const t = useText();
   const acknowledged = draft.policies.acknowledged;
   // After a refused Next, every document still to acknowledge is marked.
   const showErrors = useShowStepErrors();
@@ -16,12 +18,12 @@ export default function Policies() {
 
   return (
     <div>
-      <StepHeading title="Documents" />
+      <StepHeading title={t('block.policies.title')} />
 
       {/* Group A — KBC (with acknowledgement) */}
       <div className="mb-6">
         <div className="flex items-center justify-between mb-2">
-          <h3 className="text-[13px] font-heading font-semibold text-foreground-800">Kent Business College</h3>
+          <h3 className="text-[13px] font-heading font-semibold text-foreground-800">{t('block.policies.group')}</h3>
           <span className="text-[11px] text-foreground-400">{ackCount} of {POLICY_DOCS_KBC.length} acknowledged</span>
         </div>
         <div className="divide-y divide-foreground-100 border border-foreground-100 rounded-lg">
@@ -35,7 +37,7 @@ export default function Policies() {
               </a>
               <label className="flex items-center gap-1.5 text-[11px] text-foreground-600 cursor-pointer shrink-0">
                 <input type="checkbox" checked={!!acknowledged[doc.id]} onChange={() => toggle(doc.id)} aria-invalid={outstanding || undefined} className="accent-primary-500" />
-                <span className={outstanding ? 'text-red-600' : undefined}>I have read and understood this document</span>
+                <span className={outstanding ? 'text-red-600' : undefined}>{t('block.policies.acknowledge')}</span>
               </label>
             </div>
             );
