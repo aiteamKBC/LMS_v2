@@ -20,6 +20,8 @@ export interface LearnerCalendarEvent {
   watchedRecording?: boolean;
   /** Catch-up only: the absence report it already makes up, if any. */
   linkedReportId?: number | null;
+  /** Catch-up only: starts too soon for the learner to reschedule or cancel it. */
+  changeClosed?: boolean;
   eventKey: string;
   title: string;
   source: 'mcr' | 'progress-review' | string;
