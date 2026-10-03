@@ -165,6 +165,12 @@ class DashboardAttendanceTests(SimpleTestCase):
     def setUp(self):
         # Mock stored schedules/recoveries only; exercise the real shared
         # register and summary without touching a database or Microsoft.
+        profiles = patch("learner_api.models.LearnerProfile.objects")
+        self.profiles = profiles.start()
+        self.addCleanup(profiles.stop)
+        profile_by_enrolment = {193: 7, **{100 + index: index for index in range(1, 26)}}
+        self.profiles.filter.side_effect = lambda *, enrolment_id: SimpleNamespace(
+            values_list=lambda *args, **kwargs: [profile_by_enrolment[enrolment_id]])
         for target, kwargs in (
             ("learner_api.attendance_lectures.read_native_occurrences", {"return_value": []}),
             ("learner_api.attendance_confirmation.read_confirmations", {"return_value": {}}),
@@ -260,7 +266,7 @@ class DashboardAttendanceTests(SimpleTestCase):
     @patch("learner_api.attendance_lectures.combined_attendance_rows")
     def test_caseload_counts_a_lecture_in_kbc_and_teams_once(self, combined, _close):
         day = date(2026, 9, 3)
-        row = {"learner_id": 7, "learner_name": "A Learner", "learner_email": "learner@example.com",
+        row = {"learner_id": 193, "learner_name": "A Learner", "learner_email": "learner@example.com",
                "session_date": day, "session_start_time": None, "session_end_time": None, "minutes_late": 0,
                "catchup_completed": False, "updated_at": None}
         combined.return_value = [
@@ -271,12 +277,15 @@ class DashboardAttendanceTests(SimpleTestCase):
             {**row, "session_id": "kbc-2", "source": "kbc-attendance", "module_title": "Social Media",
              "attendance_status": "absent"},
         ]
-        learner = SimpleNamespace(id=7, _caseload_source=SimpleNamespace(id=7, email="learner@example.com"))
+        learner = SimpleNamespace(id=7, _caseload_source=SimpleNamespace(id=193, email="learner@example.com"))
         self.schedule_teams(combined.return_value)
 
         summary = caseload_canonical_attendance([learner])[7]
 
         self.assertEqual((summary["sessions"], summary["present"], summary["attendanceRate"]), (2, 1, 50))
+        self.assertEqual(summary["absent"], 1)
+        self.assertEqual([item["status"] for item in summary["sessionHistory"]], ["present", "absent"])
+        self.profiles.filter.assert_called_once_with(enrolment_id=193)
 
     @patch("coach_api.views.fetch_verified_teams_attendance_rows")
     @patch("coach_api.views.fetch_kbc_attendance_rows_bulk")
@@ -346,35 +355,25 @@ class DashboardAttendanceTests(SimpleTestCase):
             "teams:confirmed-2026-09-03": {"seconds": 3600, "submitted_at": timezone.now()},
         }):
             summary = caseload_canonical_attendance([SimpleNamespace(id=7, _caseload_source=source)])[7]
+        # Phase 4: elapsed sessions without evidence remain unmarked and do
+        # not dilute the denominator; saved confirmation counts as present.
         self.assertEqual((summary["sessions"], summary["present"], summary["absent"], summary["attendanceRate"]),
-                         (2, 1, 1, 50))
+                         (1, 1, 0, 100))
+        self.assertEqual([item["status"] for item in summary["sessionHistory"]], ["present"])
         combined.assert_called_once_with(source)
 
 
 class AttendanceDetailRowsTests(SimpleTestCase):
-    @patch("learner_api.attendance_lectures.lecture_register", return_value=[{"attendance_status": "unused"}])
-    @patch("coach_api.views._summarize_attendance")
-    def test_details_use_the_same_two_of_three_summary_as_connected_pages(self, summarize, register):
-        summarize.return_value = {
-            "learnerId": 7,
-            "learnerName": "A Learner",
-            "learnerEmail": "learner@example.com",
-            "sessions": 3,
-            "present": 2,
-            "absent": 1,
-            "sessionHistory": [
-                {"id": "one", "date": "2026-09-14", "title": "Session 1", "sessionType": "live_session", "status": "attended", "startTime": "09:00", "endTime": "10:00"},
-                {"id": "two", "date": "2026-09-07", "title": "Session 2", "sessionType": "live_session", "status": "missed", "startTime": "09:00", "endTime": "10:00"},
-                {"id": "three", "date": "2026-09-02", "title": "Session 3", "sessionType": "live_session", "status": "late", "startTime": "09:00", "endTime": "10:00"},
-            ],
-        }
-        source = SimpleNamespace(id=7)
-
-        summary, sessions = canonical_attendance_detail_rows(source)
-
-        register.assert_called_once_with(source)
-        self.assertEqual((summary["present"], summary["sessions"]), (2, 3))
-        self.assertEqual([session["status"] for session in sessions], ["present", "absent", "present"])
+    @patch("learner_api.attendance_lectures.attendance_read_contract")
+    def test_details_forward_the_authoritative_contract(self, read_contract):
+        source = SimpleNamespace(id=901)
+        summary = {"present": 2, "absent": 1, "totalCounted": 3, "attendanceRate": 67}
+        history = [{"status": "present", "rawStatus": "absent", "effectiveStatus": "made_up"}]
+        read_contract.return_value = {"summary": summary, "history": history}
+        actual_summary, sessions = canonical_attendance_detail_rows(source, learner_profile_id=315)
+        read_contract.assert_called_once_with(source, learner_profile_id=315)
+        self.assertIs(actual_summary, summary)
+        self.assertIs(sessions, history)
 
     @patch("coach_api.views.canonical_attendance_detail_rows")
     @patch("coach_api.views.CoachManualAttendance.objects")
@@ -395,11 +394,11 @@ class AttendanceDetailRowsTests(SimpleTestCase):
             "enrolmentId": "901",
         }
         detail_rows.return_value = (
-            {"sessions": 3, "present": 2, "absent": 1},
+            {"total": 3, "present": 2, "absent": 1, "unknown": 0},
             [
-                {"sessionId": "session-1", "status": "present"},
-                {"sessionId": "session-2", "status": "present"},
-                {"sessionId": "session-3", "status": "absent"},
+                {"sessionId": "session-1", "status": "present", "counted": True},
+                {"sessionId": "session-2", "status": "present", "counted": True},
+                {"sessionId": "session-3", "status": "absent", "counted": True},
             ],
         )
         manual_objects.filter.return_value = []
@@ -413,7 +412,7 @@ class AttendanceDetailRowsTests(SimpleTestCase):
         self.assertEqual(response.status_code, 200)
         fetch_rows.assert_called_once_with("coach@example.com", learner_id="315")
         attach_sources.assert_called_once_with([row])
-        detail_rows.assert_called_once_with(source)
+        detail_rows.assert_called_once_with(source, learner_profile_id=315)
         self.assertEqual(payload["learner"]["programme"], "Data")
         self.assertEqual(payload["learner"]["enrolmentId"], "901")
         self.assertEqual(payload["summary"], {"total": 3, "present": 2, "absent": 1, "unknown": 0})
@@ -432,6 +431,7 @@ class ManualAttendanceMutationTests(SimpleTestCase):
             session_date=date(2026, 10, 1), status="absent",
         )
         objects.create.return_value = created
+        objects.filter.return_value.order_by.return_value.first.return_value = None
         request = RequestFactory().post(
             "/coach_api/coach/attendance/manual",
             data=json.dumps({
@@ -475,9 +475,10 @@ class ManualAttendanceMutationTests(SimpleTestCase):
         self.assertEqual(response.status_code, 403)
         objects.create.assert_not_called()
 
-    @patch("coach_api.views._manual_attendance_learner", return_value=(SimpleNamespace(), {"id": "315"}))
+    @patch("coach_api.views._manual_attendance_learner", return_value=(SimpleNamespace(id=315, _caseload_source=SimpleNamespace(id=901)), {"id": "315"}))
     @patch("coach_api.views.CoachAttendanceSourceAdjustment.objects")
-    def test_source_edit_is_saved_for_the_authorised_learner(self, objects, _find_learner):
+    @patch("learner_api.attendance_lectures.lecture_register", return_value=[{"source": "microsoft-teams", "session_id": "occ-8"}])
+    def test_source_edit_is_saved_for_the_authorised_learner(self, register, objects, _find_learner):
         request = RequestFactory().patch(
             "/coach_api/coach/attendance/source",
             data=json.dumps({
@@ -500,9 +501,10 @@ class ManualAttendanceMutationTests(SimpleTestCase):
             },
         )
 
-    @patch("coach_api.views._manual_attendance_learner", return_value=(SimpleNamespace(), {"id": "315"}))
+    @patch("coach_api.views._manual_attendance_learner", return_value=(SimpleNamespace(id=315, _caseload_source=SimpleNamespace(id=901)), {"id": "315"}))
     @patch("coach_api.views.CoachAttendanceSourceAdjustment.objects")
-    def test_source_delete_hides_only_that_learners_attendance(self, objects, _find_learner):
+    @patch("learner_api.attendance_lectures.lecture_register", return_value=[{"source": "kbc-attendance", "session_id": "kbc-1"}])
+    def test_source_delete_hides_only_that_learners_attendance(self, register, objects, _find_learner):
         request = RequestFactory().delete(
             "/coach_api/coach/attendance/source",
             data=json.dumps({"learnerId": "315", "source": "kbc-attendance", "sourceId": "kbc-1"}),
@@ -516,6 +518,18 @@ class ManualAttendanceMutationTests(SimpleTestCase):
             learner_id=315, source="kbc-attendance", source_id="kbc-1",
             defaults={"owner_email": "coach@example.com", "updated_by": "coach@example.com", "is_deleted": True},
         )
+
+    @patch("coach_api.views._manual_attendance_learner", return_value=(SimpleNamespace(id=315, _caseload_source=SimpleNamespace(id=901)), {"id": "315"}))
+    @patch("coach_api.views.CoachAttendanceSourceAdjustment.objects")
+    @patch("learner_api.attendance_lectures.lecture_register", return_value=[])
+    def test_orphan_source_edit_and_delete_are_rejected_before_writes(self, register, objects, find_learner):
+        for method in ('patch', 'delete'):
+            request = getattr(RequestFactory(), method)("/coach_api/coach/attendance/source",
+                data=json.dumps({"learnerId": "315", "source": "microsoft-teams", "sourceId": "another-learner-occurrence"}),
+                content_type="application/json")
+            self.assertEqual(call_coach_view(coach_source_attendance, request).status_code, 404)
+        objects.update_or_create.assert_not_called()
+        self.assertEqual(register.call_args.kwargs, {'learner_profile_id': 315, 'apply_adjustments': False})
 
 
 class LatestLearnerActivityTests(SimpleTestCase):

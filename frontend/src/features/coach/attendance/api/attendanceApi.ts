@@ -1,8 +1,40 @@
 import { coachFetch } from '@/lib/coachFetch';
-import type { CoachAttendanceDetailsPayload, CoachAttendancePayload, CoachAttendanceSession, ManualAttendanceInput, SourceAttendanceInput } from '../types/attendance.types';
+import type { CoachAttendanceDetailsPayload, CoachAttendancePayload, CoachAttendanceRecord, CoachAttendanceSession, ManualAttendanceInput, SourceAttendanceInput } from '../types/attendance.types';
 
 const OVERVIEW_ENDPOINT = '/coach_api/coach/attendance';
 const DETAILS_ENDPOINT = '/coach_api/coach/attendance/details';
+
+export interface BulkSession { id: string; occurrenceStart: string; module: string; sessionTitle: string }
+export interface BulkLearner { learnerId: string; status: 'present' | 'absent' | 'unmarked' | 'upcoming' | 'in_progress'; version: string }
+export interface BulkAttendanceWarning { learnerProfileId: string; code: 'learner_source_unavailable'; message: string }
+export interface BulkAttendanceResult extends BulkLearner { sessionOccurrenceId: string; attendanceRecord: CoachAttendanceRecord }
+export class BulkAttendanceSaveError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = 'BulkAttendanceSaveError';
+    this.status = status;
+  }
+}
+export async function fetchBulkAttendance(programmeId: string, groupId: string, sessionOccurrenceId = '', signal?: AbortSignal): Promise<{ sessions?: BulkSession[]; learners?: BulkLearner[]; warnings?: BulkAttendanceWarning[] }> {
+  const query = new URLSearchParams({ programmeId, groupId, sessionOccurrenceId });
+  const response = await coachFetch(`/coach_api/coach/attendance/bulk?${query}`, { signal });
+  const payload = await response.json();
+  if (!response.ok) throw new Error(payload.detail || 'Unable to load session attendance.');
+  return payload;
+}
+
+export async function saveBulkAttendance(programmeId: string, groupId: string, sessionOccurrenceId: string, records: Array<{ learnerId: string; status: 'present' | 'absent'; version: string }>): Promise<{ results: BulkAttendanceResult[] }> {
+  const response = await coachFetch('/coach_api/coach/attendance/bulk', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ programmeId, groupId, sessionOccurrenceId, records }),
+  });
+  const payload = await response.json();
+  if (!response.ok) throw new BulkAttendanceSaveError(response.status, response.status === 409
+    ? payload.detail || 'Attendance changed since loading. Reload the session before applying your changes.'
+    : 'Unable to save attendance. Your pending changes have been kept. Please retry.');
+  return payload;
+}
 
 export async function fetchCoachAttendance(signal?: AbortSignal): Promise<CoachAttendancePayload> {
   const response = await coachFetch(OVERVIEW_ENDPOINT, signal ? { signal } : undefined);

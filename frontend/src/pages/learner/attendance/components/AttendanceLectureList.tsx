@@ -14,6 +14,7 @@ export type AttendanceFilter = 'all' | 'attended' | 'absent' | 'covered' | 'upco
 const STATUS: Record<AttendanceLecture['status'], { label: string; tone: StatusTone }> = {
   completed: { label: 'Attended', tone: 'positive' }, late: { label: 'Late', tone: 'caution' },
   absent: { label: 'Missed', tone: 'critical' }, upcoming: { label: 'Upcoming', tone: 'info' },
+  unmarked: { label: 'Unmarked', tone: 'neutral' },
   in_progress: { label: 'In progress', tone: 'info' }, pending: { label: 'Awaiting attendance', tone: 'neutral' },
 };
 const shortDate = (date: string | null | undefined) => date && /^\d{4}-\d{2}-\d{2}$/.test(date)

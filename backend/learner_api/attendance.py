@@ -1,7 +1,6 @@
 import hashlib
 import logging
 import os
-from datetime import time
 
 import psycopg
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
@@ -302,8 +301,7 @@ def fetch_recent_kbc_attendance_rows(learners, *, limit=4):
 
 def _summarize_attendance(rows, *, now=None):
     """Summarize recorded attendance for sessions that have happened so far."""
-    cutoff = timezone.localtime(now)
-    cutoff_date, cutoff_time = cutoff.date(), cutoff.time().replace(tzinfo=None)
+    now = now or timezone.now()
 
     def status(row):
         return (row['attendance_status'] or '').strip().lower()
@@ -311,18 +309,15 @@ def _summarize_attendance(rows, *, now=None):
     # Late is a display distinction only: it counts as attended in both the
     # numerator and denominator. Non-attendance workflow states (for example a
     # legacy ``catchup`` row) do not silently dilute the attendance rate.
-    counted_rows = [row for row in rows
-                    if status(row) in {'present', 'late', 'absent'}
-                    and row.get('session_date') is not None
-                    and (row['session_date'], time.min if row.get('attendance_confirmed') else
-                         row.get('session_start_time') or time.min) <= (cutoff_date, cutoff_time)]
+    from .attendance_rules import attendance_outcome
+    counted_rows = [row for row in rows if attendance_outcome(row, now)[1]]
     if not counted_rows:
         return None
 
     # A missed session recovered by a completed catch-up or an attended
     # alternative session counts as attended; the raw Teams status is kept.
     def missed(row):
-        return status(row) == 'absent' and row.get('effective_attendance') != 1
+        return attendance_outcome(row, now)[0] == 'absent'
 
     sessions = len(counted_rows)
     absent = sum(missed(row) for row in counted_rows)
@@ -345,14 +340,6 @@ def _summarize_attendance(rows, *, now=None):
     updated_values = [row['updated_at'] for row in counted_rows if row['updated_at']]
     updated_at = max(updated_values) if updated_values else None
 
-    def row_status(row):
-        s = status(row)
-        if s == 'absent':
-            return 'missed'
-        if s == 'late' or (row['minutes_late'] or 0) > 0:
-            return 'late'
-        return 'attended'
-
     session_history = [
         {
             'id': f"{row.get('session_id', '')}-{row['session_date'].isoformat()}",
@@ -361,7 +348,9 @@ def _summarize_attendance(rows, *, now=None):
             'date': row['session_date'].isoformat(),
             'title': row.get('session_title', '') or '',
             'sessionType': row.get('session_type', '') or '',
-            'status': row_status(row),
+            'status': attendance_outcome(row, now)[0],
+            'rawStatus': row.get('raw_attendance_status') or row['attendance_status'],
+            'effectiveStatus': row.get('effective_attendance_status') or row['attendance_status'],
             'startTime': row['session_start_time'].strftime('%H:%M') if row.get('session_start_time') else '',
             'endTime': row['session_end_time'].strftime('%H:%M') if row.get('session_end_time') else '',
             'module': row.get('module_title', '') or '',
@@ -403,7 +392,7 @@ def combined_attendance_rows(source):
         rows.append({**row, 'learner_id': source.id, 'source': 'microsoft-teams'})
     unique = {}
     for row in rows:
-        key = (row['source'], str(row.get('occurrence_id') or row.get('session_id')), row['session_date'])
+        key = (row['learner_id'], row['source'], str(row.get('occurrence_id') or row.get('session_id')))
         previous = unique.get(key)
         if previous is None or row['attendance_status'] in {'present', 'late'}:
             unique[key] = row
