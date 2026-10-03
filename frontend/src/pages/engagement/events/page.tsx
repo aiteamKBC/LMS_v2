@@ -417,17 +417,29 @@ export default function EventsPage() {
                     <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${cfg.bg} ${cfg.text}`}>{event.type}</span>
                   </div>
                 </div>
-                <p className="text-xs text-foreground-500 mb-3">{event.description}</p>
-                <div className="space-y-1 text-[11px] text-foreground-400">
-                  <p><AppIcon className="ri-calendar-line mr-1 text-primary-500"></AppIcon>{event.date}</p>
-                  <p><AppIcon className="ri-time-line mr-1 text-primary-500"></AppIcon>{event.time}</p>
-                  <p><AppIcon className="ri-map-pin-line mr-1 text-primary-500"></AppIcon>{event.location}</p>
-                  <p><AppIcon className="ri-user-line mr-1 text-primary-500"></AppIcon>{event.organizer}</p>
+                <p title={event.description} className="mb-4 min-h-10 line-clamp-2 text-xs leading-5 text-foreground-500">{event.description}</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="flex min-w-0 items-center gap-2 rounded-lg border border-foreground-100 bg-background-100/60 p-2.5">
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary-100 text-primary-600"><AppIcon className="ri-calendar-line text-xs" /></span>
+                    <span className="min-w-0"><span className="block text-[9px] font-semibold uppercase tracking-wide text-foreground-400">Date</span><span title={event.date} className="block truncate text-[11px] font-semibold text-foreground-700">{event.date}</span></span>
+                  </div>
+                  <div className="flex min-w-0 items-center gap-2 rounded-lg border border-foreground-100 bg-background-100/60 p-2.5">
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary-100 text-primary-600"><AppIcon className="ri-time-line text-xs" /></span>
+                    <span className="min-w-0"><span className="block text-[9px] font-semibold uppercase tracking-wide text-foreground-400">Time</span><span title={event.time} className="block truncate text-[11px] font-semibold text-foreground-700">{event.time}</span></span>
+                  </div>
+                  <div className="flex min-w-0 items-center gap-2 rounded-lg border border-foreground-100 bg-background-100/60 p-2.5">
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary-100 text-primary-600"><AppIcon className="ri-map-pin-line text-xs" /></span>
+                    <span className="min-w-0"><span className="block text-[9px] font-semibold uppercase tracking-wide text-foreground-400">Location</span><span title={event.location} className="block truncate text-[11px] font-semibold text-foreground-700">{event.location}</span></span>
+                  </div>
+                  <div className="flex min-w-0 items-center gap-2 rounded-lg border border-foreground-100 bg-background-100/60 p-2.5">
+                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-primary-100 text-primary-600"><AppIcon className="ri-user-line text-xs" /></span>
+                    <span className="min-w-0"><span className="block text-[9px] font-semibold uppercase tracking-wide text-foreground-400">Organiser</span><span title={event.organizer} className="block truncate text-[11px] font-semibold text-foreground-700">{event.organizer}</span></span>
+                  </div>
                 </div>
-                <div className="mt-3 flex items-center gap-1.5 text-xs text-foreground-600">
-                  <AppIcon className="ri-group-line text-primary-500"></AppIcon>
-                  <span className="font-semibold text-foreground-900">{event.attendees}</span>
-                  <span className="text-foreground-400">student{event.attendees === 1 ? '' : 's'} intending to attend</span>
+                <div className="mt-3 flex items-center gap-2 rounded-lg bg-primary-50/70 px-3 py-2 text-xs text-foreground-600">
+                  <span className="flex h-7 w-7 items-center justify-center rounded-full bg-white text-primary-600 shadow-sm"><AppIcon className="ri-group-line text-xs" /></span>
+                  <span className="font-bold text-foreground-900">{event.attendees}</span>
+                  <span className="text-foreground-500">student{event.attendees === 1 ? '' : 's'} intending to attend</span>
                 </div>
                 <div className="mt-3 flex items-center gap-2 flex-wrap">
                   <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${event.status === 'upcoming' ? 'bg-primary-100 text-primary-700' : event.status === 'ongoing' ? 'bg-emerald-100 text-emerald-700' : 'bg-foreground-100 text-foreground-500'}`}>{event.status}</span>
