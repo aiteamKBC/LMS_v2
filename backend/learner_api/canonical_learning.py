@@ -26,9 +26,21 @@ def counts_as_actual(record):
 
     Duplicate source observations are removed by ``canonical_activity_key`` in
     the SSOT query.  ``source_system`` says where the surviving canonical row
-    came from; it is not a reason to throw that learner evidence away.
+    came from; it is not a reason to throw that learner evidence away.  A
+    reporting allocation explicitly marked as estimated is displayed for
+    review but is not accepted toward the authoritative total until approved.
     """
-    return record.get('accepted') is True
+    return record.get('accepted') is True and not is_time_estimated(record)
+
+
+def is_time_estimated(record):
+    """Return whether a reporting allocation is provisional and needs approval."""
+    if record.get('reporting_estimated') is True or record.get('actual_estimated') is True:
+        return True
+    payload = source_payload_metadata(record.get('source_payload'))
+    reconciliation = payload.get('reconciliation')
+    allocation = reconciliation.get('reporting_allocation') if isinstance(reconciliation, dict) else None
+    return isinstance(allocation, dict) and allocation.get('estimated') is True
 
 
 def counts_as_completed(record, include_source_evidence=True):
@@ -222,9 +234,15 @@ def allocations(entry):
     segments = entry.get('segments') or []
     if not segments:
         return [entry]
+    estimated = is_time_estimated(entry)
+    reconciliation = source_payload_metadata(entry.get('source_payload')).get('reconciliation')
+    allocation = reconciliation.get('reporting_allocation', {}) if isinstance(reconciliation, dict) else {}
+    method = allocation.get('method') if isinstance(allocation, dict) else None
     return [{**entry, **{key: segment.get(key) for key in (
         'actual_seconds', 'reporting_month', 'reporting_started_at', 'reporting_ended_at')},
-        'segment_id': segment['id']} for segment in segments]
+        'segment_id': segment['id'], 'reporting_estimated': estimated,
+        'reporting_approval_required': estimated,
+        'reporting_allocation_method': method} for segment in segments]
 
 
 def recorded_seconds(entry):
@@ -263,6 +281,9 @@ def rows_for(owner, records=None):
                     reporting_month=entry.get('reporting_month'),
                     timestamp_label=entry.get('reporting_timestamp_label') or source.get('timestamp_label') or '',
                     actual_hours_recorded=entry.get('actual_seconds') is not None,
+                    actual_estimated=is_time_estimated(entry),
+                    actual_status_label='تقديري — يحتاج اعتماد' if is_time_estimated(entry)
+                    else ('Accepted' if entry.get('accepted') is True else 'Not accepted'),
                     progress_id=entry['id'])
         result.append(item)
     by_id = {}
