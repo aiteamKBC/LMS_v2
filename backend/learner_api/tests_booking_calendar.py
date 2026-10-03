@@ -407,8 +407,10 @@ class CatchupBookAndLinkTests(SimpleTestCase):
         response, check, link, cancel, _reserve = self.book()
         self.assertEqual(response.status_code, 201)
         self.assertEqual(json.loads(response.content)['linkedReportId'], 34)
-        check.assert_called_once_with(101, 34)
+        # A learner's own booking keeps the 12-hour rule for replacing a booked catch-up.
+        check.assert_called_once_with(101, 34, enforce_change_cutoff=True)
         self.assertEqual(link.call_args.args[2:], (101, 34, 'catch-up:248:12:2026-10-15'))
+        self.assertEqual(link.call_args.kwargs, {'enforce_change_cutoff': True})
         cancel.assert_not_called()
 
     def test_a_link_that_cannot_happen_is_refused_before_anything_is_booked(self):
@@ -425,3 +427,100 @@ class CatchupBookAndLinkTests(SimpleTestCase):
         self.assertEqual(response.status_code, 409)
         self.assertIn('booking was cancelled', json.loads(response.content)['error'])
         cancel.assert_called_once()
+
+
+class CatchupChangeCutoffTests(SimpleTestCase):
+    """A learner moves or cancels their catch-up until 12 hours before it starts; staff at any time."""
+
+    @staticmethod
+    def catchup():
+        record = RescheduleEndpointTests.scheduled_record()
+        record.event_key = 'catch-up:248:12:2026-10-15'
+        record.event_type = 'catch-up'
+        record.scheduled_date = date(2026, 10, 15)
+        record.scheduled_time = time(11, 0)
+        record.save = Mock()
+        return record
+
+    @staticmethod
+    def request(path, role=None, body=None):
+        request = RequestFactory().post(path, data=json.dumps(body or {'eventKey': 'catch-up:248:12:2026-10-15'}),
+                                        content_type='application/json')
+        if role:
+            request.account = SimpleNamespace(role=role)
+        return request
+
+    def reschedule(self, *, closed, role=None):
+        from . import calendar as module
+        record = self.catchup()
+        body = {'eventKey': record.event_key, 'scheduledDate': '2026-10-16', 'scheduledTime': '10:00',
+                'durationMinutes': 30, 'timezoneOffsetMinutes': -60}
+        with patch.object(module, 'SOURCE_MODELS', {'commercial': Mock()}), \
+                patch.object(module, '_learner_booking_record', return_value=record), \
+                patch('learner_api.coach_availability.catchup_change_closed', return_value=closed), \
+                patch('learner_api.booking_calendar.timezone.localdate', return_value=date(2026, 10, 14)), \
+                patch.object(module, '_catchup_time_error', return_value=None), \
+                patch('learner_api.calendar_connections.booking_conflicts', return_value=False), \
+                patch('coach_api.views.build_booked_calendar_event', return_value={}), \
+                patch('coach_api.views.persist_calendar_sync_reservation', return_value=record) as persist, \
+                patch('coach_api.views.synchronize_reserved_calendar_event', return_value=(record, '', True)):
+            response = inspect.unwrap(module.learner_calendar_reschedule)(
+                self.request('/reschedule/', role, body), 'commercial', 101)
+        return response, persist
+
+    def cancel(self, *, closed, role=None, status='scheduled'):
+        from . import calendar as module
+        record = self.catchup()
+        record.status = status
+        with patch.object(module, 'SOURCE_MODELS', {'commercial': Mock()}), \
+                patch.object(module, '_learner_booking_record', return_value=record), \
+                patch('learner_api.coach_availability.catchup_change_closed', return_value=closed), \
+                patch('coach_api.views.delete_calendar_event_from_graph', return_value='') as delete, \
+                patch.object(module, '_cancel_enrolment_review'), \
+                patch('curriculum_api.live_session_absences.release_cancelled_catchup', return_value=1) as release:
+            response = inspect.unwrap(module.learner_calendar_cancel)(self.request('/cancel/', role), 'commercial', 101)
+        return response, delete, release, record
+
+    def test_learner_cannot_move_a_catchup_within_12_hours(self):
+        response, persist = self.reschedule(closed=True)
+        self.assertEqual(response.status_code, 409)
+        self.assertIn('12 hours', json.loads(response.content)['error'])
+        persist.assert_not_called()
+
+    def test_learner_moves_a_catchup_earlier_than_12_hours(self):
+        response, persist = self.reschedule(closed=False)
+        self.assertEqual(response.status_code, 200)
+        persist.assert_called_once()
+
+    def test_staff_may_move_a_catchup_at_any_time(self):
+        response, persist = self.reschedule(closed=True, role='staff')
+        self.assertEqual(response.status_code, 200)
+        persist.assert_called_once()
+
+    def test_learner_cannot_cancel_a_catchup_within_12_hours(self):
+        response, delete, release, record = self.cancel(closed=True)
+        self.assertEqual(response.status_code, 409)
+        delete.assert_not_called()
+        release.assert_not_called()
+        self.assertEqual(record.status, 'scheduled')
+
+    def test_cancelled_catchup_returns_the_absence_to_needing_a_recovery(self):
+        response, delete, release, record = self.cancel(closed=False)
+        self.assertEqual(response.status_code, 200)
+        delete.assert_called_once_with(record)
+        self.assertEqual(record.status, 'cancelled')
+        self.assertEqual(release.call_args.kwargs['event_key'], 'catch-up:248:12:2026-10-15')
+
+    def test_a_finished_catchup_cannot_be_cancelled(self):
+        response, delete, _release, _record = self.cancel(closed=False, status='completed')
+        self.assertEqual(response.status_code, 409)
+        delete.assert_not_called()
+
+    def test_cutoff_is_counted_in_uk_time(self):
+        from datetime import timezone as dt_timezone
+        from .coach_availability import catchup_change_closed
+        # 15 Oct 11:00 UK (BST) is 10:00 UTC.
+        self.assertTrue(catchup_change_closed(date(2026, 10, 15), time(11, 0),
+                                              datetime(2026, 10, 14, 22, 30, tzinfo=dt_timezone.utc)))
+        self.assertFalse(catchup_change_closed(date(2026, 10, 15), time(11, 0),
+                                               datetime(2026, 10, 14, 21, 30, tzinfo=dt_timezone.utc)))

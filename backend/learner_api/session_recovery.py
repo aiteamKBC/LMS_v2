@@ -105,7 +105,8 @@ def link_catchup(request, kind, learner_id):
         return JsonResponse({'error': 'Learner not found.'}, status=404)
     try:
         mirror = LearnerProfile.objects.filter(enrolment_id=learner_id).first()
-        link_report_to_catchup(learner, mirror, learner_id, report_id, event_key)
+        link_report_to_catchup(learner, mirror, learner_id, report_id, event_key,
+                               enforce_change_cutoff=learner_change(request))
         return JsonResponse({'saved': True, 'message': LINKED_MESSAGE})
     except ReportNotFound:
         return JsonResponse({'error': 'Absence report not found.'}, status=404)
@@ -122,11 +123,16 @@ class ReportNotFound(Exception):
     pass
 
 
-def check_report_can_take_catchup(learner_id, report_id, *, lock=False):
-    """The learner's live absence report a catch-up may (re)make up, or raise."""
+def check_report_can_take_catchup(learner_id, report_id, *, lock=False, enforce_change_cutoff=False, event_key=''):
+    """The learner's live absence report a catch-up may (re)make up, or raise.
+
+    With ``enforce_change_cutoff`` (a learner's own change), a booked catch-up
+    starting within the cut-off cannot be replaced by another one.
+    """
     from coach_api.models import CoachAbsenceReport, CoachCalendarEvent
     from .absence_reports import RecoveryPlanError
     from .catchup_outcomes import learner_attended_catchup
+    from .coach_availability import CATCHUP_CHANGE_CLOSED_MESSAGE, catchup_change_closed
     query = CoachAbsenceReport.objects.select_for_update() if lock else CoachAbsenceReport.objects
     report = query.filter(pk=report_id, learner_id=learner_id).first()
     if not report or report.status == 'declined':
@@ -136,15 +142,28 @@ def check_report_can_take_catchup(learner_id, report_id, *, lock=False):
             and CoachCalendarEvent.objects.filter(event_key=report.catchup_event_key, status='completed').exists()
             and learner_attended_catchup(report.catchup_event_key)):
         raise RecoveryPlanError('A completed catch-up cannot be replaced.')
+    if enforce_change_cutoff and report.catchup_event_key and report.catchup_event_key != event_key:
+        current = CoachCalendarEvent.objects.filter(
+            event_key=report.catchup_event_key, status=CoachCalendarEvent.STATUS_SCHEDULED,
+        ).only('scheduled_date', 'scheduled_time').first()
+        if current and catchup_change_closed(current.scheduled_date, current.scheduled_time):
+            raise RecoveryPlanError(CATCHUP_CHANGE_CLOSED_MESSAGE)
     return report
 
 
-def link_report_to_catchup(learner, mirror, learner_id, report_id, event_key):
+def learner_change(request):
+    """Whether the request is the learner's own change (staff may change a catch-up at any time)."""
+    return getattr(getattr(request, 'account', None), 'role', '') not in {'admin', 'staff'}
+
+
+def link_report_to_catchup(learner, mirror, learner_id, report_id, event_key, *, enforce_change_cutoff=False):
     """Make ``event_key`` the catch-up that recovers this absence report (one transaction)."""
     from coach_api.models import CoachAbsenceReport
     from .absence_reports import _catchup_booking
     with transaction.atomic():
-        report = check_report_can_take_catchup(learner_id, report_id, lock=True)
+        report = check_report_can_take_catchup(learner_id, report_id, lock=True,
+                                               enforce_change_cutoff=enforce_change_cutoff, event_key=event_key)
+        replaced_key = report.catchup_event_key if report.catchup_event_key != event_key else ''
         _catchup_booking(learner, mirror, event_key, report.session_date, lock=True, for_report_id=report.pk)
         report.catchup_event_key = event_key
         report.recovery_method = 'catch-up'
@@ -152,7 +171,31 @@ def link_report_to_catchup(learner, mirror, learner_id, report_id, event_key):
         report.status = CoachAbsenceReport.STATUS_APPROVED
         report.save(update_fields=['catchup_event_key', 'recovery_method', 'status', 'updated_at'])
         _record_linked_catchup(learner_id, report.attendance_id, event_key)
+    if replaced_key:
+        _cancel_replaced_catchup(replaced_key)
     return report
+
+
+def _cancel_replaced_catchup(event_key):
+    """The catch-up a changed plan no longer uses is cancelled, so the coach is not left with it.
+
+    Only a booking that has not happened yet and makes up no other lecture is cancelled.
+    The new link is already saved; a failure here is logged and the old booking stays.
+    """
+    import logging
+    from coach_api.models import CoachAbsenceReport, CoachCalendarEvent
+    from .calendar import cancel_booking
+    try:
+        booking = CoachCalendarEvent.objects.filter(
+            event_key=event_key, event_type='catch-up',
+            status__in=[CoachCalendarEvent.STATUS_SCHEDULED, CoachCalendarEvent.STATUS_NOT_SCHEDULED],
+        ).first()
+        if booking is None or CoachAbsenceReport.objects.filter(catchup_event_key=event_key).exclude(
+                status=CoachAbsenceReport.STATUS_DECLINED).exists():
+            return
+        cancel_booking(booking)
+    except Exception:  # noqa: BLE001 - the new catch-up is already linked
+        logging.getLogger(__name__).exception('Could not cancel replaced catch-up %s', event_key)
 
 
 def _record_linked_catchup(learner_id, attendance_id, event_key):

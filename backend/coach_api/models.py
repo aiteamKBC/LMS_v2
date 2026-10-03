@@ -488,3 +488,28 @@ class CoachCalendarColorPreference(models.Model):
 
     def __str__(self):
         return f"{self.scope}:{self.scope_key} for {self.owner_email}"
+
+
+class CatchupReminder(models.Model):
+    """One reminder email sent before a catch-up, for one start time.
+
+    The row is written before the email is sent, so two servers never send the
+    same reminder. A rescheduled catch-up has a new start time and is reminded again.
+    """
+
+    KIND_DAY = "24h"
+    KIND_HOUR = "1h"
+    KIND_CHOICES = [(KIND_DAY, "24 hours before"), (KIND_HOUR, "1 hour before")]
+
+    event_key = models.CharField(max_length=255)
+    kind = models.CharField(max_length=8, choices=KIND_CHOICES)
+    starts_at = models.DateTimeField()
+    recipient = models.EmailField(max_length=255)
+    sent = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = _table_name("coach_test_catchup_reminder", 'Coach"."catchup_reminder')
+        constraints = [
+            models.UniqueConstraint(fields=["event_key", "kind", "starts_at"], name="catchup_reminder_once"),
+        ]

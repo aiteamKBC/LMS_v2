@@ -26,6 +26,20 @@ CATCHUP_WORKING_HOURS = (time(9, 0), time(17, 0))
 # ...and are booked at least an hour ahead, leaving time for the Teams meeting
 # to be created and for the coach to see it.
 CATCHUP_MIN_LEAD_MINUTES = 60
+# A learner may move or cancel their own catch-up until this many hours before it starts.
+CATCHUP_CHANGE_CUTOFF_HOURS = 12
+CATCHUP_CHANGE_CLOSED_MESSAGE = (
+    f'Catch-up sessions can be changed or cancelled up to {CATCHUP_CHANGE_CUTOFF_HOURS} hours '
+    'before they start. Please contact your coach.'
+)
+
+
+def catchup_change_closed(scheduled_date, scheduled_time, now=None):
+    """Whether a catch-up starting then (UK wall clock, as stored) is too close to move or cancel."""
+    if not scheduled_date or not scheduled_time:
+        return False
+    start = datetime.combine(scheduled_date, scheduled_time, ZoneInfo('Europe/London'))
+    return start - (now or datetime.now(timezone.utc)) < timedelta(hours=CATCHUP_CHANGE_CUTOFF_HOURS)
 
 
 def uk_offset_minutes(day):

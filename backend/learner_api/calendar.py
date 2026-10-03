@@ -49,6 +49,7 @@ from .first_session import (
     uk_today as first_session_uk_today,
 )
 from login.permissions import learner_self_or_staff
+from .session_recovery import learner_change
 from login.sessions import authenticate_request
 
 logger = logging.getLogger(__name__)
@@ -477,6 +478,8 @@ def _serialize_event(record, *, review_types_by_template=None, templates_by_id=N
         "syncWarning": _friendly_sync_warning(sync_warning) if sync_warning else "",
         "reviewId": booking_parts[5] if imported_booking else "",
         "assignmentMonth": booking_parts[4] if imported_booking else "",
+        # Catch-up only: too close to the start for the learner to move or cancel it.
+        "changeClosed": _catchup_change_closed(record),
     }
 
 
@@ -1317,12 +1320,12 @@ def _serialize_live_session_event(event):
     }
 
 
-def _catchup_link_precheck(learner_id, report_id, scheduled_date):
+def _catchup_link_precheck(learner_id, report_id, scheduled_date, *, enforce_change_cutoff=False):
     """Refuse, before booking, a catch-up the absence report could not take."""
     from .absence_reports import RecoveryPlanError
     from .session_recovery import ReportNotFound, check_report_can_take_catchup
     try:
-        report = check_report_can_take_catchup(learner_id, report_id)
+        report = check_report_can_take_catchup(learner_id, report_id, enforce_change_cutoff=enforce_change_cutoff)
     except ReportNotFound:
         return _error("Absence report not found.", 404)
     except RecoveryPlanError as exc:
@@ -1332,12 +1335,13 @@ def _catchup_link_precheck(learner_id, report_id, scheduled_date):
     return None
 
 
-def _link_booked_catchup(record, learner, mirror, learner_id, report_id):
+def _link_booked_catchup(record, learner, mirror, learner_id, report_id, *, enforce_change_cutoff=False):
     """Link the new booking to the absence; if that fails, cancel the booking again."""
     from .absence_reports import RecoveryPlanError
     from .session_recovery import ReportNotFound, link_report_to_catchup
     try:
-        link_report_to_catchup(learner, mirror, learner_id, report_id, record.event_key)
+        link_report_to_catchup(learner, mirror, learner_id, report_id, record.event_key,
+                               enforce_change_cutoff=enforce_change_cutoff)
         return None
     except (ReportNotFound, RecoveryPlanError, DatabaseError) as exc:
         message = str(exc) if isinstance(exc, RecoveryPlanError) else "The catch-up could not be linked to your absence."
@@ -1365,6 +1369,37 @@ def _annotate_linked_catchups(events):
     for event in events:
         if event.get("source") == "catch-up":
             event["linkedReportId"] = linked.get(event.get("eventKey"))
+
+
+def _catchup_change_closed(record):
+    """A catch-up starting within the cut-off can no longer be moved or cancelled by the learner."""
+    from .coach_availability import catchup_change_closed
+    return (_s(record.event_type).lower() == "catch-up"
+            and catchup_change_closed(record.scheduled_date, record.scheduled_time))
+
+
+def _learner_catchup_change_error(request, record):
+    """Refuse a learner's late change to their catch-up; staff may still change it."""
+    from .coach_availability import CATCHUP_CHANGE_CLOSED_MESSAGE
+    role = getattr(getattr(request, "account", None), "role", "")
+    if role in {"admin", "staff"} or not _catchup_change_closed(record):
+        return None
+    return _error(CATCHUP_CHANGE_CLOSED_MESSAGE, 409)
+
+
+def _release_cancelled_catchup(record):
+    """The absence this catch-up was making up goes back to needing a recovery."""
+    if _s(record.event_type).lower() != "catch-up":
+        return
+    from curriculum_api.live_session_absences import release_cancelled_catchup
+    from curriculum_api.models import LiveSessionAbsence
+    from django.db import router
+    try:
+        release_cancelled_catchup(
+            database=router.db_for_write(LiveSessionAbsence) or "default", event_key=record.event_key,
+        )
+    except DatabaseError:
+        logger.exception("learner_calendar_cancel: could not release absence for %s", record.event_key)
 
 
 def _catchup_time_error(owner_email, scheduled_date, scheduled_time, duration_minutes, *, exclude_event_key=""):
@@ -1672,7 +1707,7 @@ def learner_calendar_book(request, kind, pk):
             link_report_id = int(payload.get("absenceReportId"))
         except (TypeError, ValueError):
             return _error("absenceReportId must be a number.", 400)
-        link_error = _catchup_link_precheck(pk, link_report_id, scheduled_date)
+        link_error = _catchup_link_precheck(pk, link_report_id, scheduled_date, enforce_change_cutoff=learner_change(request))
         if link_error:
             return link_error
 
@@ -2016,7 +2051,8 @@ def learner_calendar_book(request, kind, pk):
                 replay.pk, build_booked_calendar_event(replay)
             )
             if link_report_id is not None:
-                link_error = _link_booked_catchup(replay, learner, mirror, pk, link_report_id)
+                link_error = _link_booked_catchup(replay, learner, mirror, pk, link_report_id,
+                                                  enforce_change_cutoff=learner_change(request))
                 if link_error:
                     return link_error
             return JsonResponse(
@@ -2099,7 +2135,8 @@ def learner_calendar_book(request, kind, pk):
     _follow_first_session_start_date(kind, pk, record, scheduled_date)
 
     if link_report_id is not None:
-        link_error = _link_booked_catchup(record, learner, mirror, pk, link_report_id)
+        link_error = _link_booked_catchup(record, learner, mirror, pk, link_report_id,
+                                          enforce_change_cutoff=learner_change(request))
         if link_error:
             return link_error
     return JsonResponse(
@@ -2160,6 +2197,9 @@ def learner_calendar_reschedule(request, kind, pk):
             return _error("Booking not found.", 404)
         if record.status != CoachCalendarEvent.STATUS_SCHEDULED:
             return _error("Only an upcoming scheduled session can be rescheduled.", 409)
+        late_change = _learner_catchup_change_error(request, record)
+        if late_change:
+            return late_change
         # Checked once the row is known: a first session may move to a Sunday,
         # every other session type keeps the weekday-only calendar.
         date_restriction = booking_date_restriction(
@@ -2228,6 +2268,22 @@ def learner_calendar_reschedule(request, kind, pk):
     )
 
 
+def cancel_booking(record):
+    """Delete the booking's Outlook/Teams event (Graph emails the cancellation) and keep the row as cancelled."""
+    from coach_api.views import delete_calendar_event_from_graph
+    warning = delete_calendar_event_from_graph(record)
+    record.status = CoachCalendarEvent.STATUS_CANCELLED
+    record.scheduled_date = None
+    record.scheduled_time = None
+    record.meeting_provider = ""
+    record.meeting_link = ""
+    record.graph_web_link = ""
+    record.graph_event_id = ""
+    record.last_graph_sync_error = warning
+    record.save()
+    return warning
+
+
 @csrf_exempt
 # Same reasoning as booking: staff who arranged a session can call it off.
 @learner_self_or_staff(kwarg="pk")
@@ -2247,7 +2303,6 @@ def learner_calendar_cancel(request, kind, pk):
     """
     from coach_api.views import (
         cancel_reserved_calendar_event,
-        delete_calendar_event_from_graph,
         LearnerCalendarConflict,
     )
 
@@ -2274,6 +2329,12 @@ def learner_calendar_cancel(request, kind, pk):
             return _error("Booking not found.", 404)
         if record.status == CoachCalendarEvent.STATUS_CANCELLED:
             return JsonResponse({"event": _serialize_event(record), "warning": ""})
+        if _s(record.event_type).lower() == "catch-up":
+            if record.status != CoachCalendarEvent.STATUS_SCHEDULED:
+                return _error("Only an upcoming scheduled catch-up can be cancelled.", 409)
+            late_change = _learner_catchup_change_error(request, record)
+            if late_change:
+                return late_change
 
         is_review_booking = (
             record.event_type in {'mcr', 'progress-review', 'review'}
@@ -2286,16 +2347,7 @@ def learner_calendar_cancel(request, kind, pk):
             record, warning = cancel_reserved_calendar_event(record)
             return JsonResponse({'event': _serialize_event(record), 'warning': _friendly_sync_warning(warning)})
 
-        warning = delete_calendar_event_from_graph(record)
-        record.status = CoachCalendarEvent.STATUS_CANCELLED
-        record.scheduled_date = None
-        record.scheduled_time = None
-        record.meeting_provider = ""
-        record.meeting_link = ""
-        record.graph_web_link = ""
-        record.graph_event_id = ""
-        record.last_graph_sync_error = warning
-        record.save()
+        warning = cancel_booking(record)
     except LearnerCalendarConflict as exc:
         return _error(str(exc), 409)
     except DatabaseError as exc:
@@ -2303,6 +2355,7 @@ def learner_calendar_cancel(request, kind, pk):
         return _error(f"Database error: {exc}", 502)
 
     _cancel_enrolment_review(record)
+    _release_cancelled_catchup(record)
 
     return JsonResponse(
         {"event": _serialize_event(record), "warning": _friendly_sync_warning(warning)}
