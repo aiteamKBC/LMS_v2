@@ -20,6 +20,8 @@ export interface LearnerCalendarEvent {
   watchedRecording?: boolean;
   /** Catch-up only: the absence report it already makes up, if any. */
   linkedReportId?: number | null;
+  /** Catch-up only: starts too soon for the learner to reschedule or cancel it. */
+  changeClosed?: boolean;
   eventKey: string;
   title: string;
   source: 'mcr' | 'progress-review' | string;
@@ -27,6 +29,7 @@ export interface LearnerCalendarEvent {
   sequence: number;
   reviewTemplateId?: string | null;
   reviewInstanceId?: string | null;
+  migratedForm?: boolean;
   reviewTypeId?: string | null;
   reviewTypeCode?: string | null;
   reviewTypeName?: string | null;
@@ -119,6 +122,33 @@ export type LearnerReviewDefinition = Omit<ReviewInstanceFormDefinition, 'instan
   savedSignature?: string;
   savedSignatureName?: string;
 };
+
+const migratedReviewUrl = (eventKey: string) => `/learner_api/migrated-reviews/${encodeURIComponent(eventKey)}`;
+
+export function fetchMigratedReviewForParty(eventKey: string, signal?: AbortSignal): Promise<LearnerReviewDefinition> {
+  return request<LearnerReviewDefinition>(`${migratedReviewUrl(eventKey)}/party`, { signal, credentials: 'include' });
+}
+
+export async function downloadMigratedReviewForParty(eventKey: string): Promise<void> {
+  const { saveReviewPdfResponse } = await import('./reviewPdf');
+  await saveReviewPdfResponse(await fetch(`${migratedReviewUrl(eventKey)}/party-pdf`, { credentials: 'include' }));
+}
+
+export function signMigratedReviewAsParty(eventKey: string, signature: string): Promise<{ signed: boolean; role: string }> {
+  return (async () => {
+    const csrfResponse = await fetch('/learner_api/migrated-reviews/csrf', { credentials: 'include' });
+    const csrf = await csrfResponse.json().catch(() => ({})) as { csrfToken?: string };
+    if (!csrfResponse.ok || !csrf.csrfToken) throw new Error('Unable to verify this signing request.');
+    const response = await fetch(`${migratedReviewUrl(eventKey)}/party-sign`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf.csrfToken },
+      body: JSON.stringify({ signature }),
+    });
+    const data = await response.json().catch(() => ({})) as { signed?: boolean; role?: string; detail?: string };
+    if (!response.ok) throw new Error(data.detail || `Signing failed (${response.status}).`);
+    return data as { signed: boolean; role: string };
+  })();
+}
 
 export function fetchLearnerEventReviewInstance(
   kind: LearnerKind,
@@ -232,12 +262,16 @@ export interface BookSessionInput {
   durationMinutes: number;
   notes?: string;
   timezoneOffsetMinutes?: number;
+  /** Catch-up only: the absence report the booking makes up, linked in the same request. */
+  absenceReportId?: number;
 }
 
 export interface BookSessionResponse {
   event: LearnerCalendarEvent;
   warning?: string;
   approvalRequired?: boolean;
+  /** Set when the server linked the catch-up to this absence report. */
+  linkedReportId?: number;
 }
 
 export async function bookLearnerCalendarSession(

@@ -27,6 +27,7 @@ const AdminRolesPage = lazyRoute(() => import("../pages/admin/roles/page"));
 const AdminSystemSettingsPage = lazyRoute(() => import("../pages/admin/system/page"));
 const CoachDirectoryPage = lazyRoute(() => import("../pages/admin/coach-directory/page"));
 const CoachBookingPage = lazyRoute(() => import("../pages/coach-booking/page"));
+const LmsIntroductionPage = lazyRoute(() => import("../pages/lms-introduction/page"));
 const AdminUsersPage = lazyRoute(() => import("../pages/admin/users/page"));
 const PlatformReportPage = lazyRoute(() => import("../pages/admin/platform-report/page"));
 const AttendancePage = lazyRoute(() => import("../pages/learner/attendance/page"));
@@ -973,6 +974,11 @@ const routes: RouteObject[] = [
     element: <CoachBookingPage />,
   },
   {
+    // Opened from the account invitation, before the learner has a password.
+    path: "/lms-introduction",
+    element: <LmsIntroductionPage />,
+  },
+  {
     path: "/admin/system",
     element: <AdminSystemSettingsPage />,
   },
@@ -1728,6 +1734,7 @@ const routes: RouteObject[] = [
  */
 const PUBLIC_PATHS = new Set([
   "/coach-booking/:slug",
+  "/lms-introduction",
   "/",
   "/login",
   "/event-feedback",

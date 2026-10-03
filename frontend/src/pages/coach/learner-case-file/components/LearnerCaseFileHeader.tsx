@@ -27,7 +27,10 @@ export function LearnerCaseFileHeader({ data, pageTitle, pageSubtitle, overall, 
             <StatusBadge tone={statusTone(data?.programStatus)} label={data ? data.programStatus || '--' : 'Loading'} size="sm" />
             {data?.coachRag && <StatusBadge status={data.coachRag} label={`RAG: ${data.coachRag}`} size="sm" />}
           </div>
-          <p className={styles.subtitle}>{pageSubtitle}</p>
+          <div className={styles.programmeLine}>
+            <span><AppIcon className="ri-graduation-cap-line" />{data?.programme || pageSubtitle}</span>
+            {data?.group && <span><AppIcon className="ri-group-line" />{data.group}</span>}
+          </div>
           <div className={styles.contactLine}>
             {data?.email && <span><AppIcon className="ri-mail-line" />{data.email}</span>}
             {data?.detail?.phone && <span><AppIcon className="ri-phone-line" />{data.detail.phone}</span>}
@@ -36,40 +39,38 @@ export function LearnerCaseFileHeader({ data, pageTitle, pageSubtitle, overall, 
       </div>
     </div>
 
-    {data && <section className={styles.heroSnapshot} aria-labelledby="profile-snapshot-heading">
-      <div className={styles.heroSnapshotHeading}>
-        <span><AppIcon className="ri-user-line" /></span>
-        <div><h2 id="profile-snapshot-heading">Profile Snapshot</h2><p>Current progress and support context</p></div>
-      </div>
-      <div className={styles.heroProfileGrid}>
-        <ProfileInfo icon="ri-calendar-line" label="Planned Gateway" value={data.gatewayReviewDate} />
-        <ProfileInfo icon="ri-group-line" label="Cohort" value={data.cohort} />
-        <ProfileInfo icon="ri-building-line" label="Employer" value={data.employer} />
-        <ProfileInfo icon="ri-box-3-line" label="Group" value={data.group} />
-        <ProfileInfo icon="ri-user-line" label="Coach" value={data.coachName} />
-        <ProfileInfo icon="ri-calendar-event-line" label="Start Date" value={data.startDate} />
-        <ProfileInfo icon="ri-graduation-cap-line" label="Programme" value={data.programme} />
-        <ProfileInfo icon="ri-checkbox-circle-line" label="Status" value={data.programStatus} />
-        <ProfileInfo icon="ri-calendar-check-line" label="Planned End" value={data.plannedEndDate} />
-        <ProfileInfo icon="ri-mail-line" label="Email" value={data.email} />
-      </div>
-    </section>}
+    {data && <div className={styles.dateStrip}>
+      <ProfileInfo icon="ri-calendar-event-line" label="Start Date" value={data.startDate} />
+      <ProfileInfo icon="ri-calendar-check-line" label="Planned End Date" value={data.plannedEndDate} />
+      <ProfileInfo icon="ri-calendar-line" label="Gateway Due" value={data.gatewayReviewDate} />
+    </div>}
 
     <div className={styles.metrics}>
-      <Metric icon="ri-focus-3-line" label="Overall" value={overall} />
-      <Metric icon="ri-time-line" label="OTJH (Actual / Target)" value={otjh} />
-      <Metric icon="ri-stack-line" label="KSB" value={ksb} />
-      <Metric icon="ri-group-line" label="Attendance" value={attendance} />
+      <Metric icon="ri-focus-3-line" label="Overall" value={overall} progress={percentProgress(overall)} />
+      <Metric icon="ri-time-line" label="OTJH (Actual / Target)" value={otjh} progress={fractionProgress(otjh)} tone="emerald" />
+      <Metric icon="ri-stack-line" label="KSB" value={ksb} progress={percentProgress(ksb)} tone="blue" />
+      <Metric icon="ri-group-line" label="Attendance" value={attendance} progress={fractionProgress(attendance)} tone="emerald" />
       <Metric icon="ri-calendar-line" label="Gateway" value={data?.gatewayReviewDate || '--'} />
       <Metric icon="ri-calendar-event-line" label="Next session" value={nextSession} />
     </div>
   </section>;
 }
 
-function Metric({ icon, label, value }: { icon: string; label: string; value: string }) {
+function percentProgress(value: string) {
+  return /^\d+(?:\.\d+)?%$/.test(value.trim()) ? Number.parseFloat(value) : undefined;
+}
+
+function fractionProgress(value: string) {
+  const match = value.match(/^([\d.]+)\s*\/\s*([\d.]+)$/);
+  if (!match || Number(match[2]) <= 0) return undefined;
+  return Number(match[1]) / Number(match[2]) * 100;
+}
+
+function Metric({ icon, label, value, progress, tone }: { icon: string; label: string; value: string; progress?: number; tone?: string }) {
   return <div className={styles.metric}>
     <span className={styles.metricIcon}><AppIcon className={icon} /></span>
     <div className="min-w-0"><span className={styles.metricLabel}>{label}</span><strong className={styles.metricValue} title={value}>{value}</strong></div>
+    {progress !== undefined && Number.isFinite(progress) && <div className={styles.metricTrack} aria-hidden="true"><div data-tone={tone} style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} /></div>}
   </div>;
 }
 

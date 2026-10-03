@@ -101,7 +101,7 @@ export function ModuleTimeline({ data, modules, kind, learnerId, today, selected
     .sort((a, b) => reviewDate(a).localeCompare(reviewDate(b)));
   const reviewDays = [...new Set(reviews.map(reviewDate).filter(date => positionFor(date, date)))]
     .map(date => ({ date, items: reviews.filter(review => reviewDate(review) === date) }));
-  const chartHeight = 64 + (modules.length ? modules.length * 52 : 80) + (reviewDays.length ? 50 : 0) + 2;
+  const chartHeight = 76 + (modules.length ? modules.length * 52 : 80) + (reviewDays.length ? 50 : 0) + 2;
   const subjectHref = (id: string) => `/learner/modules/${kind}/${learnerId}?subject=${encodeURIComponent(id)}`;
   const calendarHref = (event: string) => `/learner/calendar?kind=${encodeURIComponent(kind)}&learner=${encodeURIComponent(learnerId)}&event=${encodeURIComponent(event)}`;
   const reviewStatus = (review: typeof reviews[number]) => ({ completed: 'Completed', scheduled: review.invited === false ? 'Booking pending' : 'Booked', 'not-scheduled': reviewDate(review) < today ? 'Overdue' : 'Not booked', 'awaiting-signature': 'Awaiting signatures', 'in-progress': 'In progress' }[review.status] || 'Not booked');
@@ -168,7 +168,7 @@ export function ModuleTimeline({ data, modules, kind, learnerId, today, selected
     const header = chart.querySelector<HTMLElement>('[data-timeline-header]');
     if (jumpId !== 'today') {
       const row = [...chart.querySelectorAll<HTMLElement>('[data-module-id]')].find(node => node.dataset.moduleId === jumpId);
-      if (row) chart.scrollTop = Math.max(0, row.offsetTop - (header?.offsetHeight || 64) - 12);
+      if (row) chart.scrollTop = Math.max(0, row.offsetTop - (header?.offsetHeight || 76) - 12);
     }
     const track = chart.querySelector<HTMLElement>('[data-timeline-track]');
     if (track && chart.scrollWidth > chart.clientWidth) {

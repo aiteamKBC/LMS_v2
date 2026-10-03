@@ -7,6 +7,9 @@ from . import monthly_reflection_ai
 from .assignment_ai_check import assignment_ai_check
 from . import ksb_generation
 from django.urls import path
+from coach_api.migrated_completion_views import (
+    migrated_review_party_csrf, migrated_review_party_detail, migrated_review_party_pdf, migrated_review_party_sign,
+)
 from curriculum_api import recording_views
 from . import monthly_logs
 from .dashboard_metrics import learner_metrics
@@ -28,6 +31,10 @@ from curriculum_api import session_results
 from .session_recovery import link_catchup
 
 urlpatterns = [
+    path('migrated-reviews/csrf', migrated_review_party_csrf, name='migrated-review-party-csrf'),
+    path('migrated-reviews/<str:review_id>/party', migrated_review_party_detail, name='migrated-review-party-detail'),
+    path('migrated-reviews/<str:review_id>/party-pdf', migrated_review_party_pdf, name='migrated-review-party-pdf'),
+    path('migrated-reviews/<str:review_id>/party-sign', migrated_review_party_sign, name='migrated-review-party-sign'),
     path("reflection/extra-activities/", extra_activities.list_extra_activities, name="learner-extra-activities"),
     path('personal-learning/courses/', personal_learning.courses),
     path('personal-learning/verify/<uuid:token>/', personal_learning.verify_certificate),

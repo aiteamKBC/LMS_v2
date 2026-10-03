@@ -28,9 +28,9 @@ function AccountSettings() {
   </div>;
 }
 
-export function StudentHomeHeader({ name, homeHref, identity, events, loading, error, onRetry }: {
+export function StudentHomeHeader({ name, homeHref, identity, events, loading, error, onRetry, supportHref = '/learner/monthly-coaching' }: {
   name: string; homeHref: string; identity: string; events: HomeEvent[];
-  loading: boolean; error: boolean; onRetry: () => void;
+  loading: boolean; error: boolean; onRetry: () => void; supportHref?: string;
 }) {
   const { logout } = useAuth();
   const [profileOpen, setProfileOpen] = useState(false);
@@ -152,7 +152,7 @@ export function StudentHomeHeader({ name, homeHref, identity, events, loading, e
       </div> : panel === 'settings' ? <AccountSettings/> : <div className={styles.headerDialogBody}>
         <p>Use Continue Learning to open this week’s material, and Dashboard to explore your progress and learning tools.</p>
         <Link className={styles.headerDialogLink} to="/user-guide">Open the learner guide<ArrowRight aria-hidden="true"/></Link>
-        <Link className={styles.headerDialogLink} to="/learner/monthly-coaching">Get learning support from your coach<ArrowRight aria-hidden="true"/></Link>
+        <Link className={styles.headerDialogLink} to={supportHref}>Get learning support from your coach<ArrowRight aria-hidden="true"/></Link>
       </div>}
     </Modal>}
   </>;

@@ -256,8 +256,9 @@ function normalizeMonthlyRisk(points?: MonthlyRiskPoint[] | null): MonthlyRiskPo
   }));
 }
 
-function clampPercent(value?: number | string | null): number {
-  return Math.max(0, Math.min(100, Math.round(toNumber(value))));
+function clampPercent(value?: number | string | null, preservePrecision = false): number {
+  const percent = toNumber(value);
+  return Math.max(0, Math.min(100, preservePrecision ? percent : Math.round(percent)));
 }
 
 function statusFromApi(value?: string | null): PerformanceStatus {
@@ -374,7 +375,7 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     attendanceRate: (learner.attendanceAvailable ?? learner.attendanceRateAvailable) ? clampPercent(learner.attendanceRate) : 0,
     attendanceRateAvailable: Boolean(learner.attendanceAvailable ?? learner.attendanceRateAvailable),
     attendanceAvailable: Boolean(learner.attendanceAvailable ?? learner.attendanceRateAvailable),
-    activityProgress: learner.activityProgress == null ? null : clampPercent(learner.activityProgress),
+    activityProgress: learner.activityProgress == null ? null : clampPercent(learner.activityProgress, true),
     activityProgressAvailable: Boolean(learner.activityProgressAvailable),
     componentsCompleted: learner.componentsCompleted ?? null,
     componentsPlanned: learner.componentsPlanned ?? null,
@@ -389,7 +390,7 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     otjhStatus: displayValue(learner.otjhStatus),
     ksbCompleted: learner.ksbCompleted ?? null,
     ksbTarget: learner.ksbTarget ?? null,
-    ksbProgress: learner.ksbProgress == null ? null : clampPercent(learner.ksbProgress),
+    ksbProgress: learner.ksbProgress == null ? null : clampPercent(learner.ksbProgress, true),
     ksbProgressAvailable: learner.ksbProgressAvailable,
     ksbEvidencedCount: learner.ksbEvidencedCount ?? null,
     evidenceCount: toNumber(learner.evidenceCount),
@@ -1040,8 +1041,11 @@ function MetricCardSkeleton() {
 function LearnerTableSkeleton() {
   return <div className={styles.fullWidthCaseload}>
     <section className={`${caseloadStyles.page} ${caseloadStyles.embedded}`}>
-      <header className="flex flex-wrap items-center justify-between gap-4">
-        <div className={caseloadStyles.title}><h1>All Learners</h1></div>
+      <header className={`${caseloadStyles.pageHeader} flex flex-wrap items-center justify-between gap-4`}>
+        <div className={caseloadStyles.titleGroup}>
+          <LoadingBlock className="h-[46px] w-[46px] rounded-xl" />
+          <div className={caseloadStyles.title}><h1>All Learners</h1><LoadingBlock className="mt-1 h-3 w-52" /></div>
+        </div>
         <LoadingBlock className="h-9 w-[104px] rounded-md" />
       </header>
       <section className={caseloadStyles.panel}>
@@ -1502,12 +1506,12 @@ export default function CoachDashboard() {
           <>
 
         <section className={styles.metrics} aria-label="Coach dashboard metrics">
-          <DashboardMetric label="Total learners" value={loading || loadWarning ? undefined : totalCaseload} icon="ri-group-line" onClick={() => setSelectedKpi('caseload')} />
-          <DashboardMetric label="OTJH at risk" value={loading || loadWarning ? undefined : atRiskCount} note={loading || loadWarning ? undefined : `${needAttentionLearners.length} need attention`} icon="ri-alarm-warning-line" tone="critical" onClick={() => setSelectedKpi('at-risk')} />
-          <DashboardMetric label="Pending marking" value={loading || loadWarning ? undefined : markingThisWeek} note="Pending submissions" icon="ri-file-list-3-line" onClick={() => setSelectedKpi('pending-marking')} />
-          <DashboardMetric label="PR this week" value={loading || loadWarning ? undefined : reviewGenerationAvailable ? progressReviewsThisWeek : EMPTY_VALUE} note={reviewGenerationAvailable ? `Progress reviews · ${formatWeekRangeLabel()}` : 'Review schedule data unavailable'} icon="ri-focus-3-line" tone="caution" onClick={() => setSelectedKpi('pr-week')} />
-          <DashboardMetric label="MCM this week" value={loading || loadWarning ? undefined : reviewGenerationAvailable ? monthlyCoachingThisWeek : EMPTY_VALUE} note={reviewGenerationAvailable ? `Monthly coaching · ${formatWeekRangeLabel()}` : 'Review schedule data unavailable'} icon="ri-history-line" tone="caution" onClick={() => setSelectedKpi('mcm-week')} />
-          <DashboardMetric label="Catch-ups this week" value={loading || loadWarning ? undefined : catchUpsThisWeek} note={`Catch-up sessions · ${formatWeekRangeLabel()}`} icon="ri-calendar-event-line" tone="caution" onClick={() => setSelectedKpi('catch-ups-week')} />
+          <DashboardMetric kind="caseload" label="Total learners" value={loading || loadWarning ? undefined : totalCaseload} icon="ri-group-line" onClick={() => setSelectedKpi('caseload')} />
+          <DashboardMetric kind="risk" label="OTJH at risk" value={loading || loadWarning ? undefined : atRiskCount} note={loading || loadWarning ? undefined : `${needAttentionLearners.length} need attention`} icon="ri-alarm-warning-line" tone="critical" onClick={() => setSelectedKpi('at-risk')} />
+          <DashboardMetric kind="marking" label="Pending marking" value={loading || loadWarning ? undefined : markingThisWeek} note="Pending submissions" icon="ri-file-list-3-line" onClick={() => setSelectedKpi('pending-marking')} />
+          <DashboardMetric kind="pr" label="PR this week" value={loading || loadWarning ? undefined : reviewGenerationAvailable ? progressReviewsThisWeek : EMPTY_VALUE} note={reviewGenerationAvailable ? `Progress reviews · ${formatWeekRangeLabel()}` : 'Review schedule data unavailable'} icon="ri-focus-3-line" tone="caution" onClick={() => setSelectedKpi('pr-week')} />
+          <DashboardMetric kind="mcm" label="MCM this week" value={loading || loadWarning ? undefined : reviewGenerationAvailable ? monthlyCoachingThisWeek : EMPTY_VALUE} note={reviewGenerationAvailable ? `Monthly coaching · ${formatWeekRangeLabel()}` : 'Review schedule data unavailable'} icon="ri-history-line" tone="caution" onClick={() => setSelectedKpi('mcm-week')} />
+          <DashboardMetric kind="catchup" label="Catch-ups this week" value={loading || loadWarning ? undefined : catchUpsThisWeek} note={`Catch-up sessions · ${formatWeekRangeLabel()}`} icon="ri-calendar-event-line" tone="caution" onClick={() => setSelectedKpi('catch-ups-week')} />
         </section>
 
         <div id="learner-caseload" className={styles.fullWidthCaseload}>
@@ -1616,7 +1620,10 @@ function DashboardLoadingSkeleton() {
   );
 }
 
-function DashboardMetric({ label, value, note, icon, tone, onClick }: {
+type MetricKind = 'caseload' | 'risk' | 'marking' | 'pr' | 'mcm' | 'catchup';
+
+function DashboardMetric({ kind, label, value, note, icon, tone, onClick }: {
+  kind: MetricKind;
   label: string;
   value?: number | string;
   note?: string;
@@ -1630,12 +1637,11 @@ function DashboardMetric({ label, value, note, icon, tone, onClick }: {
     <span className={styles.metricLabel}>{label}</span>
     <span className={styles.metricValue}>{unavailable ? EMPTY_VALUE : value}</span>
     <span className={styles.metricNote}>{unavailable ? 'Data not available' : note || 'Your caseload'}</span>
-    {onClick && <span className={styles.metricChevron} aria-hidden="true"><AppIcon name="ri-arrow-right-s-line" /></span>}
   </>;
   return onClick ? (
-    <button type="button" className={styles.metric} data-tone={tone} data-unavailable={unavailable} onClick={onClick} aria-label={`Open ${label} details`}>{content}</button>
+    <button type="button" className={styles.metric} data-kind={kind} data-tone={tone} data-unavailable={unavailable} onClick={onClick} aria-label={`Open ${label} details`}>{content}</button>
   ) : (
-    <div className={styles.metric} data-unavailable={unavailable}>{content}</div>
+    <div className={styles.metric} data-kind={kind} data-unavailable={unavailable}>{content}</div>
   );
 }
 

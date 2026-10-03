@@ -4,6 +4,10 @@ import { AuthError, apiForgotPassword } from '@/api/auth';
 import loginStyles from '../login/page.module.css';
 import styles from './page.module.css';
 
+// The sign-in page's artwork, so reset and sign-in read as one screen.
+const BOOK_IMAGE_URL = '/login-open-book.png';
+const SIDEBAR_LOGO_URL = 'https://jokdxsdbxorzciulkdyl.supabase.co/storage/v1/object/public/images/16480272afc94729b2911a62d1bbf85d.webp';
+
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
   const [submitted, setSubmitted] = useState(false);
@@ -24,7 +28,8 @@ export default function ForgotPasswordPage() {
     setSending(true);
     try {
       // Succeeds whether or not the address has an account — the backend does
-      // not disclose which, so this screen must not either.
+      // not disclose which, so this screen must not either. An enrolled learner
+      // who has never set a password is emailed the set-password link instead.
       setMessage(await apiForgotPassword(email.trim()));
       setSubmitted(true);
     } catch (err) {
@@ -39,125 +44,115 @@ export default function ForgotPasswordPage() {
   return (
     <main className={loginStyles.page}>
       <section className={loginStyles.card} aria-labelledby="forgot-password-heading">
-        <span className={loginStyles.curveBand} aria-hidden="true" />
-        <div className={loginStyles.formPanel}>
-          <div className={loginStyles.formContent}>
-            <img
-              src="/assets/kbc-logo.png"
-              alt="Kent Business College"
-              className={loginStyles.logo}
-            />
+        <div className={loginStyles.bookStage}>
+          <div className={loginStyles.patterns} aria-hidden="true">
+            <span className={loginStyles.patternTopLeft} />
+            <span className={loginStyles.patternBottomRight} />
+          </div>
 
-            <header className={loginStyles.intro}>
-              <h1 id="forgot-password-heading">Reset your password</h1>
-              <p>Enter your email address and we will send you a reset link</p>
-            </header>
+          <img
+            className={loginStyles.bookImage}
+            src={BOOK_IMAGE_URL}
+            alt="Kent Business College learning journey illustration"
+          />
 
-            {submitted ? (
-              <div className={styles.successContent}>
-                <div className={styles.successMessage} role="status" aria-live="polite">
-                  <AppIcon className="ri-checkbox-circle-line" aria-hidden="true" />
-                  <span>{message || 'If that address has an account, a reset link has been sent to it.'}</span>
-                </div>
-                <p className={styles.supportingText}>
-                  The link can be used once and expires in an hour. Check your spam folder if it
-                  does not arrive within a few minutes.
+          <div className={loginStyles.logoOverlay}>
+            <img src={SIDEBAR_LOGO_URL} alt="KENT logo" className={loginStyles.logo} />
+          </div>
+
+          <div className={loginStyles.formPanel}>
+            <div className={loginStyles.formContent}>
+              <header className={loginStyles.intro}>
+                <h1 id="forgot-password-heading">{submitted ? 'Check your email' : 'Reset your password'}</h1>
+                <p>
+                  {submitted
+                    ? 'Follow the link we sent to continue'
+                    : 'Enter your email and we will send you a link to reset your password — or to set one if you are new'}
                 </p>
-                <button
-                  type="button"
-                  onClick={() => navigate('/login')}
-                  className={loginStyles.primaryButton}
-                >
-                  Back to Sign in
-                </button>
-              </div>
-            ) : (
-              <form onSubmit={handleSubmit} className={loginStyles.form}>
-                <div className={loginStyles.fieldGroup}>
-                  <label htmlFor="email">Email address</label>
-                  <div className={loginStyles.inputShell}>
-                    <AppIcon className={`ri-mail-line ${loginStyles.inputIcon}`} aria-hidden="true" />
-                    <input
-                      id="email"
-                      type="email"
-                      value={email}
-                      onChange={(e) => { setEmail(e.target.value); setError(''); }}
-                      placeholder="your.email@kbc.test"
-                      autoComplete="email"
-                      aria-invalid={!!error}
-                      aria-describedby={error ? 'forgot-password-error' : undefined}
-                      required
-                    />
+              </header>
+
+              {submitted ? (
+                <div className={styles.successContent}>
+                  <div className={styles.successMessage} role="status" aria-live="polite">
+                    <AppIcon className="ri-mail-check-line" aria-hidden="true" />
+                    <span>{message || 'If that address is registered, we have emailed it a link to reset or set your password.'}</span>
                   </div>
+                  <ul className={styles.steps}>
+                    <li>
+                      <AppIcon className="ri-key-2-line" aria-hidden="true" />
+                      <span>Already have a password? The reset link works once and expires in an hour.</span>
+                    </li>
+                    <li>
+                      <AppIcon className="ri-user-add-line" aria-hidden="true" />
+                      <span>New learner? The set-password link opens your account and expires in 7 days.</span>
+                    </li>
+                    <li>
+                      <AppIcon className="ri-spam-2-line" aria-hidden="true" />
+                      <span>Nothing after a few minutes? Check your junk or spam folder.</span>
+                    </li>
+                  </ul>
+                  <button type="button" onClick={() => navigate('/login')} className={loginStyles.primaryButton}>
+                    Back to Sign in
+                  </button>
+                  <button
+                    type="button"
+                    className={styles.textButton}
+                    onClick={() => { setSubmitted(false); setMessage(''); }}
+                  >
+                    Use a different email address
+                  </button>
                 </div>
-
-                {error && (
-                  <div id="forgot-password-error" className={loginStyles.error} role="alert" aria-live="polite">
-                    <AppIcon className="ri-error-warning-line" aria-hidden="true" />
-                    <span>{error}</span>
+              ) : (
+                <form onSubmit={handleSubmit} className={loginStyles.form}>
+                  <div className={loginStyles.fieldGroup}>
+                    <label htmlFor="email">Email address</label>
+                    <div className={loginStyles.inputShell}>
+                      <AppIcon className={`ri-mail-line ${loginStyles.inputIcon}`} aria-hidden="true" />
+                      <input
+                        id="email"
+                        type="email"
+                        value={email}
+                        onChange={(e) => { setEmail(e.target.value); setError(''); }}
+                        placeholder="your.email@kbc.test"
+                        autoComplete="email"
+                        aria-invalid={!!error}
+                        aria-describedby={error ? 'forgot-password-error' : undefined}
+                        required
+                      />
+                    </div>
                   </div>
-                )}
 
-                <button
-                  type="submit"
-                  disabled={!email || sending}
-                  className={loginStyles.primaryButton}
-                >
-                  {sending ? (
-                    <span className={loginStyles.loadingLabel}>
-                      <AppIcon className="ri-loader-4-line animate-spin" aria-hidden="true" />
-                      Sending…
-                    </span>
-                  ) : (
-                    'Send Reset Link'
+                  {error && (
+                    <div id="forgot-password-error" className={loginStyles.error} role="alert" aria-live="polite">
+                      <AppIcon className="ri-error-warning-line" aria-hidden="true" />
+                      <span>{error}</span>
+                    </div>
                   )}
-                </button>
-              </form>
-            )}
 
-            <footer className={`${loginStyles.secureFooter} ${styles.returnFooter}`}>
-              <p>
-                Remember your password?{' '}
-                <button type="button" onClick={() => navigate('/login')}>
-                  Sign in
-                </button>
-              </p>
-            </footer>
+                  <button type="submit" disabled={!email || sending} className={loginStyles.primaryButton}>
+                    {sending ? (
+                      <span className={loginStyles.loadingLabel}>
+                        <AppIcon className="ri-loader-4-line animate-spin" aria-hidden="true" />
+                        Sending…
+                      </span>
+                    ) : (
+                      'Send Reset Link'
+                    )}
+                  </button>
+                </form>
+              )}
+
+              <footer className={`${loginStyles.secureFooter} ${styles.returnFooter}`}>
+                <p>
+                  Remember your password?{' '}
+                  <button type="button" onClick={() => navigate('/login')}>
+                    Sign in
+                  </button>
+                </p>
+              </footer>
+            </div>
           </div>
         </div>
-
-        <aside className={loginStyles.visualPanel} aria-label="Kent Business College campus">
-          <img
-            className={loginStyles.campusImage}
-            src="/kent-business-college-campus.png"
-            alt="Kent Business College campus building at dusk"
-          />
-          <div className={loginStyles.visualShade} aria-hidden="true" />
-
-          <div className={loginStyles.visualTopCard}>
-            <span className={loginStyles.visualIcon} aria-hidden="true">
-              <AppIcon className="ri-shield-check-line" />
-            </span>
-            <p>
-              <span>Empowering learners.</span>
-              <span>Building futures.</span>
-            </p>
-          </div>
-
-          <div className={loginStyles.visualFooterCard}>
-            <span className={loginStyles.footerBrand}>
-              <AppIcon className="ri-shield-check-line" aria-hidden="true" />
-              <span>
-                <strong>Kent Business College</strong>
-                <small>{'\u00a9'} 2026 All rights reserved.</small>
-              </span>
-            </span>
-            <span className={loginStyles.supportLine}>
-              <span>Need help?</span>
-              <b>Contact support</b>
-            </span>
-          </div>
-        </aside>
       </section>
     </main>
   );

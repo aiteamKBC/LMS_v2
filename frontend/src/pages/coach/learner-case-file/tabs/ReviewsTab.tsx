@@ -9,6 +9,7 @@ import { caseFileReviewCategory, type CaseFileReviewCategory } from '../data';
 import type { useCaseFileReviews } from '../useCaseFileReviews';
 import { ReferencePanel } from '../components/CaseFilePrimitives';
 import styles from '../learnerCaseFile.module.css';
+import { downloadReviewInstancePdf } from '@/api/reviewInstances';
 
 export function ReviewsTab({
   data,
@@ -87,6 +88,7 @@ export function ReviewsTab({
         learnerId={data.enrolmentId || data.learnerId}
         category="reviews"
         reviewId={requestedReviewId}
+        downloadPdf={(review) => downloadReviewInstancePdf(`imported-review:${review.aptemReviewId}`)}
       /> : null}
       {!requestedReviewId && <>
       {(reviewsState.data?.issues || []).map(issue => (

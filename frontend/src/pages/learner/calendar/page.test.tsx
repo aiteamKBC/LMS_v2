@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { LearnerCalendarContent } from './page';
-import { bookLearnerCalendarSession, fetchLearnerCalendarEvents, rescheduleLearnerCalendarSession, type LearnerCalendarEvent } from '@/api/learnerCalendar';
+import { bookLearnerCalendarSession, cancelLearnerCalendarSession, fetchLearnerCalendarEvents, rescheduleLearnerCalendarSession, type LearnerCalendarEvent } from '@/api/learnerCalendar';
 import { fetchReviewHistory } from '@/api/reviewHistory';
 
 vi.mock('@/hooks/useMyLearner', () => ({ useLinkedLearner: () => ({ kind: 'commercial', id: '125' }) }));
@@ -14,6 +14,7 @@ vi.mock('@/api/learnerCalendar', () => ({
   fetchLearnerEventReviewInstance: vi.fn(async () => ({ instance: null })),
   bookLearnerCalendarSession: vi.fn(),
   rescheduleLearnerCalendarSession: vi.fn(),
+  cancelLearnerCalendarSession: vi.fn(),
   fetchLearnerCoach: vi.fn(async () => ({ coachName: 'Assigned coach', coachEmail: 'coach@example.test' })),
   fetchCalendarConnections: vi.fn(async () => ({ connections: [] })),
   fetchPersonalCalendarAvailability: vi.fn(async () => ({ busy: [] })),
@@ -227,6 +228,26 @@ describe('calendar event previews', () => {
     expect(document.querySelector('input[type="date"]')).toHaveValue(isoDate);
     expect(document.querySelector('input[type="time"]')).toHaveValue('10:00');
     expect(rescheduleLearnerCalendarSession).not.toHaveBeenCalled();
+  });
+
+  it('lets the learner cancel their own catch-up after confirming', async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    vi.mocked(cancelLearnerCalendarSession).mockResolvedValue({ event: event({ status: 'cancelled' }) });
+    setup([event()], '?event=catch-up%3A1');
+    const dialog = await screen.findByRole('dialog', { name: 'Catch-up with your coach' });
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel catch-up' }));
+    expect(cancelLearnerCalendarSession).toHaveBeenCalledWith('commercial', '125', 'catch-up:1');
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Catch-up with your coach' })).not.toBeInTheDocument());
+    expect(await screen.findByText(/Catch-up cancelled/)).toBeVisible();
+  });
+
+  it('closes reschedule and cancel for a catch-up starting within 12 hours', async () => {
+    setup([event({ changeClosed: true })], '?event=catch-up%3A1');
+    const dialog = await screen.findByRole('dialog', { name: 'Catch-up with your coach' });
+    expect(within(dialog).getByRole('button', { name: 'Reschedule' })).toBeDisabled();
+    expect(within(dialog).getByRole('button', { name: 'Cancel catch-up' })).toBeDisabled();
+    expect(within(dialog).getByText(/less than 12 hours/)).toBeVisible();
   });
 
   it('opens live sessions and pending requests without showing unavailable edit actions', async () => {

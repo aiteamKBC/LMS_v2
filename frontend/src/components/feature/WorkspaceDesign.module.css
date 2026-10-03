@@ -2,50 +2,42 @@
    shell so legacy workspace styles cannot restore oversized gradient heroes. */
 :global(.workspace-shell[data-workspace-role="coach"]).shell :global(.kbc-workspace-topbar) {
   margin: 0;
-  height: 76px;
+  height: 80px;
   padding-inline: 22px;
   border-radius: 0;
-  border-color: transparent;
-  background: #f7f5fc !important;
+  border: 0;
+  background: #4f2d7f !important;
+  color: white;
   box-shadow: none;
 }
-:global(.workspace-shell[data-workspace-role="coach"]).shell :is(:global(.kbc-topbar-title), :global(.kbc-topbar-user-name), :global(.kbc-navigation-menu), :global(.kbc-workspace-switcher-button)) { color: #302149 !important; }
-:global(.workspace-shell[data-workspace-role="coach"]).shell :global(.kbc-topbar-subtitle) { color: #77718d !important; }
-:global(.workspace-shell[data-workspace-role="coach"]).shell :global(.coach-header-search) { display: flex; align-items: center; gap: 8px; min-width: 0; width: min(320px, 24vw); padding: 8px 10px; border: 1px solid #ece7f5; border-radius: 5px; background: white; color: #77718d; font-size: 11px; text-align: left; }
+:global(.workspace-shell[data-workspace-role="coach"]).shell :global(.kbc-learner-header-pattern) { background-position: center; background-repeat: no-repeat; background-size: auto 190%; opacity: .12; }
+:global(.workspace-shell[data-workspace-role="coach"]).shell :global(.kbc-workspace-topbar) > :not(:global(.kbc-learner-header-pattern)) { position: relative; z-index: 1; }
+:global(.workspace-shell[data-workspace-role="coach"]).shell :is(:global(.kbc-topbar-title), :global(.kbc-topbar-subtitle), :global(.kbc-topbar-user-name), :global(.kbc-navigation-menu)) { color: white !important; }
+:global(.workspace-shell[data-workspace-role="coach"]).shell :global(.coach-header-search) { display: flex; align-items: center; gap: 8px; min-width: 0; width: min(320px, 24vw); padding: 9px 12px; border: 1px solid rgb(255 255 255 / 40%); border-radius: 8px; background: rgb(255 255 255 / 12%); color: white; font-size: 12px; text-align: left; }
 :global(.coach-header-search) span { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-:global(.coach-header-search) svg { width: 14px; height: 14px; color: #622bd1; }
+:global(.coach-header-search) svg { width: 14px; height: 14px; color: #f5c94f; }
 :global(.coach-header-search) kbd { flex-shrink: 0; font-size: 10px; }
-:global(.coach-header-search):focus-visible { outline: 2px solid #622bd1; outline-offset: 2px; }
+:global(.coach-header-search):focus-visible { outline: 2px solid #f5c94f; outline-offset: 2px; }
 @media (max-width: 1023px) {
   :global(.workspace-shell[data-workspace-role="coach"]).shell :global(.coach-header-search) { width: 34px; height: 34px; justify-content: center; padding: 0; }
   :global(.coach-header-search) :is(span, kbd) { display: none; }
 }
-:global([data-theme="dark"]) :global(.workspace-shell[data-workspace-role="coach"]).shell :global(.kbc-workspace-topbar) { background: #231b32 !important; }
-:global([data-theme="dark"]) :global(.workspace-shell[data-workspace-role="coach"]).shell :is(:global(.kbc-topbar-title), :global(.kbc-topbar-user-name), :global(.kbc-navigation-menu), :global(.kbc-workspace-switcher-button)) { color: #eee8fa !important; }
-/* Scrolling stays enabled by each panel's overflow rules; only the visible
-   scrollbar and its reserved gutter are removed, across all workspaces. */
-:global(.dashboard-theme[data-workspace-role]).shell,
-:global(.dashboard-theme[data-workspace-role]).shell * {
-  scrollbar-width: none !important;
-  scrollbar-gutter: auto !important;
-}
-
-:global(.dashboard-theme[data-workspace-role]).shell::-webkit-scrollbar,
-:global(.dashboard-theme[data-workspace-role]).shell *::-webkit-scrollbar {
-  display: none !important;
-  width: 0 !important;
-  height: 0 !important;
-}
+:global([data-theme="dark"]) :global(.workspace-shell[data-workspace-role="coach"]).shell :global(.kbc-workspace-topbar) { background: #162740 !important; border-bottom: 1px solid #3b526c; }
+:global([data-theme="dark"]) :global(.workspace-shell[data-workspace-role="coach"]).shell :is(:global(.kbc-topbar-title), :global(.kbc-topbar-user-name), :global(.kbc-navigation-menu)) { color: #f6f8fb !important; }
+/* Scrollbars inside the workspace shell are deliberately visible: learners
+   need a visible cue that a page or panel holds more content. The thin,
+   themed scrollbar style is defined globally in index.css ("Scrollbar"). A
+   blanket rule here used to hide every scrollbar and gutter in all
+   workspaces; do not reintroduce it. Hide a scrollbar only on a specific
+   control that offers its own scroll affordance. */
 
 :global(.dashboard-theme[data-workspace-role]).shell :global(.workspace-main) {
   padding: 0;
   background-image: none !important;
 }
 
-/* Module Builder's catalogue list is long enough that a hidden scrollbar
-   leaves no sign there is more to scroll to. Opt this one panel back into a
-   visible scrollbar without touching the hidden-scrollbar default anywhere
-   else. */
+/* Module Builder's catalogue list keeps its wider, always-reserved scrollbar
+   so its long list reads as scrollable at a glance. */
 :global(.dashboard-theme[data-workspace-role]).shell :global(.module-catalogue-scroll) {
   scrollbar-width: thin !important;
   scrollbar-color: oklch(var(--foreground-400)) oklch(var(--background-100)) !important;
@@ -429,9 +421,9 @@
   animation: none !important;
 }
 
-/* Learner breadcrumbs use connected step segments: the primary colour marks
+/* Learner and coach breadcrumbs use connected step segments: the primary colour marks
    completed route levels and the secondary colour marks the current level. */
-:global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumbs) {
+:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumbs) {
   min-height: 1.95rem;
   height: 1.95rem;
   margin: 0 .75rem .25rem 0;
@@ -442,14 +434,15 @@
   background: transparent;
 }
 
-:global(.workspace-shell[data-workspace-role="learner"]).shell :global(.learner-step-breadcrumb) {
+:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.learner-step-breadcrumb) {
+  min-height: 0;
   height: 100%;
   gap: 0;
   overflow-x: auto;
   overflow-y: visible;
 }
 
-:global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumb-home) {
+:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumb-home) {
   display: grid;
   width: 1.45rem;
   height: 1.45rem;
@@ -462,11 +455,11 @@
   color: oklch(var(--primary-700));
 }
 
-:global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumb-home-separator) {
+:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumb-home-separator) {
   display: none;
 }
 
-:global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumb-step) {
+:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumb-step) {
   position: relative;
   z-index: 1;
   min-width: 9.5rem;
@@ -480,17 +473,17 @@
   white-space: nowrap;
 }
 
-:global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumb-step + .workspace-breadcrumb-step) {
+:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumb-step + .workspace-breadcrumb-step) {
   margin-left: -1.15rem;
   padding-left: 2.4rem;
 }
 
-:global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumb-step.is-current) {
+:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumb-step.is-current) {
   z-index: 2;
   background: oklch(var(--secondary-500));
 }
 
-:global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumb-step)::before {
+:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumb-step)::before {
   display: grid;
   width: 1.05rem;
   height: 1.05rem;
@@ -505,13 +498,13 @@
   font-weight: 800;
 }
 
-:global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumb-step.is-current)::before {
+:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumb-step.is-current)::before {
   background: oklch(var(--primary-100));
   color: oklch(var(--secondary-700));
 }
 
-:global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumb-step > a),
-:global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumb-step > span) {
+:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumb-step > a),
+:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumb-step > span) {
   min-width: 0;
   overflow: hidden;
   color: #fff !important;
@@ -521,17 +514,17 @@
   font-weight: 600;
 }
 
-:global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumb-step > .ri-arrow-right-s-line) {
+:global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumb-step > .ri-arrow-right-s-line) {
   display: none;
 }
 
 @media (max-width: 640px) {
-  :global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumbs) {
+  :global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumbs) {
     margin-right: 0;
     padding-inline: 0;
   }
 
-  :global(.workspace-shell[data-workspace-role="learner"]).shell :global(.workspace-breadcrumb-step) {
+  :global(.workspace-shell:is([data-workspace-role="learner"], [data-workspace-role="coach"])).shell :global(.workspace-breadcrumb-step) {
     min-width: 8.5rem;
     font-size: .8rem;
   }

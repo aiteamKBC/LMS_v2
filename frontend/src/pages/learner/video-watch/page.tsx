@@ -52,6 +52,7 @@ import { AssignmentSubmissionWizard, type AssignmentAnswers } from './Assignment
 import { useSavedAssignmentAccess } from './useSavedAssignmentAccess';
 import { resolveDocEmbed } from '@/lib/docEmbed';
 import { normalizeReadingHtml } from '@/lib/readingHtml';
+import { downloadReadingPdf, readingFiles } from './readingDownloads';
 import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
 import {
   loadTeamsMeetingArtifacts,
@@ -1434,6 +1435,9 @@ function AccessibleReadingMaterial({
 }) {
   const componentId = component.componentId || title;
   const sourceHtml = normalizeReadingHtml(component.contentHtml || '');
+  const files = useMemo(() => readingFiles(component.resourceUrl, component.fileName, sourceHtml), [component.resourceUrl, component.fileName, sourceHtml]);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [downloadError, setDownloadError] = useState('');
   const savedDocument = readStoredJson(readingStorageKey(componentId, 'document'), { sourceHtml: '', html: '' });
   const [html, setHtml] = useState(
     savedDocument.sourceHtml === sourceHtml && savedDocument.html
@@ -1509,6 +1513,19 @@ function AccessibleReadingMaterial({
     setSpeaking(true);
   };
 
+  const downloadText = async () => {
+    if (downloadingPdf) return;
+    setDownloadingPdf(true);
+    setDownloadError('');
+    try {
+      await downloadReadingPdf(title, sourceHtml);
+    } catch (error) {
+      setDownloadError(error instanceof Error ? error.message : 'Could not download the reading. Please try again.');
+    } finally {
+      setDownloadingPdf(false);
+    }
+  };
+
   const downloadNotes = () => {
     const documentHtml = `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title><style>body{max-width:850px;margin:40px auto;padding:0 24px;font-family:Arial,sans-serif;font-size:${preferences.fontSize}px;line-height:${preferences.lineHeight};letter-spacing:${preferences.letterSpacing}em}mark{background:#fde047;color:#111827}</style></head><body><h1>${title}</h1>${html}</body></html>`;
     const blob = new Blob([documentHtml], { type: 'text/html;charset=utf-8' });
@@ -1532,12 +1549,17 @@ function AccessibleReadingMaterial({
         speaking={speaking}
         saved={saved}
       />
-      <div ref={readingBodyRef}>
-      {component.contentHtml && (
-        <div className="mb-3 flex justify-end">
-          <button type="button" onClick={downloadNotes} className="inline-flex items-center gap-1.5 rounded-lg border border-background-300 bg-white px-3 py-1.5 text-xs font-bold text-foreground-700 hover:bg-background-50"><AppIcon className="ri-download-2-line" />Download highlighted reading</button>
+      {(files.length > 0 || component.contentHtml) && (
+        <div className="mb-3 flex flex-wrap justify-end gap-2" aria-label="Reading downloads">
+          {files.map(file => <DownloadFileButton key={file.url} url={file.url} fileName={file.fileName} label={files.length === 1 ? 'Download original file' : `Download: ${file.label}`} />)}
+          {component.contentHtml && <>
+            <button type="button" onClick={downloadText} disabled={downloadingPdf} className="inline-flex items-center gap-1.5 rounded-lg border border-background-300 bg-white px-3 py-1.5 text-xs font-bold text-foreground-700 hover:bg-background-50 disabled:cursor-wait disabled:opacity-60"><AppIcon className="ri-file-pdf-2-line" />{downloadingPdf ? 'Preparing PDF…' : 'Download reading as PDF'}</button>
+            <button type="button" onClick={downloadNotes} className="inline-flex items-center gap-1.5 rounded-lg border border-background-300 bg-white px-3 py-1.5 text-xs font-bold text-foreground-700 hover:bg-background-50"><AppIcon className="ri-download-2-line" />Download highlighted reading</button>
+          </>}
         </div>
       )}
+      {downloadError && <p role="alert" className="mb-3 text-sm text-red-700">{downloadError}</p>}
+      <div ref={readingBodyRef}>
       {component.contentHtml && (
         <div
           className="relative overflow-hidden rounded-xl border border-background-200 p-5"
@@ -1705,7 +1727,7 @@ export function InlineAttachmentPreview({ url, title, fileName, readingPreferenc
 
         if (isWord) {
           const arrayBuffer = await response.arrayBuffer();
-          const mammoth = await import('mammoth');
+          const mammoth = await import('mammoth/mammoth.browser');
           const result = await mammoth.convertToHtml({ arrayBuffer });
           if (!cancelled) {
             setPreview({ status: 'ready', kind: 'html', html: DOMPurify.sanitize(result.value || '<p>No preview content found.</p>') });
@@ -2278,9 +2300,6 @@ export function ComponentBody({ component, contentKind, parsed, title, onDuratio
             <p className="text-sm font-semibold text-foreground-900">{title}</p>
             <p className="text-xs text-foreground-400">Read the material, then finish and reflect below.</p>
           </div>
-          {component.resourceUrl && (
-            <DownloadFileButton url={component.resourceUrl} fileName={component.fileName} />
-          )}
         </div>
         <AccessibleReadingMaterial component={component} title={title} />
         {component.audioUrl && (

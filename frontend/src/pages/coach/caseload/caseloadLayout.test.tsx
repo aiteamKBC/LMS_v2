@@ -60,10 +60,11 @@ describe('My Learners table design', () => {
     expect(screen.getByRole('table', { name: 'Learners are loading' })).toBeInTheDocument();
     expect(screen.getAllByRole('row')).toHaveLength(14);
     expect(container.querySelectorAll('[class*="summaryCard"]')).toHaveLength(4);
-    for (const heading of ['Learner', 'Progress', 'Last Activity', 'Last PR', 'Last MCM', 'Actions']) {
+    // Issue #12: the loading table mirrors the real one, including the
+    // programme Status column.
+    for (const heading of ['Learner', 'Status', 'Progress', 'Last Activity', 'Last PR', 'Last MCM', 'Actions']) {
       expect(screen.getByRole('columnheader', { name: heading })).toBeInTheDocument();
     }
-    expect(screen.queryByRole('columnheader', { name: 'Status' })).not.toBeInTheDocument();
   });
 
   it('renders the four requested summary cards and uses them as filters', () => {
@@ -78,7 +79,31 @@ describe('My Learners table design', () => {
     expect(onChange).toHaveBeenCalledWith('at-risk');
   });
 
-  it('shows real learner progress and profile actions without a status column', () => {
+  it('shows each learner\'s programme status, not their risk tier, in the Status column (issue #12)', () => {
+    render(<LearnerTable learners={[
+      { ...learner, rawProgramStatus: 'Active' },
+      { ...learner, id: '43', name: 'Sam Example', initials: 'SE', rawProgramStatus: 'Withdrawn', enrollmentStatus: 'withdrawn' },
+      { ...learner, id: '44', name: 'No Status', initials: 'NS', rawProgramStatus: '--' },
+    ]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
+      sortKey="risk" sortDirection="desc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} />);
+    const header = screen.getByRole('columnheader', { name: 'Status' });
+    expect(header).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sort by Status' })).not.toBeInTheDocument();
+    const cellIndex = (row: HTMLElement) => within(row).getAllByRole('cell')[1];
+    const active = screen.getByText('Emma Carter').closest('tr')!;
+    expect(cellIndex(active)).toHaveTextContent('Active');
+    expect(within(cellIndex(active)).getByText('Active').className).toContain('emerald');
+    const withdrawn = screen.getByText('Sam Example').closest('tr')!;
+    expect(cellIndex(withdrawn)).toHaveTextContent('Withdrawn');
+    expect(within(cellIndex(withdrawn)).getByText('Withdrawn').className).not.toContain('emerald');
+    // Withdrawn learners stay listed rather than being hidden.
+    expect(screen.getAllByRole('button', { name: 'View Profile' })).toHaveLength(3);
+    const missing = screen.getByText('No Status').closest('tr')!;
+    expect(cellIndex(missing).textContent).toBe('--');
+    expect(within(active).queryByText('On Track')).not.toBeInTheDocument();
+  });
+
+  it('shows real learner progress and profile actions without a risk status label', () => {
     const onOpenProfile = vi.fn();
     const onSort = vi.fn();
     render(<LearnerTable learners={[learner]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
@@ -90,7 +115,6 @@ describe('My Learners table design', () => {
       expect(within(row).getByLabelText(metric)).toBeInTheDocument();
     }
     for (const source of ['70h / 90h', '13 / 20', '8 / 10', '9 / 10']) expect(within(row).getByText(source)).toBeInTheDocument();
-    expect(screen.queryByRole('columnheader', { name: 'Status' })).not.toBeInTheDocument();
     expect(within(row).queryByText('On Track')).not.toBeInTheDocument();
     expect(within(row).getByLabelText('OTJH: 78%')).toHaveAttribute('data-tone', 'positive');
     expect(within(row).getByText('19 Sep 2026')).toBeInTheDocument();

@@ -258,7 +258,11 @@ export default function AttendancePage() {
         <p className={styles.catchupLectureTitle}>{catchup.title} · {catchup.date}</p>
         <CatchupBooking key={catchup.id} lecture={{ ...catchup, status: 'absent', dateIso: catchup.date,
           sessionType: 'live_session', coach: catchup.coach || '' }} selectedKey={catchupBooking?.eventKey || ''}
-          onSelect={selectCatchupBooking} onBooked={booking => saveCatchup(booking)} onBusyChange={setBookingBusy} standalone
+          onSelect={selectCatchupBooking} onBusyChange={setBookingBusy} standalone
+          onLinked={() => {
+            // Booked and linked by the server in one request.
+            invalidateLearnerReads(); setAttendNotice('Catch-up booked and linked to this absence.'); setCatchup(null); read.refresh();
+          }}
           reportId={catchup.absenceReport.id} />
         {attendError && <p role="alert">{attendError}</p>}
         <button type="button" className={styles.catchupDone} disabled={bookingBusy || !catchupBooking} onClick={() => void saveCatchup()}>Link catch-up to this absence</button>
@@ -272,8 +276,8 @@ export default function AttendancePage() {
 }
 
 function Stat({ label, value, total, icon, tone }: { label: string; value: number; total: number; icon: string; tone: 'total' | 'attended' | 'absent' | 'covered' }) {
-  return <div className={styles.metric} data-tone={tone} style={{ '--metric-progress': `${total ? value / total * 100 : 0}%` } as CSSProperties}>
-    <span className={styles.metricRing} aria-hidden="true"><span><AppIcon className={icon} /></span></span>
+  return <div className={styles.metric} data-tone={tone}>
+    <span key={`${value}:${total}`} className={`${styles.metricRing} kbc-animated-conic-ring`} aria-hidden="true" style={{ '--kbc-ring-target': `${total ? value / total * 100 : 0}%` } as CSSProperties}><span><AppIcon className={icon} /></span></span>
     <div><p className={styles.value}>{value}</p><p className={styles.metricLabel}>{label}</p></div>
   </div>;
 }

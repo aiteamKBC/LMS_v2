@@ -15,6 +15,7 @@
 // ============================================================================
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
+import { AppIcon } from '@/components/feature/AppIcon';
 import { useAuth } from '@/hooks/useAuth';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { useListQueryState } from '@/hooks/useListQueryState';
@@ -33,6 +34,7 @@ import {
   EMPTY_VALUE,
   displayValue,
   getProgramStatusKey,
+  getOtjhGapStatus,
   hasValue,
   normalizeLearner,
   startOfToday,
@@ -55,6 +57,7 @@ const EMBEDDED_PAGE_SIZE = 15;
 const QUERY_DEFAULTS = {
   search: '', cohort: 'all', group: 'all', programmeStatus: 'all', employer: 'all',
   view: 'all', sort: 'risk', direction: 'desc', page: 1,
+  otjhStatus: 'all', otjhMin: '', otjhMax: '',
 };
 
 const INITIAL_FILTERS: CaseloadFilterState = {
@@ -109,6 +112,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
   const sortDirection = String(query.direction) as SortDirection;
   const currentPage = Number(query.page);
   const usesDashboardLearners = embedded && Array.isArray(embeddedLearners);
+  const otjhStatus = String(query.otjhStatus);
 
   const [quickView, setQuickView] = useState<{ learnerId: string; tab: QuickViewTab } | null>(null);
 
@@ -214,7 +218,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
   // decided. Keyed on the learner list, so filtering and sorting never redo it.
   const insights = useMemo(() => buildInsightMap(learners, today), [learners, today]);
   const filterOptions = useMemo(() => serverFilterOptions || ({
-    cohort: [...new Map(learners.map((learner) => [learner.cohortId, displayValue(learner.cohortName)])).entries()]
+    cohort: [...new Map(learners.map((learner) => [hasValue(learner.cohortId) ? learner.cohortId : displayValue(learner.cohortName), displayValue(learner.cohortName)])).entries()]
       .filter(([, label]) => label !== EMPTY_VALUE)
       .map(([value, label]) => ({ value, label }))
       .sort((left, right) => left.label.localeCompare(right.label)),
@@ -223,13 +227,21 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
     employer: uniqueOptions(learners.map((learner) => displayValue(learner.employer))),
   }), [learners, serverFilterOptions]);
 
+  const toolbarOptions = useMemo(() => usesDashboardLearners ? {
+    ...filterOptions,
+    cohort: [
+      ...filterOptions.cohort.map(option => ({ value: `cohort:${option.value}`, label: `Cohort: ${option.label}` })),
+      ...filterOptions.group.map(option => ({ value: `group:${option.value}`, label: `Group: ${option.label}` })),
+    ],
+  } : filterOptions, [filterOptions, usesDashboardLearners]);
+
   const matched = useMemo(() => {
     return learners.filter((learner) => {
       const insight = insights.get(learner.id);
       const performanceStatus = normalizedPerformanceStatus(learner.status);
       const useApiStatus = hasAuthoritativePerformanceStatus(learner.status);
 
-      switch (statusFilter) {
+      switch (usesDashboardLearners ? 'all' : statusFilter) {
         case 'at-risk':
           if (useApiStatus ? performanceStatus !== 'at-risk' : insight?.tier !== 'critical') return false;
           break;
@@ -258,20 +270,24 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
       // Dashboard-owned learners never make that request, so apply the same
       // contract locally instead of only reflecting the values in the URL.
       if (usesDashboardLearners) {
+        if (otjhStatus !== 'all' && getOtjhGapStatus(learner.otjhCompleted, learner.otjhTarget).status !== otjhStatus) return false;
         const search = filters.search.trim().toLocaleLowerCase();
         if (search && ![learner.name, learner.email, learner.programmeName]
           .some((value) => displayValue(value).toLocaleLowerCase().includes(search))) return false;
-        if (filters.cohort !== 'all' && learner.cohortId !== filters.cohort
-          && displayValue(learner.cohortName) !== filters.cohort) return false;
-        if (filters.group !== 'all' && displayValue(learner.group) !== filters.group) return false;
+        if (filters.cohort.startsWith('group:')) {
+          if (displayValue(learner.group) !== filters.cohort.slice(6)) return false;
+        } else if (filters.cohort !== 'all') {
+          const cohort = filters.cohort.startsWith('cohort:') ? filters.cohort.slice(7) : filters.cohort;
+          if (learner.cohortId !== cohort && displayValue(learner.cohortName) !== cohort) return false;
+        }
         if (filters.programStatus !== 'all'
           && displayValue(learner.rawProgramStatus).toLocaleLowerCase() !== filters.programStatus.toLocaleLowerCase()) return false;
       }
-      if (filters.employer !== 'all' && displayValue(learner.employer) !== filters.employer) return false;
+      if (!usesDashboardLearners && filters.employer !== 'all' && displayValue(learner.employer) !== filters.employer) return false;
 
       return true;
     });
-  }, [learners, insights, statusFilter, filters, usesDashboardLearners]);
+  }, [learners, insights, statusFilter, filters, usesDashboardLearners, otjhStatus]);
 
   const sorted = useMemo(() => {
     const numeric = (value: number | null | undefined, available = true) => available && Number.isFinite(value) ? Number(value) : null;
@@ -364,7 +380,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
   }, [setQueryValues]);
 
   const handleClearAll = useCallback(() => {
-    resetQuery(['search', 'cohort', 'group', 'programmeStatus', 'employer', 'view', 'page']);
+    resetQuery(['search', 'cohort', 'group', 'programmeStatus', 'employer', 'view', 'page', 'otjhStatus', 'otjhMin', 'otjhMax']);
   }, [resetQuery]);
 
   const handleToggleSelect = useCallback((learnerId: string) => {
@@ -440,8 +456,8 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
 
   // --- render --------------------------------------------------------------
 
-  const hasFiltersApplied = statusFilter !== 'all'
-    || Object.entries(filters).some(([key, value]) => value !== INITIAL_FILTERS[key as keyof CaseloadFilterState]);
+  const hasFiltersApplied = (usesDashboardLearners ? otjhStatus !== 'all' : statusFilter !== 'all')
+    || Object.entries(filters).some(([key, value]) => (!usesDashboardLearners || ['search', 'cohort', 'programStatus'].includes(key)) && value !== INITIAL_FILTERS[key as keyof CaseloadFilterState]);
   const allPageSelected = paginated.length > 0 && paginated.every((learner) => selectedLearnerIds.has(learner.id));
 
   // A super-admin cannot read an arbitrary coach caseload until a coach has
@@ -456,10 +472,13 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
   return (
     <>
       <section className={`${styles.page} ${embedded ? styles.embedded : ''}`} aria-label="Coach learner caseload">
-        <header className="flex flex-wrap items-center justify-between gap-4">
-          <div className={styles.title}>
-            <h1>{embedded ? 'All Learners' : 'My Learners'}</h1>
-            {!embedded ? <p>Monitor learner progress and engagement</p> : null}
+        <header className={`${styles.pageHeader} flex flex-wrap items-center justify-between gap-4`}>
+          <div className={styles.titleGroup}>
+            {embedded ? <span className={styles.titleIcon} aria-hidden="true"><AppIcon name="ri-group-line" /></span> : null}
+            <div className={styles.title}>
+              <h1>{embedded ? 'All Learners' : 'My Learners'}</h1>
+              <p>{embedded ? "Manage and monitor your learners' progress" : 'Monitor learner progress and engagement'}</p>
+            </div>
           </div>
           <LearnersHeaderActions
             selectionMode={selectionMode}
@@ -478,11 +497,15 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
             <div className={styles.toolbar}>
               <LearnerToolbar
                 filters={filters}
-                options={filterOptions}
+                options={toolbarOptions}
                 statusFilter={statusFilter}
                 onFilterChange={handleFilterChange}
                 onStatusFilterChange={handleStatusFilterChange}
                 onClearAll={handleClearAll}
+                dashboardFilters={usesDashboardLearners ? {
+                  otjhStatus,
+                  onStatusChange: (value) => setQueryValues({ otjhStatus: value }, { resetPage: true }),
+                } : undefined}
               />
             </div>
           ) : null}

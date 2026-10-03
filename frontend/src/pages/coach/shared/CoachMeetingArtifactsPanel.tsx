@@ -631,6 +631,11 @@ export function CoachMeetingArtifactsPanel({
   canEditSummary = showAttendance,
   saveSummary = updateCoachMeetingSummary,
   refreshOnLoad = false,
+  canCheck = true,
+  checkLabel = 'Check Teams',
+  hasTeamsMeeting = false,
+  allowContentAccess = true,
+  onArtifactsLoaded,
 }: {
   event: CoachMeetingArtifactEvent;
   className?: string;
@@ -642,9 +647,14 @@ export function CoachMeetingArtifactsPanel({
   canEditSummary?: boolean;
   saveSummary?: typeof updateCoachMeetingSummary;
   refreshOnLoad?: boolean;
+  canCheck?: boolean;
+  checkLabel?: string;
+  hasTeamsMeeting?: boolean;
+  allowContentAccess?: boolean;
+  onArtifactsLoaded?: (result: Awaited<ReturnType<typeof fetchCoachMeetingArtifacts>>) => void;
 }) {
   const eventKey = event.eventKey || '';
-  const hasTeamsLink = Boolean(event.meetingLink || event.graphWebLink);
+  const hasTeamsLink = hasTeamsMeeting || Boolean(event.meetingLink || event.graphWebLink);
   const supportsMeetingSummary = event.source === 'mcr' || event.source === 'progress-review';
   const [state, setState] = useState<ArtifactState>({ status: 'idle' });
   const [preview, setPreview] = useState<PreviewSelection | null>(null);
@@ -654,6 +664,7 @@ export function CoachMeetingArtifactsPanel({
     setState({ status: 'loading' });
     return fetchArtifacts(eventKey, signal, { refresh })
       .then(result => {
+        onArtifactsLoaded?.(result);
         if (result.event?.status) onEventStatusChange?.(result.event.status);
         setState({
           status: 'ready',
@@ -670,7 +681,7 @@ export function CoachMeetingArtifactsPanel({
           message: error instanceof Error ? error.message : 'Unable to load Teams artifacts.',
         });
       });
-  }, [eventKey, fetchArtifacts, onEventStatusChange]);
+  }, [eventKey, fetchArtifacts, onArtifactsLoaded, onEventStatusChange]);
 
   useEffect(() => {
     setPreview(null);
@@ -682,6 +693,10 @@ export function CoachMeetingArtifactsPanel({
     loadArtifacts(controller.signal, refreshOnLoad);
     return () => controller.abort();
   }, [event.source, eventKey, hasTeamsLink, loadArtifacts, refreshOnLoad]);
+
+  useEffect(() => {
+    if (!allowContentAccess) setPreview(null);
+  }, [allowContentAccess]);
 
   useEffect(() => {
     if (!preview || preview.type !== 'transcript') {
@@ -743,7 +758,7 @@ export function CoachMeetingArtifactsPanel({
             {sourceLabel(event.source)} artifacts from Microsoft Teams.
           </p>
         </div>
-        <button
+        {canCheck ? <button
           type="button"
           onClick={() => {
             setPreview(null);
@@ -753,8 +768,8 @@ export function CoachMeetingArtifactsPanel({
           className="inline-flex items-center gap-1.5 rounded-md border border-primary-200 bg-primary-50 px-3 py-1.5 text-[12px] font-semibold text-primary-700 transition hover:border-primary-300 hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <AppIcon className={isLoading ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}></AppIcon>
-          {isLoading ? 'Loading' : 'Check Teams'}
-        </button>
+          {isLoading ? 'Loading' : checkLabel}
+        </button> : null}
       </div>
 
       {state.status === 'error' ? (
@@ -806,7 +821,7 @@ export function CoachMeetingArtifactsPanel({
                       {artifactDate(artifact.end_datetime || artifact.created_datetime)}
                     </p>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      <button
+                      {allowContentAccess ? <button
                         type="button"
                         onClick={() => setPreview({ artifact, artifactId, type, url: previewUrl })}
                         className={cn(
@@ -818,14 +833,14 @@ export function CoachMeetingArtifactsPanel({
                       >
                         <AppIcon className={type === 'recording' ? 'ri-play-circle-line' : 'ri-eye-line'}></AppIcon>
                         {type === 'recording' ? 'Play' : 'Preview'}
-                      </button>
-                      <a
+                      </button> : null}
+                      {allowContentAccess ? <a
                         href={downloadUrl}
                         className="inline-flex items-center gap-1 rounded-md border border-background-300 bg-white px-2 py-1 text-[12px] font-semibold text-foreground-700 transition hover:border-background-400 hover:bg-background-100"
                       >
                         <AppIcon className="ri-download-2-line"></AppIcon>
                         Download
-                      </a>
+                      </a> : null}
                     </div>
                   </div>
                 </div>

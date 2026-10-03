@@ -27,6 +27,7 @@ import {
   describePasswordProblem,
   isOwnLearnerRecord,
   MIN_PASSWORD_LENGTH,
+  PasswordSetupRequired,
 } from '../auth';
 
 const ACCOUNT = {
@@ -118,6 +119,18 @@ describe('request plumbing', () => {
 });
 
 describe('apiLogin', () => {
+  it('turns a first-sign-in password into a set-password redirect, not a session', async () => {
+    fetchMock.mockResolvedValue(reply(200, { passwordSetupRequired: true, setPasswordPath: '/set-password?token=T' }));
+    const error = await apiLogin('learner@kbc.test', 'changeme_password').catch(caught => caught);
+    expect(error).toBeInstanceOf(PasswordSetupRequired);
+    expect(error.setPasswordPath).toBe('/set-password?token=T');
+  });
+
+  it('never follows a setup path outside the set-password page', async () => {
+    fetchMock.mockResolvedValue(reply(200, { passwordSetupRequired: true, setPasswordPath: 'https://evil.example/x' }));
+    await expect(apiLogin('learner@kbc.test', 'changeme_password')).rejects.toBeInstanceOf(AuthError);
+  });
+
   it('returns the account on success', async () => {
     fetchMock.mockResolvedValue(reply(200, { user: ACCOUNT }));
     await expect(apiLogin('admin@kbc.test', 'pw')).resolves.toEqual(ACCOUNT);

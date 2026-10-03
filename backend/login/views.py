@@ -46,16 +46,16 @@ from .invitations import (
     peek_invitation,
     peek_reset,
     record,
-    send_reset,
 )
 from .models import EVENT_LOGIN, EVENT_LOGOUT, EVENT_PASSWORD_CHANGED, LoginAccount
 from .permissions import login_required, require_role
-from .services import invite_subject
+from .services import default_password_setup, invite_subject, issue_invitation_link, request_password_link
 from .security import (
     PasswordPolicyError,
     client_ip,
     hash_password,
     ip_is_throttled,
+    is_default_learner_password,
     is_locked,
     looks_like_email,
     normalize_email,
@@ -154,6 +154,21 @@ def login(request):
         account = identity.account_for_email(email)
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
+
+    if is_default_learner_password(password) and (account is None or not account.has_password):
+        # A learner who has never set a password, using the shared first-sign-in
+        # password: no session, only their own set-password link (see
+        # security.DEFAULT_LEARNER_PASSWORD). Anyone else falls through to the
+        # ordinary failure below, indistinguishable from a wrong password.
+        try:
+            setup_path = default_password_setup(email, ip=ip, user_agent=ua)
+        except DatabaseError as exc:
+            return _error(f"Database error: {exc}", 502)
+        if setup_path:
+            record(EVENT_LOGIN, email=email, succeeded=False, reason="default_password_setup", ip=ip, user_agent=ua)
+            response = JsonResponse({"passwordSetupRequired": True, "setPasswordPath": setup_path})
+            response["Cache-Control"] = "no-store"
+            return response
 
     if account is None:
         # No account, inactive, or ambiguous across subject types. All are
@@ -302,10 +317,11 @@ def change_password(request):
 @csrf_exempt
 @require_POST
 def forgot_password(request):
-    """Request a reset email.
+    """Request a reset email -- or, for an enrolled learner who has never set a
+    password, the set-password invitation (``services.request_password_link``).
 
     Always answers 200 with the same body. Whether the address exists, is
-    inactive, or has already used its allowance is never disclosed.
+    inactive, is a learner, or has already used its allowance is never disclosed.
     """
     blocked = _reject_cross_site(request)
     if blocked:
@@ -322,7 +338,7 @@ def forgot_password(request):
 
     uniform = JsonResponse({
         "ok": True,
-        "message": "If that address has an account, a reset link has been sent to it.",
+        "message": "If that address is registered, we have emailed it a link to reset or set your password.",
     })
 
     if not looks_like_email(email):
@@ -335,9 +351,7 @@ def forgot_password(request):
             record(EVENT_LOGIN, email=email, succeeded=False, reason="reset_throttled", ip=ip, user_agent=ua)
             return uniform
 
-        account = identity.account_for_email(email)
-        if account is not None:
-            send_reset(account, ip=ip, user_agent=ua)
+        request_password_link(email, ip=ip, user_agent=ua)
     except DatabaseError as exc:
         return _error(f"Database error: {exc}", 502)
 
@@ -508,6 +522,46 @@ def invite_account(request):
         "expiresAt": outcome["expiresAt"],
         "account": identity.account_payload(account) if account else None,
     }, status=201 if outcome["accountCreated"] else 200)
+
+
+@csrf_exempt
+@require_POST
+@require_role("admin", "staff")
+def invitation_link_view(request):
+    """(Staff) A learner's set-password link to copy and send another way.
+
+    Body: ``{"subjectType": "learner", "subjectId": 123}``. For learners whose
+    employer blocks our email: the link is returned instead of emailed. It is
+    never cached and replaces any earlier invitation link.
+    """
+    blocked = _reject_cross_site(request)
+    if blocked:
+        return blocked
+    try:
+        payload = _body(request)
+    except ValueError as exc:
+        return _error(str(exc), 400)
+    try:
+        subject_id = int(payload.get("subjectId"))
+    except (TypeError, ValueError):
+        return _error("subjectId must be a whole number.", 400)
+    subject_type = (payload.get("subjectType") or "").strip().lower()
+    try:
+        outcome = issue_invitation_link(
+            subject_type, subject_id, inviter=request.login_account,
+            ip=client_ip(request), user_agent=user_agent(request),
+        )
+    except DatabaseError as exc:
+        return _error(f"Database error: {exc}", 502)
+    if outcome["forbidden"]:
+        return _error(outcome["error"], 403, code="forbidden")
+    if not outcome["link"]:
+        return _error(outcome["error"] or "Could not create the link.", 400)
+    response = JsonResponse({"ok": True, "link": outcome["link"], "expiresAt": outcome["expiresAt"],
+                             "accountCreated": outcome["accountCreated"]})
+    # A live credential: never stored by a browser or proxy cache.
+    response["Cache-Control"] = "no-store"
+    return response
 
 
 # ---------------------------------------------------------------------------

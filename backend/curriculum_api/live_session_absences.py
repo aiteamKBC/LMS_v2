@@ -56,6 +56,34 @@ def record_reported_absence(
     return saved
 
 
+def release_cancelled_catchup(*, database: str, event_key: str) -> int:
+    """A cancelled catch-up no longer makes the absence up: back to recovery requested.
+
+    Only bookings still pending are released; a completed catch-up is history.
+    """
+
+    event_key = str(event_key or '').strip()
+    if not event_key:
+        return 0
+    rows = list(
+        LiveSessionAbsence.objects.using(database).filter(
+            recovery_method='catch-up', recovery_reference=event_key,
+            recovery_status=LiveSessionAbsence.RECOVERY_CATCHUP_BOOKED,
+        ).values_list('id', 'occurrence_id', 'learner_profile_id')
+    )
+    now = timezone.now()
+    for row_id, occurrence_id, learner_profile_id in rows:
+        LiveSessionAbsence.objects.using(database).filter(pk=row_id).update(
+            recovery_status=LiveSessionAbsence.RECOVERY_REQUESTED, updated_at=now,
+        )
+        LiveSessionLearnerAttendance.objects.using(database).filter(
+            occurrence_id=occurrence_id, learner_profile_id=learner_profile_id,
+            attendance_status=LiveSessionLearnerAttendance.STATUS_ABSENT,
+            recovery_status=LiveSessionAbsence.RECOVERY_CATCHUP_BOOKED,
+        ).update(recovery_status=LiveSessionAbsence.RECOVERY_REQUESTED, updated_at=now)
+    return len(rows)
+
+
 def complete_reported_catchup(*, database: str, event_key: str, source_learner_ids):
     """Mark approved linked catch-ups complete without rewriting Teams presence."""
 

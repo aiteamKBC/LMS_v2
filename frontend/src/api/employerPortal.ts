@@ -50,6 +50,7 @@ export interface EmployerReviewRow {
   learnerSigned: boolean;
   adminSigned: boolean;
   reviewInstanceId?: string;
+  migratedForm?: boolean;
 }
 
 /** A generated compliance PDF awaiting (or carrying) the employer's signature. */

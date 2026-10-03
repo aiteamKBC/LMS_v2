@@ -135,6 +135,23 @@ describe('Dashboard training plan controls', () => {
     expect(screen.queryByRole('region', { name: 'Learner progress charts' })).not.toBeInTheDocument();
   });
 
+  it('stacks the off-the-job hours summary under Monthly focus for apprenticeships only', () => {
+    const { rerender } = render(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={summarySubjects} kind="apprenticeship" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} activityOverviewOnly
+      weeklyFocus={<section aria-label="Weekly learning plan">Weekly learning plan</section>} /></MemoryRouter>);
+    const otj = screen.getByRole('region', { name: 'Off-the-job hours summary' });
+    // Sits in the same sidebar column as Monthly focus, after it.
+    const monthlyPlan = screen.getByRole('region', { name: 'Monthly study plan' });
+    expect(otj.parentElement).toBe(monthlyPlan.parentElement);
+    expect(within(otj).getByText('Planned (ILR)')).toBeInTheDocument();
+    expect(within(otj).getByText('40h')).toBeInTheDocument();
+
+    rerender(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={summarySubjects} kind="commercial" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} activityOverviewOnly
+      weeklyFocus={<section aria-label="Weekly learning plan">Weekly learning plan</section>} /></MemoryRouter>);
+    expect(screen.queryByRole('region', { name: 'Off-the-job hours summary' })).not.toBeInTheDocument();
+  });
+
   it('renders only the shared module timeline when embedded in the coach learning plan', () => {
     render(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={summarySubjects} kind="commercial" learnerId="125"
       onRefresh={vi.fn()} onRetryContract={vi.fn()} timelineOnly /></MemoryRouter>);
@@ -153,7 +170,9 @@ describe('Dashboard training plan controls', () => {
     expect(chart.getByText('0 / 4 sessions attended')).toBeVisible();
     expect(chart.getByText('3 / 7 completed across all modules')).toBeVisible();
     expect(chart.getByText('22.5 / 80.4 hours')).toBeVisible();
-    expect(chart.getByText('1 / 4 completed across the programme')).toBeVisible();
+    expect(chart.queryByText('Reviews')).not.toBeInTheDocument();
+    expect(chart.getByRole('img')).not.toHaveAccessibleDescription(/reviews/i);
+    expect(chart.getByRole('img')).toHaveAttribute('viewBox', '0 0 400 235');
     expect(chart.getByText('Overall', { selector: 'dt' }).parentElement).toHaveTextContent('28%');
     expect(screen.queryByRole('region', { name: 'Module progress' })).not.toBeInTheDocument();
   });

@@ -46,6 +46,7 @@ describe('connected student home', () => {
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '42');
     expect(screen.getByRole('link', { name: /8 of 10 Lectures attended/ })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /21 of 50 Activities completed/ })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /21 of 50 Activities completed/ })).toHaveAttribute('href', '/learner/my-learning');
     const upcoming = within(screen.getByRole('complementary', { name: 'Upcoming' }));
     expect(upcoming.getAllByRole('listitem')).toHaveLength(3);
     expect(upcoming.getByText('No upcoming lecture scheduled')).toBeInTheDocument();
@@ -64,6 +65,7 @@ describe('connected student home', () => {
     expect(within(rows[1]).getByRole('link')).toHaveAttribute('href', '/learner/monthly-submission');
     expect(within(rows[2]).getByRole('link')).toHaveTextContent('My progress review');
     expect(within(rows[2]).getByRole('link')).toHaveAttribute('href', '/learner/calendar');
+    expect(upcoming.getByRole('link', { name: 'View all upcoming events' })).toHaveAttribute('href', '/learner/calendar');
     expect(upcoming.queryByText('Second lecture')).not.toBeInTheDocument();
     fireEvent.click(within(rows[2]).getByRole('link'));
     expect(screen.getByTestId('destination')).toHaveTextContent('/learner/calendar');
@@ -79,8 +81,10 @@ describe('connected student home', () => {
     expect(upcoming.getByRole('button', { name: 'Try again' })).toBeInTheDocument();
   });
   it.each([
+    // A learner's own links stay id-free; their pages resolve them from the
+    // session, so the address bar never shows their type or id.
     ['Monthly Submission', '/learner/monthly-submission'],
-    ['Dashboard', '/workspace/learner/dashboard/apprenticeship/71'], ['Attend or Report Absence', '/learner/attendance'],
+    ['Dashboard', '/workspace/learner/dashboard'], ['Attend or Report Absence', '/learner/attendance'],
     ['Book for Monthly Coaching Session', '/learner/monthly-coaching'],
   ])('connects %s to its existing LMS route', (label, href) => {
     page();
@@ -100,7 +104,7 @@ describe('connected student home', () => {
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument();
     expect(screen.queryByRole('search')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('link', { name: 'Dashboard' }));
-    expect(screen.getByTestId('destination')).toHaveTextContent('/workspace/learner/dashboard/apprenticeship/71');
+    expect(screen.getByTestId('destination')).toHaveTextContent('/workspace/learner/dashboard');
   });
   it('continues the signed-in learner’s current module, ignoring an identity supplied in the URL', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -109,7 +113,7 @@ describe('connected student home', () => {
       percent: 0, ksbCodes: [], ksbMappingMissing: false }];
     page();
     fireEvent.click(screen.getByRole('button', { name: 'Continue Learning' }));
-    expect(screen.getByTestId('destination')).toHaveTextContent('/learner/my-learning/apprenticeship/71?subject=current%3AM1&week=2026-09-07');
+    expect(screen.getByTestId('destination')).toHaveTextContent('/learner/my-learning?subject=current%3AM1&week=2026-09-07');
   });
   it('shows a retry state if the personal profile fails', () => {
     state.profileError = 'Could not load the current learner'; page();
@@ -121,11 +125,11 @@ describe('connected student home', () => {
     workspace(path);
     expect(await screen.findByRole('heading', { name: 'Alex' })).toBeVisible();
     expect(screen.queryByRole('complementary', { name: 'Learner sidebar' })).not.toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'View all progress' })).toHaveAttribute('href', '/workspace/learner/dashboard/apprenticeship/71');
+    expect(screen.getByRole('link', { name: 'View all progress' })).toHaveAttribute('href', '/workspace/learner/dashboard');
     fireEvent.click(screen.getByRole('link', { name: 'Dashboard' }));
     expect(await screen.findByRole('heading', { name: 'Dashboard console' })).toBeVisible();
     expect(screen.getByRole('complementary', { name: 'Learner sidebar' })).toBeVisible();
-    expect(screen.getByTestId('destination')).toHaveTextContent('/workspace/learner/dashboard/apprenticeship/71');
+    expect(screen.getByTestId('destination')).toHaveTextContent('/workspace/learner/dashboard');
     fireEvent.click(screen.getByRole('link', { name: 'Return home' }));
     expect(await screen.findByRole('heading', { name: 'Alex' })).toBeVisible();
   });
@@ -167,6 +171,8 @@ describe('connected student home', () => {
     expect(useLearnerSummaryParam).toHaveBeenCalledWith('commercial', '502');
     expect(screen.getByRole('link', { name: 'Dashboard' })).toHaveAttribute('href', '/workspace/learner/dashboard/commercial/502');
     expect(screen.getByRole('link', { name: 'View all progress' })).toHaveAttribute('href', '/workspace/learner/dashboard/commercial/502');
+    // A staff preview keeps the learner in every link, so the sidebar routes to them.
+    expect(screen.getByRole('link', { name: /^Attend or Report Absence/ })).toHaveAttribute('href', '/learner/attendance/commercial/502');
     fireEvent.click(screen.getByRole('link', { name: 'Dashboard' }));
     expect(await screen.findByRole('heading', { name: 'Dashboard console' })).toBeVisible();
     fireEvent.click(screen.getByRole('link', { name: 'Return home' }));

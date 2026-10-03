@@ -8,6 +8,7 @@ import { LEARNER_PROFILE } from '@/mocks/learner-profile';
 import { type CalendarEvent } from '@/pages/learner/clubs/data';
 import { downloadICS, downloadAllICS, createPublicFeedBlob, type ICSEvent } from '@/utils/ics-generator';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
+import { invalidateLearnerReads } from '@/api/learnerRead';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 import { fetchReviewHistory } from '@/api/reviewHistory';
 import { buildSourceFilters, countBySource, filterBySource, learnerEventSource, learnerSourceMeta, type LearnerSourceFilter } from './reviewTypeFilters';
@@ -18,7 +19,7 @@ import { PageContainer } from '@/components/ui/PageContainer';
 import { Panel } from '@/components/ui/Panel';
 import { SectionHeader } from '@/components/ui/SectionHeader';
 import {
-  fetchLearnerCalendarEvents, bookLearnerCalendarSession, rescheduleLearnerCalendarSession, fetchLearnerCoach,
+  fetchLearnerCalendarEvents, bookLearnerCalendarSession, rescheduleLearnerCalendarSession, cancelLearnerCalendarSession, fetchLearnerCoach,
   fetchLearnerMeetingArtifacts, learnerMeetingArtifactContentUrl, saveLearnerEventReviewAnswers,
   fetchCalendarConnections, startCalendarOAuth, connectCredentialCalendar,
   disconnectPersonalCalendar, fetchPersonalCalendarAvailability,
@@ -40,7 +41,7 @@ import { meetingBookingWarning } from '../reviews/meetingBooking';
 import { useImportedMeetingBooking } from '../reviews/useImportedMeetingBooking';
 import { importedReviewsToEvents, mergeCompletedReviewHistory } from '../reviews/useReviewSessions';
 import { LearnerReviewInstanceForm, useLearnerReviewInstance } from '../reviews/LearnerReviewInstanceForm';
-import { firstAvailableBookingDate } from '../reviews/bookingDates';
+import { firstAvailableBookingDate, parseBookingDay } from '../reviews/bookingDates';
 import CoachSessionTypePicker, { COACH_APPROVAL_SESSION_TYPES } from './CoachSessionTypePicker';
 
 /** The header's secondary-actions menu — everything that isn't booking a
@@ -227,6 +228,7 @@ function mapCoachEvent(ev: LearnerCalendarEvent): CalendarEvent | null {
     syncWarning: meetingBookingWarning(ev),
     bookingReviewId: ev.reviewId,
     assignmentMonth: ev.assignmentMonth,
+    changeClosed: Boolean(ev.changeClosed),
   };
 }
 
@@ -574,6 +576,8 @@ function LearnerCalendarBody() {
   const refreshCalendar = useCallback(() => setCalendarRevision(value => value + 1), []);
   useLiveRefresh(refreshCalendar);
   const [addToCalendarToast, setAddToCalendarToast] = useState<string | null>(null);
+  const [cancelBusy, setCancelBusy] = useState(false);
+  const [cancelError, setCancelError] = useState('');
   const [showEventDetails, setShowEventDetails] = useState<CalendarEvent | null>(null);
   const selectedReview = useLearnerReviewInstance(myLearner.kind, myLearner.id,
     showEventDetails?.reviewTemplateId && showEventDetails.source !== 'live-session'
@@ -954,16 +958,19 @@ function LearnerCalendarBody() {
   }, [calendarConnections.length, viewYear, viewMonth, myLearner.kind, myLearner.id]);
 
   useEffect(() => {
-    if (!showBookModal || calendarConnections.length === 0 || !bookDate) {
+    // An unparseable day has no instant (toISOString would throw and take the
+    // page down); bookDateRestriction already asks for a valid date.
+    const day = parseBookingDay(bookDate);
+    if (!showBookModal || calendarConnections.length === 0 || !day) {
       setBusySlots([]);
       return;
     }
-    const start = new Date(`${bookDate}T00:00:00`).toISOString();
-    const end = new Date(`${bookDate}T23:59:59`).toISOString();
+    const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 0, 0, 0).toISOString();
+    const end = new Date(day.getFullYear(), day.getMonth(), day.getDate(), 23, 59, 59).toISOString();
     let cancelled = false;
     setAvailabilityLoading(true);
     fetchPersonalCalendarAvailability(myLearner.kind, myLearner.id, start, end)
-      .then((result) => { if (!cancelled) setBusySlots(result.busy); })
+      .then((result) => { if (!cancelled) setBusySlots(Array.isArray(result?.busy) ? result.busy : []); })
       .catch(() => { if (!cancelled) setBusySlots([]); })
       .finally(() => { if (!cancelled) setAvailabilityLoading(false); });
     return () => { cancelled = true; };
@@ -1212,6 +1219,26 @@ function LearnerCalendarBody() {
     if (ev) setAddToCalendarToast(`"${ev.title}" removed from calendar`);
     setShowEventDetails(null);
     setTimeout(() => setAddToCalendarToast(null), 2500);
+  };
+
+  // A learner cancels their own catch-up; Outlook emails the cancellation to them and their coach.
+  const cancelCatchup = async (ev: CalendarEvent) => {
+    if (cancelBusy || !window.confirm('Cancel this catch-up session? Your coach will be notified.')) return;
+    setCancelBusy(true); setCancelError('');
+    try {
+      const res = await cancelLearnerCalendarSession(myLearner.kind, myLearner.id, ev.eventKey || ev.id);
+      calendarWriteVersionRef.current += 1;
+      setMyEvents(prev => prev.filter(item => item.id !== ev.id));
+      setShowEventDetails(null);
+      // The lecture this catch-up was making up needs a new recovery.
+      invalidateLearnerReads();
+      setAddToCalendarToast(res.warning ? `Catch-up cancelled. (${res.warning})` : 'Catch-up cancelled. Your coach has been notified.');
+      setTimeout(() => setAddToCalendarToast(null), 4000);
+    } catch (err) {
+      setCancelError(err instanceof Error ? err.message : 'Could not cancel the catch-up.');
+    } finally {
+      setCancelBusy(false);
+    }
   };
 
   const handleExportICS = (ev: CalendarEvent) => {
@@ -1506,7 +1533,7 @@ function LearnerCalendarBody() {
       {showEventDetails && !conflictEvent && (
         <CalendarEventDialog
           title={showEventDetails.title}
-          onClose={() => setShowEventDetails(null)}
+          onClose={() => { setShowEventDetails(null); setCancelError(''); }}
           badges={<>
             <span className="rounded-full bg-primary-100 px-2.5 py-1 text-primary-700">{learnerSourceMeta(showEventDetails).label}</span>
             <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 ring-1 ring-inset ${LEARNER_STATUS_META[learnerEventStatus(showEventDetails)].badge}`}>
@@ -1539,7 +1566,10 @@ function LearnerCalendarBody() {
                 <a href={showEventDetails.meetingLink} target="_blank" rel="noreferrer" className="meeting-join-action inline-flex flex-1 items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-smooth cursor-pointer whitespace-nowrap text-center"><AppIcon className="ri-video-chat-line h-4 w-4 shrink-0"></AppIcon><span>Join Meeting</span></a>
               )}
               {showEventDetails.bookingStatus === 'scheduled' && showEventDetails.bookingSessionType && (
-                <button type="button" onClick={() => openRescheduleSession(showEventDetails)} className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 py-2.5 text-sm font-semibold text-primary-700 transition-smooth hover:bg-primary-100 cursor-pointer whitespace-nowrap"><AppIcon className="ri-calendar-schedule-line h-4 w-4 shrink-0" /><span>Reschedule</span></button>
+                <button type="button" disabled={showEventDetails.changeClosed} title={showEventDetails.changeClosed ? 'Catch-ups can be changed up to 12 hours before they start.' : undefined} onClick={() => openRescheduleSession(showEventDetails)} className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-primary-200 bg-primary-50 px-4 py-2.5 text-sm font-semibold text-primary-700 transition-smooth hover:bg-primary-100 cursor-pointer whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className="ri-calendar-schedule-line h-4 w-4 shrink-0" /><span>Reschedule</span></button>
+              )}
+              {showEventDetails.bookingStatus === 'scheduled' && showEventDetails.source === 'catch-up' && (
+                <button type="button" disabled={showEventDetails.changeClosed || cancelBusy} title={showEventDetails.changeClosed ? 'Catch-ups can be cancelled up to 12 hours before they start.' : undefined} onClick={() => void cancelCatchup(showEventDetails)} className="inline-flex flex-1 items-center justify-center gap-2 rounded-xl border border-red-200 px-4 py-2.5 text-sm font-semibold text-red-600 transition-smooth hover:bg-red-50 cursor-pointer whitespace-nowrap disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className="ri-calendar-close-line h-4 w-4 shrink-0" /><span>{cancelBusy ? 'Cancelling…' : 'Cancel catch-up'}</span></button>
               )}
               {!showEventDetails.timeToBeConfirmed && <button onClick={() => handleExportICS(showEventDetails)} className="inline-flex flex-1 items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-background-300 text-sm font-semibold text-foreground-600 hover:bg-background-100 transition-smooth cursor-pointer whitespace-nowrap"><AppIcon className="ri-download-line h-4 w-4 shrink-0"></AppIcon><span>Export .ics</span></button>}
               {showEventDetails.id.startsWith('custom-') && (
@@ -1549,6 +1579,8 @@ function LearnerCalendarBody() {
           </>}
         >
           {addToCalendarToast && <p role="status" className="mb-4 rounded-xl border border-primary-200 bg-primary-50 px-3 py-2.5 text-sm text-primary-800">{addToCalendarToast}</p>}
+          {cancelError && <p role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">{cancelError}</p>}
+          {showEventDetails.source === 'catch-up' && showEventDetails.bookingStatus === 'scheduled' && showEventDetails.changeClosed && <p role="status" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-800">This catch-up starts in less than 12 hours, so it can no longer be changed or cancelled here. Please contact your coach.</p>}
           <dl className="mb-5 grid grid-cols-1 gap-4 text-sm sm:grid-cols-2">
             <div><dt className="mb-1 flex items-center gap-2 text-xs text-foreground-500"><AppIcon className="ri-calendar-line" />Date</dt><dd className="font-semibold">{showEventDetails.isoDate ? new Date(`${showEventDetails.isoDate}T12:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : `${showEventDetails.dayName}, ${showEventDetails.date}`}</dd></div>
             <div><dt className="mb-1 flex items-center gap-2 text-xs text-foreground-500"><AppIcon className="ri-time-line" />Time</dt><dd className="font-semibold">{showEventDetails.timeToBeConfirmed ? 'Time to be confirmed' : showEventDetails.time}</dd>{showEventDetails.durationMinutes && <dd className="mt-1 text-xs text-foreground-500">{showEventDetails.durationMinutes} minutes</dd>}</div>

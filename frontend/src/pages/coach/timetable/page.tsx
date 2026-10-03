@@ -112,6 +112,7 @@ interface TimetableEvent {
   priority: 'normal' | 'urgent' | 'high';
   status: 'completed' | 'scheduled' | 'in-progress' | 'awaiting-signature' | 'confirmed' | 'pending' | 'cancelled' | 'not-scheduled';
   source?: 'mcr' | 'progress-review' | string;
+  reviewSource?: 'aptem' | 'curriculum' | string;
   sourceStatus?: string;
   sequence?: number;
   rawPlanned?: string;
@@ -579,7 +580,7 @@ type StatusFilter = 'all' | 'overdue' | 'due-soon' | 'needs-schedule' | 'schedul
 //
 // Unchanged: these are SCHEDULING buckets, not filters. The schedule modal,
 // its copy and its icons are keyed on the routing `source`.
-type SchedulableSource = 'mcr' | 'progress-review' | 'review' | 'catch-up' | 'student-support';
+type SchedulableSource = 'mcr' | 'progress-review' | 'review' | 'catch-up' | 'student-support' | 'lms-introduction';
 const STATUS_FILTER_ORDER: StatusFilter[] = ['all', 'overdue', 'due-soon', 'needs-schedule', 'scheduled', 'in-progress', 'awaiting-signature', 'completed'];
 
 const STATUS_FILTER_LABELS: Record<StatusFilter, string> = {
@@ -594,7 +595,7 @@ const STATUS_FILTER_LABELS: Record<StatusFilter, string> = {
   cancelled: 'Cancelled',
 };
 
-const SCHEDULABLE_SOURCE_ORDER: SchedulableSource[] = ['mcr', 'progress-review', 'review', 'catch-up', 'student-support'];
+const SCHEDULABLE_SOURCE_ORDER: SchedulableSource[] = ['mcr', 'progress-review', 'review', 'catch-up', 'student-support', 'lms-introduction'];
 const SCHEDULABLE_SOURCE_META: Record<SchedulableSource, { description: string; icon: string; accent: string; surface: string }> = {
   mcr: {
     description: 'Monthly coaching reviews waiting for a slot.',
@@ -626,10 +627,21 @@ const SCHEDULABLE_SOURCE_META: Record<SchedulableSource, { description: string; 
     accent: 'text-blue-700',
     surface: 'from-blue-500/10 via-blue-400/5 to-transparent',
   },
+  'lms-introduction': {
+    description: 'New learners asking for a one-to-one LMS introduction.',
+    icon: 'ri-user-voice-line',
+    accent: 'text-emerald-700',
+    surface: 'from-emerald-500/10 via-emerald-400/5 to-transparent',
+  },
 };
 
 function isSchedulableSource(value?: string): value is SchedulableSource {
-  return value === 'mcr' || value === 'progress-review' || value === 'review' || value === 'catch-up' || value === 'student-support';
+  return value === 'mcr' || value === 'progress-review' || value === 'review' || value === 'catch-up' || value === 'student-support' || value === 'lms-introduction';
+}
+
+// Learner-made requests the coach approves by placing them (status not-scheduled).
+function isApprovalRequestSource(source?: string) {
+  return source === 'student-support' || source === 'lms-introduction';
 }
 
 function parseScheduleNavigationIntent(value: unknown): ScheduleNavigationIntent | null {
@@ -746,6 +758,7 @@ function scheduleLearnerOptionLabel(event: TimetableEvent) {
 }
 
 function isSelectableScheduleEvent(event: TimetableEvent) {
+  if (event.reviewSource === 'aptem') return false;
   if (!isSchedulableSource(event.source)) return false;
   if (event.source === 'catch-up') {
     return !['completed', 'confirmed', 'in-progress'].includes(event.status);
@@ -754,6 +767,7 @@ function isSelectableScheduleEvent(event: TimetableEvent) {
 }
 
 function canEditScheduleEvent(event: TimetableEvent | null | undefined): event is TimetableEvent {
+  if (event?.reviewSource === 'aptem') return false;
   if (!event || !isSchedulableSource(event.source)) return false;
   return !['completed', 'confirmed', 'in-progress', 'awaiting-signature'].includes(event.status);
 }
@@ -762,7 +776,7 @@ function scheduleActionLabel(event: TimetableEvent | null | undefined) {
   if (!event) return 'Schedule';
   if (event.status === 'cancelled') return 'Schedule Again';
   if (event.status === 'scheduled') return 'Reschedule';
-  if (event.source === 'student-support') return 'Approve & Schedule';
+  if (isApprovalRequestSource(event.source)) return 'Approve & Schedule';
   return 'Schedule';
 }
 
@@ -1769,6 +1783,12 @@ export default function CoachTimetablePage() {
     if (!event.eventKey) return;
     setEventActionError(null);
     setEventActionNotice(null);
+    if (event.reviewSource === 'aptem' && event.eventKey.startsWith('imported-review:')) {
+      navigate(reviewInstancePath(event.eventKey), {
+        state: reviewInstanceRouteState(event, `${location.pathname}${location.search}`),
+      });
+      return;
+    }
     setReviewFormBusy(true);
     try {
       const { instanceId } = await openReviewInstanceForEvent(event.eventKey);
@@ -1918,7 +1938,7 @@ export default function CoachTimetablePage() {
   const selectedEventDetailsPath = selectedEvent ? eventDetailsPath(selectedEvent) : null;
   const selectedScheduleEventNotes = sanitizeEventNotes(selectedScheduleEvent?.notes);
   const scheduleModalFeedback = sanitizeCalendarSyncMessage(scheduleModalError || scheduleModalNotice);
-  const scheduleNeedsApproval = selectedScheduleEvent?.source === 'student-support'
+  const scheduleNeedsApproval = isApprovalRequestSource(selectedScheduleEvent?.source)
     && selectedScheduleEvent.status === 'not-scheduled';
   const scheduleModalTitle = scheduleModalCompact
     ? scheduleActionLabel(selectedScheduleEvent)
@@ -2340,7 +2360,7 @@ export default function CoachTimetablePage() {
 
             {/* WEEK VIEW */}
             {viewMode === 'week' && (
-              <div className="bg-background-50 rounded-lg border border-foreground-200/60 overflow-hidden">
+              <div className="coach-week-scroll bg-background-50 rounded-lg border border-foreground-200/60">
                 <div className="grid grid-cols-8 border-b border-foreground-200/60">
                   <div className="px-2 py-2.5 bg-background-100/50"></div>
                   {weekDates.map(wd => {
@@ -2716,14 +2736,14 @@ export default function CoachTimetablePage() {
                       )}
                     </div>
                   )}
-                  {selectedEvent.reviewTemplateId && (
+                  {(selectedEvent.reviewTemplateId || selectedEvent.reviewSource === 'aptem') && (
                     <div className="mt-4 flex flex-col gap-3 rounded-2xl border border-secondary-200 bg-secondary-50 p-4 sm:flex-row sm:items-center">
                       <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-secondary-100 text-secondary-700">
                         <AppIcon className="ri-survey-line"></AppIcon>
                       </span>
                       <div className="flex-1">
                         <p className="text-xs font-bold text-secondary-900">{selectedEvent.title} form</p>
-                        <p className="mt-1 text-[12px] text-secondary-700">The questions for this review come from Curriculum. Answers save as you go and can be finished later.</p>
+                        <p className="mt-1 text-[12px] text-secondary-700">{selectedEvent.reviewSource === 'aptem' ? 'Open this migrated review to book its LMS meeting and work on the approved form.' : 'The questions for this review come from Curriculum. Answers save as you go and can be finished later.'}</p>
                       </div>
                       <button
                         type="button"
@@ -2742,7 +2762,7 @@ export default function CoachTimetablePage() {
                           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-primary-50 text-primary-600">
                             <AppIcon className="ri-calendar-schedule-line"></AppIcon>
                           </span>
-                          {selectedEvent.status === 'not-scheduled' && selectedEvent.source === 'student-support' ? 'Approve & Schedule' : 'Schedule Meeting'}
+                          {selectedEvent.status === 'not-scheduled' && isApprovalRequestSource(selectedEvent.source) ? 'Approve & Schedule' : 'Schedule Meeting'}
                         </h4>
                         {selectedEvent.status === 'not-scheduled' && (
                           <span className="rounded-full bg-red-50 px-2.5 py-1 text-[12px] font-bold text-red-700">Needs scheduling</span>

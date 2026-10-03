@@ -54,7 +54,7 @@ describe('resolved review stream dashboard helpers', () => {
     expect(reviewActionMatrix(summaryOnly)).toMatchObject({ view: true, viewForm: false });
   });
 
-  it('offers the workspace for summary-only imports while they are not scheduled or scheduled', () => {
+  it('offers the workspace for active imports with summary-only source metadata', () => {
     const notScheduled = event({
       id: 'imported-review:14010', eventKey: 'imported-review:14010',
       reviewSource: 'aptem', aptemReviewId: '14010', status: 'not-scheduled',
@@ -68,6 +68,12 @@ describe('resolved review stream dashboard helpers', () => {
 
     expect(reviewActionMatrix(notScheduled).viewForm).toBe(true);
     expect(reviewActionMatrix(scheduled).viewForm).toBe(true);
+    expect(reviewActionMatrix(event({
+      reviewSource: 'aptem', aptemReviewId: '14012', status: 'in-progress', hasReviewForm: false,
+    })).viewForm).toBe(true);
+    expect(reviewActionMatrix(event({
+      reviewSource: 'aptem', aptemReviewId: '14013', status: 'awaiting-signature', hasReviewForm: false,
+    })).viewForm).toBe(true);
   });
 
   it('shows Schedule consistently for unbooked rows and never treats confirmed as completed', () => {

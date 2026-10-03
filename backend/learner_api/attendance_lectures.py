@@ -182,8 +182,10 @@ def read_native_occurrences(source, *, module_ids=None):
     return result
 
 
-def lecture_register(source, *, module_ids=None):
-    records = combined_attendance_rows(source)
+def lecture_register(source, *, module_ids=None, records=None):
+    # Bulk consumers can preload source rows; all schedule, recovery and saved
+    # confirmation rules still run through this same learner register.
+    records = combined_attendance_rows(source) if records is None else records
     scheduled = read_native_occurrences(source, module_ids=module_ids)
     by_occurrence = {str(row['session_id']): row for row in scheduled}
     now = timezone.now()
@@ -226,7 +228,48 @@ def lecture_register(source, *, module_ids=None):
         result = _apply_attended_alternatives(result, source.id, attended_alternatives)
     result = _apply_completed_catchups(result, source.id)
     from .attendance_confirmation import apply_confirmations, read_confirmations
-    return _merge_register_duplicates(apply_confirmations(result, read_confirmations(source.id)))
+    merged = _merge_register_duplicates(apply_confirmations(result, read_confirmations(source.id)))
+    return _apply_coach_source_adjustments(merged, source.id)
+
+
+def _apply_coach_source_adjustments(rows, learner_id):
+    """Apply persisted per-learner coach edits without changing the meeting."""
+    from coach_api.models import CoachAttendanceSourceAdjustment
+
+    try:
+        adjustments = {
+            (item.source, item.source_id): item
+            for item in CoachAttendanceSourceAdjustment.objects.filter(learner_id=learner_id)
+        }
+    except DatabaseError:
+        log.warning('Could not read coach attendance adjustments for learner %s.', learner_id, exc_info=True)
+        return rows
+
+    result = []
+    for row in rows:
+        key = (str(row.get('source') or ''), str(row.get('session_id') or ''))
+        adjustment = adjustments.get(key)
+        if adjustment is None:
+            result.append(row)
+            continue
+        if adjustment.is_deleted:
+            continue
+        updated = dict(row)
+        if adjustment.session_date:
+            updated['session_date'] = adjustment.session_date
+        if adjustment.module_name:
+            updated['module_title'] = adjustment.module_name
+            updated['session_type'] = adjustment.module_name
+        if adjustment.session_title:
+            updated['session_title'] = adjustment.session_title
+        if adjustment.status:
+            updated['attendance_status'] = adjustment.status
+            updated['effective_attendance'] = 1 if adjustment.status == 'present' else 0
+            updated['effective_attendance_status'] = adjustment.status
+            updated['final_outcome'] = adjustment.status
+        updated['updated_at'] = adjustment.updated_at
+        result.append(updated)
+    return result
 
 
 def _approved_alternative_targets(learner_id):
