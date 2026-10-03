@@ -8,6 +8,7 @@ import type { Ksb, KsbAssessment, RagLevel } from '../../types';
 import { Modal } from '../../components/Modal';
 import { FileList, inputClass, btnPrimary, btnSecondary, EmptyState } from '../../components/ui';
 import { StepHeading } from './fields';
+import { useText } from '../layout/textsContext';
 import { useShowStepErrors } from '../stepErrors';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
 
@@ -65,6 +66,7 @@ function workingFrom(existing?: KsbAssessment): WorkingAnswer {
 
 export default function SkillsRadar() {
   const { draft, setSection, readOnly, board } = useWizard();
+  const t = useText();
   const showErrors = useShowStepErrors();
   const sr = draft.skillsRadar;
 
@@ -167,7 +169,7 @@ export default function SkillsRadar() {
   return (
     <div>
       <StepHeading
-        title="Skills Radar"
+        title={t('block.skillsRadar.title')}
         subtitle={programme ? `${programme} [${ksbs.length}]` : 'No programme assigned'}
       />
 
@@ -192,7 +194,7 @@ export default function SkillsRadar() {
         <p className="text-[12px] text-foreground-500">
           {readOnly
             ? 'The learner’s self-assessment. Read-only here — only the learner can change their own answers.'
-            : 'Rate yourself on each item. You can revisit any answer before submitting.'}
+            : t('block.skillsRadar.instructions')}
         </p>
         <span className="flex items-center gap-3 shrink-0">
           {flaggedCount > 0 && (
@@ -296,7 +298,7 @@ export default function SkillsRadar() {
 
           <div className="border border-foreground-200/70 rounded-lg overflow-hidden mb-4">
             <p className="text-[12px] font-medium text-foreground-700 px-3 py-2 bg-background-100/60 border-b border-foreground-100">
-              Choose one answer that most applies to you:
+              {t('block.skillsRadar.choose')}
             </p>
             <div className="divide-y divide-foreground-100">
               {COMPETENCE_LEVELS.map((lvl) => {
@@ -348,7 +350,7 @@ export default function SkillsRadar() {
 
           <div className="mb-4">
             <label htmlFor={`competence-note-${openKsb.id}`} className="block text-[12px] font-medium text-foreground-700 mb-1.5">
-              Add a note{highRating && !readOnly && (
+              {t('block.skillsRadar.note')}{highRating && !readOnly && (
                 <><span aria-hidden="true" className="ml-0.5 text-red-500">*</span><span className="sr-only"> (required)</span></>
               )}:
             </label>
@@ -370,7 +372,7 @@ export default function SkillsRadar() {
           </div>
 
           <div>
-            <label className="block text-[12px] font-medium text-foreground-700 mb-1.5">Upload evidence:</label>
+            <label className="block text-[12px] font-medium text-foreground-700 mb-1.5">{t('block.skillsRadar.upload')}</label>
             {!readOnly && (
               <label className="inline-flex items-center gap-2 px-3 py-2 text-[12px] bg-background-100 text-foreground-600 rounded-lg border border-background-200 hover:bg-background-200 transition-smooth cursor-pointer mb-2">
                 <AppIcon className="ri-folder-open-line" />Select file…

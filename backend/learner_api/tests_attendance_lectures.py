@@ -34,6 +34,10 @@ def register_row(**overrides):
 
 class AttendanceLectureTests(SimpleTestCase):
     def setUp(self):
+        profiles = patch('learner_api.models.LearnerProfile.objects')
+        manager = profiles.start()
+        manager.filter.return_value.values_list.return_value = []
+        self.addCleanup(profiles.stop)
         confirmations = patch('learner_api.attendance_confirmation.read_confirmations', return_value={})
         confirmations.start()
         self.addCleanup(confirmations.stop)
@@ -177,7 +181,7 @@ class AttendanceLectureTests(SimpleTestCase):
         second = build_lectures([{**row, 'attendance_status': 'present'}],
                                 {row['session_id']: {'ksbs': ['K3']}}, [], [], 'apprenticeship', 12)[0]
         self.assertEqual(second['ksbs'], ['K3'])
-        self.assertEqual(second['status'], 'completed')
+        self.assertEqual(second['status'], 'present')
         self.assertIsNone(second['catchupStatus'])
 
     def test_upcoming_unsynced_and_late_have_separate_counting_rules(self):
@@ -280,11 +284,11 @@ class AttendanceLectureTests(SimpleTestCase):
         source = SimpleNamespace(id=12)
         result = lecture_register(source)
         self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]['attendance_status'], 'absent')
+        self.assertEqual(result[0]['attendance_status'], 'unmarked')
 
     @patch('learner_api.attendance_lectures.read_native_occurrences')
     @patch('learner_api.attendance_lectures.combined_attendance_rows')
-    def test_only_ended_pending_teams_sessions_become_absent(self, combined, scheduled):
+    def test_only_ended_pending_teams_sessions_become_unmarked(self, combined, scheduled):
         now = timezone.now()
         ended = register_row(source='microsoft-teams', session_id='ended', attendance_status='pending',
                              scheduled_start=now-timedelta(hours=2), scheduled_end=now-timedelta(hours=1))
@@ -294,7 +298,7 @@ class AttendanceLectureTests(SimpleTestCase):
         scheduled.return_value = [ended, active, attended]
         combined.return_value = [ended, active, attended]
         result = {row['session_id']: row['attendance_status'] for row in lecture_register(SimpleNamespace(id=12))}
-        self.assertEqual(result, {'ended': 'absent', 'active': 'in_progress', 'attended': 'present'})
+        self.assertEqual(result, {'ended': 'unmarked', 'active': 'in_progress', 'attended': 'present'})
 
     @patch('learner_api.attendance_lectures.read_native_occurrences')
     @patch('learner_api.attendance_lectures.combined_attendance_rows')
@@ -313,17 +317,17 @@ class AttendanceLectureTests(SimpleTestCase):
         rows = lecture_register(SimpleNamespace(id=12))
         self.assertEqual(sorted(row['session_id'] for row in rows), ['kbc-2', 'occ-1'])
         merged = next(row for row in rows if row['session_id'] == 'occ-1')
-        self.assertEqual(merged['attendance_status'], 'present')
+        self.assertEqual(merged['attendance_status'], 'unmarked')
         self.assertEqual(build_lectures([merged], {}, [], [], 'apprenticeship', 12)[0]['durationMinutes'], 120)
         summary = _summarize_attendance(rows)
-        self.assertEqual((summary['sessions'], summary['present']), (2, 2))
+        self.assertEqual((summary['sessions'], summary['present']), (1, 1))
 
     def test_completed_teams_catchup_is_shown_as_covered(self):
         row = register_row(source='microsoft-teams', session_id='occ-1', module_catalogue_id='mod-1',
                            attendance_status='absent', catchup_completed=True, effective_attendance=1)
         lecture = build_lectures([row], {}, [], [], 'apprenticeship', 12)[0]
         self.assertEqual((lecture['status'], lecture['catchupStatus'], lecture['effectiveAttendance']),
-                         ('absent', 'completed', 1))
+                         ('present', 'completed', 1))
         pending = build_lectures([{**row, 'catchup_completed': False, 'effective_attendance': 0}],
                                  {}, [], [], 'apprenticeship', 12)[0]
         self.assertEqual(pending['catchupStatus'], 'pending')
@@ -533,6 +537,13 @@ class AttendanceRecoveryDisplayTests(SimpleTestCase):
 
 
 class AttendanceAbsenceTests(SimpleTestCase):
+    def setUp(self):
+        # Keep recording plans in the future relative to a deterministic clock.
+        self.clock = self.enterContext(patch(
+            'learner_api.absence_reports.timezone.localtime',
+            return_value=datetime(2026, 9, 30, 9, tzinfo=datetime_timezone.utc),
+        ))
+
     def test_reason_only_report_saves_without_optional_evidence(self):
         request = RequestFactory().post('/', {'sessionId': 'teams:future', 'sessionTitle': 'Lecture',
                                              'sessionDate': '2026-10-01', 'reasonCategory': 'illness',
@@ -547,16 +558,21 @@ class AttendanceAbsenceTests(SimpleTestCase):
              patch('learner_api.absence_reports.transaction.atomic', return_value=nullcontext()), \
              patch('learner_api.absence_reports._recording_recovery_event') as calendar_event, \
              patch('learner_api.absence_reports.email_azure.send_mail', return_value=(True, 'sent')) as send_mail, \
-             patch('learner_api.absence_reports._serialize', return_value={'id': 1}):
+             patch('learner_api.absence_reports.resolve_read_url', return_value=''):
             manager.filter.return_value.exists.return_value = False
             manager.filter.return_value.count.return_value = 0
-            manager.create.return_value = SimpleNamespace(
-                id=1, owner_email='med.maher@kbc.ac.uk', owner_name='Med Maher',
-                learner_name='Learner', learner_email='learner@example.test',
-                session_title='Lecture', recovery_method='recorded',
+            manager.create.side_effect = lambda **fields: SimpleNamespace(
+                id=1, created_at=self.clock.return_value, updated_at=self.clock.return_value, **fields,
             )
             response = inspect.unwrap(learner_absence_reports)(request, 'apprenticeship', 12)
         self.assertEqual(response.status_code, 201)
+        payload = json.loads(response.content)
+        self.assertEqual(payload['id'], 1)
+        self.assertEqual(payload['attendanceId'], '8000000000000000001')
+        self.assertEqual(payload['reference'], 'AR-0001')
+        self.assertEqual(payload['status'], 'approved')
+        self.assertEqual((payload['evidenceProvided'], payload['evidenceKind'],
+                          payload['evidenceUrl'], payload['evidenceText']), (False, 'none', '', ''))
         self.assertFalse(manager.create.call_args.kwargs['evidence_provided'])
         self.assertEqual(manager.create.call_args.kwargs['evidence_kind'], 'none')
         self.assertEqual(manager.create.call_args.kwargs['status'], 'approved')
