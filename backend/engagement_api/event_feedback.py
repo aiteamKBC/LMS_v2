@@ -17,7 +17,7 @@ from login.invitations import frontend_base_url
 from login.models import LoginAccount
 from login.security import generate_token, hash_token
 
-from .event_emails import render_email
+from .event_emails import event_logo_attachment, render_email
 from .models import Event, EventAttendance, FeedbackEventCampaign, FeedbackEventRecipient, FeedbackForm
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
@@ -261,12 +261,13 @@ def send_event_invitations(event, recipients):
         recipient.invitation_error = ''
         recipient.save(update_fields=['token_hash', 'token_expires_at', 'invite_status', 'invitation_error', 'updated_at'])
         link = event_feedback_link(token)
-        subject, text, html = render_email(event, recipient.attendee_name, link, 'post_event')
-        text += f'\n\nThis personal link expires in {TOKEN_TTL.days} days and must not be shared.'
-        html += f'<p>This personal link expires in {TOKEN_TTL.days} days and must not be shared.</p>'
+        expiry_notice = f'This personal link expires in {TOKEN_TTL.days} days and must not be shared.'
+        subject, text, html = render_email(
+            event, recipient.attendee_name, link, 'post_event', notice=expiry_notice,
+        )
         sent, detail = email_azure.send_mail(
             to=recipient.attendee_email, subject=subject, html_body=html,
-            text_body=text, save_to_sent=True,
+            text_body=text, save_to_sent=True, attachments=[event_logo_attachment()],
         )
         recipient.invite_status = 'sent' if sent else 'failed'
         recipient.invitation_sent_at = timezone.now() if sent else None

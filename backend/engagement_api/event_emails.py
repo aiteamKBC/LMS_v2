@@ -1,7 +1,9 @@
 """Reusable event email templates and safe per-event copy rendering."""
 from __future__ import annotations
 
+from functools import lru_cache
 from html import escape
+from pathlib import Path
 
 from django.http import JsonResponse
 
@@ -29,6 +31,24 @@ DEFAULTS = {
         'buttonText': 'Open event feedback',
     },
 }
+
+EVENT_LOGO_CID = 'kbc-event-logo'
+
+
+@lru_cache(maxsize=1)
+def _event_logo_bytes():
+    path = Path(__file__).resolve().parents[2] / 'frontend' / 'public' / 'assets' / 'kbc-logo.png'
+    return path.read_bytes()
+
+
+def event_logo_attachment():
+    return {
+        'name': 'kent-business-college-logo.png',
+        'content_type': 'image/png',
+        'content': _event_logo_bytes(),
+        'content_id': EVENT_LOGO_CID,
+        'is_inline': True,
+    }
 
 
 def _purpose(value):
@@ -69,7 +89,7 @@ def event_email_content(event, purpose):
     return {'templateId': None, **DEFAULTS[purpose]}
 
 
-def render_email(event, recipient_name, link, purpose):
+def render_email(event, recipient_name, link, purpose, notice=''):
     copy = event_email_content(event, purpose)
     values = {
         '{{recipient_name}}': str(recipient_name),
@@ -88,10 +108,46 @@ def render_email(event, recipient_name, link, purpose):
     subject = render(copy['subject']).replace('\r', ' ').replace('\n', ' ')
     body = render(copy['body'])
     button_text = render(copy['buttonText'])
-    html_body = '<p>' + '</p><p>'.join(escape(body).replace('\r', '').split('\n\n')) + '</p>'
-    html_body = html_body.replace('\n', '<br>')
-    html_body += f'<p><a href="{escape(link)}">{escape(button_text)}</a></p>'
-    return subject, body + f'\n\n{button_text}: {link}', html_body
+    notice = str(notice or '').strip()
+    safe_link = escape(link, quote=True)
+    paragraphs = ''.join(
+        f'<p style="margin:0 0 16px;font-size:15px;line-height:1.65;color:#342a40;">{paragraph.replace(chr(10), "<br>")}</p>'
+        for paragraph in escape(body).replace('\r', '').split('\n\n')
+    )
+    notice_html = (
+        f'<p style="margin:20px 0 0;padding:12px 14px;border-radius:8px;background:#f7f5ff;'
+        f'font-size:12px;line-height:1.5;color:#6f6478;">{escape(notice)}</p>'
+        if notice else ''
+    )
+    html_body = f'''<!doctype html>
+<html>
+  <body style="margin:0;padding:24px;background:#f4f1f8;font-family:Segoe UI,Arial,sans-serif;color:#342a40;">
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:600px;margin:0 auto;background:#ffffff;border:1px solid #e7dff0;border-radius:14px;overflow:hidden;">
+      <tr>
+        <td style="padding:22px 30px;background:#f8f5fc;border-bottom:4px solid #5b21b6;">
+          <img src="cid:{EVENT_LOGO_CID}" width="190" alt="Kent Business College" style="display:block;width:190px;max-width:100%;height:auto;border:0;">
+        </td>
+      </tr>
+      <tr>
+        <td style="padding:30px;">
+          {paragraphs}
+          <table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:8px;border-collapse:separate;">
+            <tr>
+              <td bgcolor="#5b21b6" style="background:#5b21b6;border-radius:8px;">
+                <a href="{safe_link}" style="display:inline-block;padding:12px 22px;color:#ffffff;text-decoration:none;font-size:14px;font-weight:700;border-radius:8px;">{escape(button_text)}</a>
+              </td>
+            </tr>
+          </table>
+          {notice_html}
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>'''
+    text_body = body + f'\n\n{button_text}: {link}'
+    if notice:
+        text_body += f'\n\n{notice}'
+    return subject, text_body, html_body
 
 
 @require_staff
