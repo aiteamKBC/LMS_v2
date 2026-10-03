@@ -190,12 +190,17 @@ def _access_token(force_refresh=False):
 
 def _file_attachment(item):
     import base64
-    return {
+    attachment = {
         "@odata.type": "#microsoft.graph.fileAttachment",
         "name": item["name"],
         "contentType": item.get("content_type") or "application/octet-stream",
         "contentBytes": base64.b64encode(item["content"]).decode("ascii"),
     }
+    content_id = str(item.get("content_id") or "").strip()
+    if content_id:
+        attachment["contentId"] = content_id
+        attachment["isInline"] = bool(item.get("is_inline", True))
+    return attachment
 
 
 def send_mail(*, to, subject, html_body, text_body=None, sender_name=None, save_to_sent=False, attachments=None):
@@ -207,6 +212,8 @@ def send_mail(*, to, subject, html_body, text_body=None, sender_name=None, save_
 
     ``attachments`` is an optional list of ``{"name", "content_type", "content"}``
     (content as bytes), sent as Graph file attachments -- e.g. a calendar invite.
+    An item with ``content_id`` is emitted as an inline CID attachment for mail
+    clients that proxy or block external images.
 
     ``sent`` is True only when Graph accepted it. When Azure is not configured
     this returns ``(False, "not-configured: …")`` after logging the message —

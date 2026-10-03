@@ -46,6 +46,17 @@ class ProfilePhotoTests(SimpleTestCase):
                     self.assertEqual(result.size, (512, 512))
                     self.assertFalse(result.getexif())
 
+    def test_photo_normalizer_can_accept_an_explicit_larger_limit(self):
+        original = image_upload('PNG')
+        payload = original.read()
+        large_upload = SimpleUploadedFile(
+            'large.png', payload + b'0' * (11 * 1024 * 1024 - len(payload)), content_type='image/png',
+        )
+
+        normalized = normalize_photo(large_upload, max_upload_bytes=20 * 1024 * 1024)
+
+        self.assertLess(len(normalized), 1024 * 1024)
+
     def test_invalid_or_oversized_upload_never_reaches_storage(self):
         oversized = SimpleUploadedFile('oversized.jpg', b'x' * (MAX_UPLOAD_BYTES + 1), content_type='image/jpeg')
         for upload in (SimpleUploadedFile('fake.jpg', b'<svg onload="alert(1)"></svg>', content_type='image/jpeg'), oversized):

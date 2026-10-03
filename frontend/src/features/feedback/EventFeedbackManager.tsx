@@ -3,7 +3,6 @@ import { eventFeedbackApi, type EventFeedbackCampaign } from '@/api/eventFeedbac
 import { feedbackApi, type FeedbackForm } from '@/api/feedback';
 import type { EngagementEvent } from '@/api/engagement';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { EventEmailEditor } from './EventEmailEditor';
 
 export function EventFeedbackManager({ event, onClose }: { event: EngagementEvent; onClose: () => void }) {
   const [forms, setForms] = useState<FeedbackForm[]>([]);
@@ -68,10 +67,8 @@ export function EventFeedbackManager({ event, onClose }: { event: EngagementEven
           <button type="button" disabled={busy || !campaign?.qrAttendance.length || !selected.length} onClick={() => void prepare()} className="mt-3 rounded-lg bg-primary-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40">Prepare feedback for attendees</button>
         </section>
 
-        <EventEmailEditor eventId={event.id} purpose="post_event" />
-
-        <section className="border-t border-foreground-200 pt-4"><h3 className="text-sm font-semibold text-foreground-800">4. Publish feedback</h3>
-          <p className="mt-1 text-xs text-foreground-500">{campaign?.recipients.length ?? 0} recipients · {pending} pending · {failed} failed. Learner forms are already available in LMS; publishing emails each guest a private 30-day link.</p>
+        <section className="border-t border-foreground-200 pt-4"><h3 className="text-sm font-semibold text-foreground-800">3. Publish feedback</h3>
+          <p className="mt-1 text-xs text-foreground-500">{campaign?.recipients.length ?? 0} recipients · {pending} pending · {failed} failed. Manage the subject and message from Email on the event card. Learner forms are already available in LMS; publishing emails each guest a private 30-day link.</p>
           <div className="mt-3 flex flex-wrap gap-2">
             <button type="button" disabled={busy || pending + failed === 0 || !campaign?.forms.length} onClick={() => void publish()} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40">Publish / retry failed</button>
             <button type="button" disabled={busy || !campaign?.recipients.length || !campaign.forms.length} onClick={() => void publish(true)} className="rounded-lg border border-foreground-300 px-4 py-2 text-xs font-semibold text-foreground-700 disabled:opacity-40">Republish all</button>

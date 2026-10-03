@@ -14,7 +14,7 @@ from login import email_azure
 from login.invitations import frontend_base_url
 from login.security import generate_token, hash_token
 
-from .event_emails import render_email
+from .event_emails import event_logo_attachment, render_email
 from .models import Event, EventBooking, EventRsvpCampaign, EventRsvpRecipient, FeedbackForm
 
 
@@ -128,7 +128,7 @@ def send_invitations(campaign, recipients):
         subject, text, html = render_email(event, recipient.recipient_name, link, 'event_rsvp')
         sent, detail = email_azure.send_mail(
             to=recipient.recipient_email, subject=subject, html_body=html,
-            text_body=text, save_to_sent=True,
+            text_body=text, save_to_sent=True, attachments=[event_logo_attachment()],
         )
         recipient.invite_status = 'sent' if sent else 'failed'
         recipient.invitation_sent_at = timezone.now() if sent else None

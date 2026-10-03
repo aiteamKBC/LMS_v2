@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { feedbackUploadUrl, type FeedbackAnswerValue, type FeedbackNameAnswer, type FeedbackPhotoAnswer, type FeedbackQuestion, type FeedbackSection } from '@/api/feedback';
 
 interface Props {
@@ -9,6 +9,9 @@ interface Props {
   activeSection?: number;
   invalidQuestionIds?: Set<number>;
   onPhotoUpload?: (questionId: number, file: File) => Promise<FeedbackPhotoAnswer>;
+  onPhotoRemove?: (uploadId: string) => Promise<void>;
+  loadPhoto?: (uploadId: string) => Promise<Blob>;
+  dragDropPhotos?: boolean;
 }
 
 const inputClass = 'w-full rounded-lg border border-foreground-200/70 bg-white px-3 py-2 text-sm text-foreground-800 outline-none focus:border-primary-400 focus:ring-2 focus:ring-primary-100 disabled:bg-background-100';
@@ -62,7 +65,7 @@ interface FeedbackFormExperienceProps extends Props {
  */
 export function FeedbackFormExperience({
   title, description, instructions, sections, answers, onChange,
-  readOnly = false, activeSection, invalidQuestionIds, onPhotoUpload,
+  readOnly = false, activeSection, invalidQuestionIds, onPhotoUpload, onPhotoRemove, loadPhoto, dragDropPhotos = false,
   onStepChange, onBack, onNext, onSubmit, submitting = false, footerStatus,
 }: FeedbackFormExperienceProps) {
   const isLast = activeSection >= sections.length - 1;
@@ -71,7 +74,7 @@ export function FeedbackFormExperience({
     <FeedbackStepProgress sections={sections} activeSection={activeSection} onStepChange={onStepChange} />
     <FormRenderer sections={sections} activeSection={activeSection} answers={answers}
       invalidQuestionIds={invalidQuestionIds} onChange={onChange}
-      onPhotoUpload={onPhotoUpload} readOnly={readOnly} />
+      onPhotoUpload={onPhotoUpload} onPhotoRemove={onPhotoRemove} loadPhoto={loadPhoto} dragDropPhotos={dragDropPhotos} readOnly={readOnly} />
     {sections.length > 0 && <div className="mt-7 grid grid-cols-[1fr_auto_1fr] items-center gap-3 border-t border-foreground-100 pt-5">
       <div className="flex items-center gap-3">
         {activeSection > 0 && onBack && <button type="button" onClick={onBack} className="rounded-md bg-[#34405f] px-6 py-2.5 text-xs font-semibold text-white">Back</button>}
@@ -85,7 +88,7 @@ export function FeedbackFormExperience({
   </>;
 }
 
-export function FormRenderer({ sections, answers, onChange, readOnly = false, activeSection, invalidQuestionIds, onPhotoUpload }: Props) {
+export function FormRenderer({ sections, answers, onChange, readOnly = false, activeSection, invalidQuestionIds, onPhotoUpload, onPhotoRemove, loadPhoto, dragDropPhotos = false }: Props) {
   const visible = activeSection === undefined ? sections : sections.slice(activeSection, activeSection + 1);
   return <div className="space-y-6">
     {visible.map(section => <section key={section.id ?? section.title} className="rounded-xl border border-foreground-200/60 bg-background-50 p-5">
@@ -98,6 +101,9 @@ export function FormRenderer({ sections, answers, onChange, readOnly = false, ac
           invalid={Boolean(question.id && invalidQuestionIds?.has(question.id))}
           onChange={value => question.id && onChange?.(question.id, value)}
           onPhotoUpload={question.id && onPhotoUpload ? file => onPhotoUpload(question.id!, file) : undefined}
+          onPhotoRemove={onPhotoRemove}
+          loadPhoto={loadPhoto}
+          dragDropPhotos={dragDropPhotos}
         />)}
         {!section.questions.length && <p className="text-sm text-foreground-400">No questions in this section.</p>}
       </div>
@@ -105,12 +111,16 @@ export function FormRenderer({ sections, answers, onChange, readOnly = false, ac
   </div>;
 }
 
-function QuestionField({ question, value, onChange, readOnly, invalid, onPhotoUpload }: { question: FeedbackQuestion; value: FeedbackAnswerValue | undefined; onChange: (value: FeedbackAnswerValue) => void; readOnly: boolean; invalid: boolean; onPhotoUpload?: (file: File) => Promise<FeedbackPhotoAnswer> }) {
+function QuestionField({ question, value, onChange, readOnly, invalid, onPhotoUpload, onPhotoRemove, loadPhoto, dragDropPhotos }: { question: FeedbackQuestion; value: FeedbackAnswerValue | undefined; onChange: (value: FeedbackAnswerValue) => void; readOnly: boolean; invalid: boolean; onPhotoUpload?: (file: File) => Promise<FeedbackPhotoAnswer>; onPhotoRemove?: (uploadId: string) => Promise<void>; loadPhoto?: (uploadId: string) => Promise<Blob>; dragDropPhotos: boolean }) {
   const options = question.config.options || [];
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
+  const [removingPhoto, setRemovingPhoto] = useState(false);
   const nameValue: FeedbackNameAnswer = isNameAnswer(value) ? value : { firstName: '', lastName: '' };
   const photoValue = isPhotoAnswer(value) ? value : null;
+  const photoUploadId = photoValue?.uploadId;
+  const [photoSrc, setPhotoSrc] = useState('');
+  const [draggingPhoto, setDraggingPhoto] = useState(false);
   const inputId = `feedback-question-${question.id ?? question.text.replace(/\W+/g, '-').toLowerCase()}`;
   const hasSingleInput = ['short_text', 'long_text', 'number', 'date', 'email', 'dropdown'].includes(question.type);
   async function uploadPhoto(file?: File) {
@@ -120,6 +130,34 @@ function QuestionField({ question, value, onChange, readOnly, invalid, onPhotoUp
     catch (error) { setUploadError(error instanceof Error ? error.message : 'Photo upload failed.'); }
     finally { setUploading(false); }
   }
+  async function removePhoto() {
+    if (!photoValue || !onPhotoRemove) return;
+    setRemovingPhoto(true); setUploadError('');
+    try { await onPhotoRemove(photoValue.uploadId); onChange(null); }
+    catch (error) { setUploadError(error instanceof Error ? error.message : 'Photo could not be removed.'); }
+    finally { setRemovingPhoto(false); }
+  }
+  function dropPhoto(event: React.DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    setDraggingPhoto(false);
+    if (!dragDropPhotos || uploading || removingPhoto) return;
+    void uploadPhoto(event.dataTransfer.files?.[0]);
+  }
+  useEffect(() => {
+    if (!photoUploadId) { setPhotoSrc(''); return; }
+    if (!loadPhoto) { setPhotoSrc(feedbackUploadUrl(photoUploadId)); return; }
+    let active = true;
+    let objectUrl = '';
+    loadPhoto(photoUploadId).then(blob => {
+      if (!active) return;
+      objectUrl = URL.createObjectURL(blob);
+      setPhotoSrc(objectUrl);
+    }).catch(() => { if (active) setPhotoSrc(''); });
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [photoUploadId, loadPhoto]);
   return <div className={invalid ? 'rounded-lg border border-red-200 bg-red-50/50 p-3' : ''}>
     <label htmlFor={hasSingleInput ? inputId : undefined} className="mb-2 block text-sm font-medium text-foreground-800">
       {question.text} {question.required && <span className="text-red-500">*</span>}
@@ -139,7 +177,16 @@ function QuestionField({ question, value, onChange, readOnly, invalid, onPhotoUp
     })}</div>}
     {question.type === 'dropdown' && <select id={inputId} className={inputClass} disabled={readOnly} value={String(value ?? '')} onChange={e => onChange(e.target.value)}><option value="">Select an option</option>{options.map(option => <option key={option}>{option}</option>)}</select>}
     {question.type === 'rating' && <div className="flex flex-wrap items-center gap-2"><span className="text-[11px] text-foreground-400">{question.config.minLabel}</span>{Array.from({ length: question.config.max || 5 }, (_, i) => i + 1).map(number => <button key={number} type="button" disabled={readOnly} onClick={() => onChange(number)} className={`h-9 w-9 rounded-lg border text-xs font-semibold ${value === number ? 'border-primary-500 bg-primary-500 text-white' : 'border-foreground-200 bg-white text-foreground-600'} disabled:cursor-default`}>{number}</button>)}<span className="text-[11px] text-foreground-400">{question.config.maxLabel}</span></div>}
-    {question.type === 'photo_upload' && <div className="rounded-lg border border-dashed border-primary-300 bg-white p-4">{photoValue && <div className="mb-3 flex items-center gap-3"><img src={feedbackUploadUrl(photoValue.uploadId)} alt="Uploaded response" className="h-16 w-16 rounded-lg border object-cover" /><span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground-700">{photoValue.filename}</span></div>}{!readOnly && <label className="flex cursor-pointer items-center justify-between gap-3 text-xs font-semibold text-primary-700"><span>{uploading ? 'Uploading photo…' : photoValue ? 'Replace photo' : 'Choose JPG, PNG or WebP'}</span><span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-50"><i className="ri-upload-cloud-2-line text-base" /></span><input type="file" accept="image/jpeg,image/png,image/webp" disabled={uploading || !onPhotoUpload} className="sr-only" onChange={e => void uploadPhoto(e.target.files?.[0])} /></label>}{readOnly && !photoValue && <p className="text-xs text-foreground-400">No photo uploaded.</p>}{uploadError && <p className="mt-2 text-xs text-red-600">{uploadError}</p>}</div>}
+    {question.type === 'photo_upload' && <div
+      onDragEnter={dragDropPhotos && !readOnly ? event => { event.preventDefault(); setDraggingPhoto(true); } : undefined}
+      onDragOver={dragDropPhotos && !readOnly ? event => event.preventDefault() : undefined}
+      onDragLeave={dragDropPhotos && !readOnly ? () => setDraggingPhoto(false) : undefined}
+      onDrop={dragDropPhotos && !readOnly ? dropPhoto : undefined}
+      className={`rounded-lg border border-dashed bg-white p-4 transition-colors ${draggingPhoto ? 'border-primary-600 bg-primary-50 ring-2 ring-primary-200' : 'border-primary-300'}`}>
+      {photoValue && <div className="mb-3 flex items-center gap-3">{photoSrc && <img src={photoSrc} alt="Uploaded response" className="h-16 w-16 rounded-lg border object-cover" />}<span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground-700">{photoValue.filename}</span>{onPhotoRemove && !readOnly && <button type="button" disabled={uploading || removingPhoto} onClick={() => void removePhoto()} className="shrink-0 rounded-md border border-red-200 px-2.5 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50">{removingPhoto ? 'Removing…' : 'Remove image'}</button>}</div>}
+      {!readOnly && <label className="flex cursor-pointer items-center justify-between gap-3 text-xs font-semibold text-primary-700"><span>{uploading ? 'Uploading photo…' : photoValue ? 'Replace photo' : dragDropPhotos ? 'Choose or drop JPG, PNG or WebP (up to 20 MB)' : 'Choose JPG, PNG or WebP'}</span><span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary-50"><i className="ri-upload-cloud-2-line text-base" /></span><input type="file" accept="image/jpeg,image/png,image/webp" disabled={uploading || !onPhotoUpload} className="sr-only" onChange={e => { const file = e.target.files?.[0]; e.currentTarget.value = ''; void uploadPhoto(file); }} /></label>}
+      {readOnly && !photoValue && <p className="text-xs text-foreground-400">No photo uploaded.</p>}{uploadError && <p className="mt-2 text-xs text-red-600">{uploadError}</p>}
+    </div>}
     {invalid && <p role="alert" className="mt-2 text-xs font-medium text-red-600">This field is required before continuing.</p>}
   </div>;
 }

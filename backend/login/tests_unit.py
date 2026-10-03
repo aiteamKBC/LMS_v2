@@ -582,6 +582,23 @@ class MailFallbackTests(SimpleTestCase):
                     )
         self.assertTrue(posted.call_args[1]["json"]["saveToSentItems"])
 
+    def test_inline_attachment_reaches_graph_with_content_id(self):
+        with mock.patch.dict("os.environ", _MAIL_ENV, clear=False):
+            with mock.patch.object(email_azure, "_access_token", return_value="tok"):
+                response = mock.Mock(status_code=202, text="")
+                with mock.patch("httpx.post", return_value=response) as posted:
+                    email_azure.send_mail(
+                        to="person@kbc.test", subject="Subject", html_body='<img src="cid:brand-logo">',
+                        attachments=[{
+                            "name": "logo.png", "content_type": "image/png", "content": b"png",
+                            "content_id": "brand-logo", "is_inline": True,
+                        }],
+                    )
+        attachment = posted.call_args[1]["json"]["message"]["attachments"][0]
+        self.assertEqual(attachment["contentId"], "brand-logo")
+        self.assertTrue(attachment["isInline"])
+        self.assertEqual(attachment["contentBytes"], "cG5n")
+
     def test_network_error_is_caught(self):
         import httpx
 

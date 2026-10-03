@@ -7,7 +7,7 @@ from django.test import RequestFactory, SimpleTestCase
 from login.api_gate import rule_for
 
 from . import event_rsvp_views
-from .event_emails import render_email
+from .event_emails import EVENT_LOGO_CID, event_logo_attachment, render_email
 from .event_rsvp import reset_failed_recipients, rsvp_link, save_rsvp
 
 
@@ -19,6 +19,7 @@ class EventRsvpSecurityTests(SimpleTestCase):
     def test_only_public_rsvp_routes_are_ungated(self):
         self.assertIsNone(rule_for('/engagement_api/feedback/public-rsvp/'))
         self.assertIsNone(rule_for('/engagement_api/feedback/public-rsvp/csrf/'))
+        self.assertIsNone(rule_for('/engagement_api/feedback/public-rsvp/photo/remove/'))
         self.assertIsNotNone(rule_for('/engagement_api/feedback/events/4/rsvp/'))
 
     def test_unknown_token_returns_safe_error(self):
@@ -28,6 +29,27 @@ class EventRsvpSecurityTests(SimpleTestCase):
         )
         with mock.patch.object(event_rsvp_views, 'recipient_for_token', return_value=None):
             response = event_rsvp_views.public_access(request)
+        self.assertEqual(response.status_code, 404)
+        self.assertIn(b'invalid or has expired', response.content)
+
+    def test_unknown_token_cannot_upload_a_photo(self):
+        request = RequestFactory().post(
+            '/engagement_api/feedback/public-rsvp/photo/',
+            data={'token': 'unknown', 'questionId': '11'},
+        )
+        with mock.patch.object(event_rsvp_views, 'recipient_for_token', return_value=None):
+            response = event_rsvp_views.public_photo_upload(request)
+        self.assertEqual(response.status_code, 404)
+        self.assertIn(b'invalid or has expired', response.content)
+
+    def test_unknown_token_cannot_remove_a_photo(self):
+        request = RequestFactory().post(
+            '/engagement_api/feedback/public-rsvp/photo/remove/',
+            data=json.dumps({'token': 'unknown', 'uploadId': '7a80cafd-637a-4ad9-b0b4-e481fb2d31d5'}),
+            content_type='application/json',
+        )
+        with mock.patch.object(event_rsvp_views, 'recipient_for_token', return_value=None):
+            response = event_rsvp_views.public_photo_remove(request)
         self.assertEqual(response.status_code, 404)
         self.assertIn(b'invalid or has expired', response.content)
 
@@ -94,6 +116,29 @@ class EventEmailRenderingTests(SimpleTestCase):
         self.assertIn('&lt;Alex&gt;', html)
         self.assertIn('Room &amp; Hall', html)
         self.assertIn('a=1&amp;b=2', html)
+        self.assertIn(f'src="cid:{EVENT_LOGO_CID}"', html)
+        self.assertIn('alt="Kent Business College"', html)
+        self.assertNotIn('This is an automated event message', html)
+
+    def test_logo_is_packaged_as_an_inline_png_attachment(self):
+        attachment = event_logo_attachment()
+        self.assertEqual(attachment['content_id'], EVENT_LOGO_CID)
+        self.assertTrue(attachment['is_inline'])
+        self.assertEqual(attachment['content_type'], 'image/png')
+        self.assertTrue(attachment['content'].startswith(b'\x89PNG\r\n\x1a\n'))
+
+    def test_optional_delivery_notice_stays_inside_the_branded_email(self):
+        event = SimpleNamespace(title='Workshop', date='2 Oct', time='10:00', location='Main Hall')
+        with mock.patch('engagement_api.event_emails.event_email_content', return_value={
+            'subject': 'Feedback', 'body': 'Thank you.', 'buttonText': 'Open feedback',
+        }):
+            _subject, text, html = render_email(
+                event, 'Alex', 'https://example.test/feedback', 'post_event',
+                notice='This personal link expires in 30 days.',
+            )
+        self.assertIn('This personal link expires in 30 days.', text)
+        self.assertIn('This personal link expires in 30 days.', html)
+        self.assertLess(html.index('This personal link expires in 30 days.'), html.index('</body>'))
 
 
 class EventRsvpBookingTests(SimpleTestCase):
