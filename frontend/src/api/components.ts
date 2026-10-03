@@ -12,6 +12,7 @@ import { CompletionValidationError, type WorkingRuleReason } from '@/lib/complet
 const BASE = '/learner_api/components';
 
 export interface ComponentProgressSubmission {
+  assignmentTopicId?: string;
   week?: string | null;
   module?: string | null;
   startedAt: string;

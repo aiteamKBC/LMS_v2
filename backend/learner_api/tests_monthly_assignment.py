@@ -34,7 +34,7 @@ class MonthlyAssignmentTests(SimpleTestCase):
         return payload
 
     def checks(self, payload, **kwargs):
-        return {c["key"]: c["passed"] for c in assignment_checks(payload, evidence_ids=kwargs.get("evidence_ids", {"file-1"}), meeting_booked=kwargs.get("meeting_booked", True), allowed_ksbs={"K1"})}
+        return {c["key"]: c["passed"] for c in assignment_checks(payload, evidence_ids=kwargs.get("evidence_ids", {"file-1"}), meeting_booked=kwargs.get("meeting_booked", True), allowed_ksbs={"K1"}, claimed_hours=kwargs.get("claimed_hours", {}))}
 
     def test_complete_submission_has_thirteen_passing_checks_and_no_six_hour_cap(self):
         checks = self.checks(self.payload())
@@ -75,7 +75,7 @@ class MonthlyAssignmentTests(SimpleTestCase):
         payload['monthlyAssignment']['timeEntries'][0]['date'] = '2025-12-24'
         self.assertTrue(self.checks(payload)['hours'])
 
-    def test_eight_hour_limit_is_per_topic_not_per_assignment(self):
+    def test_eight_hour_limit_is_per_working_day_not_per_assignment(self):
         payload = self.payload()
         payload['monthlyAssignment']['timeEntries'] = [dict(topic='Research', hours='8', date='2026-09-01'), dict(topic='Writing', hours='8', date='2026-09-02')]
         payload['actualTimeHours'] = '16'
@@ -279,12 +279,12 @@ class MonthlyDraftPersistenceTests(SimpleTestCase):
     def test_late_draft_cannot_overwrite_a_submitted_assignment(self):
         response, cursor = self.post({"learnerKind": "commercial", "learnerId": "1", "activityId": "C1", "activityType": "assignment", "submissionMode": "draft"}, ("submitted_for_tutor_review", {}))
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(cursor.execute.call_count, 1)
+        self.assertEqual(cursor.execute.call_count, 2)
 
     def test_imported_history_is_not_overwritten_by_learner_form(self):
         response, cursor = self.post({"learnerKind": "commercial", "learnerId": "1", "activityId": "C1", "activityType": "assignment", "submissionMode": "draft"}, ("draft", {"submissionOrigin": "imported_legacy"}))
         self.assertEqual(response.status_code, 409)
-        self.assertEqual(cursor.execute.call_count, 1)
+        self.assertEqual(cursor.execute.call_count, 2)
 
     @patch("learner_api.monthly_assignment.assignment_checks", return_value=[{"passed": True}])
     @patch("learner_api.reflection_submissions._reflection_lineage", return_value={"progress_entry_id": "progress-1"})
@@ -298,7 +298,8 @@ class MonthlyDraftPersistenceTests(SimpleTestCase):
         record = {}
         complete_saved_assignment("commercial", "1", "C1", record, save)
         atomic.assert_called_once_with(using="enrolment")
-        self.assertIn("FOR UPDATE", cursor.execute.call_args_list[0].args[0])
+        self.assertIn("pg_advisory_xact_lock", cursor.execute.call_args_list[0].args[0])
+        self.assertIn("FOR UPDATE", cursor.execute.call_args_list[1].args[0])
         self.assertEqual(record["ksbs"], ["K1"])
         save.assert_called_once()
         self.assertIn("UPDATE", cursor.execute.call_args_list[-1].args[0])
@@ -312,7 +313,7 @@ class MonthlyDraftPersistenceTests(SimpleTestCase):
         cursor.fetchone.return_value = ("submission-1", "draft", {"monthlyAssignment": {"claims": []}})
         with self.assertRaisesRegex(ValueError, "Progress failed"):
             complete_saved_assignment("commercial", "1", "C1", {}, MagicMock(side_effect=ValueError("Progress failed")))
-        self.assertEqual(cursor.execute.call_count, 1)
+        self.assertEqual(cursor.execute.call_count, 2)
 
 
 class ExtendedCoachingWindowTests(SimpleTestCase):

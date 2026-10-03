@@ -1,3 +1,4 @@
+import { assignmentTopics, topicHasContent } from '@/lib/assignmentTopics';
 export type ModuleStatus = 'draft' | 'review' | 'published' | string;
 export type KsbMappingType = 'main' | 'secondary' | 'possible';
 export type ModuleComponentType =
@@ -295,6 +296,7 @@ const definitions: ComponentAuthoringDefinition[] = [
     defaultSettings: {
       ...advancedDefaults('assignment'),
       assignmentBrief: '',
+      assignmentTopics: '',
       submissionInstructions: '',
       dueTiming: 'End of week',
       markingRubric: '',
@@ -656,7 +658,8 @@ export function validateComponentAuthoring(component: ComponentValidationTarget,
       .replace(/<[^>]*>/g, '')
       .replace(/&nbsp;|&#160;/gi, ' ')
       .trim();
-    if (!assignmentQuestion) issues.push({ path: `${pathPrefix}.settings.assignmentContent`, message: 'An assignment question is required.' });
+    const topics = assignmentTopics(settings.assignmentTopics);
+    if (String(settings.assignmentTopics || '').trim() ? !topics.some(topicHasContent) : !assignmentQuestion) issues.push({ path: `${pathPrefix}.settings.assignmentContent`, message: 'An assignment question is required.' });
   }
   Object.keys(settings).forEach(key => {
     if (!allowed.has(key)) issues.push({ path: `${pathPrefix}.settings.${key}`, message: `Unsupported setting "${key}" for ${component.type}.` });

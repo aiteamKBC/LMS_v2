@@ -310,7 +310,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
       <section className="space-y-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:p-6" aria-label="Learning time" data-quality-target="hours" tabIndex={-1}>
         <div className="flex flex-wrap items-center justify-between gap-3"><h4 className="font-semibold text-slate-900">Your learning time</h4><span className="rounded-full border border-slate-200 bg-white px-3 py-1 text-sm">Planned: {plannedOtjh == null ? 'Not set' : `${plannedOtjh} hours`}</span></div>
         {disabled && !data.timeEntries?.length ? <fieldset disabled>{timeControl}</fieldset> :
-          <AssignmentTimeEntries kind={kind} learnerId={learnerId} month={data.month} entries={data.timeEntries || []} disabled={disabled} onChange={timeEntries => patch({ timeEntries })} />}
+          <AssignmentTimeEntries kind={kind} learnerId={learnerId} dailyLimit={payload().activityType !== 'extra_activity' && !parsePersonalLearning(learnerId)} month={data.month} entries={data.timeEntries || []} disabled={disabled} onChange={timeEntries => patch({ timeEntries })} />}
         {check('paidHours', 'This learning was completed during paid working hours.')}
       </section>
       <section className="rounded-2xl border border-blue-200 bg-blue-50 p-4 sm:p-5">
@@ -452,7 +452,7 @@ export function MonthlyAssignmentSteps({ step, data, onChange, answers, onAnswer
       {revisingRejected && <p className="rounded-xl border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900">You do not need a new MCM booking when your rejected submission already has a verified booking for this submission month. The final quality checks verify this automatically.</p>}
         <h3 data-quality-target="meeting" tabIndex={-1} className="text-lg font-semibold">Coaching & presentation</h3>
       <p className="text-sm text-slate-600">Book coaching in the submission-month window ({minBooking} to {maxBooking}) or the next-month window shown below. You can finish both tasks here and keep the whole submission as a draft until ready.</p>
-      <AssignmentCoachingBooking kind={kind} learnerId={learnerId} month={data.month} title={title} meetingKey={data.meetingKey} disabled={disabled || historical} onSave={onSave} onSelect={meetingKey => patch({ meetingKey })} />
+      <AssignmentCoachingBooking assignmentId={activityId} topicId={payload().assignmentTopicId} kind={kind} learnerId={learnerId} month={data.month} title={title} meetingKey={data.meetingKey} disabled={disabled || historical} onSave={onSave} onSelect={meetingKey => patch({ meetingKey })} />
       <section data-quality-target="presentation" tabIndex={-1} className="space-y-5 rounded-2xl border border-slate-200 bg-white p-4 sm:p-6">
         <div className="flex items-start gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-100 text-sm font-bold text-primary-700">2</span><div><h4 className="text-base font-semibold text-slate-900">Prepare your presentation</h4><p className="mt-1 text-sm text-slate-600">Generate, review and export your slides, or upload your own MCM PowerPoint below.</p></div></div>
       <section className="space-y-3 rounded-xl border border-dashed border-slate-300 bg-slate-50 p-4">

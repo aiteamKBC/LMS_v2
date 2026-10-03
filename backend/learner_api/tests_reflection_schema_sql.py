@@ -128,7 +128,7 @@ class ReflectionSubmissionSqlTests(SimpleTestCase):
                 "idx_learning_reflections_learner",
                 "idx_learning_reflections_activity",
                 "idx_learning_reflections_submitted",
-                "uq_learning_reflections_activity",
+                "uq_learning_reflections_topic",
                 "idx_learning_reflections_progress_entry",
                 "idx_learning_reflections_component_ref",
             }

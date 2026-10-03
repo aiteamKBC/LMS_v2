@@ -1,0 +1,29 @@
+/* Keep topic states readable when the curriculum theme styles all tab buttons. */
+.topicTabs .topicTab[role='tab'] {
+  transform: none !important;
+  transition: color 150ms ease, background-color 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.topicTabs .topicTab[role='tab'][aria-selected='true'] {
+  color: #fff !important;
+  background: var(--kbc-primary, #5b21b6) !important;
+  border-color: var(--kbc-primary, #5b21b6) !important;
+  box-shadow: 0 2px 6px rgb(91 33 182 / 0.16) !important;
+}
+
+.topicTabs .topicTab[role='tab'][aria-selected='true']:not(:disabled):hover {
+  background: var(--kbc-primary-secondary, #6d28d9) !important;
+  border-color: var(--kbc-primary-secondary, #6d28d9) !important;
+  box-shadow: 0 3px 8px rgb(91 33 182 / 0.2) !important;
+}
+
+.topicTabs .topicTab[role='tab']:focus-visible {
+  outline: 2px solid var(--kbc-primary, #5b21b6);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .topicTabs .topicTab[role='tab'] {
+    transition: none;
+  }
+}

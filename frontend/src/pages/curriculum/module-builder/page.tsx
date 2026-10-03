@@ -1,3 +1,4 @@
+import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import Swal from 'sweetalert2';
@@ -1071,7 +1072,7 @@ export default function ModuleBuilder() {
     groupName: workingModule?.group || '',
   }), [workingModule?.programmeId, workingModule?.programmeName, workingModule?.title, workingModule?.group]);
   const uploadComponentForModule = useCallback<WeekComponentUploader>(
-    (componentId, file, componentType) => uploadComponentResource({ moduleCatalogueId: workingModule?.catalogueId || '', componentId, componentType, file }),
+    (componentId, file, componentType, topicResource) => uploadComponentResource({ moduleCatalogueId: workingModule?.catalogueId || '', componentId, componentType, file, topicResource }),
     [workingModule?.catalogueId],
   );
 
@@ -3989,10 +3990,10 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
           <div
             aria-hidden
             onPointerDown={startStructureScrollbarDrag}
-            className="absolute bottom-2.5 left-1 top-2.5 z-20 w-2 cursor-pointer rounded-full bg-background-200 shadow-inner"
+            className="kbc-scrollbar-track absolute bottom-2.5 left-1 top-2.5 z-20 w-2 cursor-pointer rounded-full shadow-inner"
           >
             <div
-              className="absolute left-0 right-0 rounded-full bg-foreground-500 shadow-sm"
+              className="kbc-scrollbar-thumb absolute left-0 right-0 rounded-full shadow-sm"
               style={{ height: `${structureScrollbar.height}px`, transform: `translateY(${structureScrollbar.top}px)` }}
             />
           </div>
@@ -4326,10 +4327,10 @@ function ModuleBuilderScrollArea({ children, className = '', contentClassName = 
         <div
           aria-hidden
           onPointerDown={startScrollbarDrag}
-          className="absolute bottom-2.5 left-1 top-2.5 z-20 w-2 cursor-pointer rounded-full bg-background-200 shadow-inner"
+          className="kbc-scrollbar-track absolute bottom-2.5 left-1 top-2.5 z-20 w-2 cursor-pointer rounded-full shadow-inner"
         >
           <div
-            className="absolute left-0 right-0 rounded-full bg-foreground-500 shadow-sm"
+            className="kbc-scrollbar-thumb absolute left-0 right-0 rounded-full shadow-sm"
             style={{ height: `${scrollbar.height}px`, transform: `translateY(${scrollbar.top}px)` }}
           />
         </div>
@@ -5256,18 +5257,12 @@ function TypeSpecificFields({
   if (component.type === 'assignment') {
     return (
       <EditorBlock title="Assignment">
-        <TextArea label="Assignment brief" value={getString('assignmentBrief')} onChange={value => onSettingChange('assignmentBrief', value)} rows={4} />
-        <ComponentResourceUpload
-          label="Upload assignment file"
-          accept=".doc,.docx,.pdf,.ppt,.pptx,.xls,.xlsx,.csv,.txt,.zip,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/csv,application/zip"
-          uploadedName={getString('uploadedFileName') || getString('assignmentFileName')}
-          uploadedUrl={getString('uploadedFileUrl') || getString('assignmentFileUrl')}
-          uploadedSize={getNumber('uploadedFileSize')}
-          uploading={uploadingResource}
-          error={uploadError}
-          onUpload={file => handleResourceUpload(file, 'assignment')}
-        />
-        <TextArea label="Submission instructions" value={getString('submissionInstructions')} onChange={value => onSettingChange('submissionInstructions', value)} rows={3} />
+        <AssignmentTopicsEditor value={component.settings.assignmentTopics}
+          legacyQuestion={getString('assignmentBrief') || getString('assignmentContent')}
+          legacyInstructions={getString('submissionInstructions')}
+          legacyResources={(getString('assignmentFileUrl') || getString('uploadedFileUrl')) ? [{ fileName: getString('assignmentFileName') || getString('uploadedFileName'), url: getString('assignmentFileUrl') || getString('uploadedFileUrl'), size: getNumber('uploadedFileSize'), contentType: getString('uploadedFileContentType') }] : []}
+          onChange={value => onSettingChange('assignmentTopics', value)}
+          onUpload={async file => (await uploadComponentResource({ moduleCatalogueId: module.catalogueId, componentId: component.id, componentType: 'assignment', file, topicResource: true })).file} />
         <TextInput label="Due timing relative to week" value={getString('dueTiming')} onChange={value => onSettingChange('dueTiming', value)} />
       </EditorBlock>
     );

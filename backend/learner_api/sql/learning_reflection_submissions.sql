@@ -13,6 +13,7 @@ create table if not exists "Learner".learning_reflection_submissions (
     programme_name              text,
     activity_type               varchar(64) not null,
     activity_id                 varchar(255) not null,
+    assignment_topic_id         varchar(1) not null default '' check (assignment_topic_id in ('', '1', '2', '3')),
     activity_title              text,
     module_title                text,
     week_title                  text,
@@ -52,6 +53,7 @@ create table if not exists "Learner".learning_reflection_submissions (
 );
 
 alter table "Learner".learning_reflection_submissions
+    add column if not exists assignment_topic_id varchar(1) not null default '' check (assignment_topic_id in ('', '1', '2', '3')),
     add column if not exists ksb_weights jsonb not null default '{}'::jsonb,
     add column if not exists coach_feedback text,
     add column if not exists reviewed_by text,
@@ -96,9 +98,10 @@ create index if not exists idx_learning_reflections_submitted
 create index if not exists idx_learning_reflections_queue
     on "Learner".learning_reflection_submissions
        (learner_id, status, submitted_at, id);
-create unique index if not exists uq_learning_reflections_activity
+create unique index if not exists uq_learning_reflections_topic
     on "Learner".learning_reflection_submissions
-       (learner_kind, learner_id, activity_type, activity_id);
+       (learner_kind, learner_id, activity_type, activity_id, assignment_topic_id);
+drop index if exists "Learner".uq_learning_reflections_activity;
 create index if not exists idx_learning_reflections_progress_entry
     on "Learner".learning_reflection_submissions (progress_entry_id)
     where progress_entry_id is not null;
