@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -55,10 +55,25 @@ describe('coach attendance detail', () => {
 
     expect(await screen.findByText('24 records')).toBeInTheDocument();
     expect(container.querySelector('.attendance-profile-print-page')).toBeInTheDocument();
-    expect(screen.getAllByRole('row')).toHaveLength(50);
-    expect(container.querySelectorAll('tbody tr[data-status="absent"]')).toHaveLength(12);
-    expect(container.querySelectorAll('tbody tr[data-status="present"]')).toHaveLength(12);
-    expect(screen.getAllByText('Session 24')).toHaveLength(2);
+    const table = screen.getAllByRole('table')[0];
+    const report = screen.getByLabelText('Student attendance report');
+    expect(within(table).getAllByRole('row')).toHaveLength(11);
+    expect(within(report).getAllByRole('row')).toHaveLength(25);
+    expect(report.querySelectorAll('td[data-status="absent"]')).toHaveLength(12);
+    expect(report.querySelectorAll('td[data-status="present"]')).toHaveLength(12);
+    expect(within(report).getByText('Session 24')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Previous' })).toBeDisabled();
+    expect(screen.getByText('Showing 1–10 of 24 records')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(within(table).getByText('Session 11')).toBeInTheDocument();
+    expect(within(table).queryByText('Session 1')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+    expect(within(table).getAllByRole('row')).toHaveLength(5);
+    expect(screen.getByText('Showing 21–24 of 24 records')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Next' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Previous' }));
+    expect(screen.getByText('Page 2 of 3')).toBeInTheDocument();
+    expect(within(report).getAllByRole('row')).toHaveLength(25);
   });
 
   it('keeps present records in the printable report when the learner has no absences', async () => {
