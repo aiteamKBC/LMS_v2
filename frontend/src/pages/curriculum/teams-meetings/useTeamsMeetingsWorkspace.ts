@@ -1143,8 +1143,9 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   };
 
   /**
-   * Send the schedule email again, as a creation email, to everyone the saved
-   * calendar invites -- not the "was ... now ..." update notice.
+   * Send the schedule email again, as a creation email, to every learner the
+   * saved calendar invites -- not the "was ... now ..." update notice. The
+   * organiser, co-organisers and presenters are not emailed by the LMS.
    *
    * Its own action, before any review: it never touches the Teams calendar and
    * never asks Microsoft to announce anything. It re-reads the calendar the
@@ -1156,14 +1157,15 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   const resendSchedule = async (row: MeetingRow) => {
     const summary = row.summary;
     if (blockedReason || !summary?.liveSessionId) return;
-    const people = new Set([...(summary.attendees || []), ...(summary.presenters || []),
-      ...(summary.coOrganizers || []), summary.organizerEmail || '']
-      .map(value => String(value || '').trim().toLowerCase()).filter(Boolean));
-    const count = people.size;
+    const address = (value: unknown) => String(value || '').trim().toLowerCase();
+    // The server emails attendees who do not also run the meeting; count the same people.
+    const running = new Set([...(summary.presenters || []), ...(summary.coOrganizers || []), summary.organizerEmail || ''].map(address));
+    const learners = new Set((summary.attendees || []).map(address).filter(value => value && !running.has(value)));
+    const count = learners.size;
     setNotice(null);
     await showCurriculumConfirm({
-      title: 'Email the full schedule to everyone?',
-      text: `${count || 'Every'} invited ${count === 1 ? 'person' : 'people'} on ${row.name} will be sent the complete timetable and join links again, as a new schedule email rather than a change notice. Anyone who already received it will receive it a second time. The Teams calendar itself is not changed.`,
+      title: 'Email the full schedule to every learner?',
+      text: `${count || 'Every'} invited ${count === 1 ? 'learner' : 'learners'} on ${row.name} will be sent the complete timetable and join links again, as a new schedule email rather than a change notice. Anyone who already received it will receive it a second time. The Teams calendar itself is not changed.`,
       icon: 'warning',
       confirmButtonText: 'Send schedule emails',
       onConfirm: async () => {
@@ -1175,7 +1177,9 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
             tone: unfinished ? 'warning' : 'info',
             text: unfinished
               ? `${row.name}: Microsoft accepted ${email.accepted} of ${email.total} schedule emails. ${unfinished} could not be confirmed — press the button again to send a fresh round.`
-              : `${row.name}: the full schedule was submitted to all ${email.accepted} recipient${email.accepted === 1 ? '' : 's'}.`,
+              : email.total
+                ? `${row.name}: the full schedule was submitted to all ${email.accepted} learner${email.accepted === 1 ? '' : 's'}.`
+                : `${row.name}: no learners are invited, so no schedule email was sent.`,
           });
         } finally {
           setBusy('');

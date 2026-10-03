@@ -26,9 +26,45 @@ def counts_as_actual(record):
 
     Duplicate source observations are removed by ``canonical_activity_key`` in
     the SSOT query.  ``source_system`` says where the surviving canonical row
-    came from; it is not a reason to throw that learner evidence away.
+    came from; it is not a reason to throw that learner evidence away.  A
+    reporting allocation explicitly marked as estimated is displayed for
+    review but is not accepted toward the authoritative total until approved.
     """
-    return record.get('accepted') is True
+    return record.get('accepted') is True and not is_time_estimated(record)
+
+
+def is_time_estimated(record):
+    """Return whether a reporting allocation is provisional and needs approval."""
+    if record.get('reporting_estimated') is True or record.get('actual_estimated') is True:
+        return True
+    payload = source_payload_metadata(record.get('source_payload'))
+    reconciliation = payload.get('reconciliation')
+    allocation = reconciliation.get('reporting_allocation') if isinstance(reconciliation, dict) else None
+    return isinstance(allocation, dict) and allocation.get('estimated') is True
+
+
+def counts_as_completed(record, include_source_evidence=True):
+    """Completion and accepted OTJ hours are deliberately separate facts.
+
+    Source completion is trusted for the old LMS lineage. Callers that are
+    projecting a non-journal/coach view can disable source evidence while still
+    retaining explicit completion and status-based completion.
+    """
+    if record.get('completed') is True or record.get('accepted') is True:
+        return True
+    statuses = {str(record.get('activity_status') or '').strip().casefold()}
+    statuses.update(
+        str(source.get('activity_status') or '').strip().casefold()
+        for source in (record.get('sources') or []) if isinstance(source, dict)
+    )
+    if include_source_evidence and any(
+            source.get('completed') is True
+            and str(source.get('source_system') or '').strip().casefold() in {'', 'old_lms'}
+            for source in (record.get('sources') or []) if isinstance(source, dict)):
+        return True
+    return bool(statuses & {
+        'accepted', 'complete', 'completed', 'passed',
+    })
 
 
 def enabled(learner_id):
@@ -131,6 +167,7 @@ def entries_for(owner):
             'course_title',c.source_course_title,'catalogue_id',a.id,
             'component_ref',coalesce(nullif(s.curriculum_component_ref,''),a.curriculum_component_ref),
             'module_ref',c.curriculum_module_ref,'group_ref',c.curriculum_group_ref,
+            'activity_status',s.activity_status,
             'source_activity_kind',a.source_activity_kind) ORDER BY s.id) AS payload
         FROM "Learner".learner_activity_sources s
         JOIN canonical p ON s.canonical_progress_id=p.id AND s.learner_id=p.learner_id
@@ -184,12 +221,11 @@ def entries_for(owner):
         loaded.append(item)
     result = current_records(owner, loaded)
     if journal_enabled:
+        # Completion is independent of accepted hours. Reapply the shared rule
+        # after current saves are projected so old-LMS source/status evidence is
+        # retained in the journal learner view only.
         for record in result:
-            # Source completion is independent of hours eligibility. Excluded
-            # administration and represented recordings still retain completion.
-            record['completed'] = record.get('completed', record.get('accepted')) is True or any(
-                source.get('source_system') == 'old_lms' and source.get('completed') is True
-                for source in record.get('sources') or [])
+            record['completed'] = counts_as_completed(record)
     return result
 
 
@@ -198,9 +234,15 @@ def allocations(entry):
     segments = entry.get('segments') or []
     if not segments:
         return [entry]
+    estimated = is_time_estimated(entry)
+    reconciliation = source_payload_metadata(entry.get('source_payload')).get('reconciliation')
+    allocation = reconciliation.get('reporting_allocation', {}) if isinstance(reconciliation, dict) else {}
+    method = allocation.get('method') if isinstance(allocation, dict) else None
     return [{**entry, **{key: segment.get(key) for key in (
         'actual_seconds', 'reporting_month', 'reporting_started_at', 'reporting_ended_at')},
-        'segment_id': segment['id']} for segment in segments]
+        'segment_id': segment['id'], 'reporting_estimated': estimated,
+        'reporting_approval_required': estimated,
+        'reporting_allocation_method': method} for segment in segments]
 
 
 def recorded_seconds(entry):
@@ -239,6 +281,9 @@ def rows_for(owner, records=None):
                     reporting_month=entry.get('reporting_month'),
                     timestamp_label=entry.get('reporting_timestamp_label') or source.get('timestamp_label') or '',
                     actual_hours_recorded=entry.get('actual_seconds') is not None,
+                    actual_estimated=is_time_estimated(entry),
+                    actual_status_label='تقديري — يحتاج اعتماد' if is_time_estimated(entry)
+                    else ('Accepted' if entry.get('accepted') is True else 'Not accepted'),
                     progress_id=entry['id'])
         result.append(item)
     by_id = {}
@@ -698,7 +743,8 @@ def recorded_course_items(courses, catalogue, records):
                 'section_title': definition.get('source_section_title'),
                 'position': definition.get('position') or 0,
                 **recorded_activity_schedule(record, course),
-                'completed': record.get('completed', accepted) is True, 'historical_completed': accepted,
+                'completed': counts_as_completed(record, include_source_evidence='completed' in record),
+                'historical_completed': accepted,
                 'actual': recorded_seconds(record) / 3600 if accepted else 0,
                 'hours_mapped': accepted and any(p.get('actual_seconds') is not None for p in allocations(record)),
                 'planned': record.get('journal_planned_hours', 0),
@@ -735,7 +781,8 @@ def metrics_from_records(records, monthly_targets, *, include_ksb_points=False):
     """
     counted = list(records)
     accepted = [item for item in counted if item.get('accepted') is True]
-    completed = [item for item in counted if item.get('completed', item.get('accepted')) is True]
+    completed = [item for item in counted if counts_as_completed(
+        item, include_source_evidence='completed' in item)]
     def ratio(done, total):
         return {'completed': done, 'total': total,
                 'percent': round(done / total * 100, 2) if total else None,
@@ -855,6 +902,7 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
     for payload in progress_rows:
         owner_id = int(payload.pop('owner_id'))
         payload.update(ksbs=[], segments=[], sources=[], historical_components=[])
+        payload['completed'] = counts_as_completed(payload)
         records_by_learner.setdefault(owner_id, []).append(payload)
         records_by_progress[int(payload['id'])] = payload
 
@@ -878,7 +926,7 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
             c.source_course_title AS course_title,a.id AS catalogue_id,
             coalesce(nullif(s.curriculum_component_ref,''),a.curriculum_component_ref) AS component_ref,
             c.curriculum_module_ref AS module_ref,c.curriculum_group_ref AS group_ref,
-            a.source_activity_kind
+            a.source_activity_kind,s.activity_status,s.completed
             FROM "Learner".learner_activity_sources s
             LEFT JOIN curriculum.source_activities a
               ON a.id=s.source_catalog_activity_id AND a.deleted_at IS NULL
@@ -988,7 +1036,9 @@ def overlay_subjects(payload, records, summarize):
             accepted = [r for r in matches if counts_as_actual(r)]
             recorded = [r for r in accepted if any(part.get('actual_seconds') is not None for part in allocations(r))]
             at = local_instant(latest.get('reporting_started_at') or latest.get('reporting_ended_at'))
-            item.update(completed=any(r.get('completed', r.get('accepted')) is True for r in matches),
+            item.update(completed=any(
+                counts_as_completed(r, include_source_evidence='completed' in r)
+                for r in matches),
                         historical_completed=bool(accepted),
                         actual=sum(recorded_seconds(r) for r in recorded) / 3600,
                         hours_mapped=bool(recorded), status=latest.get('activity_status'),

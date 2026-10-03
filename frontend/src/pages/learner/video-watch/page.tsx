@@ -1,3 +1,4 @@
+import { startActivityClock } from '@/lib/activityClock';
 import { SessionResults } from '@/components/feature/SessionResults';
 import { parsePersonalLearning } from '@/lib/personalLearning';
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
@@ -50,7 +51,7 @@ import manualTimeStyles from './ActivityManualTimeInput.module.css';
 import layoutStyles from './ComponentActivityLayout.module.css';
 import { AssignmentSubmissionWizard, type AssignmentAnswers } from './AssignmentSubmissionWizard';
 import { useSavedAssignmentAccess } from './useSavedAssignmentAccess';
-import { resolveDocEmbed } from '@/lib/docEmbed';
+import { absoluteDocUrl, resolveDocEmbed } from '@/lib/docEmbed';
 import { normalizeReadingHtml } from '@/lib/readingHtml';
 import { downloadReadingPdf, readingFiles } from './readingDownloads';
 import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
@@ -236,6 +237,8 @@ export default function ComponentViewPage() {
   const [wallElapsed, setWallElapsed] = useState(
     () => readActivityTimer(timerStorageKey)?.elapsedSeconds ?? 0,
   );
+  const elapsedRef = useRef(wallElapsed);
+  elapsedRef.current = wallElapsed;
   const [manualTimeSeconds, setManualTimeSeconds] = useState<number | null>(null);
   const [timeSource, setTimeSource] = useState<TimeSource>('timer');
   // Opened only by a server refusal of the Finish click; null while learning.
@@ -259,7 +262,8 @@ export default function ComponentViewPage() {
   const [removingEvidence, setRemovingEvidence] = useState(false);
   const [evidencePreview, setEvidencePreview] = useState<EvidencePreview | null>(null);
   const evidenceInputId = useId();
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const timerRef = useRef<ReturnType<typeof startActivityClock> | null>(null);
+  const timerRemainder = useRef({ milliseconds: 0 });
   const completionInFlightRef = useRef(false);
   const [trackingGeneration, setTrackingGeneration] = useState(0);
   const trackingSessionRef = useRef<TimeTrackingSession | null>(null);
@@ -277,6 +281,7 @@ export default function ComponentViewPage() {
     setUnsupported(false);
     setRealDuration(null);
     setWallElapsed(readActivityTimer(timerStorageKey)?.elapsedSeconds ?? 0);
+    timerRemainder.current.milliseconds = 0;
     setManualTimeSeconds(null);
     setTimeSource('timer');
     setCorrection(null);
@@ -468,7 +473,7 @@ export default function ComponentViewPage() {
     : timeSource === 'input' && manualTimeSeconds != null
       ? manualTimeSeconds
       : elapsedSeconds;
-  // Planned time preset in the reflection window: always the component's
+  // Planned time in the reflection window: always the component's
   // authored expected_otjh (its OTJ hours) when set, so "the planned time"
   // means the same thing for every component type in the training plan.
   // Falls back to the real video length / authored duration only when no
@@ -493,12 +498,12 @@ export default function ComponentViewPage() {
   // made a 1h42m video look like 102 hours.
   const plannedTimeLabel = plannedHours != null ? formatHoursMinutes(plannedHours) : '';
 
-  const trackingMode: TrackingCountingMode = isVideo
+  const trackingMode: TrackingCountingMode = isVideo || isAudio
     ? 'active_playback'
     : 'visible_page';
 
-  // The server stamps and signs the start, preventing claims for time before
-  // this learner opened this specific activity.
+  // The server signs this learner/activity start for verification evidence,
+  // separately from the Timer/Input duration chosen at completion.
   useEffect(() => {
     if (phase !== 'consume' || !recordingAttempt || !openable || !componentId || !kind || !id || !canUseComponent) return;
     const learnerKind = kind as LearnerKind;
@@ -507,7 +512,10 @@ export default function ComponentViewPage() {
     trackingSessionRef.current = null;
 
     const savedTimer = readActivityTimer(timerStorageKey);
-    if (canResumeActivityTimer(savedTimer, trackingMode)) {
+    // Audio already counted playback before its session was labelled correctly.
+    // Keep a still-valid older session and its saved seconds when resuming.
+    if (canResumeActivityTimer(savedTimer, trackingMode)
+        || (isAudio && canResumeActivityTimer(savedTimer, 'visible_page'))) {
       const savedSession = savedTimer!.session!;
       trackingSessionRef.current = savedSession;
       trackingPromiseRef.current = Promise.resolve(savedSession);
@@ -520,6 +528,7 @@ export default function ComponentViewPage() {
     if (savedTimer) {
       clearActivityTimer(timerStorageKey);
       setWallElapsed(0);
+      timerRemainder.current.milliseconds = 0;
     }
 
     const pending = startTimeTracking(activityKind, componentId, learnerKind, id, trackingMode);
@@ -535,7 +544,7 @@ export default function ComponentViewPage() {
         if (!cancelled) setSubmitError(error instanceof Error ? error.message : 'Could not start activity timing');
       });
     return () => { cancelled = true; };
-  }, [phase, recordingAttempt, openable, componentId, kind, id, canUseComponent, isVideo, trackingMode, timerStorageKey, trackingGeneration]);
+  }, [phase, recordingAttempt, openable, componentId, kind, id, canUseComponent, isVideo, isAudio, trackingMode, timerStorageKey, trackingGeneration]);
 
   // Ordinary page content counts only while visible. Media counts while it is
   // genuinely playing, even when the learner switches tab or opens another
@@ -544,29 +553,27 @@ export default function ComponentViewPage() {
   useEffect(() => {
     const activeMedia = isVideo || isAudio;
     if (phase !== 'consume' || !recordingAttempt || !canUseComponent) return;
+    if (contentKind === 'reading' && (loading || loadError || !openable)) return;
     if (activeMedia ? !playerPlaying : (!unsupported && !playerPlaying)) return;
-    let lastTickAt = Date.now();
-    timerRef.current = setInterval(() => {
-      if (activeMedia || document.visibilityState === 'visible') {
-        const now = Date.now();
-        const increment = activeMedia
-          ? Math.floor((now - lastTickAt) / 1000)
-          : 1;
-        if (increment < 1) return;
-        if (activeMedia) lastTickAt += increment * 1000;
-        setWallElapsed((seconds) => {
-          const next = seconds + increment;
-          saveActivityTimerElapsed(timerStorageKey, next);
-          return next;
-        });
-      }
-    }, 1000);
-    return () => { if (timerRef.current) clearInterval(timerRef.current); };
-  }, [phase, recordingAttempt, canUseComponent, unsupported, playerPlaying, isVideo, isAudio, timerStorageKey]);
+    const clock = startActivityClock({
+      countInBackground: activeMedia,
+      pauseOnUnload: contentKind === 'reading',
+      remainder: timerRemainder.current,
+      onElapsed: (increment) => {
+        const next = elapsedRef.current + increment;
+        elapsedRef.current = next;
+        // Persist synchronously: React may ignore a state update during unmount.
+        saveActivityTimerElapsed(timerStorageKey, next);
+        setWallElapsed(next);
+      },
+    });
+    timerRef.current = clock;
+    return () => clock.stop();
+  }, [phase, recordingAttempt, canUseComponent, unsupported, playerPlaying, isVideo, isAudio, timerStorageKey, contentKind, loading, loadError, openable]);
 
   const finishConsuming = () => {
     if (!recordingAttempt) return;
-    if (timerRef.current) clearInterval(timerRef.current);
+    timerRef.current?.stop();
     if (component?.reflectionRequired === false) {
       setPhase('confirm');
       return;
@@ -579,7 +586,7 @@ export default function ComponentViewPage() {
     void finalizeSubmit({
       ksbs: (component.ksbMappings || []).map(mapping => mapping.code),
       feedback: '',
-      reportedTime: plannedTimeLabel,
+      reportedTime: `${submittedTimeSeconds / 60} minutes`,
     });
   };
 
@@ -618,6 +625,7 @@ export default function ComponentViewPage() {
           timeEntrySource: timeSource,
           declaredCompletedAt: declared,
           componentTitle: pageTitle, componentType: component.type || undefined,
+          plannedOtjh: plannedTimeLabel,
           ...(reflection.assignmentTopicId ? { assignmentTopicId: reflection.assignmentTopicId } : {}),
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
           skipReflection: options.skipReflection === true,
@@ -626,6 +634,7 @@ export default function ComponentViewPage() {
       }
       clearActivityTimer(timerStorageKey);
       setWallElapsed(0);
+      timerRemainder.current.milliseconds = 0;
       setManualTimeSeconds(null);
       if (reflection.assignmentTopicId) setTrackingGeneration(value => value + 1);
       setTimeSource(usesManualTimeOnly ? 'input' : 'timer');
@@ -743,6 +752,7 @@ export default function ComponentViewPage() {
               learnerKsbs={learnerKsbs}
               autoKsbs={component.ksbMappings ?? []}
               elapsedSeconds={elapsedSeconds}
+              selectedTimeSeconds={submittedTimeSeconds}
               submitting={submitting}
               submitError={submitError}
               onSubmit={finalizeSubmit}
@@ -764,7 +774,7 @@ export default function ComponentViewPage() {
             <div className="min-w-0">
               {isVideo && activityHeading}
               {!isAssignment && (
-                <ComponentContent component={{ ...component, liveSessionUrl: parsePersonalLearning(id) ? null : component.teamsLiveSessionId && component.teamsSessionNumber
+                <ComponentContent key={timerStorageKey} component={{ ...component, liveSessionUrl: parsePersonalLearning(id) ? null : component.teamsLiveSessionId && component.teamsSessionNumber
                     ? `/learner_api/session-results/${kind}/${id}/${encodeURIComponent(component.teamsLiveSessionId)}/sessions/${component.teamsSessionNumber}/join/`
                     : component.liveSessionUrl }} contentKind={contentKind} parsed={parsed} title={pageTitle}
                   onDuration={(d) => setRealDuration((prev) => prev ?? d)}
@@ -1021,7 +1031,7 @@ export default function ComponentViewPage() {
                         assignmentTopicId: answers.assignmentTopicId,
                         ksbs: (component.ksbMappings || []).map(mapping => mapping.code),
                         feedback: `${answers.whatYouLearned}\n\nBusiness impact:\n${answers.businessImpact}`,
-                        reportedTime: formatClock(submittedTimeSeconds),
+                        reportedTime: `${submittedTimeSeconds / 60} minutes`,
                       }, { rethrow: true });
                     }}
                   />
@@ -1101,7 +1111,7 @@ export default function ComponentViewPage() {
             onFinishWithoutReflection={() => void finalizeSubmit({
               ksbs: (component?.ksbMappings || []).map(mapping => mapping.code),
               feedback: '',
-              reportedTime: plannedTimeLabel,
+              reportedTime: `${submittedTimeSeconds / 60} minutes`,
             }, { skipReflection: true })}
           />
         )}
@@ -1595,6 +1605,15 @@ function AccessibleReadingMaterial({
         <p className="text-sm text-foreground-500">No reading content was set. You can still record your reflection below.</p>
       ) : null}
       <ExtraComponentFiles component={component} title={title} primaryUrl={component.resourceUrl} />
+      {/* `files` also carries the documents linked from inside the reading text,
+          which no author ever attached and so `ExtraComponentFiles` never sees.
+          Those get a collapsed preview instead of a card -- and the attachment
+          filter keeps a file that is in both lists from being offered twice. */}
+      {files.filter(file => file.url !== component.resourceUrl
+        && !(component.files || []).some(attached => attached.url === file.url)
+        && /\.(pdf|pptx?|ppsx?|pptm|ppsm)$/i.test(fileProbe(file.url, file.fileName))).map(file => (
+        <LinkedReadingPreview key={file.url} url={file.url} title={file.label} fileName={file.fileName} />
+      ))}
       </div>
     </>
   );
@@ -1648,6 +1667,19 @@ function ExtraComponentFiles({ component, title, primaryUrl = '', downloadAllowe
       </div>
     </section>
   );
+}
+
+/** A document linked from the reading text: previewed on request, not up front. */
+function LinkedReadingPreview({ url, title, fileName }: { url: string; title: string; fileName?: string }) {
+  const [open, setOpen] = useState(false);
+  return <div className="mt-4 rounded-xl border border-background-300 bg-white p-3">
+    <button type="button" onClick={() => setOpen(value => !value)} aria-expanded={open}
+      className="flex w-full items-center gap-2 text-left text-sm font-semibold text-primary-700">
+      <AppIcon className={open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} />
+      {open ? 'Hide preview' : 'Preview file'}: {title}
+    </button>
+    {open && <div className="mt-3"><InlineAttachmentPreview url={url} title={title} fileName={fileName} /></div>}
+  </div>;
 }
 
 function InlineMediaPreview({ url, title, fileName }: { url: string; title: string; fileName?: string | null }) {
@@ -1901,7 +1933,7 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
   const [pageNumber, setPageNumber] = useState(1);
   const [pageCount, setPageCount] = useState(0);
   const [scale, setScale] = useState(1.25);
-  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [status, setStatus] = useState<'loading' | 'ready' | 'browser' | 'error'>('loading');
   const [error, setError] = useState<string | null>(null);
   const [markerActive, setMarkerActive] = useState(false);
   const [draftHighlight, setDraftHighlight] = useState<PdfHighlight | null>(null);
@@ -1918,17 +1950,18 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
     let loadedPdf: PDFDocumentProxy | null = null;
 
     async function loadPdf() {
+      let requestFailed = false;
       try {
         setStatus('loading');
         setError(null);
-        const { GlobalWorkerOptions, getDocument } = await import('pdfjs-dist');
-        GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
         const response = await fetch(url, {
           credentials: 'same-origin',
           headers: { Accept: 'application/pdf,*/*' },
-        });
+        }).catch(error => { requestFailed = true; throw error; });
         if (!response.ok) throw new Error(`File request failed (${response.status})`);
         const buffer = await response.arrayBuffer();
+        const { GlobalWorkerOptions, getDocument } = await import('pdfjs-dist');
+        GlobalWorkerOptions.workerSrc = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
         const document = await getDocument({ data: new Uint8Array(buffer) }).promise;
         loadedPdf = document;
         if (!cancelled) {
@@ -1939,6 +1972,13 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
         }
       } catch (loadError) {
         if (!cancelled) {
+          const absolute = absoluteDocUrl(url);
+          // Keep our reading/annotation tools for files that allow CORS.
+          // A cross-origin network failure can still be viewed by the browser.
+          if (requestFailed && absolute && new URL(absolute).origin !== window.location.origin) {
+            setStatus('browser');
+            return;
+          }
           setStatus('error');
           setError(loadError instanceof Error ? loadError.message : 'Could not load PDF preview.');
         }
@@ -2075,6 +2115,10 @@ function PdfCanvasPreview({ url, title, fileName, readingPreferences, annotation
       setExporting(false);
     }
   };
+
+  if (status === 'browser') {
+    return <iframe src={url} title={title} className="h-[72vh] min-h-[400px] w-full rounded-xl border border-background-300 bg-white" />;
+  }
 
   if (status === 'loading') {
     return (
@@ -2319,7 +2363,11 @@ export function ComponentBody({ component, contentKind, parsed, title, onDuratio
             preload="metadata"
             className="w-full"
             src={audioSource}
-            onPlay={() => onPlayingChange(true)}
+            onPlaying={() => onPlayingChange(true)}
+            onWaiting={() => onPlayingChange(false)}
+            onSeeking={() => onPlayingChange(false)}
+            onEmptied={() => onPlayingChange(false)}
+            onError={() => onPlayingChange(false)}
             onPause={() => onPlayingChange(false)}
             onEnded={() => { onPlayingChange(false); onEnded(); }}
           >Your browser does not support audio playback.</audio>

@@ -1,9 +1,9 @@
 """Server-issued timing sessions for learner activities.
 
 The browser measures active time because it can observe playback/visibility.
-A signed server session prevents it from claiming time before the activity was
-opened: persisted time is the smaller of the browser's active counter and the
-signed server-session duration.
+A signed server session bounds verifiedSeconds by the session duration. This
+verification evidence is separate from the learner-selected Timer/Input duration
+saved by video and component completions; manual time can exceed this session.
 """
 import json
 import math
@@ -27,7 +27,7 @@ COUNTING_MODES = {"active_quiz", "active_playback", "visible_page"}
 ALLOWED_MODES_BY_KIND = {
     "quiz": {"active_quiz"},
     "video": {"active_playback", "visible_page"},
-    "component": {"visible_page"},
+    "component": {"visible_page", "active_playback"},
 }
 
 

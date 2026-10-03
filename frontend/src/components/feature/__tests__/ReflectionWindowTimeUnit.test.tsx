@@ -47,3 +47,48 @@ it('keeps hours for other reflections', async () => {
   openOtjh();
   expect(await screen.findByLabelText('Actual time spent (hours)')).toHaveValue(1);
 });
+
+
+it.each([
+  { seconds: 2400, clock: '00:40:00' },
+  { seconds: 317, clock: '00:05:17' },
+  { seconds: 5400, clock: '01:30:00' },
+  { seconds: 0, clock: '00:00:00' },
+])('saves the selected $clock in the reflection and completion, overriding planned and draft hours', async ({ seconds, clock }) => {
+  mocks.load.mockResolvedValue({
+    status: 'draft', actualTimeHours: '14', learningReflection: 'Learning '.repeat(100),
+    applicationType: 'apply_now', applicationText: 'Use the learning at work.',
+    selectedBenefits: ['Improved productivity'], benefitExplanation: 'Improve everyday work.',
+    dateCompleted: '2026-10-01', completedDuringPaidHours: 'yes',
+    otjhConfirmed: true, signedDeclaration: true,
+  });
+  mocks.save.mockResolvedValue({});
+  const onSubmit = vi.fn();
+  view({ noun: 'reading', plannedHours: 14, plannedTimeLabel: '14h', selectedTimeSeconds: seconds, onSubmit });
+  openOtjh();
+  expect(await screen.findByLabelText('Selected activity time')).toHaveValue(clock);
+  expect(screen.getByLabelText('Selected activity time')).toHaveAttribute('readonly');
+  expect(screen.queryByLabelText('Actual time spent (hours)')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Review' }));
+  const submit = screen.getByRole('button', { name: 'Submit for tutor review' });
+  await waitFor(() => expect(submit).toBeEnabled());
+  fireEvent.click(submit);
+  await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+    reportedTime: `${seconds / 60} minutes`,
+  })));
+  expect(mocks.save).toHaveBeenCalledWith(expect.objectContaining({
+    actualTimeHours: String(seconds / 3600), plannedOtjh: '14h',
+  }));
+});
+
+
+it('preserves the recorded hours of an accepted reflection when reopened', async () => {
+  mocks.load.mockResolvedValue({ status: 'accepted', actualTimeHours: '2' });
+  view({ noun: 'reading', selectedTimeSeconds: 2400, plannedHours: 14 });
+  openOtjh();
+  const field = await screen.findByLabelText('Actual time spent (hours)');
+  expect(field).toHaveValue(2);
+  expect(field).toBeDisabled();
+  expect(screen.queryByLabelText('Selected activity time')).not.toBeInTheDocument();
+  expect(mocks.save).not.toHaveBeenCalled();
+});

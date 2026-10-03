@@ -644,6 +644,9 @@ export default function UsersListPage() {
           eyebrow={isAdmin ? 'Administration' : 'Enrolment'}
           actions={
             <div className="flex flex-wrap items-start gap-2">
+              <button type="button" className={btnSecondary} onClick={() => navigate('/users/wizard-builder')}>
+                <AppIcon className="ri-magic-line" />Edit apprenticeship wizard
+              </button>
               <DownloadLearnerTemplateButton />
               <button type="button" className={btnSecondary} onClick={() => setImportModalOpen(true)}>
                 <AppIcon className="ri-upload-2-line" />Upload learners

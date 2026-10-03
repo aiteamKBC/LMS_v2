@@ -24,7 +24,6 @@ export function useAttendanceDetail(learnerId: string, enabled: boolean) {
         const details = await fetchCoachAttendanceDetails(learnerId, controller.signal);
         if (!details.learner) throw new Error('Learner attendance record was not found.');
         const summary = details.summary;
-        const recordedSessions = (summary?.present || 0) + (summary?.absent || 0);
         const selected: CoachAttendanceLearner = {
           id: String(details.learner.id),
           learner: details.learner.name,
@@ -35,7 +34,7 @@ export function useAttendanceDetail(learnerId: string, enabled: boolean) {
           group: details.learner.group || '--',
           groupId: details.learner.groupId,
           programStatus: details.learner.programStatus || undefined,
-          attendance: recordedSessions ? Math.round(((summary?.present || 0) / recordedSessions) * 100) : null,
+          attendance: summary?.attendanceRate ?? null,
           sessions: summary?.total || 0,
           present: summary?.present || 0,
           absent: summary?.absent || 0,
@@ -45,7 +44,7 @@ export function useAttendanceDetail(learnerId: string, enabled: boolean) {
         };
         if (!cancelled) {
           setLearner(selected);
-          setSessions((details.sessions || []).sort((a, b) => (b.sessionDate || '').localeCompare(a.sessionDate || '')));
+          setSessions(details.sessions || []);
         }
       } catch (reason) {
         if (!cancelled) {

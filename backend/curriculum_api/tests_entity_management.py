@@ -314,22 +314,20 @@ class EntityModuleTests(CurriculumPersistenceHarness):
         module = self.row(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id', 'MOD-DATA-1')
         self.assertEqual(views.format_date(module.get('start_date')), '2026-09-02')
 
-    def test_editing_a_module_tutor_moves_the_assignment_and_notifies(self):
-        """The headline UX win — Modules -> edit Tutor — must still notify.
+    def test_editing_a_module_tutor_moves_the_assignment(self):
+        """The headline UX win — Modules -> edit Tutor — must move the row.
 
         The module row is the assignment: there is no staff-side copy of it to
-        keep in step, so what this pins is that the row moves and the tutor is
-        told.
+        keep in step, so what this pins is that the row moves. The tutor is no
+        longer emailed about it.
         """
         self.seed_group()
 
-        with patch.object(views.tutor_notifications, 'schedule_assignment_notifications') as scheduled:
-            response = self.patch_json(
-                '/curriculum_api/curriculum/modules/MOD-DATA-1/',
-                {'tutor': 'Tutor Two'},
-            )
+        response = self.patch_json(
+            '/curriculum_api/curriculum/modules/MOD-DATA-1/',
+            {'tutor': 'Tutor Two'},
+        )
         self.assertEqual(response.status_code, 200, response.content)
-        self.assertTrue(scheduled.called, 'tutor assignment notification was not scheduled')
 
         module = self.row(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id', 'MOD-DATA-1')
         self.assertEqual(views.clean_str(module.get('tutor_name')), 'Tutor Two')

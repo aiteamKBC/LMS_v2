@@ -8,7 +8,11 @@ import {
 } from '@/api/extendedIlr';
 import { uploadEnrolmentDocument } from '@/api/enrolmentDocuments';
 import { fetchKsbProfile } from '@/api/curriculum';
+import { fetchWizardLayout, peekWizardLayout } from '@/api/wizardLayout';
 import { ilrDocumentBlob, ilrDocumentFilename } from './steps/ilrDocument';
+import { resolveLayout, visibleSteps } from './layout/resolve';
+import { WizardTextsContext } from './layout/textsContext';
+import type { CustomAnswer, LayoutStep, WizardLayout } from './layout/types';
 import { WIZARD_STEPS, type EnrolmentBoard, type IlrForm, type Ksb, type WizardDraft } from '../types';
 
 /** DD/MM/YYYY -> YYYY-MM-DD (for native date inputs); returns '' if unparseable. */
@@ -164,6 +168,16 @@ interface WizardContextValue {
   board: EnrolmentBoard;
   draft: WizardDraft;
   setSection: <K extends keyof WizardDraft>(key: K, value: WizardDraft[K]) => void;
+  /** Answer one of the wizard builder's custom fields. */
+  setCustom: (fieldKey: string, value: CustomAnswer) => void;
+  /**
+   * The published wizard layout (see layout/), made whole against the
+   * built-in registry — the default layout until one is published or while it
+   * is loading.
+   */
+  layout: WizardLayout;
+  /** The steps the learner walks through, in order — the layout's visible steps. */
+  steps: LayoutStep[];
   completed: boolean[];
   markComplete: (index: number, done: boolean) => void;
   /**
@@ -196,6 +210,10 @@ interface WizardContextValue {
    * it — so between hydration and seeding the step reads as finished, which both
    * flickered the progress rail and briefly let the gating wave a learner past
    * their own self-assessment.
+   *
+   * It waits for the published layout too: which fields are required comes
+   * from there, so judging the draft against the default would gate a learner
+   * on questions the enrolment team has since removed (or let them past new ones).
    */
   ready: boolean;
   /**
@@ -213,6 +231,7 @@ export function WizardProvider({
   isCommercial = false,
   board,
   readOnlyLearnerSteps = false,
+  layout: layoutOverride,
   children,
 }: {
   userId: string;
@@ -220,6 +239,8 @@ export function WizardProvider({
   board: EnrolmentBoard;
   /** Set on the staff wizard: learner-owned steps render read-only. */
   readOnlyLearnerSteps?: boolean;
+  /** Render this layout instead of the published one (the builder's preview). */
+  layout?: WizardLayout;
   children: ReactNode;
 }) {
   const kindForSeed: LearnerKind = isCommercial ? 'commercial' : 'apprenticeship';
@@ -257,6 +278,27 @@ export function WizardProvider({
   const [hydrated, setHydrated] = useState(Boolean(seed));
   /** Whether the programme's competencies have been seeded (or settled as none). */
   const [ksbsSettled, setKsbsSettled] = useState(false);
+
+  // The published layout. Read from the cache on the first frame when it is
+  // already there (as the saved answers are), otherwise the default layout
+  // stands in until the request settles. A failed load keeps the default — the
+  // wizard as it was before the builder existed — rather than blocking anyone.
+  const [layoutPeek] = useState(() => (layoutOverride ? undefined : peekWizardLayout()));
+  const [publishedLayout, setPublishedLayout] = useState<WizardLayout | null>(() => layoutPeek?.layout ?? null);
+  const [layoutSettled, setLayoutSettled] = useState(Boolean(layoutOverride || layoutPeek));
+  useEffect(() => {
+    if (layoutOverride) return;
+    let cancelled = false;
+    fetchWizardLayout()
+      .then((res) => { if (!cancelled) setPublishedLayout(res.layout ?? null); })
+      .catch(() => {
+        // Not fatal: the default layout stays in place.
+      })
+      .finally(() => { if (!cancelled) setLayoutSettled(true); });
+    return () => { cancelled = true; };
+  }, [layoutOverride]);
+  const layout = useMemo(() => resolveLayout(layoutOverride ?? publishedLayout), [layoutOverride, publishedLayout]);
+  const steps = useMemo(() => visibleSteps(layout), [layout]);
 
   /**
    * The draft as it was last written to the server (or last read from it).
@@ -380,6 +422,9 @@ export function WizardProvider({
       draft,
       readOnly: readOnlyLearnerSteps,
       setSection: (key, val) => setDraft((prev) => ({ ...prev, [key]: val })),
+      setCustom: (fieldKey, val) => setDraft((prev) => ({ ...prev, custom: { ...(prev.custom ?? {}), [fieldKey]: val } })),
+      layout,
+      steps,
       completed,
       markComplete: (index, done) => setCompleted((prev) => prev.map((c, i) => (i === index ? done : c))),
       saveIlr: async () => {
@@ -405,12 +450,13 @@ export function WizardProvider({
       ilrSaving,
       ilrSavedAt,
       hydrated,
-      ready: hydrated && ksbsSettled,
+      ready: hydrated && ksbsSettled && layoutSettled,
       fileIlrDocument: async () => {
         setIlrFiling(true);
         try {
           const sig = draft.ilr.learnerSignature;
-          const pdf = await ilrDocumentBlob(draft.ilr, board);
+          // Printed in the wording the learner was asked — edits from the builder included.
+          const pdf = await ilrDocumentBlob(draft.ilr, board, layout.texts);
           await uploadEnrolmentDocument(
             kind,
             userId,
@@ -427,10 +473,14 @@ export function WizardProvider({
       },
       ilrFiling,
     }),
-    [userId, isCommercial, board, readOnlyLearnerSteps, draft, completed, kind, ilrSaving, ilrSavedAt, hydrated, ksbsSettled, ilrFiling]
+    [userId, isCommercial, board, readOnlyLearnerSteps, draft, layout, steps, completed, kind, ilrSaving, ilrSavedAt, hydrated, ksbsSettled, layoutSettled, ilrFiling]
   );
 
-  return <WizardContext.Provider value={value}>{children}</WizardContext.Provider>;
+  return (
+    <WizardContext.Provider value={value}>
+      <WizardTextsContext.Provider value={layout.texts}>{children}</WizardTextsContext.Provider>
+    </WizardContext.Provider>
+  );
 }
 
 export function useWizard(): WizardContextValue {

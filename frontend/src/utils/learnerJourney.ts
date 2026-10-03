@@ -54,7 +54,7 @@ export type ContentKind = 'video' | 'audio' | 'reading' | 'slides' | 'reflection
 export function componentContentKind(type: string | null | undefined): ContentKind {
   const t = (type || '').toLowerCase();
   if (t === 'video') return 'video';
-  if (t === 'podcast') return 'audio';
+  if (t === 'podcast' || t === 'audio') return 'audio';
   if (t === 'reading') return 'reading';
   if (t === 'powerpoint') return 'slides';
   if (t === 'reflection') return 'reflection';

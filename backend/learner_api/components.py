@@ -381,7 +381,11 @@ def submit_component_progress(request, component_id):
         return _error("This activity timing session has already been submitted.", 409)
     started_at = tracking["startedAt"].isoformat()
     submitted_at = submitted_at_dt.isoformat()
-    time_taken = _format_clock(tracking["verifiedSeconds"])
+    # The learner chooses Timer or Input before finishing. Keep that selection
+    # for display and actual-hours totals; verifiedSeconds remains separate
+    # signed-session evidence. Explicit units prevent hours/minutes ambiguity.
+    time_taken = _format_clock(tracking["claimedSeconds"])
+    selected_time = f'{tracking["claimedSeconds"] / 60} minutes'
 
     record = {
         "kind": "component",
@@ -391,7 +395,7 @@ def submit_component_progress(request, component_id):
         "attempt": attempt_number,
         "ksbs": ksbs,                          # KSB codes the learner selected
         "feedback": feedback,                  # reflection note
-        "reportedTime": reported_time,         # self-reported time-to-complete
+        "reportedTime": selected_time,         # selected Timer/Input duration
         "reflectionSkipped": reflection_skipped,
         "startedAt": started_at,
         "submittedAt": submitted_at,
@@ -417,7 +421,7 @@ def submit_component_progress(request, component_id):
         "componentType": component_type,
         "action": action,
         "title": component_title or "Activity",
-        "detail": (f"{reported_time}" if reported_time else "").strip(),
+        "detail": selected_time,
         "componentId": component_id,
         "week": week_title,
         "module": module_title,
@@ -459,10 +463,10 @@ def submit_component_progress(request, component_id):
                 "activityTitle": component_title or "Activity",
                 "moduleTitle": module_title or "",
                 "weekTitle": week_title or "",
-                "plannedOtjh": reported_time,
+                "plannedOtjh": payload.get("plannedOtjh", reported_time),
                 # The marking schema stores decimal hours. ``timeTaken`` above
                 # remains the learner-facing MM:SS clock value.
-                "actualTimeHours": tracking["verifiedSeconds"] / 3600,
+                "actualTimeHours": tracking["claimedSeconds"] / 3600,
                 "progressEntryId": None,
             },
         )
