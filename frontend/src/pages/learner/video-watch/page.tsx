@@ -243,7 +243,7 @@ export default function ComponentViewPage() {
   const [correctionError, setCorrectionError] = useState('');
   // The reflection the learner already gave, replayed with their declared
   // instant so Final Submit does not ask for it again.
-  const lastReflectionRef = useRef<{ ksbs: string[]; feedback: string; reportedTime: string }>({
+  const lastReflectionRef = useRef<{ ksbs: string[]; feedback: string; reportedTime: string; assignmentTopicId?: string }>({
     ksbs: [], feedback: '', reportedTime: '',
   });
   const [submitting, setSubmitting] = useState(false);
@@ -261,6 +261,7 @@ export default function ComponentViewPage() {
   const evidenceInputId = useId();
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const completionInFlightRef = useRef(false);
+  const [trackingGeneration, setTrackingGeneration] = useState(0);
   const trackingSessionRef = useRef<TimeTrackingSession | null>(null);
   const trackingPromiseRef = useRef<Promise<TimeTrackingSession> | null>(null);
 
@@ -534,7 +535,7 @@ export default function ComponentViewPage() {
         if (!cancelled) setSubmitError(error instanceof Error ? error.message : 'Could not start activity timing');
       });
     return () => { cancelled = true; };
-  }, [phase, recordingAttempt, openable, componentId, kind, id, canUseComponent, isVideo, trackingMode, timerStorageKey]);
+  }, [phase, recordingAttempt, openable, componentId, kind, id, canUseComponent, isVideo, trackingMode, timerStorageKey, trackingGeneration]);
 
   // Ordinary page content counts only while visible. Media counts while it is
   // genuinely playing, even when the learner switches tab or opens another
@@ -583,7 +584,7 @@ export default function ComponentViewPage() {
   };
 
   const finalizeSubmit = async (
-    reflection: { ksbs: string[]; feedback: string; reportedTime: string },
+    reflection: { ksbs: string[]; feedback: string; reportedTime: string; assignmentTopicId?: string },
     options: { rethrow?: boolean; skipReflection?: boolean; declaredCompletedAt?: string } = {},
   ) => {
     if (!component || !componentId || !kind || !id || completionInFlightRef.current || !canUseComponent) return;
@@ -617,6 +618,7 @@ export default function ComponentViewPage() {
           timeEntrySource: timeSource,
           declaredCompletedAt: declared,
           componentTitle: pageTitle, componentType: component.type || undefined,
+          ...(reflection.assignmentTopicId ? { assignmentTopicId: reflection.assignmentTopicId } : {}),
           ksbs: reflection.ksbs, feedback: reflection.feedback, reportedTime: reflection.reportedTime,
           skipReflection: options.skipReflection === true,
         });
@@ -625,6 +627,7 @@ export default function ComponentViewPage() {
       clearActivityTimer(timerStorageKey);
       setWallElapsed(0);
       setManualTimeSeconds(null);
+      if (reflection.assignmentTopicId) setTrackingGeneration(value => value + 1);
       setTimeSource(usesManualTimeOnly ? 'input' : 'timer');
       setRepeating(false);
       // A refresh failure after a committed completion must not invite the
@@ -982,6 +985,7 @@ export default function ComponentViewPage() {
                     weekTitle={weekTitle}
                     plannedOtjh={component.expectedOtjh ?? null}
                     initialMonth={searchParams.get('month')}
+                    topics={component.assignmentTopics}
                     questionHtml={component.assignmentBriefHtml}
                     questionText={component.assignmentBrief}
                     questionFileUrl={component.resourceUrl}
@@ -1014,6 +1018,7 @@ export default function ComponentViewPage() {
                     }}
                     onSubmitProgress={async (answers: AssignmentAnswers) => {
                       await finalizeSubmit({
+                        assignmentTopicId: answers.assignmentTopicId,
                         ksbs: (component.ksbMappings || []).map(mapping => mapping.code),
                         feedback: `${answers.whatYouLearned}\n\nBusiness impact:\n${answers.businessImpact}`,
                         reportedTime: formatClock(submittedTimeSeconds),

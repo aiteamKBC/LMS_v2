@@ -88,7 +88,7 @@
 .viewAll { display: inline-flex; align-items: center; gap: 0.4rem; color: #e3d0ff; font-size: 0.75rem; white-space: nowrap; }
 .viewAll svg { width: 1rem; height: 1rem; }
 .moduleContent { display: grid; grid-template-columns: 3rem minmax(0, 1fr); align-items: center; gap: 0.4rem; flex: 1; margin: 0.2rem 0 0; min-width: 0; }
-.moduleList { list-style: none; padding: 0; margin: 0; max-height: 3.2rem; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #a47ddb transparent; }
+.moduleList { list-style: none; padding: 0; margin: 0; max-height: 3.2rem; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent; }
 .moduleList li + li { margin-top: 0.2rem; }
 .hero .moduleList li a { display: flex; width: 100%; align-items: center; justify-content: flex-start; gap: 0.55rem; min-height: 1.3rem; padding: 0.15rem 0.4rem; border-radius: 0.6rem; border: 1px solid rgb(213 188 255 / 0.14); background: rgb(29 16 64 / 0.24); color: #fff; font-size: 0.7rem; line-height: 1.25; transition: background 160ms ease; }
 .moduleList a:hover { background: rgb(128 74 212 / 0.4); }

@@ -12,6 +12,7 @@ export interface JourneyComponent {
   componentId?: string | null;
   type?: string | null;
   description?: string | null;
+  assignmentTopics?: import('@/lib/assignmentTopics').AssignmentTopic[];
   assignmentBrief?: string | null;
   assignmentBriefHtml?: string | null;
   videoUrl?: string | null;
@@ -363,7 +364,7 @@ export function hasComponentContent(c: JourneyComponent): boolean {
   // Builder rows can retain a default reflection question even when reflection
   // is disabled. That follow-up question is not the assignment's task/brief.
   if (type === 'assignment') {
-    return hasText(c.assignmentBrief) || hasText(c.assignmentBriefHtml)
+    return Boolean(c.assignmentTopics?.some(topic => topic.question.trim() || topic.resources.length)) || hasText(c.assignmentBrief) || hasText(c.assignmentBriefHtml)
       || hasUrl(c.resourceUrl) || hasText(c.contentHtml)
       || c.hasReadingContent === true || hasDescription;
   }
@@ -624,7 +625,7 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
             ksbWeightTotal: c.ksbWeightTotal, ksbMappingCount: c.ksbMappingCount,
             ksbMappings: c.ksbMappings,
             componentId: c.componentId, type: c.type, description: c.description,
-            assignmentBrief: c.assignmentBrief, assignmentBriefHtml: c.assignmentBriefHtml,
+            assignmentBrief: c.assignmentBrief, assignmentBriefHtml: c.assignmentBriefHtml, assignmentTopics: c.assignmentTopics,
             videoUrl: c.videoUrl, durationMinutes: c.durationMinutes,
             audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName,
             hasReadingContent: c.hasReadingContent,

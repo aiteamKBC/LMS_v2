@@ -105,7 +105,7 @@ def component_requires_evidence(component_type):
     return normalise_component_type(component_type) in EVIDENCE_COMPONENT_TYPES
 
 
-def _assignment_form_ready(component_id, kind, learner_id):
+def _assignment_form_ready(component_id, kind, learner_id, assignment_topic=""):
     """An assignment can complete only after all monthly submission checks pass.
 
     The wizard saves these as a draft before it calls the progress endpoint;
@@ -117,8 +117,8 @@ def _assignment_form_ready(component_id, kind, learner_id):
             cur.execute(
                 'SELECT full_submission FROM "Learner"."learning_reflection_submissions" '
                 'WHERE learner_kind = %s AND learner_id = %s '
-                "AND activity_type = 'assignment' AND activity_id = %s LIMIT 1",
-                [kind, str(learner_id), component_id],
+                "AND activity_type = 'assignment' AND activity_id = %s AND assignment_topic_id = %s LIMIT 1",
+                [kind, str(learner_id), component_id, assignment_topic],
             )
             row = cur.fetchone()
     except DatabaseError as exc:
@@ -306,12 +306,19 @@ def submit_component_progress(request, component_id):
     client_title = payload.get("componentTitle") or None
     client_type = (payload.get("componentType") or "").strip() or None
 
+    from .assignment_topics import topic_id
+    try:
+        assignment_topic = topic_id(payload.get("assignmentTopicId"))
+    except ValueError as exc:
+        return _error(str(exc), 400)
     live_type, live_title = _component_meta(component_id)
+    if assignment_topic and normalise_component_type(live_type) != "assignment":
+        return _error("Topics are only available for assignment components.", 400)
     component_type = client_type or live_type or "component"
     component_title = client_title or live_title or TYPE_ACTIONS.get(component_type, (None, "Activity"))[1]
 
     if normalise_component_type(live_type or client_type) == "assignment" and not _assignment_form_ready(
-        component_id, kind, learner_id,
+        component_id, kind, learner_id, assignment_topic,
     ):
         return _error("Complete the monthly submission quality checks, presentation and coaching booking, then save before submitting.", 409)
 
@@ -380,6 +387,7 @@ def submit_component_progress(request, component_id):
         "kind": "component",
         "componentType": component_type,
         "componentId": component_id,
+        **({"assignmentTopicId": assignment_topic} if assignment_topic else {}),
         "attempt": attempt_number,
         "ksbs": ksbs,                          # KSB codes the learner selected
         "feedback": feedback,                  # reflection note
@@ -418,7 +426,7 @@ def submit_component_progress(request, component_id):
     try:
         if normalise_component_type(live_type or client_type) == "assignment":
             from .monthly_assignment import complete_saved_assignment
-            complete_saved_assignment(kind, learner_id, component_id, record, lambda: save_progress_record(active, record, activity))
+            complete_saved_assignment(kind, learner_id, component_id, record, lambda: save_progress_record(active, record, activity), assignment_topic=assignment_topic)
         else:
             save_progress_record(active, record, activity)
     except ComponentReferenceError as exc:
@@ -438,8 +446,8 @@ def submit_component_progress(request, component_id):
     # never sees the work. Components with a reflection flow write their own on
     # submit; an assignment authored with reflection_required=false has none, so
     # it is written from the completion with the evidence the learner uploaded.
-    awaiting_validation = False
-    if requires_tutor_validation(component_id):
+    awaiting_validation = bool(assignment_topic and requires_tutor_validation(component_id))
+    if not assignment_topic and requires_tutor_validation(component_id):
         queue_for_marking(
             component_id=component_id,
             kind=kind,

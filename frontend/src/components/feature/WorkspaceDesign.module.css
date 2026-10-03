@@ -40,7 +40,7 @@
    so its long list reads as scrollable at a glance. */
 :global(.dashboard-theme[data-workspace-role]).shell :global(.module-catalogue-scroll) {
   scrollbar-width: thin !important;
-  scrollbar-color: oklch(var(--foreground-400)) oklch(var(--background-100)) !important;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track) !important;
   scrollbar-gutter: stable !important;
 }
 
@@ -51,14 +51,14 @@
 }
 
 :global(.dashboard-theme[data-workspace-role]).shell :global(.module-catalogue-scroll)::-webkit-scrollbar-track {
-  background: oklch(var(--background-100)) !important;
+  background: var(--scrollbar-track) !important;
   border-radius: 999px;
 }
 
 :global(.dashboard-theme[data-workspace-role]).shell :global(.module-catalogue-scroll)::-webkit-scrollbar-thumb {
-  background: oklch(var(--foreground-400)) !important;
+  background: var(--scrollbar-thumb) !important;
   border-radius: 999px;
-  border: 2px solid oklch(var(--background-100));
+  border: 2px solid var(--scrollbar-track);
 }
 
 /* A 1920px display at 150% browser zoom exposes about 1280 CSS pixels. Keep
