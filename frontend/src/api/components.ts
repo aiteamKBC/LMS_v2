@@ -30,6 +30,8 @@ export interface ComponentProgressSubmission {
   ksbs?: string[];
   feedback?: string;
   reportedTime?: string;
+  /** Planned duration stays separate from the selected actual time. */
+  plannedOtjh?: string;
   skipReflection?: boolean;
 }
 
