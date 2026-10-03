@@ -340,6 +340,8 @@ class DashboardKbcAttendanceTests(unittest.TestCase):
                      "lastSessionDate": date(2026, 9, 18)},
         })
         self.canonical = Mock(return_value={
+            7: {"sessions": 2, "present": 1, "absent": 1, "attendanceRate": 50,
+                "lastSessionDate": date(2026, 9, 18)},
             8: {"sessions": 3, "present": 2, "absent": 1, "attendanceRate": 67},
         })
         self.namespace = {
@@ -352,24 +354,28 @@ class DashboardKbcAttendanceTests(unittest.TestCase):
         }
         load_functions(BACKEND / "coach_api/views.py", {"dashboard_attendance_rows"}, self.namespace)
 
-    def test_aptem_uses_id_keyed_kbc_and_other_learner_keeps_existing_source(self):
+    def test_aptem_and_other_learners_use_canonical_occurrence_summary(self):
         rows = [SimpleNamespace(id=7), SimpleNamespace(id=8)]
         learners = [{"id": "7", "name": "A"}, {"id": "8", "name": "B"}]
 
         payload = self.namespace["dashboard_attendance_rows"](rows, learners)
 
-        self.assertEqual([(row["id"], row["attendance"]) for row in payload], [("7", 75), ("8", 67)])
+        self.assertEqual([(row["id"], row["attendance"]) for row in payload], [("7", 50), ("8", 67)])
+        self.assertEqual((payload[0]["sessions"], payload[0]["present"], payload[0]["absent"]), (2, 1, 1))
         self.assertEqual(payload[0]["lastSessionDate"], "2026-09-18")
-        self.assertEqual(list(self.kbc.call_args.args[0]), [4321])
-        self.canonical.assert_called_once_with([rows[1]])
+        self.kbc.assert_not_called()
+        self.canonical.assert_called_once_with(rows)
 
-    def test_missing_kbc_rows_do_not_use_teams_for_aptem_learner(self):
+    def test_missing_kbc_rows_preserve_canonical_occurrence_data(self):
         self.kbc.return_value = {}
         rows = [SimpleNamespace(id=7), SimpleNamespace(id=8)]
 
         payload = self.namespace["dashboard_attendance_rows"](rows, [{"id": "7"}, {"id": "8"}])
 
-        self.assertEqual([row["id"] for row in payload], ["8"])
+        self.assertEqual([row["id"] for row in payload], ["7", "8"])
+        self.assertEqual(payload[0]["attendance"], 50)
+        self.kbc.assert_not_called()
+        self.canonical.assert_called_once_with(rows)
 
 
 if __name__ == "__main__":

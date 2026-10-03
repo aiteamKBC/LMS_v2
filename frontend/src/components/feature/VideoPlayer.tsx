@@ -94,6 +94,8 @@ interface YTNamespace {
   Player: new (el: HTMLElement | string, opts: unknown) => {
     getDuration: () => number;
     getCurrentTime: () => number;
+    isMuted: () => boolean;
+    getVolume: () => number;
     destroy: () => void;
   };
   PlayerState: { ENDED: number; PLAYING: number; PAUSED: number };
@@ -130,22 +132,40 @@ export function VideoPlayer({
   title: string;
   onDuration?: (seconds: number) => void;   // real total length, once known
   onProgress?: (currentSeconds: number) => void; // real elapsed within the video
-  onPlayingChange?: (playing: boolean) => void; // actual playback state; seeking does not count as time
+  onPlayingChange?: (playing: boolean) => void; // audible playback eligible for timing; muted/seeking time is excluded
   onEnded?: () => void;                      // playback reached the end
   onUnsupported?: () => void;                // no progress events available (Vimeo/unknown)
 }) {
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const nativePlayingRef = useRef(false);
   const [failedSource, setFailedSource] = useState<string | null>(null);
   const useProviderPreview = parsed.kind === 'file' && failedSource === parsed.src && !!parsed.fallbackSrc;
   const cbRef = useRef({ onDuration, onProgress, onPlayingChange, onEnded, onUnsupported });
   cbRef.current = { onDuration, onProgress, onPlayingChange, onEnded, onUnsupported };
 
+  // A volume change must not start timing a paused, buffering or unloaded video.
+  const reportNativePlayback = (video: HTMLVideoElement, playing = nativePlayingRef.current) => {
+    nativePlayingRef.current = playing;
+    cbRef.current.onPlayingChange?.(playing && !video.muted && video.volume > 0);
+  };
+  useEffect(() => {
+    if (parsed.kind !== 'file') return;
+    return () => {
+      nativePlayingRef.current = false;
+      cbRef.current.onPlayingChange?.(false);
+    };
+  }, [parsed.kind, parsed.src]);
+
   // ── YouTube: IFrame Player API ──
   useEffect(() => {
     if (parsed.kind !== 'youtube' || !parsed.youTubeId || !mountRef.current) return;
-    let player: { getDuration: () => number; getCurrentTime: () => number; destroy: () => void } | null = null;
+    let player: InstanceType<YTNamespace['Player']> | null = null;
     let poll: ReturnType<typeof setInterval> | null = null;
     let cancelled = false;
+    let playing = false;
+    const reportPlayback = () => {
+      cbRef.current.onPlayingChange?.(playing && player?.isMuted?.() === false && (player?.getVolume?.() ?? 0) > 0);
+    };
 
     loadYouTubeApi().then((YT) => {
       if (cancelled || !mountRef.current) return;
@@ -167,13 +187,18 @@ export function VideoPlayer({
               const d = player?.getDuration() ?? 0;
               if (d > 0) cbRef.current.onDuration?.(Math.round(d));
             }
-            cbRef.current.onPlayingChange?.(e.data === YT.PlayerState.PLAYING);
+            playing = e.data === YT.PlayerState.PLAYING;
+            reportPlayback();
             if (e.data === YT.PlayerState.ENDED) cbRef.current.onEnded?.();
           },
         },
       });
+      // YouTube exposes mute/volume through getters, without a volume event.
+      // Recheck on the progress poll and before/after a tab switch.
+      document.addEventListener('visibilitychange', reportPlayback);
       // Poll current time for a smooth countdown (state events alone are too coarse).
       poll = setInterval(() => {
+        reportPlayback();
         const t = player?.getCurrentTime?.();
         if (typeof t === 'number') cbRef.current.onProgress?.(t);
       }, 500);
@@ -181,6 +206,7 @@ export function VideoPlayer({
 
     return () => {
       cancelled = true;
+      document.removeEventListener('visibilitychange', reportPlayback);
       cbRef.current.onPlayingChange?.(false);
       if (poll) clearInterval(poll);
       try { player?.destroy(); } catch { /* player may not be constructed yet */ }
@@ -199,16 +225,22 @@ export function VideoPlayer({
   if (parsed.kind === 'file' && !useProviderPreview) {
     return (
       <video
+        key={parsed.src}
         src={parsed.src}
         controls
         preload="metadata"
         className="absolute inset-0 w-full h-full bg-black"
         onLoadedMetadata={(e) => onDuration?.(Math.round((e.target as HTMLVideoElement).duration))}
         onTimeUpdate={(e) => onProgress?.((e.target as HTMLVideoElement).currentTime)}
-        onPlay={() => onPlayingChange?.(true)}
-        onPause={() => onPlayingChange?.(false)}
-        onEnded={() => { onPlayingChange?.(false); onEnded?.(); }}
-        onError={() => { onPlayingChange?.(false); setFailedSource(parsed.src); }}
+        onPlaying={(e) => reportNativePlayback(e.currentTarget, true)}
+        onVolumeChange={(e) => reportNativePlayback(e.currentTarget)}
+        onLoadStart={(e) => reportNativePlayback(e.currentTarget, false)}
+        onWaiting={(e) => reportNativePlayback(e.currentTarget, false)}
+        onSeeking={(e) => reportNativePlayback(e.currentTarget, false)}
+        onEmptied={(e) => reportNativePlayback(e.currentTarget, false)}
+        onPause={(e) => reportNativePlayback(e.currentTarget, false)}
+        onEnded={(e) => { reportNativePlayback(e.currentTarget, false); onEnded?.(); }}
+        onError={(e) => { reportNativePlayback(e.currentTarget, false); setFailedSource(parsed.src); }}
       >
         Your browser does not support the video tag.
       </video>
