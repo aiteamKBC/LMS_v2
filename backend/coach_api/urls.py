@@ -2,6 +2,7 @@ from django.urls import path
 
 from .ai_marking import coach_marking_ai_feedback, coach_marking_ai_prompt
 from .csrf import coach_csrf_token
+from .bulk_attendance import coach_bulk_attendance
 from . import personal_learning
 from .monthly_reports import coach_monthly_report_detail, coach_monthly_reports
 from .meeting_reminders import coach_meeting_reminder
@@ -88,6 +89,7 @@ urlpatterns = [
     path('coach/imported-review-history', coach_imported_review_history, name='coach-imported-review-history'),
     path('coach/caseload/<int:learner_id>/coach-rag', coach_caseload_coach_rag, name='coach-caseload-coach-rag'),
     path('coach/attendance', coach_attendance, name='coach-attendance'),
+    path('coach/attendance/bulk', coach_bulk_attendance, name='coach-bulk-attendance'),
     path('coach/attendance/details', coach_attendance_details, name='coach-attendance-details'),
     path('coach/attendance/manual', coach_manual_attendance, name='coach-manual-attendance-create'),
     path('coach/attendance/manual/<int:record_id>', coach_manual_attendance, name='coach-manual-attendance-detail'),

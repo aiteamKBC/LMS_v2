@@ -169,6 +169,7 @@ class RecoverySubmissionTests(SimpleTestCase):
              patch('learner_api.absence_reports.learner_profile_for_source', return_value=MIRROR), \
              patch('learner_api.absence_reports.CoachAbsenceReport.objects') as manager, \
              patch('learner_api.absence_reports.validate_alternative_occurrence', return_value={'id': 'target-occurrence'}) as validate, \
+             patch('learner_api.absence_reports._email_learner_alternative_invite') as invite, \
              patch('learner_api.absence_reports.record_reported_absence') as record_absence, \
              patch('learner_api.absence_reports.transaction.atomic', return_value=nullcontext()), \
              patch('learner_api.absence_reports.email_azure.send_mail', return_value=(True, 'sent')) as send_mail, \
@@ -185,6 +186,7 @@ class RecoverySubmissionTests(SimpleTestCase):
                 'apprenticeship', 12)
 
         self.assertEqual(response.status_code, 201)
+        invite.assert_called_once_with(manager.create.return_value, 'target-occurrence')
         self.assertEqual(manager.create.call_args.kwargs['status'], 'approved')
         self.assertEqual(manager.create.call_args.kwargs['recovery_method'], 'alternative')
         self.assertEqual(manager.create.call_args.kwargs['catchup_event_key'], 'alternative:target-occurrence')

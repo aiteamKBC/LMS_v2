@@ -121,7 +121,7 @@ def confirm_attendance(request, kind, learner_id):
             return JsonResponse({'error': 'The lecture duration is not available. Please contact support.'}, status=409)
         if lecture.get('attendanceConfirmed'):
             return JsonResponse(confirmation_payload(lecture['id'], round(lecture['creditedMinutes'] * 60), already_recorded=True))
-        if lecture['status'] in {'completed', 'late'}:
+        if lecture['status'] in {'present', 'completed', 'late'}:
             return JsonResponse({'error': 'Attendance has already been recorded for this lecture.'}, status=409)
         return JsonResponse(save_confirmation(source, lecture))
     except ValueError as error:
