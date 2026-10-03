@@ -6,7 +6,7 @@ from django.http import JsonResponse
 from django.middleware.csrf import get_token
 from django.utils import timezone
 
-from .event_rsvp import configure_campaign, recipient_for_token, save_rsvp, send_invitations
+from .event_rsvp import configure_campaign, recipient_for_token, reset_failed_recipients, save_rsvp, send_invitations
 from .feedback import _answer_empty, _iso, _section_dict, _valid_answer
 from .helpers import json_body, json_error
 from .models import (
@@ -50,12 +50,16 @@ def campaign(request, event_id):
     payload = json_body(request) or {}
     action = payload.get('action')
     if action == 'configure':
+        retry_emails = payload.get('retryEmails') or []
+        if not isinstance(retry_emails, list):
+            return json_error('Retry recipients must be a list of email addresses.')
         try:
             current = configure_campaign(
                 event=event, form_id=payload.get('formId'),
                 learner_ids=payload.get('learnerIds') or [], guests=payload.get('guests') or [],
                 created_by=actor_name(request) or 'Staff',
             )
+            reset_failed_recipients(current, retry_emails)
         except (TypeError, ValueError) as exc:
             return json_error(str(exc) or 'Could not configure RSVP campaign.')
         return JsonResponse({
@@ -67,17 +71,19 @@ def campaign(request, event_id):
     if current is None:
         return json_error('Configure the RSVP audience before sending.', status=409)
     resend_all = payload.get('resendAll') is True
+    pending_only = payload.get('pendingOnly') is True and not resend_all
     if resend_all:
         current.recipients.filter(revoked_at__isnull=True).update(
             invite_status='pending', invitation_sent_at=None, invitation_error='',
             updated_at=timezone.now(),
         )
+    statuses = ['pending'] if pending_only else ['pending', 'failed']
     recipients = list(current.recipients.filter(
-        revoked_at__isnull=True, invite_status__in=['pending', 'failed'],
+        revoked_at__isnull=True, invite_status__in=statuses,
     ).order_by('id')[:100])
     results = send_invitations(current, recipients)
     remaining = current.recipients.filter(
-        revoked_at__isnull=True, invite_status__in=['pending', 'failed'],
+        revoked_at__isnull=True, invite_status__in=statuses,
     ).count()
     return JsonResponse({
         'attempted': len(results), 'sent': sum(item['sent'] for item in results),

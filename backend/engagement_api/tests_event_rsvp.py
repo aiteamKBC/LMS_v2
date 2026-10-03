@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from unittest import mock
 
@@ -7,7 +8,7 @@ from login.api_gate import rule_for
 
 from . import event_rsvp_views
 from .event_emails import render_email
-from .event_rsvp import rsvp_link, save_rsvp
+from .event_rsvp import reset_failed_recipients, rsvp_link, save_rsvp
 
 
 class EventRsvpSecurityTests(SimpleTestCase):
@@ -29,6 +30,53 @@ class EventRsvpSecurityTests(SimpleTestCase):
             response = event_rsvp_views.public_access(request)
         self.assertEqual(response.status_code, 404)
         self.assertIn(b'invalid or has expired', response.content)
+
+
+class EventRsvpBatchTests(SimpleTestCase):
+    def test_upload_retry_only_resets_failed_active_recipients(self):
+        recipients = mock.MagicMock()
+        campaign = SimpleNamespace(recipients=recipients)
+
+        updated = reset_failed_recipients(campaign, [' Alex@Example.com ', 'alex@example.com'])
+
+        self.assertEqual(updated, recipients.filter.return_value.update.return_value)
+        recipients.filter.assert_called_once()
+        filters = recipients.filter.call_args.kwargs
+        self.assertEqual(filters['revoked_at__isnull'], True)
+        self.assertEqual(filters['invite_status'], 'failed')
+        self.assertEqual(filters['recipient_email__in'], {'alex@example.com'})
+        recipients.filter.return_value.update.assert_called_once()
+        self.assertEqual(recipients.filter.return_value.update.call_args.kwargs['invite_status'], 'pending')
+
+    def test_pending_only_batch_leaves_failed_recipients_for_explicit_retry(self):
+        event = SimpleNamespace(id=4)
+        recipient = SimpleNamespace(id=12)
+        recipient_query = mock.MagicMock()
+        recipient_query.order_by.return_value.__getitem__.return_value = [recipient]
+        recipient_query.count.return_value = 0
+        recipients = mock.MagicMock()
+        recipients.filter.return_value = recipient_query
+        current = SimpleNamespace(recipients=recipients)
+        event_query = mock.MagicMock()
+        event_query.first.return_value = event
+        campaign_query = mock.MagicMock()
+        campaign_query.filter.return_value.first.return_value = current
+        request = RequestFactory().post(
+            '/engagement_api/feedback/events/4/rsvp/',
+            data=json.dumps({'action': 'send', 'pendingOnly': True}),
+            content_type='application/json',
+        )
+
+        with mock.patch.object(event_rsvp_views.Event.objects, 'filter', return_value=event_query), \
+             mock.patch.object(event_rsvp_views.EventRsvpCampaign.objects, 'select_related', return_value=campaign_query), \
+             mock.patch.object(event_rsvp_views, 'send_invitations', return_value=[{'sent': True}]) as send:
+            response = event_rsvp_views.campaign.__wrapped__(request, event_id=4)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(json.loads(response.content), {'attempted': 1, 'sent': 1, 'failed': 0, 'remaining': 0})
+        send.assert_called_once_with(current, [recipient])
+        self.assertEqual(recipients.filter.call_args_list[0].kwargs['invite_status'], ['pending'])
+        self.assertEqual(recipients.filter.call_args_list[1].kwargs['invite_status'], ['pending'])
 
 
 class EventEmailRenderingTests(SimpleTestCase):
