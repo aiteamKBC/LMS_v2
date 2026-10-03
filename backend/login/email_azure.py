@@ -55,7 +55,9 @@ import logging
 import os
 import threading
 import time
+from functools import lru_cache
 from html import escape
+from pathlib import Path
 
 import httpx
 
@@ -190,11 +192,61 @@ def _access_token(force_refresh=False):
 
 def _file_attachment(item):
     import base64
-    return {
+    attachment = {
         "@odata.type": "#microsoft.graph.fileAttachment",
         "name": item["name"],
         "contentType": item.get("content_type") or "application/octet-stream",
         "contentBytes": base64.b64encode(item["content"]).decode("ascii"),
+    }
+    if item.get("content_id"):
+        # An inline part. The HTML names it as ``cid:<content_id>``, so the
+        # picture travels inside the message instead of being fetched from a
+        # server the reader's mail client may not be able to reach -- and that
+        # Gmail and Outlook both hold back until the reader asks for images.
+        attachment["isInline"] = True
+        attachment["contentId"] = item["content_id"]
+    return attachment
+
+
+#: The crest, carried by any message whose HTML names it. See
+#: ``brand_logo_attachment`` for why it is embedded rather than linked.
+BRAND_LOGO_CID = "kbc-brand-logo"
+_BRAND_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "report_logo_kent.png"
+
+
+@lru_cache(maxsize=1)
+def _brand_logo_bytes():
+    """Read once per process. ~62 KB, so every send would otherwise re-read it."""
+    try:
+        return _BRAND_LOGO_PATH.read_bytes()
+    except OSError:
+        logger.warning(
+            "Brand logo missing at %s -- mail will fall back to its alt text.", _BRAND_LOGO_PATH,
+        )
+        return b""
+
+
+def brand_logo_attachment():
+    """The logo as an inline attachment, or None when the file is unreadable.
+
+    Linking it (``<img src="https://...">``) would tie the picture to
+    FRONTEND_URL being reachable from wherever the mail is opened. It is not
+    reachable from a developer machine, where it is ``localhost``, and need not
+    be from a locked-down corporate network -- and both Gmail and Outlook hold
+    external images back until the reader allows them, so the first impression
+    of a branded mail would be a broken box. An inline part is simply there.
+
+    None rather than raising: a missing asset must not stop a tutor being told
+    about their module. The ``alt`` text carries the brand name either way.
+    """
+    raw = _brand_logo_bytes()
+    if not raw:
+        return None
+    return {
+        "name": "kent-business-college.png",
+        "content_type": "image/png",
+        "content": raw,
+        "content_id": BRAND_LOGO_CID,
     }
 
 
@@ -207,6 +259,9 @@ def send_mail(*, to, subject, html_body, text_body=None, sender_name=None, save_
 
     ``attachments`` is an optional list of ``{"name", "content_type", "content"}``
     (content as bytes), sent as Graph file attachments -- e.g. a calendar invite.
+    An item may also carry ``content_id``, which makes it an inline part the
+    HTML can show with ``<img src="cid:...">``. The brand logo is appended
+    automatically when the HTML names it, so templates need only reference it.
 
     ``sent`` is True only when Graph accepted it. When Azure is not configured
     this returns ``(False, "not-configured: …")`` after logging the message —
@@ -237,6 +292,13 @@ def send_mail(*, to, subject, html_body, text_body=None, sender_name=None, save_
                 missing, to, subject,
             )
         return False, f"not-configured: {missing}"
+
+    # A template shows the logo by naming its cid; carrying it is this
+    # function's job, so no call site has to know the picture exists.
+    if html_body and f"cid:{BRAND_LOGO_CID}" in html_body:
+        logo = brand_logo_attachment()
+        if logo:
+            attachments = [*(attachments or []), logo]
 
     cfg = mail_config()
     try:
@@ -638,12 +700,26 @@ def access_request_message(*, requester_name, requester_email, console_url):
     return subject, html, text
 
 
-def _detail_table(pairs):
+# ---------------------------------------------------------------------------
+# Staffing notifications
+# ---------------------------------------------------------------------------
+# Unlike the invitation/reset mails above, these carry no token and no secret —
+# only the delivery facts a tutor needs in order to know what they are teaching,
+# to whom, and when. That is why the body is a details table rather than a bare
+# call-to-action: the mail has to be useful when read on a phone without ever
+# opening the platform.
+
+
+def _detail_table(pairs, label_color="#616e7c", value_color="#1f2933", row_padding="4px"):
     """Two-column label/value rows. Pairs with an empty value are dropped.
 
     Dropping blanks rather than printing "—" matters here: a module authored
     before its group has a schedule would otherwise mail a table half full of
     placeholders, which reads as broken data instead of detail-not-set-yet.
+
+    The colours are arguments because two different mails use this: the defaults
+    are the neutral pair the access-request mail has always had, and the module
+    card passes the brand's own.
     """
     rows = []
     for label, value in pairs:
@@ -652,9 +728,9 @@ def _detail_table(pairs):
             continue
         rows.append(
             '<tr>'
-            '<td style="padding:4px 12px 4px 0;font-size:13px;color:#616e7c;'
+            f'<td style="padding:{row_padding} 14px {row_padding} 0;font-size:13px;color:{label_color};'
             'white-space:nowrap;vertical-align:top;">' + escape(str(label)) + '</td>'
-            '<td style="padding:4px 0;font-size:13px;color:#1f2933;'
+            f'<td style="padding:{row_padding} 0;font-size:13px;color:{value_color};'
             'font-weight:600;vertical-align:top;">' + escape(text) + '</td>'
             '</tr>'
         )
@@ -664,3 +740,177 @@ def _detail_table(pairs):
         '<table role="presentation" cellpadding="0" cellspacing="0" '
         'style="width:100%;border-collapse:collapse;">' + "".join(rows) + '</table>'
     )
+
+
+def _module_card(module):
+    """One assigned module, rendered as a titled details block."""
+    heading = escape(str(module.get("name") or "Untitled module"))
+    code = str(module.get("code") or "").strip()
+    code_html = (
+        f'<div style="margin:3px 0 12px;font-size:11px;color:{_LEARNER_MUTED};'
+        f'letter-spacing:0.5px;font-family:Consolas,Menlo,monospace;">{escape(code)}</div>'
+        if code else '<div style="height:12px;font-size:0;line-height:0;">&nbsp;</div>'
+    )
+    details = _detail_table([
+        ("Programme", module.get("programme")),
+        ("Cohort", module.get("cohort")),
+        ("Group", module.get("group")),
+        ("Schedule", module.get("schedule")),
+        ("Runs", module.get("dates")),
+        ("Sessions", module.get("sessions")),
+        ("Off-the-job hours", module.get("otjh")),
+        ("Group coach", module.get("coach")),
+    ], label_color=_LEARNER_MUTED, value_color=_LEARNER_TEXT, row_padding="5px")
+    return (
+        '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" '
+        f'style="margin:0 0 14px;border:1px solid {_LEARNER_BORDER};border-radius:10px;'
+        f'border-collapse:separate;background:{_LEARNER_WASH};">'
+        # A hairline of the brand accent along the top, so a run of several
+        # modules reads as a stack of cards rather than one long table.
+        f'<tr><td style="height:3px;background:{_LEARNER_ACCENT};font-size:0;'
+        'line-height:0;">&nbsp;</td></tr>'
+        '<tr><td style="padding:16px 18px 18px;">'
+        f'<div style="font-size:17px;font-weight:700;color:{_LEARNER_DEEP};'
+        'line-height:1.3;">' + heading + '</div>'
+        f'{code_html}'
+        f'<div style="height:1px;background:{_LEARNER_BORDER};font-size:0;line-height:0;'
+        'margin:0 0 12px;">&nbsp;</div>'
+        f'{details}'
+        '</td></tr></table>'
+    )
+
+
+def _module_text(module):
+    lines = [f"- {module.get('name') or 'Untitled module'}"]
+    if str(module.get("code") or "").strip():
+        lines.append(f"    {'Module ID:':<14}{module['code']}")
+    for label, key in (
+        ("Programme", "programme"),
+        ("Cohort", "cohort"),
+        ("Group", "group"),
+        ("Schedule", "schedule"),
+        ("Runs", "dates"),
+        ("Sessions", "sessions"),
+        ("OTJ hours", "otjh"),
+        ("Group coach", "coach"),
+    ):
+        value = str(module.get(key) or "").strip()
+        if value:
+            lines.append(f"    {label + ':':<14}{value}")
+    return "\n".join(lines)
+
+
+def tutor_assignment_message(*, tutor_name, modules, workspace_url):
+    """Tell a tutor which modules they have just been put on.
+
+    ``modules`` is a list of already-formatted dicts (name, code, programme,
+    cohort, group, schedule, dates, sessions, otjh, coach) — this function does
+    no database work and no date formatting, so it stays testable on its own and
+    the curriculum layer keeps ownership of what a "schedule" reads like.
+
+    One mail covers every module in the batch. A wizard save that puts a tutor on
+    six modules at once should land as one message, not six.
+    """
+    modules = list(modules or [])
+    greeting = f"Hello {tutor_name}," if tutor_name else "Hello,"
+    count = len(modules)
+
+    if count == 1:
+        subject = f"You have been assigned to {modules[0].get('name') or 'a module'}"
+        lead = "You have been assigned as the tutor for the following module."
+    else:
+        subject = f"You have been assigned to {count} modules"
+        lead = f"You have been assigned as the tutor for the following {count} modules."
+    subject = f"{subject} — {_BRAND}"
+
+    cards = "".join(_module_card(module) for module in modules)
+    # The line the inbox shows beside the subject. Without one, Gmail pulls the
+    # greeting ("Hello Osama Kord,"), which tells the reader nothing the subject
+    # has not already told them.
+    first = modules[0] if modules else {}
+    preheader = escape(" · ".join(part for part in [
+        str(first.get("name") or "").strip(),
+        str(first.get("schedule") or "").strip(),
+        str(first.get("dates") or "").strip(),
+    ] if part) or lead)
+    heading_line = (
+        "You are now teaching this module" if count == 1
+        else f"You are now teaching {count} modules"
+    )
+    html = f"""\
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>{escape(subject)}</title>
+  </head>
+  <body style="margin:0;padding:0;background:{_LEARNER_SOFT};font-family:Segoe UI,Helvetica,Arial,sans-serif;color:{_LEARNER_TEXT};-webkit-font-smoothing:antialiased;">
+    <div style="display:none;max-height:0;overflow:hidden;font-size:0;line-height:0;color:{_LEARNER_SOFT};opacity:0;">{preheader}</div>
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:{_LEARNER_SOFT};">
+      <tr>
+        <td align="center" style="padding:28px 12px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:620px;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid {_LEARNER_BORDER};">
+            <tr>
+              <td align="center" style="padding:30px 28px 22px;background:#ffffff;">
+                <img src="cid:{BRAND_LOGO_CID}" width="136" alt="{_BRAND}"
+                     style="display:block;width:136px;max-width:136px;height:auto;border:0;outline:none;text-decoration:none;">
+              </td>
+            </tr>
+            <tr>
+              <td style="height:4px;background:{_LEARNER_PRIMARY};font-size:0;line-height:0;">&nbsp;</td>
+            </tr>
+            <tr>
+              <td style="padding:30px 28px 8px;">
+                <p style="margin:0 0 6px;font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:{_LEARNER_ACCENT};">Teaching assignment</p>
+                <h1 style="margin:0 0 18px;font-size:23px;line-height:1.25;color:{_LEARNER_DEEP};font-weight:700;">{escape(heading_line)}</h1>
+                <p style="margin:0 0 6px;font-size:15px;line-height:1.6;color:{_LEARNER_TEXT};">{escape(greeting)}</p>
+                <p style="margin:0 0 22px;font-size:15px;line-height:1.6;color:{_LEARNER_TEXT};">{escape(lead)}</p>
+                {cards}
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:26px 0 4px;">
+                  <tr>
+                    <td align="center" bgcolor="{_LEARNER_PRIMARY}" style="border-radius:9px;">
+                      <a href="{escape(workspace_url)}" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:9px;">Open your tutor workspace &rarr;</a>
+                    </td>
+                  </tr>
+                </table>
+                <p style="margin:10px 0 0;font-size:12px;color:{_LEARNER_MUTED};word-break:break-all;">{escape(workspace_url)}</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:22px 28px 26px;">
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:{_LEARNER_SOFT};border-radius:10px;">
+                  <tr>
+                    <td style="padding:14px 16px;font-size:13px;line-height:1.6;color:{_LEARNER_MUTED};">
+                      Session content, learners and KSB mappings for each module are in the workspace.
+                      If any of these details look wrong, reply to your curriculum lead rather than to this address.
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:16px 28px;background:#ffffff;font-size:12px;color:{_LEARNER_MUTED};border-top:1px solid {_LEARNER_BORDER};">
+                This is an automated message from the {_BRAND} learning platform. Please do not reply.
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>"""
+
+    text = "\n".join([
+        greeting,
+        "",
+        lead,
+        "",
+        "\n\n".join(_module_text(module) for module in modules),
+        "",
+        f"Open your tutor workspace:\n{workspace_url}",
+        "",
+        "This is an automated message. Please do not reply.",
+    ])
+    return subject, html, text

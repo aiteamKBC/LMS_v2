@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
 import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
@@ -15,6 +15,8 @@ import {
   programmeIdentity,
   scheduleLabel,
   upsertById,
+  wantsWorkspaceEdit,
+  WORKSPACE_EDIT_PARAM,
 } from '../shared/entities/model';
 import { CohortFormDrawer, GroupFormDrawer } from '../shared/entities/forms';
 import { ModuleFormDrawer, moduleFormTarget, type ModuleFormTarget } from '../shared/entities/moduleForm';
@@ -47,6 +49,7 @@ const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.4fr)_minmax(140px,1fr)_minma
 
 export default function CohortWorkspacePage() {
   const { id = '' } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const {
     programmes, cohorts, groups, modules, holidays, coaches, tutors,
     loading, loaded, refreshing, error, reload, applyLocal,
@@ -65,6 +68,19 @@ export default function CohortWorkspacePage() {
   useEffect(() => () => window.clearTimeout(highlightTimer.current), []);
 
   const cohort = useMemo(() => findCohort(cohorts, id), [cohorts, id]);
+
+  // Arrived from an "edit this cohort" link elsewhere in the curriculum. It
+  // presses the same Edit cohort button the header carries, and waits for the
+  // record so the form seeds from it rather than opening as a blank new cohort.
+  // The flag is then dropped from the URL, so closing the drawer — or coming
+  // back to this page later — does not reopen it.
+  useEffect(() => {
+    if (!cohort || !wantsWorkspaceEdit(searchParams)) return;
+    setCohortDrawerOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete(WORKSPACE_EDIT_PARAM);
+    setSearchParams(next, { replace: true });
+  }, [cohort, searchParams, setSearchParams]);
   const programme = useMemo(
     () => (cohort ? cohortProgramme(cohort, programmes) : undefined),
     [cohort, programmes],

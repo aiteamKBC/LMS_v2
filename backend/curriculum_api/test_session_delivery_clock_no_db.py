@@ -38,6 +38,9 @@ class SessionDeliveryClockTests(unittest.TestCase):
             'apply_module_session_plan_to_weeks', 'build_sessions_from_authoring_modules',
             'module_expected_teams_occurrence_keys', 'authoring_session_links_by_catalogue',
             'curriculum_module_session_plan',
+            # The primary/additional date resolution both walks share.
+            'module_week_delivery_slots', 'delivery_slots_by_catalogue',
+            'resolved_live_session_date',
             'live_session_booked_on_module_calendar', 'module_has_booked_series', 'live_session_meeting_scope',
         }
         tree = ast.parse((ROOT / 'views.py').read_text(encoding='utf-8-sig'))

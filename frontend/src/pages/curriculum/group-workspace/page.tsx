@@ -15,6 +15,8 @@ import {
   resolveGroupContext,
   scheduleLabel,
   upsertById,
+  wantsWorkspaceEdit,
+  WORKSPACE_EDIT_PARAM,
 } from '../shared/entities/model';
 import { GroupFormDrawer } from '../shared/entities/forms';
 import { ModuleFormDrawer, moduleFormTarget, type ModuleFormTarget } from '../shared/entities/moduleForm';
@@ -44,7 +46,7 @@ const MODULE_GRID = 'grid grid-cols-[minmax(190px,1.5fr)_minmax(130px,1fr)_70px_
 
 export default function GroupWorkspacePage() {
   const { id = '' } = useParams();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const {
     programmes, cohorts, groups, modules, coaches, tutors, holidays,
     loading, loaded, refreshing, error, reload, applyLocal,
@@ -96,6 +98,19 @@ export default function GroupWorkspacePage() {
       void reload({ skipCache: true });
     }
   }, [group, loaded, loading, reload, retriedMissingGroup]);
+
+  // Arrived from an "edit this group" link elsewhere in the curriculum. It
+  // presses the same Edit group button the header carries, and waits for the
+  // record so the form seeds from it rather than opening as a blank new group.
+  // The flag is then dropped from the URL, so closing the drawer -- or coming
+  // back to this page later -- does not reopen it.
+  useEffect(() => {
+    if (!group || !wantsWorkspaceEdit(searchParams)) return;
+    setDrawerOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete(WORKSPACE_EDIT_PARAM);
+    setSearchParams(next, { replace: true });
+  }, [group, searchParams, setSearchParams]);
 
   const groupDisplayName = cleanText(group?.name) || cleanText(searchParams.get('groupName')) || 'Group';
   const context = useMemo(

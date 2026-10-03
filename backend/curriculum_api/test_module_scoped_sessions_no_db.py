@@ -46,7 +46,12 @@ class ModuleScopedSessionTests(unittest.TestCase):
                 'startTime': row['session_start_time'], 'endTime': row['session_end_time'], 'status': row['status']},
             scheduling_holidays_from=lambda rows, _start, excluded: [row for row in rows if row['id'] not in (excluded or [])],
             holiday_date_set=lambda rows: {date.fromisoformat(row['date']) for row in rows},
-            authoring_session_links_by_catalogue=lambda ids: {key: self.links.get(key, []) for key in ids},
+            # `**_context` absorbs the module/group/holiday rows the caller now
+            # hands over so dating each week's primary live session costs no
+            # extra round trip. The links themselves are this stub's answer.
+            authoring_session_links_by_catalogue=lambda ids, **_context: {
+                key: self.links.get(key, []) for key in ids
+            },
             module_live_session_clock=lambda module, _start, _duration, booked=False, session_date='', group_row=None: (
                 (group_row or {}).get('session_start_time') or '00:00', (group_row or {}).get('session_end_time') or '00:00', 120),
             parse_date=lambda value: date.fromisoformat(value) if value else None,

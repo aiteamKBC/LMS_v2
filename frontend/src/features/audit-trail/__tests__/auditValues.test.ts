@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { auditFieldValueLabel, auditIdList, auditValueLabel } from '../activityTime';
+import { auditFieldLabel, auditFieldValueLabel, auditIdList, auditIdListInfo, auditValueLabel } from '../activityTime';
 
 /**
  * How a saved value is written out.
@@ -22,6 +22,25 @@ describe('auditIdList', () => {
     expect(auditIdList(['APTEM-GROUP-1'])).toEqual(['APTEM-GROUP-1']);
     expect(auditIdList('not a list')).toEqual([]);
   });
+
+  it('salvages the whole ids out of a list the log cut short', () => {
+    // The last id was severed mid-way and has no closing quote, so it is left
+    // out rather than named from half of itself.
+    const info = auditIdListInfo('["APTEM-GROUP-1", "APTEM-GROUP-2", "APTEM-GROUP-7a51047');
+    expect(info).toEqual({ ids: ['APTEM-GROUP-1', 'APTEM-GROUP-2'], cut: true });
+    expect(auditIdListInfo('["APTEM-GROUP-1"]').cut).toBe(false);
+  });
+});
+
+describe('auditFieldLabel', () => {
+  it('reads a link column as the records it links, not as its storage', () => {
+    expect(auditFieldLabel('Group ids')).toBe('Groups');
+    expect(auditFieldLabel('Module ids')).toBe('Modules');
+    expect(auditFieldLabel('Parent id')).toBe('Parent');
+    // A label the backend named for itself is left alone.
+    expect(auditFieldLabel('Title')).toBe('Title');
+    expect(auditFieldLabel('Teams sync state')).toBe('Teams sync state');
+  });
 });
 
 describe('auditFieldValueLabel', () => {
@@ -40,11 +59,35 @@ describe('auditFieldValueLabel', () => {
     expect(after).toContain('Feb 2025 · Group C');
   });
 
-  it('keeps an id that could not be named rather than dropping it', () => {
+  it('counts an id that could not be named rather than printing it', () => {
     // A lookup miss is a gap in the lookup, not evidence the record was never
-    // in the list. Dropping it would make the side shorter than what was saved.
+    // in the list, so the side must not read as shorter than what was saved --
+    // which is what the count is for. The identifier itself is no use to a
+    // reader, so it is not shown; the raw value stays in the tooltip.
     const label = auditFieldValueLabel('Group ids', ['APTEM-GROUP-1', 'APTEM-GROUP-99'], [], 'after', names);
-    expect(label).toBe('Feb 2025 · Group A, APTEM-GROUP-99');
+    expect(label).toBe('Feb 2025 · Group A, and 1 more that could not be named');
+    expect(label).not.toContain('APTEM-GROUP-99');
+  });
+
+  it('names what it can out of a list the log had to cut short', () => {
+    // The reported screen: a long link field stored cut off mid-list, so it
+    // never closes its bracket, cannot be parsed, and used to be printed raw.
+    const cut = '["APTEM-GROUP-1", "APTEM-GROUP-2", "APTEM-GROUP-…';
+    const label = auditFieldValueLabel('Group ids', cut, [], 'before', names);
+    expect(label).toBe('Feb 2025 · Group A, Feb 2025 · Group B, …');
+    expect(label).not.toContain('APTEM-GROUP');
+  });
+
+  it('summarises a cut list as a floor when nothing can be named', () => {
+    const cut = '["APTEM-GROUP-98", "APTEM-GROUP-99", "APTEM-GROUP-…';
+    // "At least", because the ids after the cut were never delivered.
+    expect(auditFieldValueLabel('Group ids', cut, [], 'before', new Map()))
+      .toBe('At least 2 linked groups');
+  });
+
+  it('names a single id standing on its own', () => {
+    expect(auditFieldValueLabel('Group id', 'APTEM-GROUP-3', [], 'after', names))
+      .toBe('Feb 2025 · Group C');
   });
 
   it('prefers the names the save recorded itself over the lookup', () => {

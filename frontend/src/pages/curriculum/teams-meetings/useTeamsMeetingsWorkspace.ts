@@ -231,7 +231,12 @@ function liveSessionScopeRows(module: ModuleCatalogueItem | null): LiveSessionSc
       componentId: String(component.id),
       weekNumber: Number(week.weekNumber) || 0,
       title: cleanText(component.title) || cleanText(week.title) || `Week ${week.weekNumber}`,
-      date: cleanText(component.settings?.sessionDate || week.sessionDate).slice(0, 10),
+      // The component's own date and nothing else. The backend has already
+      // stamped the week's date onto its PRIMARY live session, so that one
+      // reads it here; falling back to `week.sessionDate` only ever answered
+      // for an ADDITIONAL session, which would then show the primary's date
+      // and claim a day nobody gave it. Undated is the truth for that one.
+      date: cleanText(component.settings?.sessionDate).slice(0, 10),
       scope: liveSessionMeetingScope(component.settings, hasSeries),
       open: meetingScopeIsOpen(component.settings),
     })));

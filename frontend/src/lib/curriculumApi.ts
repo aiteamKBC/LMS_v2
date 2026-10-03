@@ -1,3 +1,4 @@
+import { coachFetch } from '@/lib/coachFetch';
 import { publishCrossTabWrite, subscribeCrossTabWrites } from '@/lib/crossTabWrites';
 
 export type CurriculumStatus = 'active' | 'draft' | 'archived' | 'published' | 'planned' | 'completed' | string;
@@ -4488,6 +4489,87 @@ export interface StaleTeamsCalendar {
 
 export function updateCurriculumModule(id: string, input: CurriculumModuleInput) {
   return patchJson<{ updated: boolean; module: CurriculumModule; revision?: string; teamsCalendarsToUpdate?: StaleTeamsCalendar[] }>(`/curriculum/modules/${encodeURIComponent(id)}/`, input);
+}
+
+/**
+ * Tell a module's tutor they have been put on it.
+ *
+ * One mail covers every id in the list, because one drawer save can attach the
+ * module to several groups at once -- one delivery per group, all carrying the
+ * same tutor -- and that is one decision, not three. Every id must therefore
+ * name a module with the same tutor; the backend refuses a mixed list rather
+ * than guessing who to write to.
+ *
+ * Only ever called because somebody ticked the box: assigning a tutor does not
+ * mail them on its own (see curriculum_api/tutor_notifications.py).
+ */
+export interface TutorAssignmentEmailStatus {
+  tutor: { name: string; hasEmail: boolean } | null;
+  /** How many deliveries were asked about. */
+  total: number;
+  /** How many of them this tutor has actually been emailed about. */
+  emailed: number;
+  /** The most recent successful send across them, ISO, or null. */
+  lastSentAt: string | null;
+  deliveries: { moduleId: string; emailed: boolean; lastSent: { status: string | null; at: string | null } | null }[];
+}
+
+/**
+ * Whether this tutor has already been told about these deliveries.
+ *
+ * The answer comes from the assignment ledger, which is keyed on (tutor,
+ * module) -- so it is per tutor by construction, and a module whose tutor
+ * changed reports nothing for the new name. `tutorName` asks about a tutor the
+ * module does not carry yet, which is what the drawer needs while somebody is
+ * still choosing one.
+ *
+ * A read, so it must not disturb the caches a write would: see `isReadOnlyPost`
+ * for the same idea on the POST side.
+ */
+export function fetchTutorAssignmentEmailStatus(moduleIds: string[], tutorName: string, signal?: AbortSignal) {
+  const params = new URLSearchParams({ moduleIds: moduleIds.join(',') });
+  if (tutorName) params.set('tutor', tutorName);
+  return tutorEmailJson<TutorAssignmentEmailStatus>(`${tutorEmailUrl()}?${params.toString()}`, { signal });
+}
+
+export function sendTutorAssignmentEmail(moduleIds: string[]) {
+  return tutorEmailJson<{ sent: boolean; tutor: string; modules: number }>(tutorEmailUrl(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ moduleIds }),
+  });
+}
+
+function tutorEmailUrl() {
+  return `${API_BASE_URL}/curriculum/modules/tutor-email/`;
+}
+
+/**
+ * The two tutor-email calls go through `coachFetch`, not this module's own
+ * `fetchJson`, and that is not an oversight.
+ *
+ * Almost every curriculum write is `@csrf_exempt` (61 of them in views.py), so
+ * `fetchJson` never had to send a CSRF token. `tutor_notifications` is not
+ * exempt -- it is a view that sends real mail to a real person, and it keeps the
+ * protection -- so a POST from `fetchJson` is rejected by Django's CSRF
+ * middleware before the view runs, which surfaced as a bare "could not be sent".
+ * `coachFetch` fetches and attaches the token, which is exactly why the module
+ * workspace's own "Email tutor" button has always used it.
+ *
+ * The right fix is to send the token, never to exempt the view.
+ */
+async function tutorEmailJson<T>(url: string, init?: globalThis.RequestInit): Promise<T> {
+  const response = await coachFetch(url, init);
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    // The server's own sentence when it has one -- "Amira has no email address
+    // in the staff directory" tells the reader what to do; "502" does not.
+    throw new Error(
+      (data && typeof data.error === 'string' && data.error)
+      || `The tutor email request failed (${response.status}).`,
+    );
+  }
+  return data as T;
 }
 
 export function updateCurriculumModuleCover(id: string, coverImage: string) {
