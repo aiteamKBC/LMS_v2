@@ -73,6 +73,7 @@ export function fetchLearnerProfileShell(learnerId: string) {
 }
 
 export const fetchLearnerProfileDetail = fetchLearnerDetail;
-export const fetchLearnerProfileMetrics = fetchLearnerMetrics;
+export const fetchLearnerProfileMetrics = (kind: LearnerKind, id: string, signal?: AbortSignal, force = false) =>
+  fetchLearnerMetrics(kind, id, signal, force, 'learner-overview');
 export const fetchLearnerProfileActivity = fetchStudentActivity;
 

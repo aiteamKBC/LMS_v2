@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import type { KsbActivityPoint } from '@/api/learnerMetrics';
 import { formatHoursMinutes } from '@/lib/format';
 import {
   type LearnerActivityEntry,
@@ -120,12 +121,15 @@ export function useCoachLearnerCaseFileData(args: {
       let aptemActivity: StudentActivityResponse | null = null;
       if (resolvedEnrolmentId) {
         try {
-          const detailResult = await fetchAnyLearnerDetail(resolvedEnrolmentId, resolvedKind);
+          // Detail and canonical metrics are independent reads. Loading them
+          // together prevents a slow historical-activity request from holding
+          // the profile's Overall/OTJH/KSB figures behind unrelated work.
+          const [detailResult, metricsResult] = await Promise.all([
+            fetchAnyLearnerDetail(resolvedEnrolmentId, resolvedKind),
+            fetchCaseFileMetrics(resolvedKind, resolvedEnrolmentId),
+          ]);
           detail = detailResult.detail;
-          if (detail.studentActivityAvailable) {
-            aptemActivity = await fetchCaseFileStudentActivity(resolvedKind, resolvedEnrolmentId).catch(() => null);
-          }
-          learnerMetrics = await fetchCaseFileMetrics(resolvedKind, resolvedEnrolmentId);
+          learnerMetrics = metricsResult;
           const initialData = buildCaseFileData({
             learnerId: shell.identity.learnerId,
             enrolmentId: resolvedEnrolmentId,
@@ -144,6 +148,9 @@ export function useCoachLearnerCaseFileData(args: {
           if (!cancelled && initialData) {
             setData(initialData);
             setLoading(false);
+          }
+          if (detail.studentActivityAvailable) {
+            aptemActivity = await fetchCaseFileStudentActivity(resolvedKind, resolvedEnrolmentId).catch(() => null);
           }
         } catch (loadErr) {
           detailError = loadErr instanceof Error ? loadErr.message : 'Could not load learner details.';
@@ -256,16 +263,10 @@ export function formatFraction(current: number | null, total: number | null) {
   if (current === null || total === null) {
     return '--';
   }
-  return `${roundNumber(current)}/${roundNumber(total)}`;
+  return `${Number(current.toFixed(2))}/${Number(total.toFixed(2))}`;
 }
 
-function parseHoursValue(value: string | number | null | undefined): number | null {
-  if (typeof value === 'number') {
-    return Number.isFinite(value) ? value : null;
-  }
-  const match = String(value ?? '').match(/-?\d+(\.\d+)?/);
-  return match ? Number(match[0]) : null;
-}
+
 
 export function toneFromPercent(value: number | null, amberThreshold = 80) {
   if (value === null) {
@@ -319,6 +320,7 @@ type CaseFileLearnerMetrics = {
   ksbTotal: number | null;
   ksbCodes: string[];
   ksbCodeProgress: Array<{ code: string; completed: number; total: number }>;
+  ksbActivityPoints: KsbActivityPoint[];
   ksbProgress: number | null;
   ksbStatus: 'ready' | 'empty' | 'unavailable';
 };
@@ -333,7 +335,7 @@ async function fetchCaseFileMetrics(kind: LearnerKind | null, enrolmentId: strin
       programmeCompleted: metrics.programme.completed,
       programmeTotal: metrics.programme.total,
       programmeProgress: metrics.programme.percent,
-      planned: metrics.otjh.planned,
+      planned: metrics.aptem_planned_total ?? metrics.otjh.planned,
       actual: metrics.otjh.actual,
       ksbCompleted: metrics.ksb.completed,
       ksbTotal: metrics.ksb.total,
@@ -344,6 +346,7 @@ async function fetchCaseFileMetrics(kind: LearnerKind | null, enrolmentId: strin
         total: item.total,
       })),
       ksbProgress: metrics.ksb.percent,
+      ksbActivityPoints: metrics.ksb.points || [],
       ksbStatus: metrics.ksb.status,
     };
   } catch {
@@ -694,10 +697,6 @@ function buildCaseFileData(args: {
   // cumulative target-to-date or substitute OTJH progress for programme progress.
   const canonicalActual = args.learnerMetrics?.actual ?? null;
   const canonicalPlanned = args.learnerMetrics?.planned ?? null;
-  const rawDetailPlanned = parseHoursValue(args.detail?.plannedHours) ?? (args.detail?.totalExpectedOtjh || null);
-  const detailCompletedHours = canonicalActual ?? parseHoursValue(args.detail?.completedHours);
-  const detailTargetHours = canonicalPlanned ?? parseHoursValue(args.detail?.targetHours);
-  const detailPlannedHours = canonicalPlanned ?? rawDetailPlanned;
   const metricsAvailable = Boolean(args.learnerMetrics);
   const overallProgress = metricsAvailable ? args.learnerMetrics?.programmeProgress ?? null : null;
 
@@ -733,9 +732,9 @@ function buildCaseFileData(args: {
     attendancePresentCount: null,
     attendanceSessionCount: null,
     attendanceAbsentCount: null,
-    otjhCompleted: metricsAvailable ? detailCompletedHours ?? null : null,
-    otjhTarget: metricsAvailable ? detailTargetHours ?? null : null,
-    otjhPlanned: metricsAvailable ? detailPlannedHours ?? null : null,
+    otjhCompleted: metricsAvailable ? canonicalActual : null,
+    otjhTarget: metricsAvailable ? canonicalPlanned : null,
+    otjhPlanned: metricsAvailable ? canonicalPlanned : null,
     ksbProgress: metricsAvailable ? args.learnerMetrics?.ksbProgress ?? null : null,
     metricsAvailable,
     ksbStatus: args.learnerMetrics?.ksbStatus,
@@ -745,11 +744,12 @@ function buildCaseFileData(args: {
     ksbTotalCount: args.learnerMetrics?.ksbTotal ?? null,
     mappedKsbCodes: args.learnerMetrics?.ksbCodes ?? [],
     ksbCodeProgress: args.learnerMetrics?.ksbCodeProgress ?? [],
+    ksbActivityPoints: args.learnerMetrics?.ksbActivityPoints ?? [],
     evidenceCount: args.snapshot?.evidenceCount ?? args.evidence?.totalEvidence ?? null,
     startDate: args.detail?.programmeStartDate || args.shell.profile.startDate || '--',
     gatewayReviewDate: args.shell.profile.gatewayReviewDate || '--',
     plannedEndDate: args.detail?.programmeEndDate || args.shell.profile.plannedEndDate || '--',
-    totalExpectedOtjh: metricsAvailable ? detailPlannedHours ?? 0 : 0,
+    totalExpectedOtjh: metricsAvailable ? canonicalPlanned ?? 0 : 0,
     touchedKsbCodes,
     activityItems: buildActivityItems(args.snapshot, args.detail, args.evidence),
     upcomingSessions,

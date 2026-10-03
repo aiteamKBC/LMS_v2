@@ -175,14 +175,21 @@ export default function CurriculumEnglandHolidaysPage() {
   const [editingId, setEditingId] = useState<string | number | null>(null);
   const drawer = useDrawerState<ManualHolidayForm>(EMPTY_FORM);
 
-  const load = useCallback(async (signal?: AbortSignal) => {
+  /**
+   * `fresh` is for the reloads that follow a write on this page -- the GOV.UK
+   * check, and adding, editing or deleting a manual holiday. Only those need
+   * the backend to rebuild its holidays payload rather than answer from it.
+   * Opening the page is not one of them: it used to bypass both caches, which
+   * made every visit wait for a rebuild of a calendar nobody had just changed.
+   */
+  const load = useCallback(async (signal?: AbortSignal, { fresh = false } = {}) => {
     setLoading(true);
     setError(null);
     setLogError(null);
     try {
       const [calendarRows, log] = await Promise.all([
-        fetchCurriculumHolidays(signal, { skipCache: true }),
-        fetchEnglandHolidaySyncs(signal).catch(err => {
+        fetchCurriculumHolidays(signal, { skipCache: fresh, revalidate: !fresh }),
+        fetchEnglandHolidaySyncs(signal, 20, { skipCache: fresh }).catch(err => {
           if (!signal?.aborted) {
             setLogError(err instanceof Error ? err.message : 'The GOV.UK check log could not be read.');
           }
@@ -247,7 +254,7 @@ export default function CurriculumEnglandHolidaysPage() {
     setChecking(true);
     try {
       const { summary } = await refreshEnglandHolidays();
-      await load();
+      await load(undefined, { fresh: true });
       const moved = changeCount(summary);
       await showCurriculumAlert({
         title: moved ? 'GOV.UK has changed' : 'Nothing has changed',
@@ -309,7 +316,7 @@ export default function CurriculumEnglandHolidaysPage() {
       }
       drawer.close();
       setEditingId(null);
-      await load();
+      await load(undefined, { fresh: true });
       await showCurriculumAlert({
         title: editingId != null ? 'Manual holiday updated' : 'Manual holiday added',
         text: editingId != null
@@ -332,7 +339,7 @@ export default function CurriculumEnglandHolidaysPage() {
       confirmButtonText: 'Delete holiday',
       onConfirm: async () => {
         await archiveCurriculumHoliday(holiday.id);
-        await load();
+        await load(undefined, { fresh: true });
       },
       successTitle: 'Manual holiday deleted',
     });

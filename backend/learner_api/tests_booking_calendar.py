@@ -366,3 +366,62 @@ class RescheduleEndpointTests(SimpleTestCase):
             found = module._learner_booking_record("commercial", 101, record.event_key)
 
         self.assertIs(found, record)
+
+
+class CatchupBookAndLinkTests(SimpleTestCase):
+    """A catch-up booked for a reported absence is linked in the same request."""
+
+    def book(self, *, precheck=None, link_error=None):
+        from . import calendar as module
+        learner = SimpleNamespace(pk=101, username='Test Learner', email='learner@example.com',
+                                  case_owner='Coach', coach_name='Coach', coach_email='coach@example.com')
+        mirror = SimpleNamespace(id=248, coach_email='coach@example.com', coach_name='Coach',
+                                 full_name='Test Learner', email='learner@example.com')
+        source_model = Mock()
+        source_model.all_learners.filter.return_value.first.return_value = learner
+        record = SimpleNamespace(pk=1, event_key='catch-up:248:12:2026-10-15', event_type='catch-up')
+        report = SimpleNamespace(session_date=date(2026, 9, 11))
+        with patch.object(module, 'SOURCE_MODELS', {'commercial': source_model}), \
+                patch.object(module, 'learner_profile_for_source', return_value=mirror), \
+                patch('learner_api.booking_calendar.timezone.localdate', return_value=date(2026, 9, 14)), \
+                patch.object(module.CoachCalendarEvent.objects, 'filter') as events, \
+                patch('learner_api.calendar_connections.booking_conflicts', return_value=False), \
+                patch('learner_api.coach_availability.catchup_slot_is_free', return_value=True), \
+                patch('learner_api.session_recovery.check_report_can_take_catchup',
+                      side_effect=precheck, return_value=report) as check, \
+                patch('learner_api.session_recovery.link_report_to_catchup', side_effect=link_error) as link, \
+                patch('coach_api.views.cancel_reserved_calendar_event', return_value=(record, '')) as cancel, \
+                patch('coach_api.views.reserve_coach_calendar_booking', return_value=(record, True)) as reserve, \
+                patch('coach_api.views.build_booked_calendar_event', return_value={}), \
+                patch('coach_api.views.synchronize_reserved_calendar_event', return_value=(record, '', True)), \
+                patch.object(module, '_serialize_event', return_value={'eventKey': record.event_key}):
+            events.return_value.first.return_value = None
+            request = RequestFactory().post('/book/', data=json.dumps({
+                'sessionType': 'catch-up', 'scheduledDate': '2026-10-15', 'scheduledTime': '11:00',
+                'durationMinutes': 30, 'absenceReportId': 34,
+            }), content_type='application/json')
+            response = inspect.unwrap(module.learner_calendar_book)(request, 'commercial', 101)
+        return response, check, link, cancel, reserve
+
+    def test_the_new_booking_is_linked_to_the_absence_in_the_same_request(self):
+        response, check, link, cancel, _reserve = self.book()
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(json.loads(response.content)['linkedReportId'], 34)
+        check.assert_called_once_with(101, 34)
+        self.assertEqual(link.call_args.args[2:], (101, 34, 'catch-up:248:12:2026-10-15'))
+        cancel.assert_not_called()
+
+    def test_a_link_that_cannot_happen_is_refused_before_anything_is_booked(self):
+        from .session_recovery import ReportNotFound
+        response, _check, link, _cancel, reserve = self.book(precheck=ReportNotFound())
+        self.assertEqual(response.status_code, 404)
+        reserve.assert_not_called()
+        link.assert_not_called()
+
+    def test_a_failed_link_cancels_the_booking_instead_of_leaving_it_behind(self):
+        from .absence_reports import RecoveryPlanError
+        response, _check, _link, cancel, _reserve = self.book(
+            link_error=RecoveryPlanError('This catch-up is already linked to another lecture.'))
+        self.assertEqual(response.status_code, 409)
+        self.assertIn('booking was cancelled', json.loads(response.content)['error'])
+        cancel.assert_called_once()

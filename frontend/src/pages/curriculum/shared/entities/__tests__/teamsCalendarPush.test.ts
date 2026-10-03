@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { fetchCurriculumTeamsMeetingSummaries } from '@/lib/curriculumApi';
-import { fetchModuleSessionPlan, updateTeamsMeetingSchedule } from '../../../module-builder/moduleAuthoringData';
+import { fetchModuleSessionPlan, loadModuleStructure, updateTeamsMeetingSchedule } from '../../../module-builder/moduleAuthoringData';
 import { pushModulePlanToTeams } from '../teamsCalendarPush';
 
 vi.mock('@/lib/curriculumApi', async original => ({
@@ -8,7 +8,7 @@ vi.mock('@/lib/curriculumApi', async original => ({
 }));
 vi.mock('../../../module-builder/moduleAuthoringData', async original => ({
   ...(await original<typeof import('../../../module-builder/moduleAuthoringData')>()),
-  fetchModuleSessionPlan: vi.fn(), updateTeamsMeetingSchedule: vi.fn(),
+  fetchModuleSessionPlan: vi.fn(), updateTeamsMeetingSchedule: vi.fn(), loadModuleStructure: vi.fn(),
 }));
 
 beforeEach(() => {
@@ -17,6 +17,40 @@ beforeEach(() => {
     date, startTime: '09:00', endTime: '11:00', durationMinutes: 120,
   })) } as never);
   vi.mocked(updateTeamsMeetingSchedule).mockResolvedValue({ updated: true, warnings: [] } as never);
+  // No authored weeks: every planned date is the module calendar's, as before.
+  vi.mocked(loadModuleStructure).mockResolvedValue(null);
+});
+
+it('never sends a week delivered by an additional meeting, or one not yet assigned to either calendar', async () => {
+  const live = (id: string, settings: Record<string, unknown>) => ({ id, type: 'live-session', title: id, settings });
+  vi.mocked(loadModuleStructure).mockResolvedValue({ weekStructure: [
+    { weekNumber: 1, components: [live('C1', { teamsOccurrenceId: 'OCC-1', teamsSessionNumber: 1 })] },
+    { weekNumber: 2, components: [live('C2', { extraTeamsMeetingUrl: 'https://teams.example.invalid/extra' })] },
+    { weekNumber: 3, components: [live('C3', {})] },
+    { weekNumber: 4, components: [live('C4', { teamsMeetingScope: 'main' })] },
+    { weekNumber: 5, components: [live('C5', { teamsMeetingScope: 'additional' })] },
+  ] } as never);
+  vi.mocked(fetchModuleSessionPlan).mockResolvedValue({ sessions: [1, 2, 3, 4, 5].map(weekNumber => ({
+    weekNumber, date: `2026-11-0${weekNumber + 1}`, startTime: '09:00', endTime: '11:00', durationMinutes: 120,
+  })) } as never);
+  vi.mocked(fetchCurriculumTeamsMeetingSummaries).mockResolvedValue([
+    { moduleCatalogueId: 'MOD-1', liveSessionId: 'LIVE-1', organizerEmail: 'organizer@example.invalid', timeZone: 'Africa/Cairo' },
+  ] as never);
+
+  const pushed = await pushModulePlanToTeams({ moduleCatalogueId: 'MOD-1' });
+
+  const sent = vi.mocked(updateTeamsMeetingSchedule).mock.calls[0][1].scheduledOccurrences || [];
+  expect(sent.map(item => item.startDateTimeUtc.slice(0, 10))).toEqual(['2026-11-02', '2026-11-05']);
+  expect(pushed.sessionCount).toBe(2);
+});
+
+it('sends nothing when the module weeks cannot be read', async () => {
+  vi.mocked(loadModuleStructure).mockRejectedValue(new Error('Network down'));
+  vi.mocked(fetchCurriculumTeamsMeetingSummaries).mockResolvedValue([
+    { moduleCatalogueId: 'MOD-1', liveSessionId: 'LIVE-1', timeZone: 'Africa/Cairo' },
+  ] as never);
+  await expect(pushModulePlanToTeams({ moduleCatalogueId: 'MOD-1' })).rejects.toThrow('Network down');
+  expect(updateTeamsMeetingSchedule).not.toHaveBeenCalled();
 });
 
 it.each([

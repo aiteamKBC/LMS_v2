@@ -439,10 +439,13 @@ const WEEK_BUILDER_SHARED_KEYS = [
 
 // These are persisted per occurrence by the Teams attachment path. Keeping
 // them only in legacySettings disconnects previews and subsequent saves.
+// `teamsMeetingScope` is which calendar runs the session (main or additional);
+// the Teams dialog sets it and the server keeps the stored one on every save.
 const LIVE_SESSION_TRACKING_SETTING_KEYS = [
   'teamsOccurrenceId', 'teamsSessionNumber', 'teamsOnlineMeetingId',
   'teamsMeetingUrl', 'teamsWebLink', 'teamsStartDateTimeUtc',
   'teamsDurationMinutes', 'sessionDay', 'sessionRescheduled',
+  'teamsMeetingScope',
 ] as const;
 
 /**

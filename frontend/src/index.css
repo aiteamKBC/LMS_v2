@@ -97,20 +97,40 @@
   --glow-gold: 45 85% 55%;
 }
 
-/* Scrollbar — thin and refined */
+/* Scrollbar — thin, always visible, and themed app-wide. Learners rely on it
+   to see that a page or panel holds more content, so workspaces must not hide
+   it globally. Chromium/Safari use the ::-webkit-scrollbar rules (which keep
+   the hover state); Firefox, which has no ::-webkit-scrollbar, uses the
+   standard properties. The standard properties are limited to Firefox
+   because Chromium ignores ::-webkit-scrollbar styling on any element that
+   sets them. Component rules that set their own scrollbar style still win. */
+:root {
+  --app-scrollbar-track: oklch(var(--background-100));
+  --app-scrollbar-thumb: oklch(var(--foreground-300));
+  --app-scrollbar-thumb-hover: oklch(var(--foreground-400));
+}
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: oklch(var(--background-100));
+  background: var(--app-scrollbar-track);
 }
 ::-webkit-scrollbar-thumb {
-  background: oklch(var(--foreground-300));
-  border-radius: 3px;
+  background: var(--app-scrollbar-thumb);
+  border-radius: 999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: oklch(var(--foreground-400));
+  background: var(--app-scrollbar-thumb-hover);
+}
+::-webkit-scrollbar-corner {
+  background: var(--app-scrollbar-track);
+}
+@supports not selector(::-webkit-scrollbar) {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--app-scrollbar-thumb) var(--app-scrollbar-track);
+  }
 }
 
 .module-course-structure-scroll {
@@ -6999,16 +7019,12 @@ html[data-theme="light"][data-accessibility="monochrome"] {
   color: #FFFFFF;
 }
 
-[data-theme="dark"] ::-webkit-scrollbar-track {
-  background: var(--theme-page-bg);
-}
-
-[data-theme="dark"] ::-webkit-scrollbar-thumb {
-  background: rgb(161 161 170 / 0.38);
-}
-
-[data-theme="dark"] ::-webkit-scrollbar-thumb:hover {
-  background: rgb(196 181 253 / 0.58);
+/* Dark scrollbar colours feed the shared app-wide scrollbar (see "Scrollbar"
+   near the top of this file), so WebKit and Firefox stay consistent. */
+[data-theme="dark"] {
+  --app-scrollbar-track: var(--theme-page-bg);
+  --app-scrollbar-thumb: rgb(161 161 170 / 0.38);
+  --app-scrollbar-thumb-hover: rgb(196 181 253 / 0.58);
 }
 
 /* Engagement's top-achiever card predates the shared theme and carries inline

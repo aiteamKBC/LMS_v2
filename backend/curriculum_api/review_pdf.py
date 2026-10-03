@@ -487,3 +487,157 @@ def mcm_pdf_response(definition, information):
     response['Content-Disposition'] = f'attachment; filename="{prefix}-{identifier}.pdf"'
     response['Cache-Control'] = 'private, no-store'
     return response
+
+
+def build_historical_review_pdf(review, information):
+    """Render a read-only PDF from one imported Aptem review.
+
+    Imported Aptem rows are historical source data, rather than Curriculum
+    instances.  They therefore do not have the frozen LMS signature state
+    required by :func:`build_mcm_pdf`.  Keeping this renderer separate means
+    the signed-export rules for current reviews cannot be weakened while old
+    learners still get a useful document from the data that was imported.
+    """
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer
+
+    output = BytesIO()
+    page_width, page_height = landscape(A4)
+    margin = 56
+    width = page_width - 2 * margin
+    navy, panel = colors.HexColor('#204d66'), colors.HexColor('#f1f3f7')
+    body = ParagraphStyle('HistoricalReviewBody', fontName='Helvetica', fontSize=9, leading=11,
+                          textColor=navy, splitLongWords=True)
+    bold = ParagraphStyle('HistoricalReviewLabel', parent=body, fontName='Helvetica-Bold')
+
+    def paragraph(value, strong=False):
+        return Paragraph(escape(str(value or '')).replace('\n', '<br/>'), bold if strong else body)
+
+    def block(title, rows):
+        table_rows = [[paragraph(title, True)], *rows]
+        table = Table(table_rows, colWidths=[width], repeatRows=1, splitByRow=1, splitInRow=1)
+        table.setStyle(TableStyle([
+            ('BOX', (0, 0), (-1, -1), .55, navy),
+            ('INNERGRID', (0, 0), (-1, -1), .35, navy),
+            ('BACKGROUND', (0, 0), (-1, 0), panel),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 7),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 7),
+            ('TOPPADDING', (0, 0), (-1, -1), 4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+            ('TOPPADDING', (0, 0), (-1, 0), 7),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 7),
+        ]))
+        return table
+
+    def field_rows(section):
+        rows = []
+        fields = section.get('fields') or []
+        for field in fields:
+            if not isinstance(field, dict):
+                continue
+            label = field.get('label') or field.get('title') or 'Response'
+            value = field['value'] if 'value' in field else field.get('answer')
+            rows.append([paragraph(label, True), paragraph(answer_text(value))])
+        for table in section.get('tables') or []:
+            if not isinstance(table, dict):
+                continue
+            table_rows = table.get('rows')
+            if not isinstance(table_rows, list):
+                continue
+            table_title = table.get('title') or 'Imported table'
+            rows.append([paragraph(table_title, True), paragraph('')])
+            for row in table_rows:
+                values = row if isinstance(row, list) else [row]
+                rows.append([paragraph('', False), paragraph(' | '.join(answer_text(value) for value in values))])
+        raw_text = section.get('rawText') or section.get('raw_text')
+        if raw_text and raw_text != 'EMPTY_STRING':
+            rows.append([paragraph('Imported text', True), paragraph(raw_text)])
+        return rows
+
+    title = review.get('name') or review.get('type') or 'Imported Aptem review'
+    story = [paragraph(title, True), Spacer(1, 8),
+             paragraph('Historical record regenerated from the imported Aptem data.', False),
+             Spacer(1, 12)]
+    info_rows = [
+        ('Programme Name', information.get('programme')),
+        ('Review Type', review.get('type')),
+        ('Reviewer', review.get('reviewerName')),
+        ('Planned Date', display_date(review.get('plannedDate'))),
+        ('Completed Date', display_date(review.get('completedDate'))),
+        ('Status', review.get('status')),
+    ]
+    info_table = Table([[paragraph(information.get('name') or review.get('learnerName') or 'Not recorded', True),
+                         Paragraph('<br/>'.join(
+                             f'<b>{escape(label)}:</b> {escape(str(value or "Not recorded"))}'
+                             for label, value in info_rows
+                         ), body)]], colWidths=[150, width - 164])
+    info_table.setStyle(TableStyle([
+        ('BOX', (0, 0), (-1, -1), .55, navy),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('LINEAFTER', (0, 0), (0, -1), .4, navy),
+        ('LEFTPADDING', (0, 0), (-1, -1), 7),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 7),
+        ('TOPPADDING', (0, 0), (-1, -1), 7),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 7),
+        ('LEFTPADDING', (1, 0), (1, -1), 10),
+    ]))
+    story.extend([block('Information', [[info_table]]), Spacer(1, 14)])
+
+    sections = review.get('sections') or []
+    rendered = False
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        rows = field_rows(section)
+        if not rows:
+            continue
+        rendered = True
+        story.extend([block(section.get('name') or 'Review section', rows), Spacer(1, 14)])
+    if not rendered:
+        story.append(block('Review details', [[paragraph('No detailed responses were imported for this review.')]]))
+
+    logo = Path(__file__).parent / 'templates' / 'kbc-logo.png'
+
+    def page_header(canvas, document):
+        canvas.saveState()
+        canvas.setTitle(str(title))
+        canvas.setAuthor('Kent Business College')
+        canvas.setFont('Helvetica-Bold', 11)
+        canvas.drawCentredString(page_width / 2, page_height - 40, 'Historical Aptem Review')
+        if logo.is_file():
+            canvas.drawImage(str(logo), page_width - margin - 75, page_height - 86, width=75, height=75,
+                             preserveAspectRatio=True, mask='auto')
+        canvas.setFont('Helvetica', 8)
+        canvas.drawCentredString(page_width / 2, 25, f'Page {document.page}')
+        canvas.restoreState()
+
+    SimpleDocTemplate(output, pagesize=landscape(A4), leftMargin=margin, rightMargin=margin,
+                      topMargin=85, bottomMargin=43).build(story, onFirstPage=page_header,
+                                                           onLaterPages=page_header)
+    return output.getvalue()
+
+
+def historical_pdf_response(review, information, *, identifier, original_content=None):
+    """Return the verified original PDF for an imported Aptem review.
+
+    Aptem reviews are historical records.  The LMS must return the exact PDF
+    stored by Aptem when one is available; it must not silently create a new
+    document that could differ from the source record.
+    """
+    from django.http import HttpResponse, JsonResponse
+
+    if not original_content:
+        return JsonResponse(
+            {'detail': 'The original Aptem PDF is unavailable for this review.'},
+            status=404,
+        )
+    content = original_content
+    safe_identifier = re.sub(r'[^A-Za-z0-9_-]', '', str(identifier)) or 'review'
+    response = HttpResponse(content, content_type='application/pdf')
+    response['Content-Disposition'] = f'attachment; filename="Aptem-Review-{safe_identifier}.pdf"'
+    response['X-Review-PDF-Source'] = 'aptem-original'
+    response['Cache-Control'] = 'private, no-store'
+    return response

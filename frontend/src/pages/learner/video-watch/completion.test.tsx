@@ -7,6 +7,7 @@ import { submitComponentProgress, type ComponentProgressResponse } from '@/api/c
 import { startTimeTracking } from '@/api/timeTracking';
 import { fetchEvidence } from '@/api/evidence';
 import ComponentViewPage, { ComponentBody } from './page';
+import { downloadReadingPdf } from './readingDownloads';
 
 (globalThis as Record<string, unknown>).AppIcon = ({ className }: { className?: string }) => <i className={className} />;
 
@@ -16,6 +17,11 @@ const session = vi.hoisted(() => ({
   outsideWorkingHours: true,
   holidayCalendarReady: true,
   holidays: [] as { start: string; end: string; label?: string }[],
+}));
+
+vi.mock('./readingDownloads', async () => ({
+  ...await vi.importActual<typeof import('./readingDownloads')>('./readingDownloads'),
+  downloadReadingPdf: vi.fn(),
 }));
 
 vi.mock('@/api/learnerDetail', () => ({ fetchLearnerDetail: vi.fn() }));
@@ -119,7 +125,7 @@ it.each([false, undefined])('offers reading downloads when downloadAllowed is %s
     resourceUrl: '/learner_api/materials/reading.png', fileName: 'Reading material.png', downloadAllowed };
   vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading] } as unknown as LearnerDetail);
   mount();
-  const download = await screen.findByRole('link', { name: 'Download' });
+  const download = await screen.findByRole('link', { name: 'Download original file' });
   expect(download).toHaveAttribute('href', reading.resourceUrl);
   expect(download).toHaveAttribute('download', reading.fileName);
   expect(submitComponentProgress).not.toHaveBeenCalled();
@@ -130,7 +136,7 @@ it('does not offer a reading file download without an attachment', async () => {
   vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading] } as unknown as LearnerDetail);
   mount();
   await screen.findByText('Read the material, then finish and reflect below.');
-  expect(screen.queryByRole('link', { name: 'Download' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('link', { name: 'Download original file' })).not.toBeInTheDocument();
 });
 
 it('keeps slide deck downloads subject to the author setting', async () => {
@@ -355,4 +361,44 @@ it('keeps a failed save open for retry without marking it complete', async () =>
   expect(screen.queryByRole('status')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Confirm' })).toBeEnabled();
   expect(screen.getByTestId('location')).toHaveTextContent('/C1');
+});
+
+it('offers both downloads when the original PDF is linked inside the reading', async () => {
+  const reading = { ...first, type: 'reading', component: 'Reading',
+    contentHtml: '<p>Source text</p><a href="/learner_api/materials/topic.pdf">Topic reading (PDF)</a>' };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading] } as unknown as LearnerDetail);
+  mount();
+  const original = await screen.findByRole('link', { name: 'Download original file' });
+  expect(original).toHaveAttribute('href', '/learner_api/materials/topic.pdf');
+  expect(original).toHaveAttribute('download', 'topic.pdf');
+  expect(screen.getByRole('button', { name: 'Download highlighted reading' })).toBeEnabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Download reading as PDF' }));
+  await waitFor(() => expect(downloadReadingPdf).toHaveBeenCalledWith('Reading', reading.contentHtml));
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+});
+
+it('shows a PDF error and allows retry without completing the activity', async () => {
+  vi.mocked(downloadReadingPdf).mockRejectedValueOnce(new Error('Could not prepare PDF'));
+  const reading = { ...first, type: 'reading', component: 'Reading', contentHtml: '<p>Source text</p>' };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading] } as unknown as LearnerDetail);
+  mount();
+  fireEvent.click(await screen.findByRole('button', { name: 'Download reading as PDF' }));
+  expect(await screen.findByRole('alert')).toHaveTextContent('Could not prepare PDF');
+  expect(screen.getByRole('button', { name: 'Download reading as PDF' })).toBeEnabled();
+  expect(submitComponentProgress).not.toHaveBeenCalled();
+});
+
+it('prevents duplicate PDF requests while preparing the file', async () => {
+  let resolvePdf: (() => void) | undefined;
+  vi.mocked(downloadReadingPdf).mockImplementationOnce(() => new Promise<void>(resolve => { resolvePdf = resolve; }));
+  const reading = { ...first, type: 'reading', component: 'Reading', contentHtml: '<p>Source text</p>' };
+  vi.mocked(fetchLearnerDetail).mockResolvedValue({ ...detail(), components: [reading] } as unknown as LearnerDetail);
+  mount();
+  fireEvent.click(await screen.findByRole('button', { name: 'Download reading as PDF' }));
+  const pending = screen.getByRole('button', { name: 'Preparing PDF…' });
+  expect(pending).toBeDisabled();
+  fireEvent.click(pending);
+  expect(downloadReadingPdf).toHaveBeenCalledTimes(1);
+  resolvePdf?.();
+  await screen.findByRole('button', { name: 'Download reading as PDF' });
 });

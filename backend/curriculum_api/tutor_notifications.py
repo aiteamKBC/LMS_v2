@@ -1,4 +1,11 @@
-"""Email a tutor when a module is assigned to them.
+"""Email a tutor about a module they are assigned to.
+
+Sent on request only: staff press "Email tutor" on the module workspace
+(``module_tutor_email`` below). Assigning a tutor no longer mails them -- see
+``schedule_assignment_notifications``, kept as a no-op so the write paths that
+call it need not change. The reconcile machinery described next is retained
+for ``dispatch_assignment_notifications`` and the ledger, which still records
+every manual send.
 
 Why a reconcile pass instead of a hook per write
 ------------------------------------------------
@@ -52,6 +59,9 @@ import threading
 from datetime import datetime
 
 from django.db import connection, transaction
+from django.http import JsonResponse
+
+from login.permissions import require_role
 
 from login import email_azure
 
@@ -371,8 +381,10 @@ def schedule_assignment_notifications():
     skipped; because it is a full diff rather than an increment, the next
     curriculum write picks up whatever it missed.
     """
-    if not notifications_enabled():
-        return
+    # Automatic assignment emails are switched off: staff send them from the
+    # module workspace when they choose to. Every assignment write still calls
+    # this, so it stays callable and does nothing.
+    return
     token = getattr(_state, 'token', 0) + 1
     _state.token = token
 
@@ -518,3 +530,113 @@ def _forget_stale_rows(live_ids, ledger):
             views.delete_rows(NOTIFICATION_TABLE, 'id = %s', [row_id])
         except Exception:
             logger.debug('Could not drop stale ledger row %s.', row_id, exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# Manual send, from the module workspace
+# ---------------------------------------------------------------------------
+
+def _module_tutor(module_id):
+    """``(module_row, tutor or None, tutor_key)`` for a live module, or ``(None, None, '')``."""
+    views = _views()
+    module_id = views.clean_str(module_id)
+    module_row = next((
+        row for row in views.safe_authoring_module_rows() or []
+        if views.clean_str(row.get('module_catalogue_id')) == module_id
+        and not views.truthy(row.get('is_programme_deleted')) and not views.row_has_deleted_at(row)
+    ), None)
+    if module_row is None:
+        return None, None, ''
+    tutor_key = views.staff_assignment_key(module_row.get('tutor_name'))
+    if not tutor_key or tutor_key == 'unassigned':
+        return module_row, None, ''
+    for profile in views.get_staff_profile_rows('tutor') or []:
+        name = views.staff_profile_name(profile)
+        if views.staff_assignment_key(name) == tutor_key:
+            return module_row, {
+                'id': views.clean_str(profile.get('id')), 'name': name,
+                'email': views.staff_profile_email(profile),
+            }, tutor_key
+    return module_row, {'id': '', 'name': views.clean_str(module_row.get('tutor_name')), 'email': ''}, tutor_key
+
+
+def _last_send(tutor_key, module_id):
+    views = _views()
+    ensure_notification_table()
+    row = next((r for r in ledger_rows() if views.clean_str(r.get('id')) == ledger_id(tutor_key, module_id)), None)
+    if row is None:
+        return None
+    updated = row.get('updated_at')
+    return {
+        'status': views.clean_str(row.get('status')).lower() or None,
+        'at': updated.isoformat() if hasattr(updated, 'isoformat') else (views.clean_str(updated) or None),
+    }
+
+
+def module_tutor_status(module_id):
+    module_row, tutor, tutor_key = _module_tutor(module_id)
+    if module_row is None:
+        return None
+    return {
+        'moduleId': module_id,
+        'tutor': {'name': tutor['name'], 'hasEmail': bool(tutor['email'])} if tutor else None,
+        'lastSent': _last_send(tutor_key, module_id) if tutor else None,
+    }
+
+
+def send_module_tutor_email(module_id):
+    """Email this module's tutor about it now. Returns ``(payload, http_status)``.
+
+    Re-sending is allowed -- the button asks first -- and every send is
+    recorded in the ledger, so the workspace can say when it last went out.
+    """
+    views = _views()
+    module_row, tutor, tutor_key = _module_tutor(module_id)
+    if module_row is None:
+        return {'error': 'Module not found.'}, 404
+    if tutor is None:
+        return {'error': 'Assign a tutor to this module before emailing them.'}, 409
+    if not tutor['email']:
+        return {'error': f"{tutor['name']} has no email address in the staff directory."}, 409
+    groups = {views.clean_str(r.get('group_id')): r for r in views.authoring_fetch_all(views.GROUPS_TABLE)}
+    cohorts = {views.clean_str(r.get('cohort_id')): r for r in views.authoring_fetch_all(views.COHORT_AUTHORING_DETAILS_TABLE)}
+    detail = describe_module(
+        module_row,
+        groups.get(views.clean_str(module_row.get('group_id'))),
+        cohorts.get(views.clean_str(module_row.get('cohort_id'))),
+    )
+    ensure_notification_table()
+    row_id = ledger_id(tutor_key, module_id)
+    previous = next((r for r in ledger_rows() if views.clean_str(r.get('id')) == row_id), None)
+    attempts = int((previous or {}).get('attempts') or 0)
+    subject, html, text = email_azure.tutor_assignment_message(
+        tutor_name=tutor['name'], modules=[detail], workspace_url=workspace_url(),
+    )
+    sent, failure = email_azure.send_mail(to=tutor['email'], subject=subject, html_body=html, text_body=text)
+    _upsert_ledger_row(row_id, tutor, module_id, 'sent' if sent else 'failed', attempts + 1,
+                       '' if sent else (failure or '')[:500])
+    if not sent:
+        logger.warning('Could not email %s about module %s: %s', tutor['email'], module_id, failure)
+        return {'error': f'The email to {tutor["name"]} could not be sent. Please try again.', 'code': 'send_failed'}, 502
+    logger.info('Emailed %s about module %s on request.', tutor['email'], module_id)
+    return {'sent': True, 'tutor': tutor['name'], 'lastSent': _last_send(tutor_key, module_id)}, 200
+
+
+@require_role('admin', 'staff')
+def module_tutor_email(request, module_id):
+    """GET: who the tutor is and when they were last emailed. POST: email them now (CSRF protected)."""
+    if request.method == 'GET':
+        try:
+            status = module_tutor_status(module_id)
+        except Exception:
+            logger.exception('Could not read the tutor email status for module %s', module_id)
+            return JsonResponse({'error': 'The tutor email status could not be loaded.'}, status=502)
+        return JsonResponse(status, status=200) if status else JsonResponse({'error': 'Module not found.'}, status=404)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Method not allowed.'}, status=405)
+    try:
+        payload, status = send_module_tutor_email(module_id)
+    except Exception:
+        logger.exception('Could not email the tutor of module %s', module_id)
+        return JsonResponse({'error': 'The email could not be sent. Please try again.'}, status=502)
+    return JsonResponse(payload, status=status)

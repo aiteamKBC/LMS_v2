@@ -23,13 +23,14 @@ import {
 } from './data';
 import type { CaseFileReviewMeeting } from './types';
 import styles from './learnerCaseFile.module.css';
+import weeklyActivitiesStyles from './coachWeeklyActivities.module.css';
 import { CaseFileTabs } from './components/CaseFileTabs';
 import { LearnerCaseFileHeader } from './components/LearnerCaseFileHeader';
 import { AttendanceTab } from './tabs/AttendanceTab';
 import { ReviewsTab } from './tabs/ReviewsTab';
 import { EnrolmentDocumentsTab } from './tabs/EnrolmentDocumentsTab';
 import { EvidencePreviewModal, ProgressTab } from './tabs/ProgressTab';
-import { selectCaseFileKsbRows, selectCaseFileKsbSummary, type EvidencePreviewTarget } from './domain/ksbSelectors';
+import { selectCaseFileKsbProgress, type EvidencePreviewTarget } from './domain/ksbSelectors';
 import { formatAttendanceFraction } from './formatters';
 import { useLearnerProfile } from '@/features/coach/learner-profile/hooks/useLearnerProfile';
 import { useLearnerProfileTabs } from '@/features/coach/learner-profile/hooks/useLearnerProfileTabs';
@@ -82,7 +83,7 @@ export default function LearnerCaseFile() {
   const pageSubtitle = subtitle || 'Live learner view for coaching support';
   const nextLiveSession = caseFileNextSession.data;
   const headerOtjh = data ? selectCaseFileOtjh(data) : null;
-  const headerKsb = data?.metricsAvailable === false ? null : data ? selectCaseFileKsbSummary(selectCaseFileKsbRows(data)) : null;
+  const headerKsb = data?.metricsAvailable === false ? null : data ? selectCaseFileKsbProgress(data) : null;
 
   const handleOpenReviewMeeting = (item: CaseFileReviewMeeting) => {
     const returnParams = new URLSearchParams(location.search);
@@ -228,7 +229,7 @@ export default function LearnerCaseFile() {
 
         <CaseFileTabs activeTab={activeTab} onChange={setActiveTab} />
 
-        <section className={styles.content} role="tabpanel">
+        <section className={`${styles.content} ${weeklyActivitiesStyles.root}`} role="tabpanel">
           {renderTab()}
         </section>
       </main>
@@ -236,8 +237,13 @@ export default function LearnerCaseFile() {
         <EvidencePreviewModal
           evidence={evidencePreview}
           onClose={() => setEvidencePreview(null)}
-          onOpenAssignment={(componentId) => {
+          onOpenAssignment={(componentId, activityId) => {
             if (!data?.kind || !data.learnerId) return;
+            if (componentId.startsWith('journal:')) {
+              const target = activityId ? `record:${activityId}` : componentId;
+              navigate(`/learner/my-learning/${data.kind}/${data.learnerId}?activity=${encodeURIComponent(target)}`);
+              return;
+            }
             navigate(`/learner/monthly-submission/${data.kind}/${data.learnerId}/${encodeURIComponent(componentId)}`);
           }}
         />

@@ -294,6 +294,12 @@ export default function CoachMeetingDetail() {
 
   const openReviewWorkflow = async (manualOverride = false) => {
     if (!event) return;
+    if (event.reviewSource === 'aptem' && eventIdentity(event).startsWith('imported-review:')) {
+      navigate(reviewInstancePath(eventIdentity(event)), {
+        state: reviewInstanceRouteState(event, `${location.pathname}${location.search}`),
+      });
+      return;
+    }
     if (event.reviewInstanceId) {
       navigate(reviewInstancePath(event.reviewInstanceId), {
         state: reviewInstanceRouteState(event, `${location.pathname}${location.search}`),
@@ -377,15 +383,15 @@ export default function CoachMeetingDetail() {
   };
 
   const url = event ? meetingUrl(event) : '';
-  const canEditBooking = event?.status === 'not-scheduled' || event?.status === 'scheduled';
-  const showMeetingActions = canEditBooking || event?.status === 'in-progress';
+  const canEditBooking = event?.reviewSource !== 'aptem' && (event?.status === 'not-scheduled' || event?.status === 'scheduled');
+  const showMeetingActions = canEditBooking || event?.status === 'in-progress' || (event?.reviewSource === 'aptem' && event.status === 'scheduled');
   const bookingPanelTitle = event?.status === 'not-scheduled'
     ? `Schedule ${isProgressReview ? 'Review' : 'Meeting'}`
     : event?.status === 'in-progress'
       ? 'Meeting Actions'
       : `Manage ${isProgressReview ? 'Review' : 'Meeting'}`;
  const canOpenReviewFormFromHeader = Boolean(
-    event?.reviewTemplateId,
+    event?.reviewTemplateId || event?.reviewSource === 'aptem',
  );
   const reviewFormHeaderLabel = event?.status === 'completed'
     ? 'View Form'
@@ -456,6 +462,7 @@ export default function CoachMeetingDetail() {
                 ) : null}
                 <div className={cn('flex flex-wrap items-center gap-2', canEditBooking && 'mt-5 border-t border-foreground-100 pt-4')}>
                   {canEditBooking ? <RowAction label={event.status === 'scheduled' ? 'Reschedule' : 'Schedule'} icon="ri-calendar-check-line" emphasis="primary" disabled={busy} onClick={() => { void handleSchedule(); }} /> : null}
+                  {event.reviewSource === 'aptem' ? <RowAction label="Open Review" icon="ri-file-list-3-line" emphasis="primary" disabled={busy} onClick={() => { void openReviewWorkflow(false); }} /> : null}
                   {(event.status === 'scheduled' || event.status === 'in-progress') && url ? <RowAction label="Join Meeting" icon="ri-video-on-line" emphasis="meeting" disabled={busy} onClick={() => { void handleJoin(); }} /> : null}
                   {event.status === 'scheduled' && event.reviewTemplateId ? <RowAction label="Mark In Progress" icon="ri-play-circle-line" disabled={busy} onClick={() => { void markReviewInProgress(); }} /> : null}
                   {/* A catch-up has no coaching form; it must never open the Monthly Coaching record. */}

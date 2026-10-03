@@ -271,8 +271,10 @@ class LinkedCatchupLedgerTests(SimpleTestCase):
 
     def test_link_catchup_updates_the_absence_ledger(self):
         from . import session_recovery
+        # link_catchup and catch-up booking share link_report_to_catchup.
+        self.assertIn('link_report_to_catchup(', inspect.getsource(session_recovery.link_catchup))
         self.assertIn('_record_linked_catchup(learner_id, report.attendance_id, event_key)',
-                      inspect.getsource(session_recovery.link_catchup))
+                      inspect.getsource(session_recovery.link_report_to_catchup))
 
     def test_linking_a_catchup_approves_the_report_without_coach_approval(self):
         from unittest.mock import MagicMock
@@ -389,3 +391,44 @@ class LinkedCatchupCalendarTests(SimpleTestCase):
         self.assertEqual([event.get('linkedReportId') for event in events], [40, None, None])
         self.assertNotIn('linkedReportId', events[2])
         reports.filter.assert_called_once_with(catchup_event_key__in=['catch-up:1', 'catch-up:2'])
+
+
+class AlternativeModuleMatchTests(SimpleTestCase):
+    def test_group_copies_named_by_weekday_or_copy_are_the_same_module(self):
+        from .alternative_recovery import _module_key
+        self.assertEqual(_module_key('Martech - Thur'), _module_key('Martech - Fri'))
+        self.assertEqual(_module_key('Martech (Fri)'), 'martech')
+        self.assertEqual(_module_key('MM21 copy'), _module_key('MM21'))
+        # Only a trailing weekday is ignored: a title that starts with one keeps it.
+        self.assertEqual(_module_key('Monday Planning'), 'monday planning')
+        self.assertNotEqual(_module_key('Martech - Thur'), _module_key('Social Media - Thur'))
+
+
+class AlternativeInviteTests(SimpleTestCase):
+    def test_learner_gets_a_calendar_invite_for_the_alternative_session_only(self):
+        from .absence_reports import _email_learner_alternative_invite, alternative_invite_ics
+        report = SimpleNamespace(id=41, learner_email='aya@example.test', session_title='Martech - Thur — Session 3',
+                                 catchup_event_key='alternative:OCC-ALT')
+        occurrence = SimpleNamespace(live_session_id='LIVE-FRI', join_url='https://teams.example/fri',
+                                     scheduled_start=datetime(2026, 10, 9, 7, 0), scheduled_end=datetime(2026, 10, 9, 9, 0))
+        session = SimpleNamespace(module_title='Martech - Fri', join_url='')
+        ics = alternative_invite_ics(report, occurrence, 'Martech - Fri — Session 3', 'https://teams.example/fri').decode()
+        self.assertIn('METHOD:PUBLISH', ics)
+        self.assertIn('DTSTART:20261009T070000Z', ics)
+        self.assertIn('DTEND:20261009T090000Z', ics)
+        self.assertIn('UID:absence-alternative-41@kbc-lms', ics)
+        self.assertNotIn('ATTENDEE', ics)
+        with patch('curriculum_api.models.LiveSessionOccurrence.objects') as occurrences, \
+                patch('curriculum_api.models.LiveSession.objects') as sessions, \
+                patch('learner_api.absence_reports.alternative_target_details', return_value={
+                    'title': 'Martech - Fri — Session 3', 'dateIso': '2026-10-09', 'startTime': '08:00',
+                    'endTime': '10:00', 'group': 'G2-MarTech', 'joinUrl': 'https://teams.example/fri'}), \
+                patch('learner_api.absence_reports.email_azure.send_mail', return_value=(True, None)) as send_mail:
+            occurrences.using.return_value.filter.return_value.first.return_value = occurrence
+            sessions.using.return_value.filter.return_value.first.return_value = session
+            _email_learner_alternative_invite(report, 'OCC-ALT')
+        kwargs = send_mail.call_args.kwargs
+        self.assertEqual(kwargs['to'], 'aya@example.test')
+        self.assertEqual(kwargs['attachments'][0]['name'], 'alternative-session.ics')
+        self.assertEqual(kwargs['attachments'][0]['content_type'], 'text/calendar')
+        self.assertIn('https://teams.example/fri', kwargs['html_body'])

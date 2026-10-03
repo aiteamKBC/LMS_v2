@@ -10,7 +10,7 @@ import {
 import { ReviewSignatures } from '@/components/reviews/ReviewSignatures';
 import { ReviewPdfDownload } from '@/components/reviews/ReviewPdfDownload';
 import { ReviewProgressPanel } from '@/components/reviews/ReviewProgressPanel';
-import { fetchLearnerEventReviewInstance, type LearnerReviewDefinition } from '@/api/learnerCalendar';
+import { fetchLearnerEventReviewInstance, fetchMigratedReviewForParty, type LearnerReviewDefinition } from '@/api/learnerCalendar';
 import type { LearnerKind } from '@/api/learnerDetail';
 import { flattenReviewFields } from '@/api/reviewInstances';
 import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
@@ -94,7 +94,9 @@ export function useLearnerReviewInstance(
     setLoading(true);
     setDefinition(null);
     setError('');
-    fetchLearnerEventReviewInstance(kind, learnerId, eventKey, controller.signal)
+    (eventKey.startsWith('imported-review:')
+      ? fetchMigratedReviewForParty(eventKey, controller.signal)
+      : fetchLearnerEventReviewInstance(kind, learnerId, eventKey, controller.signal))
       .then((data) => {
         if (controller.signal.aborted) return;
         setDefinition('template' in data ? data : null);
@@ -386,7 +388,7 @@ export function LearnerReviewInstanceForm({
 
       <div ref={signatureSection} tabIndex={-1} aria-label="Signature step" className="scroll-mt-6 space-y-3 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500">
         <ReviewSignatures signatures={definition.signatures} />
-        <ReviewPdfDownload availability={definition.pdf} onDownload={onDownload} />
+        <ReviewPdfDownload availability={definition.pdf} onDownload={onDownload} label={definition.migratedForm ? 'Download LMS-generated review PDF' : undefined} />
       {canSign && signatureOpen ? mcmMonthlyLog ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-3 sm:p-6" role="presentation">
           <div className="flex max-h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-violet-200 bg-background-50 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="mcm-sign-dialog-title">

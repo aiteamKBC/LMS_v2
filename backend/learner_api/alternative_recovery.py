@@ -7,6 +7,7 @@ than one active series, this module deliberately returns no alternative: the
 repository has no stronger authored-component relationship to choose safely.
 """
 from collections import defaultdict
+import re
 from datetime import timezone as datetime_timezone
 
 from django.db.models import Q
@@ -47,10 +48,19 @@ def _module_key(value) -> str:
     second group, but the module and its session numbers still represent the
     same authored course.  The database does not retain a module-level source
     identifier for that copy, so ignore that generated suffix only at the end
-    of the title.
+    of the title.  Groups that meet on different days also name their copy by
+    the weekday ("Martech - Thur" / "Martech - Fri"), so a trailing weekday is
+    ignored as well; matching stays limited to one programme and cohort.
     """
     key = " ".join(str(value or "").split()).casefold()
-    return key[:-5].rstrip() if key.endswith(" copy") else key
+    key = key[:-5].rstrip() if key.endswith(" copy") else key
+    return _WEEKDAY_SUFFIX.sub("", key).rstrip()
+
+
+# " - Thur", " (Fri)", " Monday" ... at the end of a module title.
+_WEEKDAY_SUFFIX = re.compile(
+    r"(?:\s*[-–—]\s*|\s+\(?)(mon(day)?|tue(s(day)?)?|wed(nesday)?|thu(r(s(day)?)?)?|fri(day)?|sat(urday)?|sun(day)?)\)?$"
+)
 
 
 def _matching_alternative_series(original_session, original_module, modules, sessions):
