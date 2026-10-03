@@ -48,7 +48,7 @@ def require_post(fn):
 
 service = {'__package__': 'curriculum_api', '__name__': 'curriculum_api.teams_schedule_delivery', '__file__': str(ROOT / 'teams_schedule_delivery.py'),
            'Path': Path, 'base64': base64, 'quote': quote, 're': re, 'utc_datetime': utc_datetime,
-           'render_schedule_email': render_schedule_email, 'render_change_email': render_change_email, 'meeting_settings': meeting_settings, 'logger': logging.getLogger('email-test'),
+           'render_schedule_email': render_schedule_email, 'render_change_email': render_change_email, 'logger': logging.getLogger('email-test'),
            'TABLE': 'curriculum.teams_schedule_emails', 'BATCH_SIZE': 4, 'JsonResponse': Response,
            'ThreadPoolExecutor': ThreadPoolExecutor,
            'transaction': types.SimpleNamespace(non_atomic_requests=lambda fn: fn),
@@ -313,25 +313,32 @@ class EmailTests(unittest.TestCase):
         self.assertNotIn('csrf_exempt', ' '.join(ast.unparse(item) for item in node.decorator_list))
 
     def test_added_people_only_narrow_the_stored_recipients(self):
-        learners, organisers = service['added_only'](
-            ['one@example.invalid', 'two@example.invalid'], ['organizer@example.invalid', 'tutor@example.invalid'],
+        learners = service['added_only'](
+            ['one@example.invalid', 'two@example.invalid'],
             [' TWO@example.invalid', 'tutor@example.invalid', 'stranger@example.invalid'])
-        # A browser-supplied address the calendar does not invite is never emailed.
+        # A browser-supplied address the calendar does not invite as a learner
+        # is never emailed: neither a stranger nor an added presenter.
         self.assertEqual(learners, ['two@example.invalid'])
-        self.assertEqual(organisers, ['tutor@example.invalid'])
 
     def test_added_people_skip_anyone_this_schedule_already_reached(self):
         self.ledger.rows[('LIVE-ONE', 'one@example.invalid')] = 'accepted'
-        learners, organisers = service['added_only'](['one@example.invalid', 'two@example.invalid'], ['tutor@example.invalid'],
-                                                     ['one@example.invalid', 'two@example.invalid', 'tutor@example.invalid'])
-        status = service['dispatch_by_role']('LIVE-ONE', learners, organisers, 'learner', 'organiser', self.ledger, self.sender)
-        self.assertEqual(sorted(call.args for call in self.sender.call_args_list),
-                         [('tutor@example.invalid', 'organiser'), ('two@example.invalid', 'learner')])
+        learners = service['added_only'](['one@example.invalid', 'two@example.invalid'],
+                                         ['one@example.invalid', 'two@example.invalid', 'tutor@example.invalid'])
+        status = service['dispatch_batch']('LIVE-ONE', learners, 'learner', self.ledger, self.sender)
+        self.assertEqual([call.args for call in self.sender.call_args_list], [('two@example.invalid', 'learner')])
         self.assertEqual(status['status'], 'complete')
 
     def test_nobody_added_sends_nothing_and_reports_complete(self):
-        status = service['dispatch_by_role']('LIVE-ONE', *service['added_only'](['one@example.invalid'], [], []),
-                                             'learner', 'organiser', self.ledger, self.sender)
+        status = service['dispatch_batch']('LIVE-ONE', service['added_only'](['one@example.invalid'], []),
+                                           'learner', self.ledger, self.sender)
+        self.sender.assert_not_called()
+        self.assertEqual((status['total'], status['status']), (0, 'complete'))
+
+    def test_an_added_presenter_is_sent_no_schedule_email(self):
+        # Only learners are emailed: someone added to run the meeting gets
+        # Microsoft's invitation and nothing from the LMS.
+        status = service['dispatch_batch']('LIVE-ONE', service['added_only'](['one@example.invalid'], ['tutor@example.invalid']),
+                                           'learner', self.ledger, self.sender)
         self.sender.assert_not_called()
         self.assertEqual((status['total'], status['status']), (0, 'complete'))
 
@@ -347,19 +354,17 @@ class EmailTests(unittest.TestCase):
         # The point of the button: everyone is emailed again, including the
         # person the creation email already reached.
         self.ledger.rows[('LIVE-ONE', 'one@example.invalid')] = 'accepted'
-        status = service['dispatch_by_role']('LIVE-ONE@round-one-key', ['one@example.invalid', 'two@example.invalid'],
-                                             ['tutor@example.invalid'], 'learner', 'organiser', self.ledger, self.sender)
+        status = service['dispatch_batch']('LIVE-ONE@round-one-key', ['one@example.invalid', 'two@example.invalid'],
+                                           'learner', self.ledger, self.sender)
         self.assertEqual(sorted(call.args for call in self.sender.call_args_list),
-                         [('one@example.invalid', 'learner'), ('tutor@example.invalid', 'organiser'),
-                          ('two@example.invalid', 'learner')])
+                         [('one@example.invalid', 'learner'), ('two@example.invalid', 'learner')])
         self.assertEqual(status['status'], 'complete')
 
     def test_a_resend_key_still_stops_a_duplicate_inside_its_own_press(self):
         # Batches of one press share the key, so a retry reads back what was
         # sent rather than sending it twice.
         for _ in range(2):
-            service['dispatch_by_role']('LIVE-ONE@round-one-key', ['one@example.invalid'], [],
-                                        'learner', 'organiser', self.ledger, self.sender)
+            service['dispatch_batch']('LIVE-ONE@round-one-key', ['one@example.invalid'], 'learner', self.ledger, self.sender)
         self.assertEqual(self.sender.call_count, 1)
 
     def test_resend_key_must_be_a_plain_name_and_never_ride_with_another_mode(self):
@@ -392,10 +397,9 @@ class EmailTests(unittest.TestCase):
     def test_saved_dates_are_verified_before_rendered_message_is_used(self):
         rows, series, view, transport, verify = self.verified_context()
         with patch.dict(sys.modules, {'curriculum_api.views': view, 'coach_api.views': transport}), patch.dict(service, {'verify_calendar': verify}):
-            recipients, organisers, message, _organiser_copy = service['verified_message']('LIVE-ONE')
+            recipients, message = service['verified_message']('LIVE-ONE')
+        # The presenting tutor is on the attendee list too and is still not a recipient.
         self.assertEqual(recipients, ['one@example.invalid'])
-        # The presenting tutor gets the organiser copy, never the learner copy.
-        self.assertEqual(organisers, ['organizer@example.invalid', 'tutor@example.invalid'])
         self.assertIn('29 Oct 2026', message[1])
         self.assertNotIn('tutor@example.invalid', message[1])
         self.assertEqual(verify.call_args.args[2], 'MASTER')
@@ -411,13 +415,12 @@ class EmailTests(unittest.TestCase):
         rows[:] = [session(start='2026-10-29T06:00:00Z')]
         series['timezone'] = 'Egypt Standard Time'
         with patch.dict(sys.modules, {'curriculum_api.views': view, 'coach_api.views': transport}), patch.dict(service, {'verify_calendar': verify}):
-            _recipients, _organisers, message, organiser_copy = service['verified_message']('LIVE-ONE')
+            _recipients, message = service['verified_message']('LIVE-ONE')
         self.assertIn('09:00 AM', message[1])
         self.assertNotIn('06:00 AM', message[1])
-        self.assertIn('Africa/Cairo', organiser_copy[1])
         series.pop('timezone')
         with patch.dict(sys.modules, {'curriculum_api.views': view, 'coach_api.views': transport}), patch.dict(service, {'verify_calendar': verify}):
-            _recipients, _organisers, message, _copy = service['verified_message']('LIVE-ONE')
+            _recipients, message = service['verified_message']('LIVE-ONE')
         self.assertIn('06:00 AM', message[1])
 
     def test_unverified_calendar_or_unconfirmed_roster_blocks_summary(self):
@@ -455,8 +458,9 @@ class EmailTests(unittest.TestCase):
                 request = types.SimpleNamespace(account=types.SimpleNamespace(role=role), method='POST')
                 response = service['schedule_email'](request, 'LIVE-ONE')
                 self.assertEqual(response.status_code, 200)
-                self.assertEqual(response['accepted'], 3)
-        self.assertEqual(self.sender.call_count, 3)
+                self.assertEqual(response['accepted'], 1)
+        # The one learner, once: neither the organiser nor the presenting tutor.
+        self.assertEqual([call.args[0] for call in self.sender.call_args_list], ['one@example.invalid'])
 
     def create_context(self):
         rows, series, view, transport, verify = self.verified_context()
@@ -473,22 +477,19 @@ class EmailTests(unittest.TestCase):
         mail = types.SimpleNamespace(is_configured=lambda: True)
         with patch.dict(sys.modules, {'curriculum_api.views': view, 'coach_api.views': transport, 'login': types.SimpleNamespace(email_azure=mail)}), patch.dict(service, {
             'verify_calendar': verify or default_verify, 'connection': object(), 'DeliveryLedger': lambda _: ledger, '_send_message': sender,
-            'learner_names': lambda emails: {'one@example.invalid': 'Learner One', 'two@example.invalid': 'Learner Two'},
         }):
             request = types.SimpleNamespace(account=types.SimpleNamespace(role='staff'), method='POST')
             return service['schedule_email'](request, 'LIVE-ONE')
 
-    def test_create_sends_learner_copies_and_organiser_copies_once_each(self):
+    def test_create_sends_each_learner_their_copy_and_nobody_who_runs_the_meeting(self):
         response = self.send_create(self.ledger, self.sender)
         self.assertEqual(response.status_code, 200)
-        # Five recipients are two batches of at most four; the browser asks again while any are queued.
-        self.assertEqual(response['queued'], 1)
-        response = self.send_create(self.ledger, self.sender)
+        self.assertEqual((response['total'], response['accepted'], response['queued']), (2, 2, 0))
         copies = {call.args[0]: call.args[1] for call in self.sender.call_args_list}
-        # The presenting tutor gets the organiser copy; the organiser listed twice gets one.
-        self.assertEqual(sorted(copies), ['co@example.invalid', 'one@example.invalid', 'organizer@example.invalid', 'tutor@example.invalid', 'two@example.invalid'])
-        self.assertEqual(self.sender.call_count, 5)
-        self.assertEqual(response['total'], 5)
+        # The organiser, the co-organiser and the presenting tutor are on the
+        # saved calendar -- two of them on its attendee list -- and get no email.
+        self.assertEqual(sorted(copies), ['one@example.invalid', 'two@example.invalid'])
+        self.assertEqual(self.sender.call_count, 2)
         for learner, other in (('one@example.invalid', 'two@example.invalid'), ('two@example.invalid', 'one@example.invalid')):
             subject, html, text = copies[learner]
             self.assertNotIn('organiser copy', subject)
@@ -498,35 +499,22 @@ class EmailTests(unittest.TestCase):
             self.assertNotIn('Meeting settings', html)
             self.assertIn('29 Oct 2026', html)
             self.assertIn('teams.microsoft.com/meet/synthetic', html)
-        for organiser in ('organizer@example.invalid', 'co@example.invalid', 'tutor@example.invalid'):
-            subject, html, text = copies[organiser]
-            # The inbox never shows an internal label: the organiser's subject is the
-            # learner's, word for word. Only the content tells the two copies apart.
-            self.assertNotIn('organiser copy', subject)
-            self.assertEqual(subject, copies['one@example.invalid'][0])
-            for learner in ('Learner One', 'one@example.invalid', 'Learner Two', 'two@example.invalid'):
-                self.assertIn(learner, html)
-                self.assertIn(learner, text)
-            self.assertNotIn('tutor@example.invalid', html.split('Invited learners')[1])
-            self.assertIn('Record and transcribe', html)
-            self.assertIn('People in my organization', html)
-            self.assertIn('Europe/London', html)
-            self.assertIn('29 Oct 2026', html)
-            self.assertIn('teams.microsoft.com/meet/synthetic', html)
             self.assertNotIn('[[', html)
+        # Asking again sends nothing twice.
+        self.send_create(self.ledger, self.sender)
+        self.assertEqual(self.sender.call_count, 2)
 
     def test_create_retry_does_not_resend_accepted_emails(self):
-        failing = Mock(side_effect=lambda recipient, _m: ('failed', 'mail_rejected_400') if recipient == 'co@example.invalid' else ('accepted', ''))
+        failing = Mock(side_effect=lambda recipient, _m: ('failed', 'mail_rejected_400') if recipient == 'two@example.invalid' else ('accepted', ''))
         first = self.send_create(self.ledger, failing)
-        self.assertEqual((first['accepted'], first['failed'], first['queued']), (3, 1, 1))
+        self.assertEqual((first['accepted'], first['failed'], first['queued']), (1, 1, 0))
         again = self.send_create(self.ledger, failing)
-        self.assertEqual(failing.call_count, 5)
+        self.assertEqual(failing.call_count, 2)
         self.assertEqual(again['failed'], 1)
         retry = Mock(return_value=('accepted', ''))
         final = self.send_create(self.ledger, retry, retry=True)
-        self.assertEqual([call.args[0] for call in retry.call_args_list], ['co@example.invalid'])
-        self.assertNotIn('organiser copy', retry.call_args.args[1][0])
-        self.assertIn('Invited learners', retry.call_args.args[1][1])
+        self.assertEqual([call.args[0] for call in retry.call_args_list], ['two@example.invalid'])
+        self.assertNotIn('Invited learners', retry.call_args.args[1][1])
         self.assertEqual(final['status'], 'complete')
 
     def test_create_failed_verification_sends_no_email_to_anyone(self):
@@ -568,25 +556,26 @@ class EmailTests(unittest.TestCase):
         (verify or default_verify).return_value = {'attendees': [{'emailAddress': {'address': a}} for a in series['attendees']]}
         mail = types.SimpleNamespace(is_configured=lambda: configured)
         with patch.dict(sys.modules, {'curriculum_api.views': view, 'coach_api.views': transport, 'login': types.SimpleNamespace(email_azure=mail)}), patch.dict(service, {
-            'verify_calendar': verify or default_verify, 'learner_names': lambda emails: {},
+            'verify_calendar': verify or default_verify,
         }):
             return service['send_creation_emails']('LIVE-ONE', ledger=self.ledger, send=sender)
 
     def test_create_sends_every_schedule_email_in_one_call(self):
         status = self.creation_emails(self.sender)
-        # Nine learners plus the organiser, one co-organiser and one presenter: more than two batches.
-        self.assertEqual((status['total'], status['accepted'], status['queued'], status['status']), (12, 12, 0, 'complete'))
-        self.assertEqual(self.sender.call_count, 12)
-        self.assertEqual(len({call.args[0] for call in self.sender.call_args_list}), 12)
+        # Nine learners are more than two batches; the organiser, co-organiser and presenter are not emailed.
+        self.assertEqual((status['total'], status['accepted'], status['queued'], status['status']), (9, 9, 0, 'complete'))
+        self.assertEqual(self.sender.call_count, 9)
+        self.assertEqual({call.args[0] for call in self.sender.call_args_list},
+                         {f'learner{i}@example.invalid' for i in range(9)})
         # A browser asking afterwards only reads back what was sent.
         again = self.creation_emails(self.sender)
-        self.assertEqual(again['accepted'], 12)
-        self.assertEqual(self.sender.call_count, 12)
+        self.assertEqual(again['accepted'], 9)
+        self.assertEqual(self.sender.call_count, 9)
 
     def test_create_emails_stop_on_a_batch_without_progress(self):
         self.ledger.claim = Mock(return_value=False)
         status = self.creation_emails(self.sender)
-        self.assertEqual(status['queued'], 12)
+        self.assertEqual(status['queued'], 9)
         self.sender.assert_not_called()
 
     def test_create_emails_are_reported_not_raised_when_blocked(self):
@@ -599,15 +588,11 @@ class EmailTests(unittest.TestCase):
         self.sender.assert_not_called()
         self.assertFalse(self.ledger.rows)
 
-    def test_recipient_roles_come_from_the_stored_calendar(self):
+    def test_recipients_are_the_stored_calendars_learners_only(self):
         series, view, _transport, _verify = self.create_context()
-        learners = service['learner_recipients'](view, series)
-        self.assertEqual(learners, ['one@example.invalid', 'two@example.invalid'])
-        self.assertEqual(service['organiser_recipients'](view, series, learners),
-                         ['organizer@example.invalid', 'co@example.invalid', 'tutor@example.invalid'])
-        # An address that is somehow both never receives the roster copy.
-        self.assertEqual(service['organiser_recipients'](view, series, ['organizer@example.invalid', 'tutor@example.invalid']),
-                         ['co@example.invalid'])
+        # The presenting tutor and the co-organiser are on the attendee list and are still left out.
+        self.assertEqual(service['learner_recipients'](view, series), ['one@example.invalid', 'two@example.invalid'])
+        self.assertNotIn('organiser_recipients', service)
 
     def test_meeting_settings_labels_fall_back_to_saved_values(self):
         self.assertEqual(dict(meeting_settings({'organizer_email': 'o@example.invalid'}, 'Europe/London')),
@@ -617,7 +602,7 @@ class EmailTests(unittest.TestCase):
 
 
 class ChangeNoticeTests(unittest.TestCase):
-    """Update and cancellation emails: was/now, one copy per audience, no cross-learner data."""
+    """Update and cancellation emails: was/now, one copy per learner, no cross-learner data."""
 
     @classmethod
     def setUpClass(cls):
@@ -690,7 +675,7 @@ class ChangeNoticeTests(unittest.TestCase):
         """Ticking "email attendees" is an instruction, even on a save that moved nothing.
 
         A "was / now" is still refused, because with nothing in either column it
-        says nothing -- `verified_change_messages` sends the standing schedule
+        says nothing -- `verified_change_message` sends the standing schedule
         instead. What must not happen is the author being handed no token at
         all and told afterwards that nothing was sent.
         """
@@ -733,40 +718,32 @@ class ChangeNoticeTests(unittest.TestCase):
 
     def send_change(self, token, stored_rows, ledger, sender, status='active'):
         view, transport, verify = self.change_context(stored_rows, status)
-        names = {'learner_names': lambda emails: {'one@example.invalid': 'Learner One'}}
         with patch.dict(sys.modules, {'curriculum_api.views': view, 'coach_api.views': transport}), \
-                patch.dict(service, {'verify_calendar': verify, **names}):
+                patch.dict(service, {'verify_calendar': verify}):
             return service['dispatch_change']('LIVE-ONE', token, ledger, send=sender), verify
 
-    def test_each_learner_gets_their_own_copy_and_organisers_get_the_roster(self):
+    def test_each_learner_gets_their_own_copy_and_nobody_who_runs_the_meeting_is_emailed(self):
         before = [session(), session(2, '2026-09-24T11:00:00Z')]
         after = [session(), session(2, '2026-09-23T11:00:00Z')]
         token = self.notices.issue_change_notice('LIVE-ONE', self.snapshot(*before), self.snapshot(*after))
         ledger, sender = MemoryLedger(), Mock(return_value=('accepted', ''))
         # The creation email already reached this learner; the change must still go out.
         ledger.rows[('LIVE-ONE', 'one@example.invalid')] = 'accepted'
-        result, _verify = self.send_change(token, after, ledger, sender)
-        # Five recipients are two batches of at most four; the browser asks again while any are queued.
-        self.assertEqual((result['total'], result['queued']), (5, 1))
         result, verify = self.send_change(token, after, ledger, sender)
-        self.assertEqual((result['accepted'], result['queued']), (5, 0))
+        self.assertEqual((result['total'], result['accepted'], result['queued']), (2, 2, 0))
         verify.assert_called_once()
         copies = {call.args[0]: call.args[1] for call in sender.call_args_list}
-        self.assertEqual(set(copies), {'one@example.invalid', 'two@example.invalid', 'organizer@example.invalid', 'co@example.invalid', 'tutor@example.invalid'})
+        # The organiser, co-organiser and presenting tutor hear from Microsoft, not from the LMS.
+        self.assertEqual(set(copies), {'one@example.invalid', 'two@example.invalid'})
         for learner, other in (('one@example.invalid', 'two@example.invalid'), ('two@example.invalid', 'one@example.invalid')):
             html = copies[learner][1]
             self.assertNotIn(other, html)
-            self.assertNotIn('Learner One', html)
             self.assertNotIn('Invited learners', html)
-            self.assertIn('Wed, 23 Sept 2026', html)
-        for organiser in ('organizer@example.invalid', 'co@example.invalid', 'tutor@example.invalid'):
-            html = copies[organiser][1]
-            self.assertIn('Learner One', html)
-            self.assertIn('two@example.invalid', html)
             self.assertIn('Thu, 24 Sept 2026', html)
+            self.assertIn('Wed, 23 Sept 2026', html)
         # Asking again about the same change sends nothing twice.
         self.send_change(token, after, ledger, sender)
-        self.assertEqual(sender.call_count, 5)
+        self.assertEqual(sender.call_count, 2)
 
     def test_stale_notice_sends_nothing(self):
         token = self.notices.issue_change_notice('LIVE-ONE', self.snapshot(session()), self.snapshot(session(start='2026-09-18T11:00:00Z')))
@@ -781,20 +758,15 @@ class ChangeNoticeTests(unittest.TestCase):
         token = self.notices.issue_change_notice('LIVE-ONE', self.snapshot(*before), [], notice_id='OP-1')
         ledger, sender = MemoryLedger(), Mock(return_value=('accepted', ''))
         result, verify = self.send_change(token, before, ledger, sender, status='cancelled')
-        self.assertEqual(result['accepted'], 4)
+        self.assertEqual((result['total'], result['accepted']), (2, 2))
         verify.assert_not_called()
         learner_html = next(call.args[1][1] for call in sender.call_args_list if call.args[0] == 'one@example.invalid')
         self.assertIn('are cancelled', learner_html)
+        self.assertIn('Thu, 24 Sept 2026', learner_html)
         self.assertNotIn('teams.microsoft.com', learner_html)
         self.assertNotIn('two@example.invalid', learner_html)
-        for organiser in ('organizer@example.invalid', 'co@example.invalid'):
-            subject, html, _text = next(call.args[1] for call in sender.call_args_list if call.args[0] == organiser)
-            self.assertNotIn('organiser copy', subject)
-            self.assertEqual(subject, next(call.args[1][0] for call in sender.call_args_list if call.args[0] == 'one@example.invalid'))
-            self.assertIn('Learner One', html)
-            self.assertIn('two@example.invalid', html)
-            self.assertIn('Thu, 24 Sept 2026', html)
-            self.assertNotIn('teams.microsoft.com', html)
+        # Only the learners are told by the LMS, under this cancellation's own key.
+        self.assertEqual({call.args[0] for call in sender.call_args_list}, {'one@example.invalid', 'two@example.invalid'})
         self.assertTrue(all(key == 'LIVE-ONE#OP-1' for key, _ in ledger.rows))
 
     def test_cancelled_session_keeps_the_remaining_schedule_and_link(self):
@@ -802,7 +774,7 @@ class ChangeNoticeTests(unittest.TestCase):
         token = self.notices.issue_change_notice('LIVE-ONE', self.snapshot(*before), self.snapshot(session()), notice_id='OP-2')
         ledger, sender = MemoryLedger(), Mock(return_value=('accepted', ''))
         result, verify = self.send_change(token, [session()], ledger, sender)
-        self.assertEqual(result['accepted'], 4)
+        self.assertEqual((result['total'], result['accepted']), (2, 2))
         verify.assert_called_once()
         copies = {call.args[0]: call.args[1] for call in sender.call_args_list}
         subject, html, _text = copies['one@example.invalid']
@@ -813,19 +785,14 @@ class ChangeNoticeTests(unittest.TestCase):
         self.assertIn('Join your Teams session', html)
         self.assertNotIn('two@example.invalid', html)
         self.assertNotIn('Invited learners', html)
-        subject, html, _text = copies['co@example.invalid']
-        self.assertNotIn('organiser copy', subject)
-        self.assertEqual(subject, copies['one@example.invalid'][0])
-        self.assertIn('Invited learners', html)
-        self.assertIn('two@example.invalid', html)
-        self.assertIn('Join your Teams session', html)
-        # Checking the same action's status again hands out the same notice id: the
-        # second batch reaches only the presenter still queued, and nobody twice.
+        self.assertEqual(set(copies), {'one@example.invalid', 'two@example.invalid'})
+        # Checking the same action's status again hands out the same notice id,
+        # so asking again reaches nobody twice.
         again = self.notices.issue_change_notice('LIVE-ONE', self.snapshot(*before), self.snapshot(session()), notice_id='OP-2')
         self.send_change(again, [session()], ledger, sender)
         self.send_change(again, [session()], ledger, sender)
-        self.assertEqual(sender.call_count, 5)
-        self.assertEqual(len({call.args[0] for call in sender.call_args_list}), 5)
+        self.assertEqual(sender.call_count, 2)
+        self.assertEqual(len({call.args[0] for call in sender.call_args_list}), 2)
 
     def test_edit_session_action_issues_a_notice_only_once_microsoft_confirmed_it(self):
         before = self.snapshot(session(), session(2, '2026-09-24T11:00:00Z'))

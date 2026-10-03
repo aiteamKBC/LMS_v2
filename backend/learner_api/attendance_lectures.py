@@ -16,6 +16,7 @@ from audit_api.last_audit_ledger_views import _is_completed
 from login.permissions import learner_self_or_staff
 from old_otjh.repository import ksb_codes
 from .attendance import combined_attendance_rows, _summarize_attendance
+from .attendance_rules import attendance_outcome
 from .dashboard_metrics import as_json
 from .learner_detail import SOURCE_MODELS
 from .progress_rules import progress_record_counts_as_achieved as progress_counts_as_achieved
@@ -176,13 +177,14 @@ def read_native_occurrences(source, *, module_ids=None):
             session_date=start.date(), session_start_time=start.time(), session_end_time=end.time(),
             attendance_status='present' if row.get('attended') else
                               'upcoming' if row['scheduled_start'] > now else
-                              'in_progress' if row['scheduled_end'] > now else 'pending',
+                              'in_progress' if row['scheduled_end'] > now else
+                              'absent' if row.get('attendance_report_id') else 'pending',
             minutes_late=0, catchup_completed=False,
         )
     return result
 
 
-def lecture_register(source, *, module_ids=None, records=None):
+def lecture_register(source, *, module_ids=None, records=None, learner_profile_id=None, apply_adjustments=True):
     # Bulk consumers can preload source rows; all schedule, recovery and saved
     # confirmation rules still run through this same learner register.
     records = combined_attendance_rows(source) if records is None else records
@@ -193,7 +195,8 @@ def lecture_register(source, *, module_ids=None, records=None):
     attended_alternatives = set()
     for row in records:
         if row.get('source') == 'microsoft-teams':
-            schedule = by_occurrence.pop(str(row['session_id']), None)
+            occurrence_id = str(row.get('occurrence_id') or row['session_id'])
+            schedule = by_occurrence.pop(occurrence_id, None)
             if schedule is None:
                 # Another group's occurrence joined as an approved alternative
                 # recovers the original absence; it is not a lecture of its own.
@@ -204,7 +207,8 @@ def lecture_register(source, *, module_ids=None, records=None):
             if schedule['scheduled_end'] > now:
                 row = schedule
             else:
-                row = {**schedule, **row, 'scheduled_start': schedule['scheduled_start'],
+                row = {**schedule, **row, 'session_id': occurrence_id,
+                       'scheduled_start': schedule['scheduled_start'],
                        'scheduled_end': schedule['scheduled_end'], 'session_date': schedule['session_date'],
                        'session_start_time': schedule['session_start_time'], 'session_end_time': schedule['session_end_time']}
         elif row['session_date'] > timezone.localdate() or (
@@ -212,37 +216,107 @@ def lecture_register(source, *, module_ids=None, records=None):
             row = {**row, 'attendance_status': 'upcoming'}
         result.append({**row, 'updated_at': _aware(row.get('updated_at'))})
     result.extend(by_occurrence.values())
-    # Once a Teams occurrence has ended, an unresolved attendance record is a
-    # missed session until stronger evidence (a Teams report or a saved
-    # confirmation) says otherwise. Keep live and future occurrences pending.
-    result = [
-        {**row, 'attendance_status': 'absent'}
-        if row.get('source') == 'microsoft-teams'
-        and row.get('attendance_status') == 'pending'
-        and row.get('scheduled_end')
-        and _aware(row['scheduled_end']) <= now
-        else row
-        for row in result
-    ]
+    # Ended sessions remain unmarked until evidence or a saved correction exists.
+    result = [_ended_unmarked_status(row, now) for row in result]
     if attended_alternatives:
         result = _apply_attended_alternatives(result, source.id, attended_alternatives)
     result = _apply_completed_catchups(result, source.id)
     from .attendance_confirmation import apply_confirmations, read_confirmations
     merged = _merge_register_duplicates(apply_confirmations(result, read_confirmations(source.id)))
-    return _apply_coach_source_adjustments(merged, source.id)
+    if not apply_adjustments:
+        return merged
+    if learner_profile_id is None:
+        from .models import LearnerProfile
+        profile_ids = list(LearnerProfile.objects.filter(enrolment_id=source.id).values_list('id', flat=True))
+        if len(profile_ids) > 1:
+            raise ValueError('Attendance requires an unambiguous learner profile.')
+        learner_profile_id = profile_ids[0] if profile_ids else None
+    return _apply_coach_source_adjustments(merged, learner_profile_id) if learner_profile_id is not None else merged
 
 
-def _apply_coach_source_adjustments(rows, learner_id):
+def _ended_unmarked_status(row, now):
+    """Use the shared backend rule without losing the source status."""
+    status, _ = attendance_outcome(row, now)
+    if status == 'unmarked':
+        return {**row, 'raw_attendance_status': row.get('raw_attendance_status') or row.get('attendance_status'),
+                'attendance_status': 'unmarked'}
+    return row
+
+
+def attendance_read_contract(source, *, learner_profile_id):
+    """Authoritative coach read; profile identity never substitutes for enrolment."""
+    from coach_api.models import CoachManualAttendance, CoachAbsenceReport
+    rows = lecture_register(source, learner_profile_id=learner_profile_id)
+    native_ids = {row['module_catalogue_id'] for row in rows
+                  if row.get('source') == 'microsoft-teams' and row.get('module_catalogue_id')}
+    components, _ = read_native_components(source, native_ids) if native_ids else ([], [])
+    by_module = {}
+    for component in components:
+        by_module.setdefault(component['module_catalogue_id'], []).append(component)
+    reports = {str(report.attendance_id): report for report in
+               CoachAbsenceReport.objects.filter(learner_id=source.id).order_by('created_at', 'id')}
+    history = []
+    now = timezone.now()
+    for row in rows:
+        status = row.get('effective_attendance_status') or row['attendance_status']
+        outcome, counted = attendance_outcome(row, now)
+        start = _aware(row.get('scheduled_start'))
+        report = reports.get(str(report_id(row)))
+        component = _component_for(row, by_module.get(row.get('module_catalogue_id'), []))
+        history.append({
+            'learnerId': str(learner_profile_id), 'learner_profile_id': learner_profile_id,
+            'enrolment_id': source.id, 'sessionId': session_key(row),
+            'sourceId': str(row['session_id']), 'source': row.get('source', 'kbc-attendance'),
+            'module': row.get('module_title') or '', 'sessionTitle': (row.get('session_title') if row.get('title_adjusted') else (component or {}).get('title')) or row.get('session_title') or '',
+            'sessionType': row.get('session_type') or '', 'sessionDate': row['session_date'].isoformat(),
+            'sessionDateLabel': row['session_date'].strftime('%d %b %Y'),
+            'occurrenceStart': start.isoformat() if start else None,
+            'startTime': row['session_start_time'].strftime('%H:%M') if row.get('session_start_time') else '',
+            'rawStatus': row.get('raw_attendance_status') or row['attendance_status'],
+            'effectiveStatus': status, 'status': outcome, 'counted': counted,
+            'legacyAmbiguity': row.get('legacy_ambiguity', []),
+            'absenceReport': {'id': str(report.id), 'status': report.status,
+                              'url': getattr(report, 'evidence_image_url', '') or None} if report else None,
+        })
+    for row in CoachManualAttendance.objects.filter(learner_id=learner_profile_id):
+        outcome, counted = attendance_outcome({'attendance_status': row.status, 'session_date': row.session_date}, now)
+        history.append({
+            'learnerId': str(learner_profile_id), 'learner_profile_id': learner_profile_id,
+            'enrolment_id': source.id, 'sessionId': f'manual-{row.id}', 'manualId': str(row.id),
+            'source': 'coach-manual', 'module': row.module_name, 'sessionType': 'manual',
+            'sessionTitle': row.session_title, 'sessionDate': row.session_date.isoformat(),
+            'sessionDateLabel': row.session_date.strftime('%d %b %Y'), 'occurrenceStart': None,
+            'rawStatus': row.status, 'effectiveStatus': row.status, 'status': outcome,
+            'counted': counted,
+            'absenceReport': None,
+        })
+    def occurrence_order(row):
+        start = row.get('occurrenceStart')
+        instant = datetime.fromisoformat(start) if start else timezone.make_aware(
+            datetime.fromisoformat(f"{row['sessionDate']}T{row.get('startTime') or '00:00'}"))
+        return instant.timestamp(), row['sessionId']
+    history.sort(key=occurrence_order, reverse=True)
+    counted = [row for row in history if row['counted']]
+    present = sum(row['status'] == 'present' for row in counted)
+    absent = len(counted) - present
+    summary = {'present': present, 'absent': absent, 'total': len(counted),
+               'totalCounted': len(counted), 'sessions': len(counted), 'unknown': 0,
+               'attendanceRate': round(100 * present / len(counted)) if counted else None}
+    return {'learner_profile_id': learner_profile_id, 'enrolment_id': source.id,
+            'summary': summary, 'history': history, 'recentAttendance': counted[:4]}
+
+
+def _apply_coach_source_adjustments(rows, learner_profile_id):
     """Apply persisted per-learner coach edits without changing the meeting."""
     from coach_api.models import CoachAttendanceSourceAdjustment
 
     try:
         adjustments = {
             (item.source, item.source_id): item
-            for item in CoachAttendanceSourceAdjustment.objects.filter(learner_id=learner_id)
+            for item in CoachAttendanceSourceAdjustment.objects.filter(learner_id=learner_profile_id)
         }
     except DatabaseError:
-        log.warning('Could not read coach attendance adjustments for learner %s.', learner_id, exc_info=True)
+        log.warning('Could not read coach attendance adjustments for profile %s.', learner_profile_id, exc_info=True)
         return rows
 
     result = []
@@ -255,13 +329,14 @@ def _apply_coach_source_adjustments(rows, learner_id):
         if adjustment.is_deleted:
             continue
         updated = dict(row)
+        updated['raw_attendance_status'] = row.get('raw_attendance_status') or row['attendance_status']
         if adjustment.session_date:
             updated['session_date'] = adjustment.session_date
         if adjustment.module_name:
             updated['module_title'] = adjustment.module_name
-            updated['session_type'] = adjustment.module_name
         if adjustment.session_title:
             updated['session_title'] = adjustment.session_title
+            updated['title_adjusted'] = True
         if adjustment.status:
             updated['attendance_status'] = adjustment.status
             updated['effective_attendance'] = 1 if adjustment.status == 'present' else 0
@@ -293,7 +368,7 @@ def _apply_attended_alternatives(rows, learner_id, attended_occurrences):
                'effective_attendance_status': 'made_up', 'final_outcome': 'made_up'}
     return [
         {**row, **made_up}
-        if row.get('source') == 'microsoft-teams' and row.get('attendance_status') == 'absent'
+        if row.get('source') == 'microsoft-teams' and row.get('attendance_status') in {'absent', 'unmarked'}
         and targets.get(str(report_id(row))) in attended_occurrences
         else row
         for row in rows
@@ -312,13 +387,12 @@ def _completed_catchup_occurrences(learner_id, occurrence_ids):
 def _apply_completed_catchups(rows, learner_id):
     """Credit a missed Teams lecture that has no attendance report of its own.
 
-    Such a lecture only reads as absent because its time passed, so the recovery
-    that report rows receive never reaches it. The absence ledger still records
+    Unmarked lectures can also have independently verified recovery evidence. The absence ledger still records
     a catch-up the learner attended (recovery_status completed).
     """
     unreported = {
         str(row.get('session_id')) for row in rows
-        if row.get('source') == 'microsoft-teams' and row.get('attendance_status') == 'absent'
+        if row.get('source') == 'microsoft-teams' and row.get('attendance_status') in {'absent', 'unmarked'}
         and row.get('effective_attendance') is None
     }
     if not unreported:
@@ -339,28 +413,45 @@ def _apply_completed_catchups(rows, learner_id):
 
 
 def _merge_register_duplicates(rows):
-    """Count a lecture recorded in both the KBC register and Teams once.
-
-    The Teams occurrence is kept (it carries the schedule and join link). A KBC
-    row only merges into exactly one Teams row of the same module and date,
-    and passes on an attended outcome the Teams row does not already have.
-    """
+    """Suppress only a deterministic legacy mirror; occurrences remain authoritative."""
+    # Source evidence may contain stale dates or multiple representations of
+    # one occurrence. Collapse explicit identities before legacy matching and
+    # before coach corrections; an adjustment must override the single row.
+    unique = {}
+    for row in rows:
+        occurrence = row.get('occurrence_id')
+        source = row.get('source') or 'kbc-attendance'
+        key = (row.get('learner_id'),
+               'microsoft-teams' if occurrence else source,
+               str(occurrence or row['session_id']))
+        previous = unique.get(key)
+        if previous is None or (source == 'microsoft-teams' and previous.get('source') != 'microsoft-teams'):
+            unique[key] = row
+    rows = list(unique.values())
     teams = {}
     for row in rows:
         if row.get('source') == 'microsoft-teams':
             teams.setdefault((row['session_date'], _module_key(row.get('module_title'))), []).append(row)
-    attended = {'present', 'late'}
+    candidates = {}
+    for index, row in enumerate(rows):
+        if row.get('source') != 'kbc-attendance':
+            continue
+        key = _module_key(row.get('module_title'))
+        matches = teams.get((row['session_date'], key), []) if key else []
+        if row.get('session_start_time'):
+            matches = [target for target in matches if target.get('session_start_time') == row['session_start_time']]
+        candidates[index] = matches
     merged = []
-    for row in rows:
-        if row.get('source') == 'kbc-attendance':
-            matches = teams.get((row['session_date'], _module_key(row.get('module_title'))), [])
-            if len(matches) == 1 and _module_key(row.get('module_title')):
-                target = matches[0]
-                if row['attendance_status'] in attended and target['attendance_status'] not in attended:
-                    target.update({key: row[key] for key in (
-                        'attendance_status', 'minutes_late', 'attendance_confirmed', 'credited_minutes')
-                        if key in row})
+    for index, original in enumerate(rows):
+        row = dict(original)
+        matches = candidates.get(index, [])
+        if len(matches) == 1:
+            target_id = session_key(matches[0])
+            competing = sum(any(session_key(target) == target_id for target in options) for options in candidates.values())
+            if competing == 1:
                 continue
+        if matches:
+            row['legacy_ambiguity'] = [session_key(target) for target in matches]
         merged.append(row)
     return merged
 
@@ -523,6 +614,7 @@ def build_lectures(register, legacy_meta, legacy_activities, components, kind, l
         # Its UTC month can differ from the local date displayed in Attendance.
         log_date = (row.get('scheduled_start') or row['session_date']) if source == 'microsoft-teams' else row['session_date']
         module_id = f"native:{row['module_catalogue_id']}" if source == 'microsoft-teams' else f"legacy:{_key(row.get('module_title'))}"
+        outcome, counted = attendance_outcome(row)
         lecture = {
             'id': f"{session_key(row)}-{row['session_date'].isoformat()}",
             'sessionId': session_key(row), 'reportId': str(report_id(row)),
@@ -539,9 +631,10 @@ def build_lectures(register, legacy_meta, legacy_activities, components, kind, l
             'tutor': _text(row.get('tutor_name')), 'coach': _text(row.get('coach_name')),
             'attendanceConfirmed': bool(row.get('attendance_confirmed')),
             'creditedMinutes': row.get('credited_minutes'),
-            'status': {'present': 'completed', 'late': 'late', 'absent': 'absent',
-                       'upcoming': 'upcoming', 'in_progress': 'in_progress'}.get(row['attendance_status'], 'pending'),
-            'rawAttendanceStatus': row['attendance_status'],
+            'status': outcome, 'counted': counted,
+            'rawStatus': row.get('raw_attendance_status') or row['attendance_status'],
+            'effectiveStatus': row.get('effective_attendance_status') or row['attendance_status'],
+            'rawAttendanceStatus': row.get('raw_attendance_status') or row['attendance_status'],
             'effectiveAttendanceStatus': row.get('effective_attendance_status') or row['attendance_status'],
             'effectiveAttendance': row.get('effective_attendance') if 'effective_attendance' in row else
                                    (1 if row['attendance_status'] in {'present', 'late'} else
@@ -608,7 +701,7 @@ def build_lectures(register, legacy_meta, legacy_activities, components, kind, l
             lecture['durationMinutes'] = lecture['creditedMinutes']
             if source == 'kbc-attendance':
                 lecture['monthlyLog']['month'] = lecture['date'][:7]
-        if lecture['status'] == 'absent':
+        if (row['attendance_status'] in {'absent', 'unmarked'} and row.get('catchup_completed')) or lecture['status'] == 'absent':
             activities = lecture['activities']
             lecture['catchupStatus'] = ('completed' if row.get('catchup_completed') else 'pending') if source == 'microsoft-teams' else (
                 'completed' if activities and all(a['completed'] for a in activities) else 'pending')
@@ -617,8 +710,9 @@ def build_lectures(register, legacy_meta, legacy_activities, components, kind, l
 
 
 def lecture_totals(lectures):
-    attended = sum(row['status'] in {'completed', 'late'} for row in lectures)
-    absent = sum(row['status'] == 'absent' for row in lectures)
+    from .attendance_rules import canonical_status
+    attended = sum(canonical_status(row['status']) == 'present' and row.get('counted') is not False for row in lectures)
+    absent = sum(row['status'] == 'absent' and row.get('counted') is not False for row in lectures)
     return {'total': len(lectures), 'attended': attended, 'absent': absent,
             'covered': sum(row['catchupStatus'] == 'completed' for row in lectures),
             'upcoming': sum(row['status'] == 'upcoming' for row in lectures),
@@ -790,7 +884,7 @@ def read_workspace(source, kind):
         lecture['absenceReport'] = {'id': report['id'], 'status': report['status']} if report else None
         lecture['canReportAbsence'] = (lecture['status'] in {'absent', 'upcoming', 'in_progress'} or
             (lecture['status'] == 'pending' and lecture['date'] == timezone.localdate().isoformat())) and not report
-        if lecture['status'] in {'completed', 'late'} and lecture['updatedAt']:
+        if lecture['status'] == 'present' and lecture['updatedAt']:
             recent.append({'id': lecture['id'], 'title': f"{lecture['title']} attended", 'at': lecture['updatedAt'], 'type': 'attendance'})
     _attach_recovery(lectures, reported)
     _attach_recording_views(lectures, kind, source.id)
