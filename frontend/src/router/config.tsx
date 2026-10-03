@@ -287,6 +287,7 @@ const VoucherClaimsPage = lazyRoute(() => import("../pages/engagement/voucher-cl
 const WeekDetailPage = lazyRoute(() => import("../pages/learner/week-detail/page"));
 const WhatsAppLogsPage = lazyRoute(() => import("../pages/engagement/whatsapp-logs/page"));
 const WizardPage = lazyRoute(() => import("../pages/users/wizard/WizardPage"));
+const WizardBuilderPage = lazyRoute(() => import("../pages/users/wizard-builder/page"));
 
 const routes: RouteObject[] = [
   { path: '/old-otjh', element: <OldOtjhPage /> },
@@ -448,6 +449,11 @@ const routes: RouteObject[] = [
   {
     path: "/users",
     element: <UsersListPage />,
+  },
+  // The enrolment wizard builder. A static segment, so it wins over /users/:userId.
+  {
+    path: "/users/wizard-builder",
+    element: <WizardBuilderPage />,
   },
   {
     path: "/users/:userId",

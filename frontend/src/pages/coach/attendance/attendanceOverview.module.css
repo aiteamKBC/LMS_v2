@@ -1,5 +1,6 @@
-.page{min-height:calc(100vh - 76px);padding:24px 28px 32px;background:#f7f7fb;color:#211b45}.card{margin-bottom:16px;padding:20px;border:1px solid #ded6f2;border-radius:12px;background:#fff;box-shadow:0 3px 14px rgb(55 38 103/5%)}.heading,.studentsHeader{display:flex;align-items:center;gap:12px}.heading>span{display:grid;width:38px;height:38px;place-items:center;border-radius:9px;background:#f0ebff;color:#6235c7;font-size:18px}.card h1{margin:0;font-size:18px;font-weight:750}.heading p{margin:3px 0 0;color:#706a87;font-size:12px}.formRow{display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,1fr) auto;align-items:end;gap:14px;margin-top:18px}.formRow label,.studentsHeader>label{display:grid;gap:6px;font-size:12px;font-weight:700;color:#3b3460}.page select,.page input[type=date]{height:40px;padding:0 12px;border:1px solid #dcd7e8;border-radius:7px;background:#fff;color:#282043}.page button{height:38px;padding:0 15px;border-radius:7px;font-size:12px;font-weight:700}.primary{border:1px solid #5f35bd;background:#5f35bd;color:#fff}.secondary{border:1px solid #cfc3eb;background:#f7f3ff;color:#5630aa}.danger{border:1px solid #efc7cf;background:#fff7f8;color:#b32642}.page button:disabled{cursor:not-allowed;opacity:.45}.dayList{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.dayList>span{display:inline-flex;align-items:center;gap:7px;padding:5px 8px;border-radius:6px;background:#f2eefb;color:#44376e;font-size:12px}.dayList button{width:20px;height:20px;padding:0;border:0;background:transparent}.editFooter{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:18px;padding-top:14px;border-top:1px solid #eeeaf6}.editFooter>div{display:flex;gap:18px}.editFooter strong{font-size:12px}.notice{margin:12px 0 0;padding:10px 12px;border-radius:7px;background:#fff8e8;color:#70520c;font-size:12px}.studentsHeader>label{margin-left:auto;min-width:185px}.selectActions{display:flex;gap:8px;margin:16px 0 8px}.selectActions button,.pagination button{border:1px solid #d9d2e8;background:#fff;color:#523b82}.tableScroll{overflow-x:auto}.tableScroll table{width:100%;min-width:850px;border-collapse:collapse}.tableScroll th{padding:10px 12px;background:#f6f4fa;color:#625a78;font-size:11px;text-align:left}.tableScroll td{padding:12px;border-bottom:1px solid #eeeaf4;color:#514967;font-size:12px}.tableScroll td strong{color:#2d2548}.programStatus{display:inline-flex;padding:4px 8px;border-radius:999px;background:#edf7f1;color:#16734a;font-weight:700}.chips{display:flex;gap:5px}.chips span{padding:4px 6px;border-radius:5px;font-weight:750}.chips span[data-status=present]{background:#e3f5eb;color:#13724a}.chips span[data-status=absent]{background:#fde8ec;color:#bd2947}.linkButton{border:0;background:transparent;color:#5f35bd;text-decoration:underline}.pagination{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:12px;color:#625a78;font-size:12px}@media(max-width:760px){.page{padding:16px 12px}.formRow{grid-template-columns:1fr}.studentsHeader{align-items:flex-start;flex-wrap:wrap}.studentsHeader>label{width:100%;margin-left:50px}.editFooter{align-items:flex-start;flex-direction:column}.editFooter>div:last-child{flex-wrap:wrap}}
+.page{min-height:calc(100vh - 76px);padding:24px 28px 32px;background:#f7f7fb;color:#211b45}.card{margin-bottom:16px;padding:20px;border:1px solid #ded6f2;border-radius:12px;background:#fff;box-shadow:0 3px 14px rgb(55 38 103/5%)}.heading,.studentsHeader{display:flex;align-items:center;gap:12px}.heading>span{display:grid;width:38px;height:38px;place-items:center;border-radius:9px;background:#f0ebff;color:#6235c7;font-size:18px}.card h1{margin:0;font-size:18px;font-weight:750}.heading p{margin:3px 0 0;color:#706a87;font-size:12px}.formRow{display:grid;grid-template-columns:minmax(180px,1fr) minmax(180px,1fr) auto;align-items:end;gap:14px;margin-top:18px}.formRow label,.studentsHeader>label{display:grid;gap:6px;font-size:12px;font-weight:700;color:#3b3460}.page select,.page input[type=date]{height:40px;padding:0 12px;border:1px solid #dcd7e8;border-radius:7px;background:#fff;color:#282043}.page button{height:38px;padding:0 15px;border-radius:7px;font-size:12px;font-weight:700}.primary{border:1px solid #5f35bd;background:#5f35bd;color:#fff}.secondary{border:1px solid #cfc3eb;background:#f7f3ff;color:#5630aa}.danger{border:1px solid #efc7cf;background:#fff7f8;color:#b32642}.page button:disabled{cursor:not-allowed;opacity:.45}.dayList{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.dayList>span{display:inline-flex;align-items:center;gap:7px;padding:5px 8px;border-radius:6px;background:#f2eefb;color:#44376e;font-size:12px}.dayList button{width:20px;height:20px;padding:0;border:0;background:transparent}.editFooter{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:18px;padding-top:14px;border-top:1px solid #eeeaf6}.editFooter>div{display:flex;flex-wrap:wrap;align-items:center;gap:8px 14px}.editFooter strong{font-size:12px}.notice{margin:12px 0 0;padding:10px 12px;border-radius:7px;background:#fff8e8;color:#70520c;font-size:12px}.studentsHeader>label{margin-left:auto;min-width:185px}.selectActions{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0 8px}.selectActions button,.pagination button{border:1px solid #d9d2e8;background:#fff;color:#523b82}.tableScroll{overflow-x:auto}.tableScroll table{width:100%;min-width:850px;border-collapse:collapse}.tableScroll th{padding:8px 10px;background:#f6f4fa;color:#625a78;font-size:11px;text-align:left}.tableScroll td{padding:8px 10px;border-bottom:1px solid #eeeaf4;color:#514967;font-size:12px}.tableScroll td strong{color:#2d2548}.programStatus{display:inline-flex;padding:4px 8px;border-radius:999px;background:#edf7f1;color:#16734a;font-weight:700}.chips{display:flex;gap:5px}.chips span{padding:4px 6px;border-radius:5px;font-weight:750}.chips span[data-status=present]{background:#e3f5eb;color:#13724a}.chips span[data-status=absent]{background:#fde8ec;color:#bd2947}.linkButton{border:0;background:transparent;color:#5f35bd;text-decoration:underline}.pagination{display:flex;align-items:center;justify-content:flex-end;gap:12px;margin-top:12px;color:#625a78;font-size:12px}@media(max-width:760px){.page{padding:16px 12px}.formRow{grid-template-columns:1fr}.studentsHeader{align-items:flex-start;flex-wrap:wrap}.studentsHeader>label{width:100%;min-width:0;margin-left:0}.editFooter{align-items:flex-start;flex-direction:column}.editFooter>div:last-child{flex-wrap:wrap}}
 /* Match the available content width, including expanded desktop navigation. */
+.tableScroll td.studentName { color: #2d2548; font-weight: 700; }
 @container coach-content (max-width: 760px) {
   .formRow { grid-template-columns: minmax(0, 1fr); }
   .studentsHeader { align-items: flex-start; flex-wrap: wrap; }
@@ -7,3 +8,154 @@
   .editFooter { align-items: stretch; flex-direction: column; }
   .editFooter > div, .selectActions, .pagination { flex-wrap: wrap; }
 }
+
+/* Compact bulk editing controls without changing attendance interactions. */
+.editCard { position: sticky; top: 0; z-index: 10; padding: 16px 20px; }
+.editCard .heading { gap: 10px; }
+.editCard .heading > span { width: 32px; height: 32px; flex-shrink: 0; }
+.formRow.sessionRow { grid-template-columns: minmax(0, 1fr); margin-top: 10px; gap: 8px; }
+.sessionRow label { min-width: 0; gap: 4px; }
+.sessionRow select { width: 100%; min-width: 0; }
+.editCard .selectActions { margin: 10px 0 0; }
+.editCard .editFooter { flex-wrap: wrap; margin-top: 8px; padding-top: 8px; gap: 8px 12px; }
+.editCard .editFooter > div:last-child { margin-left: auto; }
+.studentsSummary { min-width: 0; }
+.inlineWarning { margin: 4px 0 0 50px; color: #706a87; font-size: 12px; }
+.checkboxColumn { width: 40px; }
+.learnerColumn { width: 180px; }
+.emailColumn { width: 240px; }
+.programmeColumn { width: 140px; }
+.attendanceColumn { width: 150px; }
+.detailsColumn { width: 100px; }
+.tableScroll th, .tableScroll td { padding: 7px 8px; }
+.tableScroll th { font-weight: 600; white-space: nowrap; }
+.tableScroll th:first-child, .tableScroll td:first-child { width: 40px; text-align: center; }
+.tableScroll th:last-child, .tableScroll td:last-child { text-align: right; }
+.tableScroll tbody tr:nth-child(even) { background: #fcfbfe; }
+.tableScroll tbody tr[data-selected=true] { background: #f5f2fb; }
+.tableScroll input[type=checkbox] { accent-color: #7355a6; vertical-align: middle; }
+.tableScroll td strong { font-weight: 700; }
+.tableScroll .programStatus { padding: 2px 7px; background: #f2f0f6; color: #625a78; font-size: 11px; font-weight: 600; }
+.tableScroll .chips { flex-wrap: wrap; }
+.tableScroll .chips span { font-size: 11px; font-weight: 600; border-color: #e5e0ed; }
+.tableScroll td select { width: 116px; height: 34px; padding: 0 8px; font-size: 12px; }
+.tableScroll .chips { gap: 4px; }
+.tableScroll .chips span { padding: 3px 6px; }
+.tableScroll .linkButton { height: 34px; padding: 0 8px; white-space: nowrap; }
+@media (max-width: 760px) {
+  .editCard { padding: 14px; }
+  .editCard .editFooter > div:last-child { margin-left: 0; }
+  .editCard .editFooter button { height: auto; min-height: 38px; padding: 8px 12px; }
+}
+@container coach-content (max-width: 760px) {
+  .editCard .editFooter > div:last-child { margin-left: 0; }
+  .editCard .editFooter button { height: auto; min-height: 38px; padding: 8px 12px; }
+}
+/* Coach Bulk Attendance: page-local KBC purple presentation. */
+.page { --attendance-primary: #4b168c; background: #f7f5ff; padding: 20px 24px 28px; }
+.page .card { padding: 18px 20px; border-color: #e4dcf5; box-shadow: 0 3px 14px rgb(75 22 140 / 5%); }
+.page .heading > span { flex-shrink: 0; width: 40px; height: 40px; color: var(--attendance-primary); background: #eee7fc; }
+.page .card h1 { font-size: 22px; line-height: 1.25; }
+.page .heading p { line-height: 1.5; }
+.page .formRow { margin-top: 14px; gap: 12px; }
+.page label { min-width: 0; }
+.page select { width: 100%; min-width: 0; border-color: #dfd6f1; font-size: 13px; }
+.page button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; white-space: nowrap; }
+.page button svg { flex-shrink: 0; font-size: 16px; }
+.page .primary { background: var(--attendance-primary); border-color: var(--attendance-primary); height: 40px; box-shadow: 0 3px 8px rgb(75 22 140 / 10%); }
+.page .primary:hover:not(:disabled) { background: #5b21b6; }
+.page .secondary { background: #fff; border-color: #cfc0ed; color: var(--attendance-primary); }
+.page :is(button, select, input):focus-visible { outline: 2px solid #6d28d9; outline-offset: 2px; }
+.page select:focus { border-color: #6d28d9; }
+.page .editCard { padding: 18px 20px; }
+.page .editActions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; margin-top: 12px; }
+.page .editActions > div { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
+.page .selectActions .presentAction { background: #f0faf4; border-color: #c8e8d4; color: #286344; }
+.page .selectActions .absentAction { background: #fff4f5; border-color: #f3cdd2; color: #a92e40; }
+.page .presentAction svg { color: #278252; }
+.page .absentAction svg { color: #bc3649; }
+.page .editFooter { margin-top: 8px; padding-top: 0; border: 0; }
+.page .editFooter strong { font-size: 11px; color: #625478; font-weight: 600; }
+.page .notice { background: #f3eeff; color: var(--attendance-primary); }
+.page .studentsHeader { align-items: flex-start; gap: 16px; }
+.page .studentsHeader > label { flex-shrink: 0; width: 185px; font-size: 11px; }
+.page .studentsHeader select { height: 36px; }
+.page .selectActions { margin: 12px 0 8px; }
+.page .selectActions button { color: var(--attendance-primary); border-color: #e0d6f3; height: 34px; }
+.page .tableScroll table { width: 100%; min-width: 1182px; table-layout: fixed; }
+.page .tableScroll th { background: #f7f3fe; color: #443357; border-bottom: 1px solid #e4dcf3; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .035em; padding: 6px 8px; }
+.page .tableScroll th:first-child { border-radius: 7px 0 0 7px; }
+.page .tableScroll th:last-child { border-radius: 0 7px 7px 0; }
+.page .tableScroll td { height: 46px; padding: 6px 12px; border-color: #f0eaf8; vertical-align: middle; }
+.emailText { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.page .tableScroll tbody tr { background: #fff; }
+.page .tableScroll tbody tr:nth-child(even) { background: #faf8ff; }
+.page .tableScroll tbody tr[data-selected=true] { background: #f1ebfc; }
+.page .tableScroll input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--attendance-primary); }
+.page .learnerColumn { width: 16%; }
+.page .checkboxColumn { width: 44px; }
+.page .emailColumn { width: 20%; }
+.page .programmeColumn { width: 12%; }
+.page .attendanceColumn { width: 14%; }
+.page .detailsColumn { width: 110px; }
+.page .tableScroll td strong { font-weight: 600; }
+.page .tableScroll td select { width: 126px; height: 32px; padding: 0 8px; font-size: 12px; }
+.learnerIdentity { display: flex; align-items: center; gap: 7px; }
+.learnerIdentity strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.studentSkeleton { display: block; height: 12px; width: 70%; border-radius: 4px; background: #eae0fc; }
+.page .tableScroll td:first-child .studentSkeleton { width: 15px; height: 15px; margin: 0 auto; }
+.page .tableScroll td:last-child .studentSkeleton { width: 64px; height: 30px; margin-left: auto; }
+.avatar { display: grid; place-items: center; flex-shrink: 0; width: 28px; height: 28px; border-radius: 50%; background: #eae0fc; color: var(--attendance-primary); font-size: 10px; font-weight: 700; }
+.page .tableScroll .programStatus { padding: 2px 7px; color: #635570; background: #f2eef7; white-space: nowrap; }
+.page .programStatus[data-programme-status=active] { background: #e8f6ed; color: #23744a; }
+.page .programStatus[data-programme-status=delivery] { background: #eee5fc; color: #6330a4; }
+.page .tableScroll .chips { gap: 6px; flex-wrap: wrap; justify-content: center; }
+.page .tableScroll .chips span { border-radius: 999px; padding: 2px 5px; font-size: 10px; line-height: 1.5; }
+.page .tableScroll .chips span[data-status=present] { border-color: #c9e9d5; background: #f0faf4; color: #286344; }
+.page .tableScroll .chips span[data-status=absent] { border-color: #f3cdd2; background: #fff4f5; color: #a92e40; }
+.page .tableScroll .linkButton { color: var(--attendance-primary); border: 1px solid #d9c9ee; background: #fcfaff; text-decoration: none; height: 30px; min-height: 30px; padding: 0 9px; gap: 5px; font-size: 11px; white-space: nowrap; }
+.page .tableScroll .linkButton:hover { background: #f0e8fc; border-color: #bca0df; }
+.page .studentsHeader { align-items: center; gap: 12px; }
+.page :is(.studentsHeader, .studentsSelection, .tableScroll, .pagination) { width: 100%; }
+.page .studentsHeader > label { gap: 4px; }
+.page .studentsSelection { margin: 8px 0; gap: 6px; }
+.page .studentsSelection button { height: 30px; min-height: 30px; padding: 0 10px; white-space: nowrap; }
+@media (max-width: 760px) {
+  .page { padding: 14px 12px; }
+  .page .card { padding: 16px; }
+  .page .card h1 { font-size: 20px; }
+  .page .studentsHeader > label { width: 100%; }
+  .page .editActions { align-items: flex-start; flex-direction: column; }
+  .page button { white-space: normal; height: auto; min-height: 34px; padding: 8px 12px; }
+}
+@container coach-content (max-width: 760px) {
+  .page .studentsHeader > label { width: 100%; }
+  .page .editActions { align-items: flex-start; flex-direction: column; }
+  .page button { white-space: normal; height: auto; min-height: 34px; padding: 8px 12px; }
+}
+/* Override shared workspace table sizing and grey chrome only on this page. */
+:global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .page .card h1 { font-size: 22px !important; }
+:global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .page select { min-height: 0; font-size: 13px !important; }
+:global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .page input[type=checkbox] { min-height: 0; }
+:global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .page button { min-height: 34px; font-size: 12px; }
+:global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .page .tableScroll th { height: 40px; padding: 10px 12px; border-bottom: 1px solid #e4dcf3; background: #f7f3fe !important; color: #443357 !important; font-size: 11px; text-align: center; }
+:global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .page .tableScroll td { height: 52px; padding: 10px 12px; font-size: 13px; text-align: center; border-bottom-color: #e4dcf3 !important; }
+:global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .page .tableScroll tbody tr { background: #fff !important; }
+:global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .page .tableScroll tbody tr:nth-child(even) { background: #faf8ff !important; }
+:global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .page .tableScroll tbody tr[data-selected=true] { background: #f1ebfc !important; }
+:global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .page .tableScroll { scrollbar-gutter: auto; }
+:global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .page .tableScroll :is(th, td):first-child { width: 44px; text-align: center; }
+:global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .page .tableScroll :is(th, td):last-child { text-align: center; }
+.page .tableScroll td:last-child { background: inherit; }
+:global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .page .tableScroll td select { font-size: 12px !important; }
+:global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .page .tableScroll .linkButton,
+:global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .page .studentsSelection button { min-height: 30px; font-size: 11px; }
+
+/* Keep each heading and its content on the same centre line. */
+.page .tableScroll { border: 1px solid #e4dcf3; border-radius: 8px; }
+.page .tableScroll :is(th, td) { text-align: center; }
+.page .tableScroll .learnerIdentity { justify-content: center; }
+.page .tableScroll .studentSkeleton { margin-inline: auto; }
+.page .tableScroll tbody tr:last-child td { border-bottom: 0; }
+.page .tableScroll tbody tr:hover { background: #f3eefc !important; }
+.page .tableScroll tbody tr[data-selected=true]:hover { background: #eae0f9 !important; }

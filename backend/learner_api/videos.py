@@ -110,7 +110,6 @@ def submit_video_progress(request, component_id):
     if not ksbs and isinstance(payload.get("ksbs"), list):
         ksbs = payload["ksbs"]
     feedback = payload.get("feedback") or ""
-    reported_time = payload.get("reportedTime") or ""
     reflection_skipped = payload.get("skipReflection") is True
     time_entry_source = "input" if payload.get("timeEntrySource") == "input" else "timer"
     # Client may pass the title it rendered; fall back to a live master lookup.
@@ -160,7 +159,11 @@ def submit_video_progress(request, component_id):
         return _error("This activity timing session has already been submitted.", 409)
     started_at = tracking["startedAt"].isoformat()
     submitted_at = submitted_at_dt.isoformat()
-    time_taken = _format_clock(tracking["verifiedSeconds"])
+    # The learner chooses Timer or Input before finishing. Keep that selection
+    # for display and actual-hours totals; verifiedSeconds remains separate
+    # signed-session evidence. Explicit units prevent hours/minutes ambiguity.
+    time_taken = _format_clock(tracking["claimedSeconds"])
+    selected_time = f'{tracking["claimedSeconds"] / 60} minutes'
 
     # Slim, id-referenced record. The videoTitle/week/module NAMES are dropped —
     # the plan tree resolves them from componentId.
@@ -170,7 +173,7 @@ def submit_video_progress(request, component_id):
         "attempt": attempt_number,
         "ksbs": ksbs,                          # KSB codes the learner selected
         "feedback": feedback,                  # reflection note
-        "reportedTime": reported_time,         # self-reported time-to-complete
+        "reportedTime": selected_time,         # selected Timer/Input duration
         "reflectionSkipped": reflection_skipped,
         "startedAt": started_at,
         "submittedAt": submitted_at,
@@ -195,7 +198,7 @@ def submit_video_progress(request, component_id):
             "kind": "video",
             "action": "Watched video",
             "title": video_title or "Video",
-            "detail": (f"{reported_time}" if reported_time else "").strip(),
+            "detail": selected_time,
             "componentId": component_id,
             "week": week_title,
             "module": module_title,

@@ -1,3 +1,4 @@
+import type { CustomAnswer } from './wizard/layout/types';
 // ============================================================================
 // Enrolment Console — shared types
 // Frontend only. Every shape is named so it can be mapped to the API later.
@@ -578,6 +579,12 @@ export interface WizardDraft {
   plr: PlrState;
   cvJob: CvJobForm;
   policies: PoliciesState;
+  /**
+   * Answers to the fields added in the wizard builder, by field key. Optional:
+   * drafts saved before the builder existed have none. Projected server-side
+   * into each field's own column (see enrolment_api/wizard_layout.py).
+   */
+  custom?: Record<string, CustomAnswer>;
 }
 
 export interface WizardStepDef {

@@ -107,6 +107,7 @@ export function ReflectionWindow({
   plannedTimeLabel,
   plannedHours: plannedHoursProp,
   actualTimeUnit = 'hours',
+  selectedTimeSeconds,
   noun = 'quiz',
   submitting,
   submitError,
@@ -146,6 +147,8 @@ export function ReflectionWindow({
    * reflection record still receives hours.
    */
   actualTimeUnit?: 'hours' | 'minutes';
+  /** Timer/Input duration already selected on the activity completion screen. */
+  selectedTimeSeconds?: number;
   noun?: string;
   submitting: boolean;
   submitError: string | null;
@@ -173,10 +176,6 @@ export function ReflectionWindow({
     plannedHoursProp != null && Number.isFinite(plannedHoursProp) && plannedHoursProp > 0
       ? String(Number((inMinutes ? plannedHoursProp * 60 : plannedHoursProp).toFixed(2)))
       : '';
-  const actualTimeHours = () => {
-    const value = actualTime.trim();
-    return inMinutes && value ? String(Number((Number(value) / 60).toFixed(4))) : value;
-  };
   const [tab, setTab] = useState<TabId>('learning');
   const [reflection, setReflection] = useState('');
   const [selectedKsbs, setSelectedKsbs] = useState<string[]>([]);
@@ -206,6 +205,16 @@ export function ReflectionWindow({
   const [reflectionSaving, setReflectionSaving] = useState(false);
   const [reflectionSaveError, setReflectionSaveError] = useState('');
   const [submissionStatus, setSubmissionStatus] = useState('');
+  // Accepted reflections are historical, read-only records. A new activity
+  // selection must not replace their saved duration when they are reopened.
+  const selectedSeconds = submissionStatus !== 'accepted'
+    && selectedTimeSeconds != null && Number.isFinite(selectedTimeSeconds)
+    ? Math.max(0, Math.floor(selectedTimeSeconds)) : null;
+  const actualTimeHours = () => {
+    if (selectedSeconds != null) return String(selectedSeconds / 3600);
+    const value = actualTime.trim();
+    return inMinutes && value ? String(Number((Number(value) / 60).toFixed(4))) : value;
+  };
   const [coachFeedback, setCoachFeedback] = useState<string | null>(null);
   const [loadingExisting, setLoadingExisting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -277,7 +286,7 @@ export function ReflectionWindow({
   ];
   const evidenceReady = allEvidenceFileNames.length === 0 || coachVisibilityConfirmed;
   const benefitReady = selectedBenefits.length > 0 && Boolean(benefitExplanation.trim());
-  const otjhReady = Boolean(actualTime.trim() && dateCompleted && paidHours && otjhConfirmed);
+  const otjhReady = Boolean((selectedSeconds != null || actualTime.trim()) && dateCompleted && paidHours && otjhConfirmed);
   const canSubmit = learningReady && ksbReady && applicationReady && evidenceReady
     && benefitReady && otjhReady && signedDeclaration;
 
@@ -423,7 +432,9 @@ export function ReflectionWindow({
     const result: ReflectionSubmission = {
       ksbs: ksbCodes,
       feedback: reflection.trim(),
-      reportedTime: inMinutes && actualTime.trim() ? `${actualTime.trim()} minutes` : actualTime.trim(),
+      reportedTime: selectedSeconds != null
+        ? `${selectedSeconds / 60} minutes`
+        : inMinutes && actualTime.trim() ? `${actualTime.trim()} minutes` : actualTime.trim(),
       confidenceBefore,
       confidenceAfter,
       ksbExplanations,
@@ -1109,17 +1120,30 @@ export function ReflectionWindow({
                   {plannedTimeLabel || 'Not set'}
                 </div>
               </Field>
-              <Field label={`Actual time spent (${inMinutes ? 'minutes' : 'hours'})`}>
-                <input
-                  type="number"
-                  min="0"
-                  step={inMinutes ? '1' : '0.25'}
-                  value={actualTime}
-                  onChange={event => setActualTime(event.target.value)}
-                  placeholder={inMinutes ? 'e.g. 30' : 'e.g. 2'}
-                  className="h-11 w-full rounded-xl border border-foreground-200 bg-white px-3 text-sm focus:border-primary-400 focus:outline-none"
-                />
-              </Field>
+              {selectedSeconds != null ? (
+                <div>
+                  <Field label="Selected activity time">
+                    <input
+                      readOnly
+                      value={formatClock(selectedSeconds)}
+                      className="h-11 w-full rounded-xl border border-foreground-200 bg-background-100 px-3 font-mono text-sm"
+                    />
+                  </Field>
+                  <p className="mt-1 text-xs text-foreground-500">Uses the time selected when finishing this activity.</p>
+                </div>
+              ) : (
+                <Field label={`Actual time spent (${inMinutes ? 'minutes' : 'hours'})`}>
+                  <input
+                    type="number"
+                    min="0"
+                    step={inMinutes ? '1' : '0.25'}
+                    value={actualTime}
+                    onChange={event => setActualTime(event.target.value)}
+                    placeholder={inMinutes ? 'e.g. 30' : 'e.g. 2'}
+                    className="h-11 w-full rounded-xl border border-foreground-200 bg-white px-3 text-sm focus:border-primary-400 focus:outline-none"
+                  />
+                </Field>
+              )}
               <Field label="Date completed">
                 <input
                   type="date"

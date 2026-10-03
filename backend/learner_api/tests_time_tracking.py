@@ -86,6 +86,26 @@ class TimeTrackingSessionTests(SimpleTestCase):
                 issued_at=datetime(2026, 7, 15, 12, 0, tzinfo=ZoneInfo("UTC")),
             )
 
+    def test_audio_component_can_verify_active_playback_with_the_same_session_cap(self):
+        session = issue_tracking_session(
+            activity_kind="component", activity_id="AUDIO-1",
+            learner_kind="commercial", learner_id="321",
+            counting_mode="active_playback", issued_at=self.started_at,
+        )
+        result = verify_tracking_session(
+            session["trackingToken"], activity_kind="component", activity_id="AUDIO-1",
+            learner_kind="commercial", learner_id="321", claimed_seconds=999,
+            submitted_at=self.started_at + timedelta(seconds=20),
+        )
+        self.assertEqual(result["verifiedSeconds"], 20)
+        self.assertEqual(result["source"], "signed_session_capped_active_playback")
+        with self.assertRaisesRegex(TrackingSessionError, "does not match"):
+            verify_tracking_session(
+                session["trackingToken"], activity_kind="component", activity_id="AUDIO-2",
+                learner_kind="commercial", learner_id="321", claimed_seconds=20,
+                submitted_at=self.started_at + timedelta(seconds=20),
+            )
+
     def test_component_access_is_open_before_during_and_after_old_hours(self):
         self.assertTrue(component_access_is_open(datetime(2026, 1, 15, 6, 59, tzinfo=ZoneInfo("UTC"))))
         self.assertTrue(component_access_is_open(datetime(2026, 1, 15, 7, 0, tzinfo=ZoneInfo("UTC"))))

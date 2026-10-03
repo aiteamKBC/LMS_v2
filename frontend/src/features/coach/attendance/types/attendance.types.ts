@@ -5,6 +5,10 @@ export interface CoachAttendanceRecord {
   sessionId: string;
   sessionDate: string | null;
   status: string;
+  counted?: boolean;
+  rawStatus?: string;
+  effectiveStatus?: string;
+  occurrenceStart?: string | null;
 }
 
 export interface CoachAttendanceLearner {
@@ -40,9 +44,15 @@ export interface CoachAttendanceSession {
   sessionId: string;
   sessionTitle: string;
   sessionType: string;
+  module?: string;
   sessionDate: string | null;
   sessionDateLabel: string;
   status: string;
+  counted?: boolean;
+  rawStatus?: string;
+  effectiveStatus?: string;
+  occurrenceStart?: string | null;
+  legacyAmbiguity?: string[];
   manualId?: string;
   source?: string;
   sourceId?: string;
@@ -80,6 +90,8 @@ export interface CoachAttendanceDetailsPayload {
     coachName?: string | null;
   };
   summary?: {
+    attendanceRate?: number | null;
+    totalCounted?: number;
     total: number;
     present: number;
     absent: number;

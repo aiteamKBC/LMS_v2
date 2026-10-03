@@ -2,7 +2,7 @@ import type { LearnerKind } from './learnerDetail';
 import type { LearnerAttendance } from './learnerAttendance';
 import { invalidateLearnerReads, peekLearnerJson, readLearnerJson } from './learnerRead';
 
-export type LectureStatus = 'completed' | 'late' | 'absent' | 'upcoming' | 'in_progress' | 'pending';
+export type LectureStatus = 'completed' | 'late' | 'absent' | 'upcoming' | 'in_progress' | 'pending' | 'unmarked';
 export interface LectureActivity {
   id: string; title: string; type: string; completed: boolean;
   href?: string; groupId?: number; activityId?: number;
@@ -17,6 +17,9 @@ export interface AttendanceLecture {
   contentSummary: string; ksbs: string[]; activities: LectureActivity[];
   ksbScope?: 'lecture' | 'activities' | 'module' | null;
   status: LectureStatus; catchupStatus: 'completed' | 'pending' | 'missed' | null;
+  rawStatus?: string;
+  effectiveStatus?: string;
+  counted?: boolean;
   rawAttendanceStatus?: string;
   effectiveAttendanceStatus?: string;
   effectiveAttendance?: 0 | 1 | null;
@@ -51,9 +54,23 @@ export interface AttendanceWorkspace {
   recentActivity: { id: string; title: string; at: string; type: string }[];
 }
 const url = (kind: LearnerKind, id: string) => `/learner_api/attendance/${kind}/${id}/lectures/`;
-export const peekAttendanceWorkspace = (kind: LearnerKind, id: string) => peekLearnerJson<AttendanceWorkspace>(url(kind, id));
-export function fetchAttendanceWorkspace(kind: LearnerKind, id: string, signal?: AbortSignal, fresh = false) {
-  return readLearnerJson<AttendanceWorkspace>(url(kind, id), { ttlMs: 30_000, signal, revalidate: fresh });
+/** Preserve the established lecture display labels while the wire status is canonical. */
+export function attendanceWorkspaceForDisplay(data: AttendanceWorkspace): AttendanceWorkspace {
+  return { ...data, lectures: data.lectures.map(row => {
+    if ((row.status as string) !== 'present') return row;
+    const raw = row.rawStatus || row.rawAttendanceStatus;
+    const status: LectureStatus = raw === 'absent' && row.effectiveAttendance === 1 ? 'absent'
+      : raw === 'late' ? 'late' : 'completed';
+    return { ...row, status };
+  }) };
+}
+export const peekAttendanceWorkspace = (kind: LearnerKind, id: string) => {
+  const data = peekLearnerJson<AttendanceWorkspace>(url(kind, id));
+  return data ? attendanceWorkspaceForDisplay(data) : data;
+};
+export async function fetchAttendanceWorkspace(kind: LearnerKind, id: string, signal?: AbortSignal, fresh = false) {
+  const data = await readLearnerJson<AttendanceWorkspace>(url(kind, id), { ttlMs: 30_000, signal, revalidate: fresh });
+  return attendanceWorkspaceForDisplay(data);
 }
 export async function confirmAttendance(kind: LearnerKind, id: string, lectureId: string): Promise<{
   lectureId: string; status: 'completed'; creditedMinutes: number; creditedHours: number; alreadyRecorded: boolean;

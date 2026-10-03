@@ -6,7 +6,7 @@ attendance dates are retained as source evidence without adding counted hours.
 """
 import argparse
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from decimal import Decimal
 import hashlib
 import json
@@ -32,7 +32,7 @@ def ids(value):
     return sorted({int(part) for part in value.split(',') if part.strip()})
 
 
-def plan_evidence(evidence, journals, assignments, attendance):
+def plan_evidence(evidence, journals, assignments, attendance, attendance_start_time=None):
     """Resolve exact evidence references first; never match attendance by title."""
     if evidence['evidence_status'] != 'Accepted':
         raise ValueError('Only reviewed Accepted evidence is supported by this repair.')
@@ -63,6 +63,11 @@ def plan_evidence(evidence, journals, assignments, attendance):
             matches = active
     else:
         raise ValueError('Component type has not been explicitly verified.')
+    # Aptem attendance timestamps are date-only values stored at 23:00 UTC.
+    # When the module timetable is known, anchor the counted interval to the
+    # real London session start instead of creating a midnight activity.
+    if kind == 'attendance' and attendance_start_time is not None:
+        at = datetime.combine(day, attendance_start_time, tzinfo=UK)
     if len(matches) > 1:
         raise ValueError('Multiple journal matches require review.')
     if matches and matches[0]['deleted_at'] is not None:
@@ -81,10 +86,14 @@ def plan_evidence(evidence, journals, assignments, attendance):
                   and abs((j['activity_date'] - day).days) <= 3]
         resolution = 'date_review_required' if nearby else 'new_attendance'
         added = 0 if nearby else int(seconds)
+    # The source evidence always retains a complete interval, including when
+    # it links to an existing journal progress row and therefore adds no hours.
+    end_at = at + timedelta(seconds=int(seconds)) if kind == 'attendance' and seconds else None
     return {
         'evidence_id': evidence['evidence_id'], 'kind': kind,
         'resolution': resolution, 'source_seconds': int(seconds),
         'added_seconds': added, 'at': at, 'month': day.strftime('%Y-%m'),
+        'end_at': end_at,
         'progress_id': match['progress_id'] if match else None,
         'journal_id': match['id'] if match else None,
         'journal_seconds': int(Decimal(str(match['actual_hours'])) * 3600) if match else None,
@@ -113,7 +122,7 @@ def read_state(cur, aptem_id, evidence_ids):
                 sources=sources, documents=documents, segments=segments)
 
 
-def make_plan(state, assignments, attendance):
+def make_plan(state, assignments, attendance, attendance_start_time=None):
     if assignments & attendance:
         raise ValueError('Component types must be disjoint.')
     plans = []
@@ -133,7 +142,7 @@ def make_plan(state, assignments, attendance):
                 present['review_required'] = True
             plans.append(present)
             continue
-        p = plan_evidence(e, state['journals'], assignments, attendance)
+        p = plan_evidence(e, state['journals'], assignments, attendance, attendance_start_time)
         if p['progress_id'] is not None and p['progress_id'] not in progress:
             raise ValueError('Journal progress owner/deletion mismatch.')
         if p['resolution'] == 'new_attendance':
@@ -144,6 +153,10 @@ def make_plan(state, assignments, attendance):
                         and str(source['source_payload'].get('ComponentId')) == str(e['component_id'])
                         and source_at and source_at.astimezone(UK).date() == p['at'].astimezone(UK).date()):
                     raise ValueError('Non-journal activity already covers this date; review overlap.')
+                source_end = source.get('reporting_ended_at')
+                if (source['deleted_at'] is None and source_at and source_end
+                        and max(source_at, p['at']) < min(source_end, p['end_at'])):
+                    raise ValueError('Non-journal activity overlaps this attendance window; review overlap.')
         plans.append(p)
     return plans
 
@@ -222,7 +235,7 @@ def apply_plan(cur, state, plans, fingerprint):
                 'source_system': 'aptem', 'source_activity_id': source_ref,
                 'canonical_activity_key': key, 'activity_status': 'Accepted', 'accepted': True,
                 'actual_seconds': plan['added_seconds'], 'actual_basis': 'aptem:accepted-evidence-spent-minutes',
-                'reporting_started_at': plan['at'], 'reporting_ended_at': plan['at'],
+                'reporting_started_at': plan['at'], 'reporting_ended_at': plan['end_at'],
                 'reporting_month': plan['month'], 'source_payload': Jsonb(raw), 'sync_run_id': run,
             })
         insert(cur, 'learner_activity_sources', {
@@ -233,8 +246,8 @@ def apply_plan(cur, state, plans, fingerprint):
             'title': e['component_name'] or e['evidence_name'], 'activity_status': 'Accepted',
             'completed': True, 'accepted': True, 'actual_seconds': plan['source_seconds'],
             'actual_basis': 'aptem:accepted-evidence-spent-minutes',
-            'source_started_at': plan['at'], 'source_ended_at': plan['at'],
-            'reporting_started_at': plan['at'], 'reporting_ended_at': plan['at'],
+            'source_started_at': plan['at'], 'source_ended_at': plan['end_at'],
+            'reporting_started_at': plan['at'], 'reporting_ended_at': plan['end_at'],
             'reporting_month': plan['month'], 'source_payload': Jsonb(raw),
             'ksb_codes': Jsonb(e['ksb_codes'] or []),
             'source_updated_at': raw.get('UpdatedDate'), 'sync_run_id': run,
@@ -286,6 +299,7 @@ def main():
     parser.add_argument('--evidence-ids', type=ids, required=True)
     parser.add_argument('--assignment-components', type=ids, required=True)
     parser.add_argument('--attendance-components', type=ids, required=True)
+    parser.add_argument('--attendance-start-time', type=lambda value: datetime.strptime(value, '%H:%M').time())
     parser.add_argument('--apply', action='store_true')
     parser.add_argument('--expected-database')
     parser.add_argument('--expected-fingerprint')
@@ -316,7 +330,8 @@ def main():
                         sql.Identifier(table), sql.Identifier(field)), [value])
                 cur.execute('SELECT evidence_id FROM fetching_evidence.evidence_items WHERE learner_id=%s AND evidence_id=ANY(%s) FOR SHARE', [args.aptem_id, args.evidence_ids])
             state = read_state(cur, args.aptem_id, args.evidence_ids)
-            plans = make_plan(state, set(args.assignment_components), set(args.attendance_components))
+            plans = make_plan(state, set(args.assignment_components), set(args.attendance_components),
+                              args.attendance_start_time)
             fingerprint = digest({'state': state, 'plans': plans})
             output = {'database': database, 'fingerprint': fingerprint, **summary(state, plans)}
             if args.apply:
@@ -333,7 +348,8 @@ def main():
                         raise ValueError('An existing record changed; rolling back.')
                 if summary(after, [])['accepted_seconds_before'] != output['accepted_seconds_after']:
                     raise ValueError('Hours verification failed; rolling back.')
-                remaining = make_plan(after, set(args.assignment_components), set(args.attendance_components))
+                remaining = make_plan(after, set(args.assignment_components), set(args.attendance_components),
+                                      args.attendance_start_time)
                 if any(p['resolution'] != 'already_present' for p in remaining):
                     raise ValueError('Evidence coverage verification failed; rolling back.')
                 output.update(applied=True, run_id=run_id, verification='passed')

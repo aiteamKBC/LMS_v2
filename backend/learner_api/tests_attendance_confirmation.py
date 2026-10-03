@@ -124,20 +124,20 @@ class AttendanceConfirmationTests(SimpleTestCase):
         self.assertEqual([r['attendance_status'] for r in rows], ['present', 'absent'])
         self.assertFalse(_can_report_absence(rows[0]))
         lecture = build_lectures(rows, {}, [], [], 'apprenticeship', 12)[0]
-        self.assertEqual((lecture['status'], lecture['durationMinutes'], lecture['creditedMinutes']), ('completed', 120, 120))
+        self.assertEqual((lecture['status'], lecture['durationMinutes'], lecture['creditedMinutes']), ('present', 120, 120))
 
     def test_today_pending_can_report_but_historical_pending_cannot(self):
         self.assertTrue(_can_report_absence({'attendance_status': 'pending', 'session_date': date(2026, 9, 14)}))
         self.assertFalse(_can_report_absence({'attendance_status': 'pending', 'session_date': date(2026, 9, 13)}))
 
-    def test_same_day_confirmation_counts_before_scheduled_start(self):
+    def test_same_day_confirmation_excluded_before_scheduled_start(self):
         from datetime import time
         from .attendance import _summarize_attendance
         from .tests_attendance_lectures import register_row
         record = register_row(session_date=date(2026, 9, 14), session_start_time=time(18),
                               attendance_status='present', attendance_confirmed=True)
         result = _summarize_attendance([record], now=datetime(2026, 9, 14, 8, tzinfo=dt_timezone.utc))
-        self.assertEqual((result['present'], result['attendanceRate']), (1, 100))
+        self.assertIsNone(result)
 
     def test_monthly_logs_count_confirmation_once_when_teams_report_arrives(self):
         saved = {self.lecture['id']: {'seconds': 7200, 'details': json.dumps({
@@ -153,8 +153,15 @@ class AttendanceConfirmationTests(SimpleTestCase):
 
     def test_cancelled_occurrence_stays_excluded_even_with_confirmation(self):
         from .tests_attendance_lectures import register_row
-        record = register_row(source='microsoft-teams', session_id='occ-1')
+        enrolment_id, learner_profile_id = self.source.id, 901
+        record = register_row(source='microsoft-teams', session_id='occ-1', learner_id=enrolment_id)
         with patch('learner_api.attendance_lectures.combined_attendance_rows', return_value=[record]), \
              patch('learner_api.attendance_lectures.read_native_occurrences', return_value=[]), \
-             patch.object(confirmation, 'read_confirmations', return_value={self.lecture['id']: {'seconds': 7200}}):
+             patch.object(confirmation, 'read_confirmations', return_value={self.lecture['id']: {'seconds': 7200}}), \
+             patch('learner_api.models.LearnerProfile.objects') as profiles, \
+             patch('learner_api.attendance_lectures._apply_coach_source_adjustments', side_effect=lambda rows, _: rows) as adjustments:
+            profiles.filter.return_value.values_list.return_value = [learner_profile_id]
             self.assertEqual(lecture_register(self.source), [])
+        profiles.filter.assert_called_once_with(enrolment_id=enrolment_id)
+        profiles.filter.return_value.values_list.assert_called_once_with('id', flat=True)
+        adjustments.assert_called_once_with([], learner_profile_id)
