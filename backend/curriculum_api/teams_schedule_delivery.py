@@ -18,7 +18,7 @@ from django.views.decorators.http import require_POST
 from login.permissions import require_role
 
 from .teams_calendar_checks import utc_datetime, verify_calendar
-from .teams_schedule_email import meeting_settings, render_change_email, render_schedule_email
+from .teams_schedule_email import render_change_email, render_schedule_email
 
 logger = logging.getLogger(__name__)
 BATCH_SIZE = 4
@@ -170,29 +170,15 @@ def _send_message(recipient, message):
 
 
 def learner_recipients(v, series):
-    """The invited learners: attendees, minus everyone who runs the meeting."""
+    """The invited learners: attendees, minus everyone who runs the meeting.
+
+    They are the only people a schedule email is addressed to. The organiser,
+    co-organisers and presenters are on Microsoft's own invitation and get
+    nothing from the LMS.
+    """
     recipients = v.teams_series_email_list(series.get('attendees'))
     excluded = set(v.teams_series_email_list(series.get('presenters'), series.get('co_organizers'), [series.get('organizer_email')]))
     return v.teams_attendee_emails([address for address in recipients if address not in excluded])
-
-
-def organiser_recipients(v, series, learners):
-    """The organiser, every co-organiser and every presenter, once each, from the stored calendar.
-
-    Presenters run the sessions with the organisers, so they get the same copy.
-    Never from the request, and never an address that is also an invited
-    learner: one address gets one email, and a learner never gets the copy that
-    lists the other learners.
-    """
-    learners = set(learners)
-    return [address for address in v.teams_series_email_list([series.get('organizer_email')], series.get('co_organizers'),
-                                                             series.get('presenters'))
-            if address and address not in learners]
-
-
-def learner_roster(recipients):
-    names = learner_names(recipients)
-    return [(names.get(email, ''), email) for email in recipients]
 
 
 def session_titles(v, live_id, series, rows):
@@ -242,10 +228,10 @@ def calendar_time_zone(v, series, graph_settings):
 
 
 def verified_message(live_id):
-    """The learner copy and the organiser copy of a new calendar's schedule.
+    """The learners and the schedule email of a new calendar.
 
-    Both are rendered from the saved occurrences only after Microsoft confirms
-    those dates, links and learner invitations.
+    Rendered from the saved occurrences only after Microsoft confirms those
+    dates, links and learner invitations.
     """
     from coach_api.views import get_graph_settings
     from . import views as v
@@ -263,23 +249,7 @@ def verified_message(live_id):
     names = session_titles(v, live_id, series, rows)
     message = render_schedule_email(title, rows, zone, session_titles=names)
     verify_saved_calendar(v, series, rows, recipients)
-    organisers = organiser_recipients(v, series, recipients)
-    organiser_copy = render_schedule_email(title, rows, zone, roster=learner_roster(recipients),
-                                           settings=meeting_settings(series, zone), session_titles=names)
-    return recipients, organisers, message, organiser_copy
-
-
-def dispatch_by_role(key, learners, organisers, learner_copy, organiser_copy, ledger, send, retry_failed=False, parallel=False):
-    """One ledger batch: each learner their own copy, each organiser the roster copy.
-
-    The copy is chosen per address, so a learner is never handed the organiser
-    copy and its list of the other learners, and an address listed twice is
-    claimed, and emailed, once.
-    """
-    organiser_set = {address.strip().lower() for address in organisers}
-    return dispatch_batch(key, [*learners, *organisers], None, ledger,
-                          lambda recipient, _message: send(recipient, organiser_copy if recipient in organiser_set else learner_copy),
-                          retry_failed, parallel)
+    return recipients, message
 
 
 def send_creation_emails(live_id, ledger=None, send=None):
@@ -302,11 +272,10 @@ def send_creation_emails(live_id, ledger=None, send=None):
         if not email_azure.is_configured():
             return {'error': 'Schedule emails are not configured. Check the existing Azure mail settings.',
                     'code': 'schedule_email_not_configured'}
-        recipients, organisers, learner_copy, organiser_copy = verified_message(live_id)
+        recipients, message = verified_message(live_id)
         previous_queued = None
         while True:
-            status = dispatch_by_role(live_id, recipients, organisers, learner_copy, organiser_copy,
-                                      ledger, send or _send_message, parallel=True)
+            status = dispatch_batch(live_id, recipients, message, ledger, send or _send_message, parallel=True)
             if not status['queued'] or (previous_queued is not None and status['queued'] >= previous_queued):
                 return status
             previous_queued = status['queued']
@@ -355,25 +324,11 @@ def verify_saved_calendar(v, series, rows, recipients):
         raise ValueError('Some saved sessions do not have a verified meeting.')
 
 
-def learner_names(emails):
-    """Display names for the organiser copy, from the learner records; '' when unknown."""
-    try:
-        from learner_api.models import LearnerProfile
-        found = LearnerProfile.objects.filter(email_normalized__in=list(emails)).values_list('email_normalized', 'full_name')
-        return {email: ' '.join(str(name or '').split()) for email, name in found}
-    except Exception:
-        # A name is a courtesy in the organiser copy; its absence must not stop
-        # the learners hearing about their change. The email address is shown.
-        logger.warning('Learner names for a schedule change could not be read.')
-        return {}
-
-
-def verified_change_messages(live_id, notice):
-    """The learner copy and the organiser copy of one signed schedule change.
+def verified_change_message(live_id, notice):
+    """The learners and the email of one signed schedule change.
 
     Recipients and dates come only from the stored calendar and the server-signed
-    notice. Learners get a copy with the shared schedule and nothing else; the
-    organiser and co-organisers get the same change plus the invited learners.
+    notice. Each learner gets a copy with the shared schedule and nothing else.
     """
     from coach_api.views import get_graph_settings
     from . import views as v
@@ -392,7 +347,6 @@ def verified_change_messages(live_id, notice):
     recipients = learner_recipients(v, series)
     if current:
         verify_saved_calendar(v, series, current, recipients)
-    organisers = organiser_recipients(v, series, recipients)
     zone = calendar_time_zone(v, series, get_graph_settings())
     title = series.get('module_title')
     previous = as_occurrences(notice.get('before') or [])
@@ -402,37 +356,33 @@ def verified_change_messages(live_id, notice):
         # nothing in either column tells them nothing, so they are sent the
         # schedule as it now stands -- under this update's own ledger key, so
         # it goes out rather than being suppressed as already delivered.
-        learner_copy = render_schedule_email(title, current, zone, session_titles=names)
-        organiser_copy = render_schedule_email(title, current, zone, roster=learner_roster(recipients),
-                                               settings=meeting_settings(series, zone), session_titles=names)
+        message = render_schedule_email(title, current, zone, session_titles=names)
     else:
-        learner_copy = render_change_email(title, previous, current, zone, session_titles=names)
-        organiser_copy = render_change_email(title, previous, current, zone, roster=learner_roster(recipients), session_titles=names)
-    return recipients, organisers, learner_copy, organiser_copy
+        message = render_change_email(title, previous, current, zone, session_titles=names)
+    return recipients, message
 
 
-def added_only(recipients, organisers, added):
-    """Narrow both lists to the people an update just added.
+def added_only(recipients, added):
+    """Narrow the learners to the ones an update just added.
 
     ``added`` comes from the browser, so it only ever removes people: an address
-    the stored calendar does not invite is dropped, never emailed. The ledger's
-    calendar key still skips anyone already sent this schedule.
+    the stored calendar does not invite as a learner is dropped, never emailed.
+    The ledger's calendar key still skips anyone already sent this schedule.
     """
     wanted = {str(value).strip().lower() for value in added}
-    return [value for value in recipients if value in wanted], [value for value in organisers if value in wanted]
+    return [value for value in recipients if value in wanted]
 
 
 def dispatch_change(live_id, token, ledger, retry_failed=False, send=None, parallel=False):
-    """Email one signed schedule change: each learner their copy, organisers theirs."""
+    """Email one signed schedule change: each learner their own copy."""
     from .teams_schedule_notice import read_change_notice
     send = send or _send_message
     notice = read_change_notice(token, live_id)
-    recipients, organisers, learner_copy, organiser_copy = verified_change_messages(live_id, notice)
+    recipients, message = verified_change_message(live_id, notice)
     # Its own ledger key per change. The calendar's own key already holds
     # everyone the creation email reached, and "accepted once, never again" is
     # right for that email but would silence every update after it.
-    return dispatch_by_role(f"{live_id}#{notice['id']}", recipients, organisers, learner_copy, organiser_copy,
-                            ledger, send, retry_failed, parallel)
+    return dispatch_batch(f"{live_id}#{notice['id']}", recipients, message, ledger, send, retry_failed, parallel)
 
 
 def send_change_emails(live_id, token, ledger=None, send=None):
@@ -489,18 +439,17 @@ def schedule_email(request, live_session_id):
                                  'code': 'schedule_email_not_configured'}, status=503)
         if payload.get('changeNotice'):
             return JsonResponse(dispatch_change(live_session_id, payload['changeNotice'], ledger, payload.get('retryFailed', False)))
-        recipients, organisers, learner_copy, organiser_copy = verified_message(live_session_id)
+        recipients, message = verified_message(live_session_id)
         if added is not None:
-            # People an update added: the same full schedule a creation sends,
+            # Learners an update added: the same full schedule a creation sends,
             # under the calendar's own key, to them alone.
-            recipients, organisers = added_only(recipients, organisers, added)
-        # A resend is the creation email again, to everyone the saved calendar
-        # invites -- including the people it already reached. Only the ledger
-        # key changes: the message and the recipients are still the verified
-        # ones read back from the stored calendar, never anything sent here.
+            recipients = added_only(recipients, added)
+        # A resend is the creation email again, to every learner the saved
+        # calendar invites -- including the ones it already reached. Only the
+        # ledger key changes: the message and the recipients are still the
+        # verified ones read back from the stored calendar, never anything sent here.
         key = f'{live_session_id}@{resend}' if resend else live_session_id
-        return JsonResponse(dispatch_by_role(key, recipients, organisers, learner_copy, organiser_copy,
-                                             ledger, _send_message, payload.get('retryFailed', False)))
+        return JsonResponse(dispatch_batch(key, recipients, message, ledger, _send_message, payload.get('retryFailed', False)))
     except (ValueError, RuntimeError) as exc:
         return JsonResponse({'error': str(exc), 'code': 'schedule_email_blocked'}, status=409)
     except Exception:
@@ -510,7 +459,7 @@ def schedule_email(request, live_session_id):
 
 
 def week_meeting_message(live_id):
-    """The learner copy and the organiser copy of one additional week meeting.
+    """The guests and the schedule email of one additional week meeting.
 
     The same rendered email the module's calendar sends, for a calendar of one
     session. Where it differs from `verified_message` is only what genuinely
@@ -521,9 +470,9 @@ def week_meeting_message(live_id):
     * There is no occurrences table row to read: this meeting is a single event
       with no series, so its one session is built from the stored start,
       duration and join link that Microsoft already confirmed.
-    * Its recipients are the people named on its own form, never the module's
-      learners. `learner_recipients`/`organiser_recipients` read the invitation
-      columns off the row, which is exactly what those hold.
+    * Its recipients are the guests named on its own form, never the module's
+      learners. `learner_recipients` reads the invitation columns off the row,
+      which is exactly what those hold.
     """
     from coach_api.views import get_graph_settings
     from . import views as v
@@ -544,15 +493,12 @@ def week_meeting_message(live_id):
         'join_url': join_url,
     }]
     recipients = learner_recipients(v, series)
-    organisers = organiser_recipients(v, series, recipients)
     zone = calendar_time_zone(v, series, get_graph_settings())
     # Named after the meeting itself rather than "SESSION 01": a one-off has a
     # name, and it is the one the invitation already carries.
     names = {1: title}
     message = render_schedule_email(title, rows, zone, session_titles=names)
-    organiser_copy = render_schedule_email(title, rows, zone, roster=learner_roster(recipients),
-                                           settings=meeting_settings(series, zone), session_titles=names)
-    return recipients, organisers, message, organiser_copy
+    return recipients, message
 
 
 def send_week_meeting_emails(live_id, ledger=None, send=None):
@@ -574,13 +520,12 @@ def send_week_meeting_emails(live_id, ledger=None, send=None):
         if not email_azure.is_configured():
             return {'error': 'Schedule emails are not configured. Check the existing Azure mail settings.',
                     'code': 'schedule_email_not_configured'}
-        recipients, organisers, learner_copy, organiser_copy = week_meeting_message(live_id)
-        if not recipients and not organisers:
+        recipients, message = week_meeting_message(live_id)
+        if not recipients:
             return {'total': 0, 'accepted': 0, 'queued': 0, 'failed': 0, 'uncertain': 0, 'status': 'complete'}
         previous_queued = None
         while True:
-            status = dispatch_by_role(live_id, recipients, organisers, learner_copy, organiser_copy,
-                                      ledger, send or _send_message, parallel=True)
+            status = dispatch_batch(live_id, recipients, message, ledger, send or _send_message, parallel=True)
             if not status['queued'] or (previous_queued is not None and status['queued'] >= previous_queued):
                 return status
             previous_queued = status['queued']
