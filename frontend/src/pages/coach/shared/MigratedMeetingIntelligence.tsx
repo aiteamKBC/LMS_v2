@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchMigratedReviewIntelligence, saveMigratedMeetingSummary } from '@/api/reviewInstances';
 import type { CoachMeetingArtifactsResponse } from './calendarEvents';
 import { coachMeetingArtifactContentUrl } from './calendarEvents';
@@ -25,17 +25,40 @@ export function MigratedMeetingIntelligence({
   status,
   viewAs,
   meetingLink,
+  bound = false,
+  checkBlocked = false,
+  onCheckComplete,
+  onCheckingChange,
+  savedBinding,
 }: {
   instanceId: string;
   family: string;
   status: string;
   viewAs: boolean;
   meetingLink?: string | null;
+  bound?: boolean;
+  checkBlocked?: boolean;
+  onCheckComplete?: (result: CoachMeetingArtifactsResponse) => void;
+  onCheckingChange?: (checking: boolean) => void;
+  savedBinding?: CoachMeetingArtifactsResponse['summaryBinding'];
 }) {
   const [intelligence, setIntelligence] = useState<CoachMeetingArtifactsResponse['intelligence']>();
   const [attendance, setAttendance] = useState<CoachMeetingArtifactsResponse['attendance']>();
+  const [binding, setBinding] = useState<CoachMeetingArtifactsResponse['summaryBinding']>();
+  useEffect(() => { if (savedBinding) setBinding(savedBinding); }, [savedBinding]);
+  const handlers = useRef({ onCheckComplete, onCheckingChange });
+  useEffect(() => { handlers.current = { onCheckComplete, onCheckingChange }; }, [onCheckComplete, onCheckingChange]);
   const fetchArtifacts = useCallback<typeof fetchMigratedReviewIntelligence>(
-    (eventKey, signal, options) => fetchMigratedReviewIntelligence(eventKey, signal, options),
+    async (eventKey, signal, options) => {
+      if (options?.refresh) handlers.current.onCheckingChange?.(true);
+      try {
+        const result = await fetchMigratedReviewIntelligence(eventKey, signal, options);
+        if (options?.refresh) handlers.current.onCheckComplete?.(result);
+        return result;
+      } finally {
+        if (options?.refresh) handlers.current.onCheckingChange?.(false);
+      }
+    },
     [],
   );
   const saveSummary = useCallback<typeof saveMigratedMeetingSummary>(
@@ -45,9 +68,11 @@ export function MigratedMeetingIntelligence({
   const onArtifactsLoaded = useCallback((result: CoachMeetingArtifactsResponse) => {
     setIntelligence(result.intelligence);
     setAttendance(result.attendance);
+    setBinding(result.summaryBinding);
   }, []);
-  const canCheck = !viewAs && (status === 'scheduled' || status === 'in-progress');
-  const canEdit = !viewAs && status === 'in-progress';
+  const mapped = bound || Boolean(binding?.fieldKey);
+  const canCheck = !viewAs && !checkBlocked && (status === 'scheduled' || status === 'in-progress');
+  const canEdit = !mapped && !viewAs && status === 'in-progress';
 
   return (
     <section aria-label="Meeting Intelligence" className="space-y-3 rounded-xl border border-primary-200 bg-white p-4">
@@ -62,6 +87,24 @@ export function MigratedMeetingIntelligence({
         <span>AI Summary: <strong>{statusLabel[intelligence?.summaryStatus || 'not-generated']}</strong></span>
       </div>
       {viewAs ? <p className="text-xs text-amber-800">Admin view-as is read-only. Session checks and summary edits are unavailable.</p> : null}
+      {checkBlocked && !viewAs ? <p className="text-xs text-foreground-500">Save your draft and wait for any current action to finish before checking the session.</p> : null}
+      {binding?.status === 'no-binding' && <p className="text-xs text-foreground-500">This review has no AI Meeting Summary question. Session checks keep intelligence separate from form answers.</p>}
+      {binding?.status === 'invalid-binding' && <p role="alert" className="text-xs text-amber-800">{binding.message}</p>}
+      {mapped && <div role="status" className="text-xs text-foreground-600">
+        {binding?.status === 'summary-too-long'
+          ? 'AI summary is longer than this field allows. Review and shorten it before saving.'
+          : binding?.state === 'COACH_CLEARED'
+            ? 'Your cleared Meeting Summary answer has been kept.'
+            : binding?.state === 'COACH_EDITED'
+              ? 'Your Meeting Summary answer has been kept.'
+              : binding?.state === 'AI_POPULATED_UNEDITED'
+                ? 'The AI summary is saved in the review form. Review and edit it before submission. Further checks keep this answer.'
+                : 'Check Session can fill the Meeting Summary question once. You can also type the answer yourself.'}
+      </div>}
+      {binding?.status === 'summary-too-long' && binding.suggestionText && <details className="text-xs">
+        <summary className="cursor-pointer font-semibold">View full AI suggestion to shorten</summary>
+        <textarea aria-label="Full AI suggestion" readOnly value={binding.suggestionText} className="mt-2 min-h-48 w-full rounded border p-2" />
+      </details>}
       {status === 'completed' || status === 'awaiting-signature' ? <p className="text-xs text-foreground-500">This review's meeting intelligence is read-only.</p> : null}
       {intelligence?.errorCodes?.length ? (
         <p role="status" className="text-xs text-amber-800">{intelligence.errorCodes.join(', ')}</p>
@@ -92,6 +135,7 @@ export function MigratedMeetingIntelligence({
         canCheck={canCheck}
         checkLabel="Check Session"
         canEditSummary={canEdit}
+        showMeetingSummary={!mapped}
         hasTeamsMeeting
         allowContentAccess={!viewAs}
         onArtifactsLoaded={onArtifactsLoaded}

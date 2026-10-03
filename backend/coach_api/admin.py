@@ -2,6 +2,7 @@ from django.contrib import admin
 from django import forms
 
 from .migrated_reviews import validate_definition
+from .migrated_templates import validate_managed_definition, validate_slot
 from .models import MigratedReviewTemplate
 
 
@@ -20,13 +21,20 @@ class MigratedReviewTemplateForm(forms.ModelForm):
     def clean(self):
         values = super().clean()
         key = (values.get("programme_key") or "").strip()
-        if not key.startswith(("id:", "name:")) or not key.split(":", 1)[1].strip():
-            self.add_error("programme_key", "Use an exact id:<programme id> or name:<programme name> key.")
-        elif key.startswith("name:") and key != key.casefold():
-            self.add_error("programme_key", "Name fallback keys must be lowercase.")
-        if values.get("is_active") and key and values.get("review_family"):
+        scope = values.get("scope", self.instance.scope or "PROGRAMME")
+        family = values.get("review_family", self.instance.review_family)
+        key = key or self.instance.programme_key
+        try:
+            validate_slot(scope, family, key)
+        except ValueError as exc:
+            self.add_error(None, str(exc))
+        if values.get("is_active") and family:
+            try:
+                validate_managed_definition(values.get("definition_json"))
+            except ValueError as exc:
+                self.add_error("definition_json", str(exc))
             assigned = MigratedReviewTemplate.objects.filter(
-                programme_key=key, review_family=values["review_family"], is_active=True,
+                scope=scope, programme_key=key, review_family=family, is_active=True,
             )
             if self.instance.pk:
                 assigned = assigned.exclude(pk=self.instance.pk)
@@ -38,9 +46,15 @@ class MigratedReviewTemplateForm(forms.ModelForm):
 @admin.register(MigratedReviewTemplate)
 class MigratedReviewTemplateAdmin(admin.ModelAdmin):
     form = MigratedReviewTemplateForm
-    list_display = ("id", "programme_key", "review_family", "name", "is_active", "updated_at")
-    list_filter = ("review_family", "is_active")
+    list_display = ("id", "scope", "programme_key", "review_family", "name", "is_active", "updated_at")
+    list_filter = ("scope", "review_family", "is_active")
     search_fields = ("programme_key", "name")
-    readonly_fields = ("created_at", "updated_at")
+    readonly_fields = ("created_at", "updated_at", "source_metadata")
+
+    def get_readonly_fields(self, request, obj=None):
+        return self.readonly_fields + (("scope", "programme_key", "review_family") if obj else ())
+
+    def has_delete_permission(self, request, obj=None):
+        return False
 
 

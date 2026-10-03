@@ -21,6 +21,8 @@ from .models import ImportedReviewInstance, MigratedReviewDocument, MigratedRevi
 ROLES = ("advisor", "participant", "employer", "referrer")
 # Audited against active native MCM/PR templates and their frozen instances.
 FAMILY_REQUIRED_ROLES = {"MCM": ("advisor", "participant"), "PR": ("advisor", "participant", "employer")}
+# This family previously used PR rules; separating template selection preserves them.
+FAMILY_REQUIRED_ROLES["PR_SKILLS_RADAR"] = FAMILY_REQUIRED_ROLES["PR"]
 IMAGE_PATTERN = re.compile(r"^data:image/(?:png|jpeg|webp);base64,([A-Za-z0-9+/]+={0,2})$", re.I)
 
 

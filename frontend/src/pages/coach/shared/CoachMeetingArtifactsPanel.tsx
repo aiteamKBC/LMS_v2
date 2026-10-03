@@ -627,6 +627,7 @@ export function CoachMeetingArtifactsPanel({
   fetchArtifacts = fetchCoachMeetingArtifacts,
   contentUrl = coachMeetingArtifactContentUrl,
   showAttendance = true,
+  showMeetingSummary = true,
   visibleArtifactTypes = ['transcript', 'recording'],
   canEditSummary = showAttendance,
   saveSummary = updateCoachMeetingSummary,
@@ -643,6 +644,7 @@ export function CoachMeetingArtifactsPanel({
   fetchArtifacts?: typeof fetchCoachMeetingArtifacts;
   contentUrl?: typeof coachMeetingArtifactContentUrl;
   showAttendance?: boolean;
+  showMeetingSummary?: boolean;
   visibleArtifactTypes?: string[];
   canEditSummary?: boolean;
   saveSummary?: typeof updateCoachMeetingSummary;
@@ -780,7 +782,7 @@ export function CoachMeetingArtifactsPanel({
 
       {state.status === 'ready' && showAttendance ? <AttendanceTracker attendance={attendance} /> : null}
 
-      {state.status === 'ready' && supportsMeetingSummary ? (
+      {state.status === 'ready' && supportsMeetingSummary && showMeetingSummary ? (
         <MeetingSummaryCard
           event={event}
           meetingSummary={meetingSummary}

@@ -48,14 +48,19 @@ from coach_api.cache.learners import (
     get_cached_caseload,
     release_caseload_lock,
 )
-from coach_api.models import CoachAbsenceReport, CoachAttendanceSourceAdjustment, CoachCalendarEvent, CoachCalendarSequence, CoachManualAttendance, ImportedReviewInstance, MigratedReviewTemplate
+from coach_api.models import CoachAbsenceReport, CoachAttendanceSourceAdjustment, CoachCalendarEvent, CoachCalendarSequence, CoachManualAttendance, ImportedReviewInstance
 from coach_api.migrated_reviews import (
     EDITABLE_STATUSES as MIGRATED_EDITABLE_STATUSES,
+    booking_event_type as migrated_booking_event_type,
     initial_local_status, programme_key as migrated_programme_key,
     render_sections as render_migrated_sections,
     review_family as migrated_review_family,
     source_is_completed as migrated_source_is_completed,
     validate_answers as validate_migrated_answers,
+)
+from coach_api.migrated_templates import (
+    resolve_template as resolve_migrated_template, resolution_metadata,
+    snapshot_for as migrated_template_snapshot, snapshot_assignment_valid,
 )
 from coach_api.services.learners.context import CaseloadRequestContext
 from coach_api.validation import (
@@ -14264,13 +14269,13 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
     )
     eligible_for_template = bool(
         not saved_instance and not historical_completed and not form_available
-        and family and local_programme_key and initial_local_status(review.get("status"))
+        and family and initial_local_status(review.get("status"))
     )
     approved_template = None
     if eligible_for_template:
-        approved_template = MigratedReviewTemplate.objects.filter(
-            programme_key=local_programme_key, review_family=family, is_active=True,
-        ).first()
+        # Programme identity selects an override; Global forms only need a
+        # supported family. Aptem programme IDs are not LMS programme keys.
+        approved_template = resolve_migrated_template(local_programme_key, family)
     can_initialize = bool(eligible_for_template and approved_template and not preview_only)
     no_approved_template = bool(eligible_for_template and not approved_template)
     preview_sections = []
@@ -14413,6 +14418,12 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         "noApprovedMigratedTemplate": no_approved_template,
         "migratedPreviewError": preview_error,
         "canInitialize": can_initialize,
+        "migratedTemplateResolution": (
+            {"resolved_template_id": getattr(saved_instance, "migrated_template_id", None),
+             "resolved_scope": (snapshot.get("templateSource") or {}).get("scope", "PROGRAMME"),
+             "review_family": family, "uses_snapshot": True}
+            if migrated_form else resolution_metadata(approved_template, family)
+        ),
         "migratedProgrammeKey": local_programme_key if can_initialize or migrated_form or is_template_preview else None,
         "sourceStatus": clean_text(row.get("status")) or review.get("status"),
         "localStatus": saved_instance.status if saved_instance else None,
@@ -14453,6 +14464,10 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
     }
     if migrated_form:
         from coach_api.models import MigratedReviewDocument
+        from coach_api.migrated_summary_binding import answer_version, binding_state
+        definition["summaryBinding"] = binding_state(saved_instance)
+        if definition["summaryBinding"].get("fieldKey"):
+            definition["answerVersion"] = answer_version(saved_instance)
         pdf_ready = bool(saved_instance and saved_instance.status == ImportedReviewInstance.STATUS_COMPLETED
                          and MigratedReviewDocument.objects.filter(overlay=saved_instance).exists())
         definition["pdf"] = {
@@ -14474,7 +14489,7 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
             calendar and calendar.owner_email.casefold() == canonical_owner
             and calendar.learner_id == profile_id
             and not calendar.review_instance_id and not calendar.review_template_id
-            and calendar.event_type == ("mcr" if family == "MCM" else "progress-review")
+            and calendar.event_type == migrated_booking_event_type(family)
         )
         booked = bool(
             association_valid and calendar.sync_state == CoachCalendarEvent.SYNC_SYNCED
@@ -14486,15 +14501,13 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
             "conflict": bool(calendar and not association_valid),
             "canAttach": bool(
                 booked and migrated_form and saved_instance and booking_template
-                and booking_template.is_active and booking_template.review_family == family
-                and booking_template.programme_key == local_programme_key
+                and snapshot_assignment_valid(saved_instance, family, local_programme_key)
                 and saved_instance.status == ImportedReviewInstance.STATUS_NOT_SCHEDULED
                 and not preview_only
             ),
             "canBook": bool(
                 migrated_form and saved_instance and booking_template
-                and booking_template.is_active and booking_template.review_family == family
-                and booking_template.programme_key == local_programme_key
+                and snapshot_assignment_valid(saved_instance, family, local_programme_key)
                 and saved_instance.status in {
                     ImportedReviewInstance.STATUS_NOT_SCHEDULED,
                     ImportedReviewInstance.STATUS_SCHEDULED,
@@ -14543,10 +14556,7 @@ def coach_review_instance_initialize(request, instance_id):
     local_status = initial_local_status(definition.get("sourceStatus"))
     source_id = int(definition["historicalReview"]["id"])
     with transaction.atomic():
-        template = MigratedReviewTemplate.objects.filter(
-            programme_key=definition["migratedProgrammeKey"],
-            review_family=family, is_active=True,
-        ).first()
+        template = resolve_migrated_template(definition["migratedProgrammeKey"], family, lock=True)
         if template is None:
             return JsonResponse({"detail": "No approved migrated template is assigned."}, status=409)
         try:
@@ -14563,7 +14573,7 @@ def coach_review_instance_initialize(request, instance_id):
                         "learner_id": definition["instance"]["learnerId"],
                         "source_review_id": source_id,
                         "migrated_template": template,
-                        "template_snapshot": {"name": template.name, **json.loads(json.dumps(template.definition_json))},
+                        "template_snapshot": migrated_template_snapshot(template),
                         "signature_requirements": requirements_for_family(family),
                         "answers": {}, "status": local_status,
                     },
@@ -14627,16 +14637,14 @@ def coach_review_instance_book(request, instance_id):
         return coach_error(request, code="UNAUTHORIZED", message="Imported review not found for this coach.", status=404)
     if not initial_local_status(definition.get("sourceStatus")):
         return coach_error(request, code="BOOKING_CONFLICT", message="Historical or unsupported Aptem reviews cannot be booked.", status=409)
-    if not definition.get("migratedProgrammeKey"):
-        return coach_error(request, code="MISSING_PROGRAMME", message="This learner's programme could not be resolved.", status=409)
     if not definition.get("migratedForm") or definition.get("readOnly"):
         return coach_error(request, code="NO_APPROVED_TEMPLATE", message="An approved migrated form is required before booking.", status=409)
     overlay = _owned_migrated_overlay(owner_email, definition)
     family = migrated_review_family((definition.get("historicalReview") or {}).get("type"))
+    # A Global snapshot has no programme assignment. Programme snapshots still
+    # require their exact key through snapshot_assignment_valid below.
     if (not overlay or not family or not initial_local_status(definition.get("sourceStatus"))
-        or not overlay.migrated_template_id or not overlay.migrated_template.is_active
-        or overlay.migrated_template.review_family != family
-        or overlay.migrated_template.programme_key != definition.get("migratedProgrammeKey")):
+        or not snapshot_assignment_valid(overlay, family, definition.get("migratedProgrammeKey"))):
         return coach_error(request, code="NO_APPROVED_TEMPLATE", message="An approved migrated form is required before booking.", status=409)
     if overlay.status not in {ImportedReviewInstance.STATUS_NOT_SCHEDULED, ImportedReviewInstance.STATUS_SCHEDULED}:
         return coach_error(request, code="BOOKING_CONFLICT", message="Only an unstarted migrated review can be booked.", status=409)
@@ -14656,7 +14664,7 @@ def coach_review_instance_book(request, instance_id):
         return validation_error_response(exc)
     base_event, owner_name = find_generated_timetable_event(owner_email, instance_id)
     learner_id = definition["instance"]["learnerId"]
-    event_type = "mcr" if family == "MCM" else "progress-review" if family == "PR" else None
+    event_type = migrated_booking_event_type(family)
     if not event_type or not base_event or base_event.get("reviewSource") != "aptem" or int(base_event.get("learnerId") or 0) != learner_id or base_event.get("source") != event_type:
         return coach_error(request, code="BOOKING_CONFLICT", message="The imported calendar event could not be verified.", status=409)
     learner = next((row for row in fetch_caseload_dashboard_profiles(owner_email) if int(getattr(row, "id", 0) or 0) == learner_id), None)
@@ -15005,17 +15013,24 @@ def coach_review_instance_answers(request, instance_id):
         if not isinstance(answers, dict):
             return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
         if definition.get("migratedForm"):
+            from coach_api.migrated_summary_binding import AnswerConflict, check_answer_version, record_answer_edit
             with transaction.atomic():
                 imported = _owned_migrated_overlay(owner_email, definition, lock=True)
                 if not imported or imported.status not in MIGRATED_EDITABLE_STATUSES:
                     return JsonResponse({"detail": "Imported review association or status mismatch."}, status=409)
                 try:
+                    check_answer_version(imported, payload)
                     validate_migrated_answers(imported.template_snapshot, answers)
+                except AnswerConflict as exc:
+                    return JsonResponse({"detail": str(exc), "code": "ANSWER_CONFLICT"}, status=409)
                 except ValueError as exc:
                     return JsonResponse({"detail": str(exc)}, status=400)
+                record_answer_edit(imported, answers, actor=owner_email,
+                                   edited_fields=payload.get("editedFields") if isinstance(payload.get("editedFields"), list) else ())
                 imported.answers = answers
-                imported.save(update_fields=["answers", "updated_at"])
-            return JsonResponse(_imported_review_definition(owner_email, imported.event_key))
+                imported.save(update_fields=["answers", "meeting_intelligence", "updated_at"])
+                # Return answers and their version from the same locked state.
+                return JsonResponse(_imported_review_definition(owner_email, imported.event_key))
         field_ids = {
             field["id"]
             for section in definition.get("sections", [])
@@ -15319,11 +15334,18 @@ def coach_review_instance_complete(request, instance_id):
                 if not imported or imported.status != ImportedReviewInstance.STATUS_IN_PROGRESS:
                     return JsonResponse({"detail": "Only an in-progress migrated review can be submitted."}, status=409)
                 final_answers = payload.get("answers", imported.answers)
+                from coach_api.migrated_summary_binding import AnswerConflict, check_answer_version, record_answer_edit
                 try:
                     from coach_api.migrated_completion import submit
+                    check_answer_version(imported, payload)
+                    record_answer_edit(imported, final_answers, actor=owner_email,
+                                       edited_fields=payload.get("editedFields") if isinstance(payload.get("editedFields"), list) else ())
                     submit(imported, final_answers)
+                except AnswerConflict as exc:
+                    return JsonResponse({"detail": str(exc), "code": "ANSWER_CONFLICT"}, status=409)
                 except ValueError as exc:
                     return JsonResponse({"detail": str(exc)}, status=400)
+                imported.save(update_fields=["meeting_intelligence"])
                 from coach_api.migrated_completion_views import _mirror_status
                 _mirror_status(imported)
             return JsonResponse(_imported_review_definition(owner_email, imported.event_key))

@@ -65,6 +65,7 @@ class MigratedReviewCompletionTests(SimpleTestCase):
     def test_roles_match_audited_native_rules(self):
         self.assertEqual([role for role, needed in requirements_for_family("MCM").items() if needed], ["advisor", "participant"])
         self.assertEqual([role for role, needed in requirements_for_family("PR").items() if needed], ["advisor", "participant", "employer"])
+        self.assertEqual([role for role, needed in requirements_for_family("PR_SKILLS_RADAR").items() if needed], ["advisor", "participant", "employer"])
 
     def test_submission_validates_required_visible_fields_and_freezes_rules(self):
         review = overlay()
@@ -105,6 +106,17 @@ class MigratedReviewCompletionTests(SimpleTestCase):
         self.assertIsNotNone(review.completed_at)
         with self.assertRaisesRegex(ValueError, "awaiting signatures"):
             complete(review)
+
+    def test_skills_radar_completion_still_requires_employer_signature(self):
+        review = overlay(family="PR_SKILLS_RADAR", answers={"answer": "Done"})
+        submit(review, {"answer": "Done"})
+        self.assertEqual(review.signature_requirements, requirements_for_family("PR"))
+        review.migrated_signatures.values_list.return_value = ["advisor", "participant"]
+        with self.assertRaisesRegex(ValueError, "All required signatures"):
+            complete(review)
+        review.migrated_signatures.values_list.return_value.append("employer")
+        complete(review)
+        self.assertEqual(review.status, ImportedReviewInstance.STATUS_COMPLETED)
 
     def test_pdf_uses_saved_answers_signatures_and_lms_provenance(self):
         at = datetime(2026, 10, 2, 14, 0, tzinfo=timezone.utc)
