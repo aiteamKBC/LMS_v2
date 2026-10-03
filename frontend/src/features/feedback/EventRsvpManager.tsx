@@ -3,7 +3,6 @@ import type { EngagementEvent } from '@/api/engagement';
 import { feedbackApi, type FeedbackForm, type FeedbackLearnerOption } from '@/api/feedback';
 import { eventFeedbackApi, type EventRsvpCampaign } from '@/api/eventFeedback';
 import { AppIcon } from '@/components/feature/AppIcon';
-import { EventEmailEditor } from './EventEmailEditor';
 import { parseEventInviteSpreadsheet } from './eventInviteSpreadsheet';
 
 function parseGuests(value: string) {
@@ -153,8 +152,7 @@ export function EventRsvpManager({ event, onClose }: { event: EngagementEvent; o
         </section>
       </div>
 
-      <div className="mt-5"><EventEmailEditor eventId={event.id} purpose="event_rsvp" /></div>
-      <section className="mt-5 border-t border-foreground-200 pt-4"><h3 className="text-sm font-semibold text-foreground-800">3. Send invitations</h3><p className="mt-1 text-xs text-foreground-500">Each person receives a private 30-day link. Resending invalidates their previous link but keeps their recorded answer.</p><div className="mt-3 flex gap-2"><button type="button" disabled={busy || !campaign?.recipients.length} onClick={() => void send()} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40">Send pending / retry failed</button><button type="button" disabled={busy || !campaign?.recipients.length} onClick={() => void send(true)} className="rounded-lg border border-foreground-300 px-4 py-2 text-xs font-semibold text-foreground-700 disabled:opacity-40">Resend all</button></div></section>
+      <section className="mt-5 border-t border-foreground-200 pt-4"><h3 className="text-sm font-semibold text-foreground-800">2. Send invitations</h3><p className="mt-1 text-xs text-foreground-500">Each person receives a private 30-day link. Manage its subject and message from Email on the event card. Resending invalidates their previous link but keeps their recorded answer.</p><div className="mt-3 flex gap-2"><button type="button" disabled={busy || !campaign?.recipients.length} onClick={() => void send()} className="rounded-lg bg-emerald-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-40">Send pending / retry failed</button><button type="button" disabled={busy || !campaign?.recipients.length} onClick={() => void send(true)} className="rounded-lg border border-foreground-300 px-4 py-2 text-xs font-semibold text-foreground-700 disabled:opacity-40">Resend all</button></div></section>
       {error && <div role="alert" className="mt-4 rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{error}</div>}
       {notice && <div role="status" className="mt-4 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-xs text-emerald-800">{notice}</div>}
     </section>

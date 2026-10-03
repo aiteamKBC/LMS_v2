@@ -14,6 +14,7 @@ import {
 import { EventCardSkeletonGrid } from '@/pages/engagement/EngagementSkeletons';
 import { EventFeedbackManager } from '@/features/feedback/EventFeedbackManager';
 import { EventRsvpManager } from '@/features/feedback/EventRsvpManager';
+import { EventEmailManager } from '@/features/feedback/EventEmailManager';
 import { QRCodeSVG } from 'qrcode.react';
 
 const engagementNav = roleNavMap.engagement;
@@ -191,6 +192,7 @@ export default function EventsPage() {
   const [deleteEventId, setDeleteEventId] = useState<string | null>(null);
   const [feedbackEvent, setFeedbackEvent] = useState<Event | null>(null);
   const [rsvpEvent, setRsvpEvent] = useState<Event | null>(null);
+  const [emailEvent, setEmailEvent] = useState<Event | null>(null);
   const [qrEvent, setQrEvent] = useState<Event | null>(null);
 
   // Attendance modal — mark who showed up; 'present' awards event_attended points.
@@ -432,6 +434,9 @@ export default function EventsPage() {
                 <div className="mt-3 flex items-center gap-2 flex-wrap">
                   <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${event.status === 'upcoming' ? 'bg-primary-100 text-primary-700' : event.status === 'ongoing' ? 'bg-emerald-100 text-emerald-700' : 'bg-foreground-100 text-foreground-500'}`}>{event.status}</span>
                   <div className="flex-1"></div>
+                  <button onClick={() => setEmailEvent(event)} className="flex items-center gap-1 px-2 py-1.5 bg-sky-50 text-sky-700 rounded-lg text-[11px] font-medium hover:bg-sky-100 transition-smooth cursor-pointer whitespace-nowrap">
+                    <AppIcon className="ri-mail-settings-line"></AppIcon> Email
+                  </button>
                   <button onClick={() => setRsvpEvent(event)} className="flex items-center gap-1 px-2 py-1.5 bg-violet-50 text-violet-700 rounded-lg text-[11px] font-medium hover:bg-violet-100 transition-smooth cursor-pointer whitespace-nowrap">
                     <AppIcon className="ri-mail-send-line"></AppIcon> Invitations
                   </button>
@@ -610,6 +615,7 @@ export default function EventsPage() {
         )}
         {feedbackEvent && <EventFeedbackManager event={feedbackEvent} onClose={() => setFeedbackEvent(null)} />}
         {rsvpEvent && <EventRsvpManager event={rsvpEvent} onClose={() => setRsvpEvent(null)} />}
+        {emailEvent && <EventEmailManager event={emailEvent} onClose={() => setEmailEvent(null)} />}
         {qrEvent && <EventQrDialog event={qrEvent} onClose={() => setQrEvent(null)} />}
       </div>
     </WorkspaceShell>
