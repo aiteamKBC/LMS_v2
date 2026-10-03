@@ -4,6 +4,7 @@ import { feedbackApi, type FeedbackForm, type FeedbackLearnerOption } from '@/ap
 import { eventFeedbackApi, type EventRsvpCampaign } from '@/api/eventFeedback';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { EventEmailEditor } from './EventEmailEditor';
+import { parseEventInviteSpreadsheet } from './eventInviteSpreadsheet';
 
 function parseGuests(value: string) {
   return value.split(/\r?\n/).filter(line => line.trim()).map((line, index) => {
@@ -76,6 +77,47 @@ export function EventRsvpManager({ event, onClose }: { event: EngagementEvent; o
     finally { setBusy(false); }
   }
 
+  async function importAndSend(file: File) {
+    if (!formId) { setError('Choose a published Event RSVP form before uploading a recipient file.'); return; }
+    setBusy(true); setError(''); setNotice('Reading the spreadsheet…');
+    let attempted = 0;
+    let sent = 0;
+    let failed = 0;
+    let audienceSaved = false;
+    try {
+      const imported = await parseEventInviteSpreadsheet(file);
+      const guestsByEmail = new Map<string, { name: string; email: string }>();
+      for (const guest of parseGuests(guestText)) guestsByEmail.set(guest.email.toLocaleLowerCase(), guest);
+      for (const guest of imported) {
+        const key = guest.email.toLocaleLowerCase();
+        if (!guestsByEmail.has(key)) guestsByEmail.set(key, guest);
+      }
+      const guests = [...guestsByEmail.values()];
+      setGuestText(guests.map(guest => `${guest.name}, ${guest.email}`).join('\n'));
+      await eventFeedbackApi.configureRsvp(event.id, formId, selectedLearners, guests, imported.map(guest => guest.email));
+      audienceSaved = true;
+      setNotice(`Saved ${imported.length} unique spreadsheet recipient(s). Sending invitations…`);
+
+      let remaining = 1;
+      while (remaining > 0) {
+        const result = await eventFeedbackApi.sendRsvp(event.id, false, true);
+        attempted += result.attempted;
+        sent += result.sent;
+        failed += result.failed;
+        remaining = result.remaining;
+        if (remaining > 0 && result.attempted === 0) break;
+      }
+      await reload();
+      setNotice(`${imported.length} unique spreadsheet recipient(s) imported. ${sent} invitation(s) sent; ${failed} failed${remaining ? `; ${remaining} remain pending` : ''}.`);
+    } catch (reason) {
+      const detail = reason instanceof Error ? reason.message : 'Could not import and send the event invitations.';
+      const savedNote = audienceSaved ? 'The RSVP audience was saved.' : '';
+      const deliveryNote = attempted ? `${sent} invitation(s) confirmed sent and ${failed} failed before the error.` : '';
+      setError([detail, savedNote, deliveryNote].filter(Boolean).join(' '));
+      if (attempted) await reload().catch(() => undefined);
+    } finally { setBusy(false); }
+  }
+
   return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
     <section className="max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-2xl bg-white p-5 shadow-xl" onClick={click => click.stopPropagation()} aria-labelledby="event-rsvp-heading">
       <header className="flex items-start justify-between gap-3 border-b border-foreground-200 pb-4">
@@ -93,6 +135,11 @@ export function EventRsvpManager({ event, onClose }: { event: EngagementEvent; o
             {visibleLearners.map(item => <label key={item.id} className="flex items-center gap-2 border-b border-foreground-100 px-3 py-2 text-xs last:border-0"><input type="checkbox" checked={selectedLearners.includes(item.id)} onChange={() => toggleLearner(item.id)} /><span className="min-w-0"><strong className="block truncate">{item.name}</strong><span className="block truncate text-foreground-500">{item.email}</span></span></label>)}
           </div>
           <label className="mt-4 block text-xs font-semibold text-foreground-700">External guests <span className="font-normal text-foreground-500">— one per line: Name, Email</span><textarea className="mt-1 min-h-28 w-full rounded-lg border border-foreground-200 px-3 py-2 text-xs" value={guestText} onChange={change => setGuestText(change.target.value)} placeholder={'Alex Morgan, alex@example.com\nSam Lee, sam@example.com'} /></label>
+          <label aria-disabled={busy || !formId} className={`mt-3 inline-flex cursor-pointer items-center gap-2 rounded-lg border border-primary-200 bg-primary-50 px-4 py-2 text-xs font-semibold text-primary-700 hover:bg-primary-100 ${busy || !formId ? 'pointer-events-none opacity-50' : ''}`}>
+            <AppIcon className="ri-file-excel-2-line" /> Upload spreadsheet and send invitations
+            <input type="file" accept=".xlsx,.csv" className="sr-only" disabled={busy || !formId} onChange={change => { const file = change.currentTarget.files?.[0]; change.currentTarget.value = ''; if (file) void importAndSend(file); }} />
+          </label>
+          {!formId && <p className="mt-2 text-xs text-foreground-500">Choose a published RSVP form before uploading; valid rows will be emailed immediately.</p>}
           <button type="button" disabled={busy} onClick={() => void saveAudience()} className="mt-3 rounded-lg bg-primary-600 px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">Save form & audience</button>
         </section>
 

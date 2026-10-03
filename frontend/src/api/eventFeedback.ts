@@ -117,15 +117,15 @@ export const eventFeedbackApi = {
     body: JSON.stringify({ resendAll }),
   })),
   rsvpCampaign: async (eventId: string) => jsonResponse<EventRsvpCampaign>(await fetch(`${BASE}/events/${eventId}/rsvp/`, { credentials: 'include' })),
-  configureRsvp: async (eventId: string, formId: number, learnerIds: string[], guests: Array<{ name: string; email: string }>) => jsonResponse<{ campaignId: number; recipientCount: number }>(await fetch(`${BASE}/events/${eventId}/rsvp/`, {
+  configureRsvp: async (eventId: string, formId: number, learnerIds: string[], guests: Array<{ name: string; email: string }>, retryEmails: string[] = []) => jsonResponse<{ campaignId: number; recipientCount: number }>(await fetch(`${BASE}/events/${eventId}/rsvp/`, {
     method: 'POST', credentials: 'include',
     headers: { 'X-CSRFToken': await csrfToken(), 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'configure', formId, learnerIds, guests }),
+    body: JSON.stringify({ action: 'configure', formId, learnerIds, guests, retryEmails }),
   })),
-  sendRsvp: async (eventId: string, resendAll = false) => jsonResponse<{ attempted: number; sent: number; failed: number; remaining: number }>(await fetch(`${BASE}/events/${eventId}/rsvp/`, {
+  sendRsvp: async (eventId: string, resendAll = false, pendingOnly = false) => jsonResponse<{ attempted: number; sent: number; failed: number; remaining: number }>(await fetch(`${BASE}/events/${eventId}/rsvp/`, {
     method: 'POST', credentials: 'include',
     headers: { 'X-CSRFToken': await csrfToken(), 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'send', resendAll }),
+    body: JSON.stringify({ action: 'send', resendAll, pendingOnly }),
   })),
   publicAccess: async (token: string) => jsonResponse<PublicEventFeedback>(await fetch(`${BASE}/public-event/`, {
     method: 'POST', credentials: 'include',

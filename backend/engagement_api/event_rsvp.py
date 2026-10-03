@@ -140,6 +140,21 @@ def send_invitations(campaign, recipients):
     return results
 
 
+def reset_failed_recipients(campaign, emails):
+    """Queue failed invitees from a newly uploaded roster for one fresh attempt."""
+    if not isinstance(emails, list):
+        raise ValueError('Retry recipients must be a list of email addresses.')
+    requested = {str(email).strip().casefold() for email in emails if str(email).strip()}
+    if not requested:
+        return 0
+    return campaign.recipients.filter(
+        revoked_at__isnull=True, invite_status='failed', recipient_email__in=requested,
+    ).update(
+        invite_status='pending', invitation_sent_at=None, invitation_error='',
+        updated_at=timezone.now(),
+    )
+
+
 @transaction.atomic
 def save_rsvp(recipient, status):
     status = str(status or '').strip().casefold()
