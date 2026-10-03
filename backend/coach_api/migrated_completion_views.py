@@ -11,6 +11,7 @@ from django.views.decorators.http import require_GET, require_POST
 from coach_api.auth import authenticated_coach_email, coach_access_required
 from coach_api.migrated_completion import complete, ensure_document, required_roles, sign, submit
 from coach_api.models import CoachCalendarEvent, ImportedReviewInstance, MigratedReviewDocument
+from coach_api.migrated_summary_binding import AnswerConflict, check_answer_version, record_answer_edit
 from learner_api.models import EnrolmentUser, LearnerProfile
 from login.permissions import authenticate_request
 
@@ -71,9 +72,16 @@ def migrated_review_submit(request, review_id):
         if not overlay:
             return JsonResponse({"detail": "Migrated review association mismatch."}, status=409)
         try:
+            check_answer_version(overlay, payload)
+            answers = payload.get("answers", overlay.answers)
+            record_answer_edit(overlay, answers, actor=owner,
+                               edited_fields=payload.get("editedFields") if isinstance(payload.get("editedFields"), list) else ())
             submit(overlay, payload.get("answers", overlay.answers))
+        except AnswerConflict as exc:
+            return JsonResponse({"detail": str(exc), "code": "ANSWER_CONFLICT"}, status=409)
         except ValueError as exc:
             return JsonResponse({"detail": str(exc)}, status=400)
+        overlay.save(update_fields=["meeting_intelligence"])
         _mirror_status(overlay)
     return _response(owner, review_id)
 
@@ -152,6 +160,8 @@ def migrated_review_party_detail(request, review_id):
     definition["readOnly"] = True
     definition.pop("historicalReview", None)
     definition.pop("ragHistory", None)
+    definition.pop("summaryBinding", None)
+    definition.pop("answerVersion", None)
     return JsonResponse(definition)
 
 

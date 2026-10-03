@@ -74,6 +74,7 @@ const CoachTimetable = lazyRoute(() => import("../pages/coach/timetable/page"));
 const CommunicationPage = lazyRoute(() => import("../pages/communication/page"));
 const CurriculumDashboard = lazyRoute(() => import("../pages/workspace/curriculum/page"));
 const CurriculumLibraryHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumLibraryHub })));
+const MigratedReviewTemplates = lazyRoute(() => import("../pages/curriculum/review-templates/page"));
 const CurriculumDeliveryHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumDeliveryHub })));
 const CurriculumQualityHub = lazyRoute(() => import("../pages/curriculum/hubs/page").then(module => ({ default: module.CurriculumQualityHub })));
 const CurriculumFreeCourses = lazyRoute(() => import("../pages/curriculum/free-courses/page"));
@@ -996,6 +997,10 @@ const routes: RouteObject[] = [
   {
     path: "/curriculum/library",
     element: <CurriculumLibraryHub />,
+  },
+  {
+    path: "/curriculum/library/review-templates",
+    element: <MigratedReviewTemplates />,
   },
   {
     path: "/curriculum/delivery",

@@ -1,4 +1,5 @@
 from django.urls import path
+from coach_api import migrated_template_views
 
 from system_audit import activity as system_activity
 
@@ -18,6 +19,10 @@ from . import session_results, tutor_notifications
 
 
 urlpatterns = [
+    path('curriculum/migrated-review-templates/', migrated_template_views.collection),
+    path('curriculum/migrated-review-templates/preview/', migrated_template_views.preview),
+    path('curriculum/migrated-review-templates/reset/', migrated_template_views.reset),
+    path('curriculum/migrated-review-templates/<int:template_id>/', migrated_template_views.detail),
     path('curriculum/modules/<str:module_id>/session-results/', session_results.module_results),
     path('curriculum/modules/<str:module_id>/tutor-email/', tutor_notifications.module_tutor_email, name='curriculum-module-tutor-email'),
     path('curriculum/session-results/<str:series_id>/sync/', session_results.queue_sync),
