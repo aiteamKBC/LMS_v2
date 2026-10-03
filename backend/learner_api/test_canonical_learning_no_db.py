@@ -48,6 +48,22 @@ def adapter(query):
 
 
 class CanonicalLearningTests(unittest.TestCase):
+    def test_completion_status_does_not_invent_accepted_otj_hours(self):
+        completed = {'activity_status': 'completed', 'accepted': False,
+                     'actual_seconds': None, 'ksbs': []}
+        pending = {'activity_status': 'not_started', 'accepted': False,
+                   'actual_seconds': None, 'ksbs': []}
+        result = self.scope['metrics_from_records']([completed, pending], {})
+        self.assertEqual(result['programme']['completed'], 1)
+        self.assertEqual(result['programme']['total'], 2)
+        self.assertEqual(result['otjh']['actual'], 0)
+        self.assertTrue(self.scope['counts_as_completed']({'activity_status': 'passed'}))
+        self.assertTrue(self.scope['counts_as_completed']({
+            'activity_status': 'not accepted',
+            'sources': [{'activity_status': 'completed', 'completed': True}],
+        }))
+        self.assertFalse(self.scope['counts_as_completed']({'activity_status': 'not accepted'}))
+
     def test_material_preview_requires_exact_unique_activity_or_component_id(self):
         self.scope['__package__'] = 'learner_api'
         record = {'id': 20, 'actual_seconds': 9000,
