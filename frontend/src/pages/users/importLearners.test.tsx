@@ -48,6 +48,8 @@ it('refreshes the directory after importing the validated workbook', async () =>
   render(<MemoryRouter><UsersListPage /></MemoryRouter>);
   await screen.findByText(/No users yet/);
   expect(screen.getByRole('button', { name: 'Download template' })).toBeInTheDocument();
+  // The wizard builder is opened from the same header.
+  expect(screen.getByRole('button', { name: 'Edit apprenticeship wizard' })).toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Upload learners' }));
   const workbook = new File(['workbook'], 'learners.xlsx');
   fireEvent.change(screen.getByLabelText('Completed template'), { target: { files: [workbook] } });

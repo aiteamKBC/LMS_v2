@@ -67,7 +67,9 @@ LEARNER_ID_KWARGS = ("learner_id", "pk")
 #: lacking a learner id is treated as staff-only.
 # open_policy_document: the college policies every enrolling learner reads —
 # the same files for everyone, with nothing learner-specific in them.
-UNSCOPED_VIEWS = frozenset({"health", "document_types", "open_policy_document"})
+# wizard_layout: which questions the enrolment wizard asks — the same for every
+# learner, with no answers in it. (Publishing a layout is staff-only.)
+UNSCOPED_VIEWS = frozenset({"health", "document_types", "open_policy_document", "wizard_layout"})
 
 #: Views an employer may reach, and only for a learner they employ: signing the
 #: compliance documents that carry an employer signature. Each one also refuses
