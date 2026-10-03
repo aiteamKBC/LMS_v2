@@ -4,6 +4,7 @@ import {
   createEmptyComponent,
   createEmptyWeek,
   createLocalModuleDraft,
+  moduleTeamsPlannedSessions,
   moduleWeekSessionDates,
   moduleWeekIdBySessionNumber,
   moduleUsesSessionRows,
@@ -130,13 +131,17 @@ describe('dating a week added in the builder', () => {
     const dated = applyModuleWeekSessionPlan(module, planFor([
       '2026-09-07', '2026-09-09', '2026-09-14', '2026-09-16',
     ]));
-    const visibleDates = dated.weekStructure.flatMap(week => (
-      week.components.map(component => String(component.settings.sessionDate || week.sessionDate || ''))
+    // Read off each component's OWN date, never `week.sessionDate`: the week
+    // header shows its FIRST delivery day, so falling back to it would show
+    // the week's second live session sitting on the first one's date.
+    const componentDates = dated.weekStructure.flatMap(week => (
+      week.components.map(component => String(component.settings.sessionDate || ''))
     ));
 
-    expect(visibleDates).toEqual([
-      '2026-09-07', '2026-09-09', '2026-09-14', '2026-09-16',
-    ]);
+    // A Mon+Wed group delivers twice a week, so each week has two planned
+    // slots and its two live sessions take one each, in delivery order.
+    expect(componentDates).toEqual(['2026-09-07', '2026-09-09', '2026-09-14', '2026-09-16']);
+    expect(dated.weekStructure.map(week => week.sessionDate)).toEqual(['2026-09-07', '2026-09-14']);
   });
 
   it('gives the added week the next planned date and leaves the others put', () => {
@@ -343,8 +348,11 @@ describe('an authored week is a calendar week', () => {
   });
 
   it('dates a live session added to a week from that week alone', () => {
-    // Week 2 gains its second live session. It takes week 2's second delivery
-    // day -- never week 3's, and never a date already spoken for.
+    // Week 2's FIRST live session takes week 2's own date -- never week 3's,
+    // and never a date already spoken for. A second live session added to the
+    // week is an additional one: the week's date is the primary's, so this one
+    // waits for a date of its own rather than taking the week's spare delivery
+    // day and moving every time the week moves.
     const plan = mondayWeekPlan([
       { date: '2026-08-03', weekNumber: 1, day: 'Monday' },
       { date: '2026-08-07', weekNumber: 1, day: 'Friday' },
@@ -361,9 +369,10 @@ describe('an authored week is a calendar week', () => {
   });
 
   it('leaves a live session over-authored beyond its week undated', () => {
-    // Three live sessions in a week the group delivers twice. There is no third
-    // date to give it, and inventing one would put a real Teams meeting on a
-    // day nobody chose.
+    // Three live sessions in one week. The week's date belongs to the first of
+    // them; the other two are additional and have no date until somebody gives
+    // them one. Inventing one -- from the week's spare delivery day or from
+    // anywhere else -- would put a real Teams meeting on a day nobody chose.
     const plan = mondayWeekPlan([
       { date: '2026-08-03', weekNumber: 1, day: 'Monday' },
       { date: '2026-08-07', weekNumber: 1, day: 'Friday' },
@@ -373,11 +382,11 @@ describe('an authored week is a calendar week', () => {
 
     const dated = applyModuleWeekSessionPlan(weeksCarryingLiveSessions(2, [3, 2]), plan);
 
-    // The third one keeps the empty date it was created with, which is the
-    // "No date" the rail reports and the reason it is not sent to Teams.
+    // The additional ones keep the empty date they were created with, which is
+    // the "No date" the rail reports and the reason they are not sent to Teams.
     expect(dated.weekStructure[0].components.map(c => c.settings.sessionDate))
       .toEqual(['2026-08-03', '2026-08-07', '']);
-    // The extra session did not eat week 2's Monday.
+    // The extra sessions did not eat week 2's Monday.
     expect(dated.weekStructure[1].components[0].settings.sessionDate).toBe('2026-08-10');
   });
 
@@ -398,5 +407,104 @@ describe('an authored week is a calendar week', () => {
     ]);
     const dated = applyModuleWeekSessionPlan(module, plan);
     expect(dated.weekStructure[2].components[0].settings.sessionDate).toBe('2026-08-17');
+  });
+});
+
+/**
+ * What the Teams dialog is offered to put on the calendar.
+ *
+ * The same slot rule the structure walk above applies, because this is the
+ * list Create and Update actually send. The two disagreeing is how a module
+ * with thirteen dated weeks told the Teams dialog it had no sessions.
+ */
+describe('moduleTeamsPlannedSessions pairs each live session with its own delivery slot', () => {
+  // One week, `dates` live sessions in authored order carrying those stored
+  // dates ('' for one nobody has dated).
+  const weekOf = (dates: string[]): ModuleCatalogueItem => {
+    const draft = createLocalModuleDraft({
+      programme: 'Delivery slots',
+      title: 'One week, several live sessions',
+      description: '',
+      weeks: 1,
+      status: 'draft',
+      catalogueId: 'MOD-DELIVERY-SLOTS',
+      startDate: '2026-10-05',
+    });
+    const week = draft.weekStructure[0];
+    return {
+      ...draft,
+      weekStructure: [{
+        ...week,
+        components: dates.map((date, index) => ({
+          ...createEmptyComponent(week.id, 'live-session', index + 1),
+          id: `COMP-${index + 1}`,
+          settings: { sessionDate: date, sessionTime: '09:00' },
+        })),
+      }],
+    } as ModuleCatalogueItem;
+  };
+  const resolved = (module: ModuleCatalogueItem, plan: ModuleWeekSessionPlan) => (
+    moduleTeamsPlannedSessions(module, plan).map(session => [session.componentId, session.date])
+  );
+  // A Monday-only group: one slot a week.
+  const mondayOnly = mondayWeekPlan([{ date: '2026-10-05', weekNumber: 1, day: 'Monday' }]);
+  // A Mon+Fri group: two slots a week, in the calendar order the scheduler
+  // emits them, never the order the delivery days were listed in.
+  const mondayAndFriday = mondayWeekPlan([
+    { date: '2026-10-05', weekNumber: 1, day: 'Monday' },
+    { date: '2026-10-09', weekNumber: 1, day: 'Friday' },
+  ]);
+
+  it('gives a one-day group its single slot and leaves the second session on its own date', () => {
+    expect(resolved(weekOf(['2026-10-05', '2026-10-07']), mondayOnly)).toEqual([
+      ['COMP-1', '2026-10-05'],
+      ['COMP-2', '2026-10-07'],
+    ]);
+  });
+
+  it('gives a two-day group both slots, one per live session, in delivery order', () => {
+    expect(resolved(weekOf(['', '']), mondayAndFriday)).toEqual([
+      ['COMP-1', '2026-10-05'],
+      ['COMP-2', '2026-10-09'],
+    ]);
+  });
+
+  it('moves both planned sessions of a two-day week onto their own new slots', () => {
+    // The week moves on by one: Monday 12 Oct and Friday 16 Oct. The third
+    // session was put on the Wednesday deliberately and does not move.
+    const moved = mondayWeekPlan([
+      { date: '2026-10-12', weekNumber: 1, day: 'Monday' },
+      { date: '2026-10-16', weekNumber: 1, day: 'Friday' },
+    ]);
+    expect(resolved(weekOf(['2026-10-05', '2026-10-09', '2026-10-07']), moved)).toEqual([
+      ['COMP-3', '2026-10-07'],
+      ['COMP-1', '2026-10-12'],
+      ['COMP-2', '2026-10-16'],
+    ]);
+  });
+
+  it('leaves a third live session of a two-day week on its own manual date', () => {
+    // Date order, which is the order the calendar is built in.
+    expect(resolved(weekOf(['', '', '2026-10-07']), mondayAndFriday)).toEqual([
+      ['COMP-1', '2026-10-05'],
+      ['COMP-3', '2026-10-07'],
+      ['COMP-2', '2026-10-09'],
+    ]);
+  });
+
+  it('keeps an undated additional session out of the calendar', () => {
+    // Undated, it must not borrow a delivery slot or another session's day --
+    // either would book a second Teams meeting on a day nobody chose.
+    const planned = moduleTeamsPlannedSessions(weekOf(['', '', '']), mondayAndFriday);
+    expect(planned.filter(session => session.date).map(session => session.componentId))
+      .toEqual(['COMP-1', 'COMP-2']);
+    expect(planned.find(session => session.componentId === 'COMP-3')?.date).toBe('');
+  });
+
+  it('never lets a stale stored date outvote a delivery slot', () => {
+    expect(resolved(weekOf(['2026-08-03', '2026-08-07']), mondayAndFriday)).toEqual([
+      ['COMP-1', '2026-10-05'],
+      ['COMP-2', '2026-10-09'],
+    ]);
   });
 });

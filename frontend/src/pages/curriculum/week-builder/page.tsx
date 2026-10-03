@@ -1,4 +1,5 @@
 import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
+import { componentFileList, legacyComponentFile, serialiseComponentFiles, type ComponentFile } from '@/lib/componentFiles';
 import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
@@ -42,6 +43,7 @@ import {
   validateWeekComponent,
   weekPaletteGroups,
   weekPaletteTypes,
+  weekAutoTitleLabels,
   weekTypeLabel,
   type KsbMapping,
   type ModuleComponent,
@@ -1067,7 +1069,7 @@ function RailNodeCard({ component, index, selected, focused = false, issues, wee
   // the empty settings that adding it produced. Said on the row so a week of
   // twenty components shows at a glance which ones are still placeholders --
   // it is a hint and nothing else, and it disappears on the first real edit.
-  const unedited = componentLooksUnedited(component, weekTypeLabel(component.type));
+  const unedited = componentLooksUnedited(component, weekAutoTitleLabels(component.type));
   return (
     <div id={`node-${component.id}`} data-focused={focused || undefined} className="group/node">
       {/* Its own row above the card rather than beside the title: the title
@@ -2016,6 +2018,28 @@ const READING_UPLOAD_ACCEPT = '.txt,.doc,.docx,.pdf,.rtf,.odt,text/plain,applica
 const PODCAST_UPLOAD_ACCEPT = '.mp3,.ogg,.oga,.wav,.m4a,.aac,.webm,audio/*';
 const POWERPOINT_UPLOAD_ACCEPT = '.ppt,.pptx,.pps,.ppsx,.pdf,application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/pdf';
 
+/**
+ * The legacy single-file keys, kept in step with the list's first entry.
+ *
+ * `componentFiles` is the whole ordered set, but the learner API, the Excel
+ * export, the Module Builder's own readers and every component authored before
+ * the list existed all look at these four keys. They must therefore always
+ * describe `files[0]` -- a component whose first file changed but whose
+ * `uploadedFileUrl` did not would serve the learner a different document than
+ * the one the author put first.
+ */
+function componentFileSettings(files: ComponentFile[]) {
+  const first = files[0];
+  return {
+    componentFiles: serialiseComponentFiles(files),
+    uploadedFileName: first?.fileName || '',
+    uploadedFileUrl: first?.url || '',
+    uploadedFileSize: first?.size || 0,
+    uploadedFileContentType: first?.contentType || '',
+    uploadSource: first ? 'Device upload' : '',
+  };
+}
+
 // Bespoke Reading Material editor — the source has just two shapes: written
 // text (a plain content field, matching the Module Builder's text editor
 // intent) or an uploaded document (Word/PDF/text/RTF/OpenDocument), each with
@@ -2023,6 +2047,18 @@ const POWERPOINT_UPLOAD_ACCEPT = '.ppt,.pptx,.pps,.ppsx,.pdf,application/vnd.ms-
 function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResource }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
   const sourceMode = ['File', 'LMS resource'].includes(s('readingSource')) ? 'File' : 'Text';
+  // The stored list when one exists, otherwise the single file this component
+  // has always carried: a reading authored before multi-file support keeps it
+  // in `resourceUrl`, and nothing re-saves a component on its own.
+  const readingFileList = useMemo(() => componentFileList(
+    component.settings.componentFiles,
+    legacyComponentFile(
+      component.settings.uploadedFileUrl || component.settings.resourceUrl,
+      component.settings.uploadedFileName,
+      component.settings.uploadedFileSize,
+      component.settings.uploadedFileContentType,
+    ),
+  ), [component.settings]);
   const [writtenPreviewOpen, setWrittenPreviewOpen] = useState(false);
   // Stable innerHTML object: React 19 re-applies innerHTML on every new identity,
   // so an inline literal would restart preview videos on each keystroke anywhere
@@ -2074,32 +2110,13 @@ function ReadingBody({ component, onChange, setSetting, rulePoints, uploadResour
               componentType="reading"
               onUpload={uploadResource}
               accept={READING_UPLOAD_ACCEPT}
-              uploadedName={s('uploadedFileName')}
-              uploadedUrl={s('uploadedFileUrl') || s('resourceUrl')}
-              uploadedSize={Number(component.settings.uploadedFileSize) || 0}
-              uploadedContentType={s('uploadedFileContentType')}
-              onUploaded={file => onChange({
+              files={readingFileList}
+              onFilesChange={files => onChange({
                 settings: {
                   ...component.settings,
                   readingSource: 'File',
-                  resourceUrl: file.url,
-                  uploadedFileName: file.fileName,
-                  uploadedFileUrl: file.url,
-                  uploadedFileSize: file.size,
-                  uploadedFileContentType: file.contentType,
-                  uploadSource: 'Device upload',
-                },
-              })}
-              onRemove={() => onChange({
-                settings: {
-                  ...component.settings,
-                  readingSource: 'File',
-                  resourceUrl: '',
-                  uploadedFileName: '',
-                  uploadedFileUrl: '',
-                  uploadedFileSize: 0,
-                  uploadedFileContentType: '',
-                  uploadSource: '',
+                  resourceUrl: files[0]?.url || '',
+                  ...componentFileSettings(files),
                 },
               })}
             />
@@ -2151,6 +2168,16 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
   // reload the embedded player iframe (React 19 compares by reference).
   const podcastEmbedCode = s('podcastEmbedCode');
   const podcastEmbedHtml = useMemo(() => ({ __html: podcastEmbedCode }), [podcastEmbedCode]);
+  // Same fallback as reading, against the key a podcast keeps its audio in.
+  const podcastFileList = useMemo(() => componentFileList(
+    component.settings.componentFiles,
+    legacyComponentFile(
+      component.settings.uploadedFileUrl || component.settings.podcastUrl,
+      component.settings.uploadedFileName,
+      component.settings.uploadedFileSize,
+      component.settings.uploadedFileContentType,
+    ),
+  ), [component.settings]);
   const sourceType = rawSourceType === 'Device upload'
     ? 'Audio File'
     : rawSourceType === 'External URL'
@@ -2178,32 +2205,13 @@ function PodcastBody({ component, onChange, setSetting, rulePoints, uploadResour
               componentType="podcast"
               onUpload={uploadResource}
               accept={PODCAST_UPLOAD_ACCEPT}
-              uploadedName={s('uploadedFileName')}
-              uploadedUrl={s('uploadedFileUrl') || s('podcastUrl')}
-              uploadedSize={Number(component.settings.uploadedFileSize) || 0}
-              uploadedContentType={s('uploadedFileContentType')}
-              onUploaded={file => onChange({
+              files={podcastFileList}
+              onFilesChange={files => onChange({
                 settings: {
                   ...component.settings,
                   podcastSource: 'Audio File',
-                  podcastUrl: file.url,
-                  uploadedFileName: file.fileName,
-                  uploadedFileUrl: file.url,
-                  uploadedFileSize: file.size,
-                  uploadedFileContentType: file.contentType,
-                  uploadSource: 'Device upload',
-                },
-              })}
-              onRemove={() => onChange({
-                settings: {
-                  ...component.settings,
-                  podcastSource: 'Audio File',
-                  podcastUrl: '',
-                  uploadedFileName: '',
-                  uploadedFileUrl: '',
-                  uploadedFileSize: 0,
-                  uploadedFileContentType: '',
-                  uploadSource: '',
+                  podcastUrl: files[0]?.url || '',
+                  ...componentFileSettings(files),
                 },
               })}
             />
@@ -2289,6 +2297,17 @@ function UploadedDeckPreview({ url }: { url: string }) {
 // this editor no longer shows or writes it, but nothing here deletes it.
 function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadResource }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
+  // Same fallback as reading. A deck's name lives in `fileName` when the upload
+  // predates the shared `uploadedFileName` key.
+  const deckFileList = useMemo(() => componentFileList(
+    component.settings.componentFiles,
+    legacyComponentFile(
+      component.settings.uploadedFileUrl,
+      component.settings.uploadedFileName || component.settings.fileName,
+      component.settings.uploadedFileSize,
+      component.settings.uploadedFileContentType,
+    ),
+  ), [component.settings]);
 
   return (
     <>
@@ -2302,15 +2321,9 @@ function PowerPointBody({ component, onChange, setSetting, rulePoints, uploadRes
             componentType="powerpoint"
             onUpload={uploadResource}
             accept={POWERPOINT_UPLOAD_ACCEPT}
-            uploadedName={s('uploadedFileName') || s('fileName')}
-            uploadedUrl={s('uploadedFileUrl')}
-            uploadedSize={Number(component.settings.uploadedFileSize) || 0}
-            uploadedContentType={s('uploadedFileContentType')}
-            onUploaded={file => onChange({
-              settings: { ...component.settings, uploadedFileName: file.fileName, uploadedFileUrl: file.url, uploadedFileSize: file.size, uploadedFileContentType: file.contentType },
-            })}
-            onRemove={() => onChange({
-              settings: { ...component.settings, uploadedFileName: '', fileName: '', uploadedFileUrl: '', uploadedFileSize: 0, uploadedFileContentType: '' },
+            files={deckFileList}
+            onFilesChange={files => onChange({
+              settings: { ...component.settings, fileName: files[0]?.fileName || '', ...componentFileSettings(files) },
             })}
           />
           <p className="mt-2 text-[11px] text-foreground-400">Accepted formats: PowerPoint (.ppt, .pptx, .pps, .ppsx) or PDF. The preview below is what a learner sees.</p>
@@ -2704,145 +2717,232 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadRes
   );
 }
 
-function WeekComponentFileUpload({ componentId, componentType, accept, uploadedName, uploadedUrl, uploadedSize, uploadedContentType, onUploaded, onRemove, onUpload = uploadWeekComponentResource }: {
+/**
+ * Every file attached to one component, in the order they were uploaded.
+ *
+ * A Reading Material, a slide deck or a podcast rarely is one file: a workbook
+ * comes with its answer sheet, a deck with the handout. The list is the whole
+ * truth — `files[0]` is the first upload and stays the one the legacy
+ * single-file keys mirror, so nothing that reads a component the old way sees
+ * a different first file than it did before.
+ *
+ * The author never types an index. Position is the order, shown as #1, #2, …
+ * one above the zero-based array so the list reads the way a person counts.
+ */
+function WeekComponentFileUpload({ componentId, componentType, accept, files, onFilesChange, onUpload = uploadWeekComponentResource }: {
   componentId: string;
   componentType: 'reading' | 'podcast' | 'powerpoint' | 'assignment';
   accept: string;
-  uploadedName: string;
-  uploadedUrl: string;
-  uploadedSize: number;
-  uploadedContentType: string;
-  onUploaded: (file: WeekComponentUploadResult['file']) => void;
-  // Clears the stored file without replacing it. Authors need this when a deck
-  // or document was attached by mistake and no replacement exists yet.
-  onRemove?: () => void;
+  /** Ordered; index 0 is the first file uploaded. */
+  files: ComponentFile[];
+  onFilesChange: (files: ComponentFile[]) => void;
   onUpload?: WeekComponentUploader;
 }) {
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
-  const [failedFile, setFailedFile] = useState<File | null>(null);
-  const [previewOpen, setPreviewOpen] = useState(Boolean(uploadedUrl));
-  const [confirmRemove, setConfirmRemove] = useState(false);
+  const [failedFiles, setFailedFiles] = useState<File[]>([]);
   const inputId = useMemo(() => `week-component-upload-${Math.random().toString(36).slice(2)}`, []);
+  // The upload loop reads the list it is appending to. Reading `files` straight
+  // from props would make every file in a multi-file selection overwrite the
+  // previous one, because the parent's re-render lands after the loop.
+  const latest = useRef(files);
+  latest.current = files;
 
-  // A removal prompt left open against a file that is already gone (or has been
-  // swapped for another) would apply to the wrong thing, so drop it.
-  useEffect(() => {
-    if (!uploadedUrl && !uploadedName) setConfirmRemove(false);
-  }, [uploadedUrl, uploadedName]);
-
-  const handleRemove = () => {
-    setConfirmRemove(false);
-    setError('');
-    setFailedFile(null);
-    setPreviewOpen(false);
-    onRemove?.();
-  };
-
-  const handleFile = async (file: File) => {
+  const handleFiles = async (chosen: File[]) => {
+    if (!chosen.length) return;
     setUploading(true);
     setError('');
-    setFailedFile(null);
-    try {
-      const result = await onUpload(componentId, file, componentType);
-      onUploaded(result.file);
-      setPreviewOpen(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to upload file.');
-      setFailedFile(file);
-    } finally {
-      setUploading(false);
+    setFailedFiles([]);
+    const failed: File[] = [];
+    let lastError = '';
+    for (const file of chosen) {
+      try {
+        const result = await onUpload(componentId, file, componentType);
+        // Appended one at a time rather than collected and written once: a
+        // five-file upload that fails on the fourth keeps the three that
+        // landed, instead of discarding them with the failure.
+        const next = [...latest.current, result.file];
+        latest.current = next;
+        onFilesChange(next);
+      } catch (err) {
+        failed.push(file);
+        lastError = err instanceof Error ? err.message : 'Unable to upload file.';
+      }
     }
+    if (failed.length) {
+      setFailedFiles(failed);
+      setError(failed.length === 1 ? lastError : `${failed.length} files could not be uploaded. ${lastError}`);
+    }
+    setUploading(false);
+  };
+
+  const removeAt = (index: number) => {
+    const next = latest.current.filter((_, position) => position !== index);
+    latest.current = next;
+    onFilesChange(next);
+  };
+
+  const moveTo = (index: number, target: number) => {
+    if (target < 0 || target >= latest.current.length) return;
+    const next = [...latest.current];
+    const [moved] = next.splice(index, 1);
+    next.splice(target, 0, moved);
+    latest.current = next;
+    onFilesChange(next);
   };
 
   return (
     <div className="rounded-xl border border-background-200 bg-background-50 p-3">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <p className="truncate text-[12px] font-bold text-foreground-800">
-            {uploadedName || 'No file uploaded yet'}
-            {uploadedSize > 0 && <span className="ml-2 font-normal tabular-nums text-foreground-400">{formatFileSize(uploadedSize)}</span>}
+          <p className="text-[12px] font-bold text-foreground-800">
+            {files.length ? `${files.length} file${files.length === 1 ? '' : 's'} attached` : 'No file uploaded yet'}
           </p>
-          {uploadedUrl && (
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
-              <button type="button" onClick={() => setPreviewOpen(current => !current)} className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-600 hover:text-primary-700" aria-expanded={previewOpen}>
-                <AppIcon className={previewOpen ? 'ri-eye-off-line' : 'ri-eye-line'}></AppIcon>
-                {previewOpen ? 'Hide preview' : 'Preview file'}
-              </button>
-              <a href={uploadedUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] font-bold text-foreground-500 hover:text-foreground-700">
-                <AppIcon className="ri-external-link-line"></AppIcon> Open in new tab
-              </a>
-            </div>
-          )}
-          {onRemove && (uploadedUrl || uploadedName) && !confirmRemove && (
-            <button type="button" disabled={uploading} onClick={() => setConfirmRemove(true)} className="mt-1 inline-flex items-center gap-1 text-[11px] font-bold text-red-600 hover:text-red-700 disabled:opacity-50">
-              <AppIcon className="ri-delete-bin-line"></AppIcon> Remove file
-            </button>
-          )}
+          <p className="mt-0.5 text-[11px] text-foreground-400">Learners see them in this order. Upload as many as the component needs.</p>
         </div>
         <div className="w-full shrink-0 sm:w-auto">
           <input
             id={inputId}
             type="file"
             accept={accept}
+            multiple
             disabled={uploading}
             className="hidden"
             onChange={event => {
-              const file = event.target.files?.[0];
+              const chosen = Array.from(event.target.files || []);
+              // Reset first so re-picking the same file name fires change again.
               event.target.value = '';
-              if (file) void handleFile(file);
+              void handleFiles(chosen);
             }}
           />
           <label htmlFor={inputId} aria-disabled={uploading} className={`primary-action inline-flex h-9 w-full min-w-[124px] items-center justify-center gap-1.5 rounded-lg px-3 text-[11px] font-bold !text-white shadow-sm transition-smooth sm:w-auto ${uploading ? 'cursor-wait bg-foreground-300' : 'cursor-pointer bg-primary-600 hover:bg-primary-700'}`}>
             <AppIcon className={`${uploading ? 'ri-loader-4-line animate-spin' : 'ri-upload-cloud-2-line'} !text-white`}></AppIcon>
-            {uploading ? 'Uploading…' : 'Upload file'}
+            {uploading ? 'Uploading…' : files.length ? 'Add more files' : 'Upload files'}
           </label>
         </div>
       </div>
       <p className="mt-2 flex items-center gap-1 text-[10px] font-medium text-foreground-400">
         <AppIcon className="ri-information-line shrink-0"></AppIcon>
-        Maximum file size: {COMPONENT_UPLOAD_MAX_LABEL}.
+        Maximum file size: {COMPONENT_UPLOAD_MAX_LABEL} each.
       </p>
-      {onRemove && confirmRemove && (
-        <div className="mt-2 flex flex-col gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
-          <p className="flex min-w-0 items-start gap-1.5 text-[11px] font-semibold text-red-700">
-            <AppIcon className="ri-error-warning-line mt-0.5 shrink-0"></AppIcon>
-            <span>Remove this file from the component? The component keeps its other details and you can upload a new file later.</span>
-          </p>
-          <div className="flex shrink-0 items-center gap-2">
-            <button type="button" onClick={() => setConfirmRemove(false)} className="inline-flex h-8 items-center justify-center rounded-md border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-600 hover:bg-background-100">
-              Cancel
-            </button>
-            <button type="button" onClick={handleRemove} className="inline-flex h-8 items-center justify-center gap-1 rounded-md bg-red-600 px-3 text-[11px] font-bold text-white hover:bg-red-700">
-              <AppIcon className="ri-delete-bin-line !text-white"></AppIcon> Remove file
-            </button>
-          </div>
-        </div>
+
+      {files.length > 0 && (
+        <ul className="mt-3 space-y-2">
+          {files.map((file, index) => (
+            <WeekComponentFileRow
+              key={`${file.url}:${index}`}
+              file={file}
+              index={index}
+              total={files.length}
+              componentType={componentType}
+              busy={uploading}
+              onRemove={() => removeAt(index)}
+              onMoveUp={() => moveTo(index, index - 1)}
+              onMoveDown={() => moveTo(index, index + 1)}
+            />
+          ))}
+        </ul>
       )}
+
       {error && (
         <div className="mt-2 flex flex-col gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-red-700 sm:flex-row sm:items-center sm:justify-between">
           <p className="flex min-w-0 items-start gap-1.5 text-[11px] font-semibold">
             <AppIcon className="ri-error-warning-line mt-0.5 shrink-0"></AppIcon>
             <span>{error}</span>
           </p>
-          {failedFile && (
-            <button type="button" disabled={uploading} onClick={() => void handleFile(failedFile)} className="inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-md border border-red-200 bg-background-50 px-3 text-[11px] font-bold text-red-700 hover:bg-red-100 disabled:opacity-50">
+          {failedFiles.length > 0 && (
+            <button type="button" disabled={uploading} onClick={() => void handleFiles(failedFiles)} className="inline-flex h-8 shrink-0 items-center justify-center gap-1 rounded-md border border-red-200 bg-background-50 px-3 text-[11px] font-bold text-red-700 hover:bg-red-100 disabled:opacity-50">
               <AppIcon className="ri-refresh-line"></AppIcon>
               Retry upload
             </button>
           )}
         </div>
       )}
+    </div>
+  );
+}
 
-      {uploadedUrl && previewOpen && (
+/** One attached file: its place in the order, its preview, and its removal. */
+function WeekComponentFileRow({ file, index, total, componentType, busy, onRemove, onMoveUp, onMoveDown }: {
+  file: ComponentFile;
+  index: number;
+  total: number;
+  componentType: 'reading' | 'podcast' | 'powerpoint' | 'assignment';
+  busy: boolean;
+  onRemove: () => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+}) {
+  // Only the first file opens expanded. Opening all of them at once would fetch
+  // and convert every Word document on the component the moment it is selected.
+  const [previewOpen, setPreviewOpen] = useState(index === 0);
+  const [confirmRemove, setConfirmRemove] = useState(false);
+  const label = file.fileName || 'Uploaded file';
+
+  return (
+    <li className="rounded-lg border border-background-200 bg-white p-2.5">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 items-start gap-2">
+          <span aria-hidden="true" className="mt-0.5 grid h-5 w-6 shrink-0 place-items-center rounded bg-background-100 text-[10px] font-bold tabular-nums text-foreground-500">#{index + 1}</span>
+          <div className="min-w-0">
+            <p className="truncate text-[12px] font-bold text-foreground-800">
+              {label}
+              {file.size > 0 && <span className="ml-2 font-normal tabular-nums text-foreground-400">{formatFileSize(file.size)}</span>}
+            </p>
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+              <button type="button" onClick={() => setPreviewOpen(current => !current)} className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-600 hover:text-primary-700" aria-expanded={previewOpen}>
+                <AppIcon className={previewOpen ? 'ri-eye-off-line' : 'ri-eye-line'}></AppIcon>
+                {previewOpen ? 'Hide preview' : 'Preview file'}
+              </button>
+              <a href={file.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] font-bold text-foreground-500 hover:text-foreground-700">
+                <AppIcon className="ri-external-link-line"></AppIcon> Open in new tab
+              </a>
+              {!confirmRemove && (
+                <button type="button" disabled={busy} onClick={() => setConfirmRemove(true)} className="inline-flex items-center gap-1 text-[11px] font-bold text-red-600 hover:text-red-700 disabled:opacity-50">
+                  <AppIcon className="ri-delete-bin-line"></AppIcon> Remove file
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+        {total > 1 && (
+          <div className="flex shrink-0 items-center gap-1">
+            <button type="button" disabled={busy || index === 0} onClick={onMoveUp} aria-label={`Move ${label} earlier`} title="Move earlier" className="grid h-7 w-7 place-items-center rounded-md border border-background-200 text-foreground-500 hover:bg-background-100 disabled:opacity-40">
+              <AppIcon className="ri-arrow-up-line text-[13px]"></AppIcon>
+            </button>
+            <button type="button" disabled={busy || index === total - 1} onClick={onMoveDown} aria-label={`Move ${label} later`} title="Move later" className="grid h-7 w-7 place-items-center rounded-md border border-background-200 text-foreground-500 hover:bg-background-100 disabled:opacity-40">
+              <AppIcon className="ri-arrow-down-line text-[13px]"></AppIcon>
+            </button>
+          </div>
+        )}
+      </div>
+
+      {confirmRemove && (
+        <div className="mt-2 flex flex-col gap-2 rounded-lg border border-red-100 bg-red-50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+          <p className="flex min-w-0 items-start gap-1.5 text-[11px] font-semibold text-red-700">
+            <AppIcon className="ri-error-warning-line mt-0.5 shrink-0"></AppIcon>
+            <span>Remove {label} from the component? The other files and the component&apos;s details are kept.</span>
+          </p>
+          <div className="flex shrink-0 items-center gap-2">
+            <button type="button" onClick={() => setConfirmRemove(false)} className="inline-flex h-8 items-center justify-center rounded-md border border-background-200 bg-background-50 px-3 text-[11px] font-bold text-foreground-600 hover:bg-background-100">
+              Cancel
+            </button>
+            <button type="button" onClick={() => { setConfirmRemove(false); onRemove(); }} className="inline-flex h-8 items-center justify-center gap-1 rounded-md bg-red-600 px-3 text-[11px] font-bold text-white hover:bg-red-700">
+              <AppIcon className="ri-delete-bin-line !text-white"></AppIcon> Remove file
+            </button>
+          </div>
+        </div>
+      )}
+
+      {previewOpen && (
         <UploadedComponentFilePreview
-          url={uploadedUrl}
-          fileName={uploadedName}
-          contentType={uploadedContentType}
+          url={file.url}
+          fileName={file.fileName}
+          contentType={file.contentType}
           componentType={componentType}
         />
       )}
-    </div>
+    </li>
   );
 }
 

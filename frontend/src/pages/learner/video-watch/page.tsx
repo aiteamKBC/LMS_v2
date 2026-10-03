@@ -1440,7 +1440,7 @@ function AccessibleReadingMaterial({
 }) {
   const componentId = component.componentId || title;
   const sourceHtml = normalizeReadingHtml(component.contentHtml || '');
-  const files = useMemo(() => readingFiles(component.resourceUrl, component.fileName, sourceHtml), [component.resourceUrl, component.fileName, sourceHtml]);
+  const files = useMemo(() => readingFiles(component.resourceUrl, component.fileName, sourceHtml, component.files), [component.resourceUrl, component.fileName, sourceHtml, component.files]);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [downloadError, setDownloadError] = useState('');
   const savedDocument = readStoredJson(readingStorageKey(componentId, 'document'), { sourceHtml: '', html: '' });
@@ -1594,8 +1594,59 @@ function AccessibleReadingMaterial({
       ) : !component.contentHtml ? (
         <p className="text-sm text-foreground-500">No reading content was set. You can still record your reflection below.</p>
       ) : null}
+      <ExtraComponentFiles component={component} title={title} primaryUrl={component.resourceUrl} />
       </div>
     </>
+  );
+}
+
+/**
+ * The attachments the block above did not already show.
+ *
+ * One of a component's files is normally on screen already — inline for a
+ * reading or a deck, in the player for a podcast — and `primaryUrl` says which.
+ * Everything else the author attached is rendered here, each keeping the
+ * position it has in the authored list so the numbers match the #1, #2 order
+ * the Module Builder shows.
+ *
+ * Filtering by URL rather than dropping `files[0]` matters when the primary is
+ * not the first file: a reading whose text is the body, or a podcast pointing
+ * at an external episode page, would otherwise silently swallow one attachment.
+ */
+function ExtraComponentFiles({ component, title, primaryUrl = '', downloadAllowed = true, audio = false }: {
+  component: JourneyComponent;
+  title: string;
+  /** The file already rendered above, if any. */
+  primaryUrl?: string | null;
+  downloadAllowed?: boolean;
+  /** A podcast's extra files are recordings, so give them players, not cards. */
+  audio?: boolean;
+}) {
+  const extras = (component.files || [])
+    .map((file, index) => ({ file, position: index + 1 }))
+    .filter(({ file }) => file.url !== (primaryUrl || ''));
+  if (!extras.length) return null;
+  return (
+    <section className="mt-4 border-t border-background-200 pt-4" aria-label="More files">
+      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-foreground-400">
+        {extras.length} more file{extras.length === 1 ? '' : 's'}
+      </p>
+      <div className="space-y-4">
+        {extras.map(({ file, position }) => (
+          <div key={`${file.url}:${position}`}>
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <p className="min-w-0 truncate text-xs font-bold text-foreground-700">
+                <span className="tabular-nums text-foreground-400">{position}.</span> {file.fileName || 'Attached file'}
+              </p>
+              {downloadAllowed && <DownloadFileButton url={file.url} fileName={file.fileName} />}
+            </div>
+            {audio
+              ? <audio controls preload="metadata" className="w-full" src={proxiedMaterialUrl(file.url)}>Your browser does not support audio playback.</audio>
+              : <InlineAttachmentPreview url={file.url} title={file.fileName || title} fileName={file.fileName} />}
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -2292,6 +2343,7 @@ export function ComponentBody({ component, contentKind, parsed, title, onDuratio
         {component.audioUrl && (
           <a href={proxiedMaterialUrl(component.audioUrl)} target="_blank" rel="noreferrer" className="mt-3 inline-flex items-center gap-1.5 text-xs font-semibold text-violet-600 hover:text-violet-700"><AppIcon className="ri-external-link-line" />Open in a new tab</a>
         )}
+        <ExtraComponentFiles component={component} title={title} primaryUrl={component.audioUrl} audio />
       </div>
     );
   }
@@ -2341,6 +2393,7 @@ export function ComponentBody({ component, contentKind, parsed, title, onDuratio
         ) : (
           <p className="text-sm text-foreground-500">{component.fileName ? <>Slide deck: <span className="font-semibold text-foreground-700">{component.fileName}</span>. </> : ''}Review your slide deck for this week, then record your reflection below.</p>
         )}
+        <ExtraComponentFiles component={component} title={title} primaryUrl={component.resourceUrl} downloadAllowed={Boolean(component.downloadAllowed)} />
       </div>
     );
   }

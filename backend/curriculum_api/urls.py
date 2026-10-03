@@ -20,6 +20,12 @@ from . import session_results, tutor_notifications
 urlpatterns = [
     path('curriculum/modules/<str:module_id>/session-results/', session_results.module_results),
     path('curriculum/modules/<str:module_id>/tutor-email/', tutor_notifications.module_tutor_email, name='curriculum-module-tutor-email'),
+    # Several deliveries of one module, one mail. Carries no module id, so it
+    # must stay above `curriculum/modules/<str:identifier>/` at the bottom of
+    # this list -- that catch-all matches two segments and would otherwise read
+    # "tutor-email" as a module id, exactly as `resolve-structures/` and
+    # `archived/` are kept above it for the same reason.
+    path('curriculum/modules/tutor-email/', tutor_notifications.modules_tutor_email, name='curriculum-modules-tutor-email'),
     path('curriculum/session-results/<str:series_id>/sync/', session_results.queue_sync),
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/', session_results.admin_session),
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/attendance-alias/', session_results.link_attendance_alias),

@@ -20,6 +20,8 @@ export interface JourneyComponent {
   contentHtml?: string | null;
   hasReadingContent?: boolean;
   fileName?: string | null;
+  /** Ordered attachments; entry 0 is `resourceUrl`. */
+  files?: import('@/lib/componentFiles').ComponentFile[];
   downloadAllowed?: boolean;
   reflectionPrompt?: string | null;
   reflectionRequired?: boolean;
@@ -627,7 +629,7 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
             componentId: c.componentId, type: c.type, description: c.description,
             assignmentBrief: c.assignmentBrief, assignmentBriefHtml: c.assignmentBriefHtml, assignmentTopics: c.assignmentTopics,
             videoUrl: c.videoUrl, durationMinutes: c.durationMinutes,
-            audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName,
+            audioUrl: c.audioUrl, contentHtml: c.contentHtml, fileName: c.fileName, files: c.files,
             hasReadingContent: c.hasReadingContent,
             downloadAllowed: c.downloadAllowed, reflectionPrompt: c.reflectionPrompt,
             reflectionRequired: c.reflectionRequired,
