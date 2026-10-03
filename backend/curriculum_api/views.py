@@ -53,7 +53,6 @@ from . import pptx_slides
 from . import schema_gate
 from . import versioning
 from . import upload_storage
-from . import tutor_notifications
 from .schema_gate import SchemaNotProvisioned
 from .ksb_coverage import (
     SUPPORTED_CLASSIFICATIONS,
@@ -22690,7 +22689,6 @@ def save_tree_group(group, cohort_row):
         previous_cohort = fetch_cohort_row(previous_cohort_id) or {}
         update_cohort_fields(previous_cohort_id, {'group_ids': json_array_remove(previous_cohort.get('group_ids'), group_id)})
     update_cohort_fields(cohort['cohortId'], {'group_ids': json_array_add(cohort_row.get('group_ids'), group_id)})
-    notify_staff_assignment_change()
     return curriculum_group_from_authoring_detail(serialize_group_authoring_detail(row))
 
 
@@ -22778,7 +22776,6 @@ def save_tree_group_modules(group, cohort, modules, preserve_missing=False):
         if clean_str(row.get('group_id')) == clean_str(group.get('id'))
     ]
     refresh_group_module_cache(group.get('id'), group_module_rows)
-    notify_staff_assignment_change()
     return saved_modules, removed
 
 
@@ -27877,12 +27874,6 @@ def curriculum_module_detail(request, identifier):
                         ),
                     )
             result = save_module_authoring_structure(module_catalogue_id, structure_payload)
-        # A tutor change made straight against one module has to mirror onto the
-        # raise the assignment notification, exactly as the tree save and the
-        # group-modules endpoint do. Without this the module row carried the new
-        # tutor_name while the notification queue never moved.
-        if 'tutor' in payload or 'tutorName' in payload or 'tutor_name' in payload:
-            notify_staff_assignment_change()
         # Same as the group PATCH: a date, week-count or delivery-day edit moves
         # the generated plan out from under the Teams series it was sent to, and
         # the drawer needs to be able to say so while the reader is still there.
@@ -28683,7 +28674,6 @@ def create_curriculum_group(payload):
             for row in safe_authoring_module_rows()
             if clean_str(row.get('group_id')) == existing_id and row.get('module_catalogue_id')
         ]
-        notify_staff_assignment_change()
         invalidate_curriculum_cache()
         return JsonResponse({'created': False, 'group': curriculum_group_from_authoring_detail({
             'id': existing_id,
@@ -28751,7 +28741,6 @@ def create_curriculum_group(payload):
     # Link the group to its cohort by extending the cohort's group_ids array,
     # without touching any other cohort column.
     update_cohort_fields(cohort_id, {'group_ids': json_array_add(cohort_row.get('group_ids'), group_id)})
-    notify_staff_assignment_change()
     invalidate_curriculum_cache()
     return JsonResponse({'created': True, 'group': curriculum_group_from_authoring_detail({
         'id': group_id,
@@ -29084,7 +29073,6 @@ def curriculum_group_detail(request, identifier):
                     'tutor_name': next_tutor or None,
                     'updated_at': datetime.utcnow(),
                 })
-        notify_staff_assignment_change()
     log_curriculum_decision(
         'group.patch', outcome='updated', entity_id=group_id,
         parent_id=clean_str(updated_group.get('cohort_id')),
@@ -30212,7 +30200,6 @@ def curriculum_group_modules(request, identifier):
                         raise TutorScheduleConflictError(candidate, conflicts)
                 pending_candidates.append(candidate)
                 saved = save_module_authoring_structure(catalogue_id, structure_payload)
-                notify_staff_assignment_change()
                 saved_catalogue_ids.add(catalogue_id)
                 if is_duplicate:
                     skipped.append(module_name)
@@ -30476,7 +30463,6 @@ def update_staffing_assignment(identifier, payload):
                 'tutor_email': next_tutor_email or None,
                 'updated_at': datetime.utcnow(),
             })
-    notify_staff_assignment_change()
     invalidate_curriculum_cache()
     return JsonResponse({'updated': True, 'id': group_id})
 
@@ -30521,18 +30507,6 @@ def clean_assignment_ids(values):
             seen.add(item)
             result.append(item)
     return result
-
-
-def notify_staff_assignment_change():
-    """Tell a tutor their assignment changed.
-
-    This is all that is left of the old profile-link sync. Assignments live on
-    ``curriculum.modules.tutor_name`` / ``curriculum.groups.coach_name``, and the
-    staff themselves live in the directory, so there is no second copy to mirror
-    a change into -- but the person still has to hear about it, and every write
-    path that moves an assignment calls through here to make sure they do.
-    """
-    tutor_notifications.schedule_assignment_notifications()
 
 
 def find_staff_user_profile(role, identifier):
@@ -31245,9 +31219,6 @@ def reset_schema_ready_flags():
     call this in setUp so provisioning state always matches the live schema.
     """
     globals().update({name: False for name in _SCHEMA_READY_FLAGS})
-    # The notification ledger keeps its own latch, in its own module, for the
-    # same reason as the ones above.
-    tutor_notifications._TABLE_READY = False
     # Review templates likewise -- reviews.py is a sibling module with its own
     # latch, deferred-imported here to avoid a module-load-time circular import
     # (reviews.py imports this module).
