@@ -43,6 +43,10 @@ export interface LearningReflectionSubmissionInput {
   outsideWorkingHoursConfirmed?: boolean;
   monthlyAssignment?: MonthlyAssignment;
   assignmentTimeSource?: 'timer' | 'input';
+  assignmentTopicId?: string;
+  assignmentTopicName?: string;
+  assignmentQuestion?: string;
+  assignmentElapsedSeconds?: number;
 }
 
 export interface HistoricalAssignmentContent {
@@ -107,6 +111,7 @@ export async function loadLearningReflectionSubmission(input: {
   activityType: string;
   activityId: string;
   attempt?: string;
+  assignmentTopicId?: string;
 }): Promise<StoredLearningReflectionSubmission | null> {
   const params = new URLSearchParams(input);
   const data = await readLearnerJson<{ submission?: StoredLearningReflectionSubmission | null }>(

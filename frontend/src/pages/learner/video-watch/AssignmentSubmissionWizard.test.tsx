@@ -60,6 +60,22 @@ function confirmLearning() {
   for (const name of learningDeclarations) fireEvent.click(screen.getByRole('checkbox', { name }));
 }
 describe('monthly assignment drafts', () => {
+  it('keeps a partially accepted topic locked without repeating its question', async () => {
+    vi.mocked(loadLearningReflectionSubmission).mockResolvedValue({
+      status: 'partial', assignmentTopicId: '2', assignmentQuestion: 'The original Topic 2 question.',
+      assignmentAnswer: 'The submitted topic answer.',
+      monthlyAssignment: emptyMonthlyAssignment([], '2026-10'),
+    } as Awaited<ReturnType<typeof loadLearningReflectionSubmission>>);
+    render(<AssignmentSubmissionWizard {...props} assignmentTopicId="2" questionText="A later edited question." />);
+    await screen.findByDisplayValue('The submitted topic answer.');
+    expect(screen.queryByText('Assignment question')).not.toBeInTheDocument();
+    expect(screen.queryByText('The original Topic 2 question.')).not.toBeInTheDocument();
+    expect(screen.getByLabelText(/Your answer \(/)).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Save draft' })).not.toBeInTheDocument();
+    cleanup();
+    expect(saveLearningReflectionSubmission).not.toHaveBeenCalled();
+  });
+
   it('shows the personal booking exemption while keeping presentation and validation', async () => {
     render(<AssignmentSubmissionWizard {...props} learnerId="pl.7.study.MOD-A" />);
     fireEvent.click(await screen.findByRole('button', { name: /Presentation/ }));

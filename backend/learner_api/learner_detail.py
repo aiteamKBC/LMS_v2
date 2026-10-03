@@ -1617,11 +1617,13 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             linked_quiz or content_html or resource_url or audio_url or live_session_url
         ):
             continue
+        from .assignment_topics import topics_from_settings
         comps_by_week.setdefault(week_id, []).append({
             "componentId": comp_id,
             "display": _display_quiz_title(linked_quiz["title"]) if linked_quiz else _display_component_title(ctype, ctitle),
             "type": ctype,
             "description": _s(cdesc) or None,
+            "assignmentTopics": topics_from_settings(settings) if normalised_type == "assignment" else [],
             "assignmentBrief": assignment_brief,
             "assignmentBriefHtml": assignment_brief_html,
             "videoUrl": video_url,
@@ -1691,6 +1693,7 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
                     "moduleId": mid, "weekId": week_id, "componentId": comp["componentId"],
                     "type": comp["type"],
                     "description": comp["description"],
+                    "assignmentTopics": comp["assignmentTopics"],
                     "assignmentBrief": comp["assignmentBrief"],
                     "assignmentBriefHtml": comp["assignmentBriefHtml"],
                     "videoUrl": comp["videoUrl"],

@@ -19,6 +19,11 @@ describe('assignment content from live builder rows', () => {
   ])('accepts an authored task or attached workbook: %j', content => {
     expect(hasComponentContent({ ...assignment, ...content })).toBe(true);
   });
+  it('opens an assignment with only authored topic content', () => {
+    const topic = { id: '2', name: 'Planning', question: 'Describe your plan.', instructions: '', resources: [] };
+    expect(hasComponentContent({ ...assignment, assignmentTopics: [topic] })).toBe(true);
+    expect(hasComponentContent({ ...assignment, assignmentTopics: [{ ...topic, question: '' }] })).toBe(false);
+  });
   it('keeps standalone reflection activities available', () => {
     expect(hasComponentContent({ ...assignment, type: 'reflection' })).toBe(true);
   });
