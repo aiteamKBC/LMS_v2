@@ -60,6 +60,7 @@ const SESSION_API_PREFIXES = [
 // them to the workspace login page.
 const PUBLIC_TOKEN_API_PREFIXES = [
   '/engagement_api/feedback/public-event/',
+  '/engagement_api/feedback/public-rsvp/',
   '/engagement_api/event-check-in/',
 ];
 

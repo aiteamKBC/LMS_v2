@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import csv
 from datetime import timedelta
-from html import escape
 from io import BytesIO, StringIO
 from pathlib import Path
 
@@ -18,6 +17,7 @@ from login.invitations import frontend_base_url
 from login.models import LoginAccount
 from login.security import generate_token, hash_token
 
+from .event_emails import render_email
 from .models import Event, EventAttendance, FeedbackEventCampaign, FeedbackEventRecipient, FeedbackForm
 
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
@@ -241,7 +241,6 @@ def event_feedback_link(token):
 def send_event_invitations(event, recipients):
     """Mint a fresh hash-only token per recipient, then send outside a transaction."""
     results = []
-    form_count = FeedbackEventCampaign.objects.filter(event=event, status='open').count()
     for recipient in recipients:
         if recipient.learner_id:
             recipient.token_hash = None
@@ -262,19 +261,9 @@ def send_event_invitations(event, recipients):
         recipient.invitation_error = ''
         recipient.save(update_fields=['token_hash', 'token_expires_at', 'invite_status', 'invitation_error', 'updated_at'])
         link = event_feedback_link(token)
-        event_title = escape(event.title)
-        name = escape(recipient.attendee_name)
-        subject = f'Feedback for {event.title}'
-        text = (
-            f'Hello {recipient.attendee_name},\n\nThank you for attending {event.title}. '
-            f'Please complete the {form_count} feedback form(s) available at:\n{link}\n\n'
-            f'This personal link expires in {TOKEN_TTL.days} days and must not be shared.'
-        )
-        html = (
-            f'<p>Hello {name},</p><p>Thank you for attending <strong>{event_title}</strong>.</p>'
-            f'<p><a href="{escape(link)}">Open event feedback</a></p>'
-            f'<p>This personal link expires in {TOKEN_TTL.days} days and must not be shared.</p>'
-        )
+        subject, text, html = render_email(event, recipient.attendee_name, link, 'post_event')
+        text += f'\n\nThis personal link expires in {TOKEN_TTL.days} days and must not be shared.'
+        html += f'<p>This personal link expires in {TOKEN_TTL.days} days and must not be shared.</p>'
         sent, detail = email_azure.send_mail(
             to=recipient.attendee_email, subject=subject, html_body=html,
             text_body=text, save_to_sent=True,

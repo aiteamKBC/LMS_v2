@@ -59,6 +59,7 @@ const EXCLUDED_PREFIXES = [
   // would look like an expired LMS session to the global session handler.
   '/event-check-in',
   '/event-feedback',
+  '/event-rsvp',
   // Public booking pages must not call the authenticated audit endpoint.
   '/coach-booking/',
   '/learner/quiz/',

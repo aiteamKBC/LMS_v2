@@ -678,6 +678,87 @@ class FeedbackEventRecipient(models.Model):
         db_table = 'Feedback"."feedback_event_recipients'
 
 
+class EventEmailTemplate(models.Model):
+    """Reusable, staff-authored plain-text email copy for event workflows."""
+
+    PURPOSE_CHOICES = [('event_rsvp', 'Event RSVP'), ('post_event', 'Post-event feedback')]
+
+    name = models.CharField(max_length=255)
+    purpose = models.CharField(max_length=30, choices=PURPOSE_CHOICES)
+    subject = models.CharField(max_length=255)
+    body = models.TextField()
+    button_text = models.CharField(max_length=120)
+    created_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."event_email_templates'
+
+
+class EventEmailSetting(models.Model):
+    """Per-event snapshot/override of reusable email copy."""
+
+    event = models.ForeignKey(Event, on_delete=models.PROTECT, related_name='email_settings', db_column='event_id')
+    purpose = models.CharField(max_length=30, choices=EventEmailTemplate.PURPOSE_CHOICES)
+    template = models.ForeignKey(
+        EventEmailTemplate, on_delete=models.SET_NULL, related_name='event_settings',
+        db_column='template_id', null=True, blank=True,
+    )
+    subject = models.CharField(max_length=255)
+    body = models.TextField()
+    button_text = models.CharField(max_length=120)
+    updated_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."event_email_settings'
+        constraints = [
+            models.UniqueConstraint(fields=['event', 'purpose'], name='event_email_setting_unique'),
+        ]
+
+
+class EventRsvpCampaign(models.Model):
+    """One published RSVP form attached to one Engagement event."""
+
+    event = models.OneToOneField(Event, on_delete=models.PROTECT, related_name='rsvp_campaign', db_column='event_id')
+    form = models.ForeignKey(FeedbackForm, on_delete=models.PROTECT, related_name='rsvp_campaigns', db_column='form_id')
+    status = models.CharField(max_length=20, default='open')
+    created_by = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."event_rsvp_campaigns'
+
+
+class EventRsvpRecipient(models.Model):
+    """A learner or guest invited to declare intent to attend an event."""
+
+    campaign = models.ForeignKey(EventRsvpCampaign, on_delete=models.CASCADE, related_name='recipients', db_column='campaign_id')
+    recipient_name = models.CharField(max_length=255)
+    recipient_email = models.EmailField(max_length=320)
+    learner_id = models.CharField(max_length=100, blank=True, default='')
+    token_hash = models.CharField(max_length=64, null=True, blank=True)
+    token_expires_at = models.DateTimeField(null=True, blank=True)
+    invite_status = models.CharField(max_length=20, default='pending')
+    rsvp_status = models.CharField(max_length=20, default='no_response')
+    invitation_sent_at = models.DateTimeField(null=True, blank=True)
+    invitation_error = models.TextField(blank=True, default='')
+    responded_at = models.DateTimeField(null=True, blank=True)
+    revoked_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        managed = False
+        db_table = 'Feedback"."event_rsvp_recipients'
+
+
 class FeedbackResponse(models.Model):
     STATUS_CHOICES = [('in_progress', 'In progress'), ('completed', 'Completed')]
 
@@ -689,6 +770,10 @@ class FeedbackResponse(models.Model):
     event_recipient = models.ForeignKey(
         FeedbackEventRecipient, on_delete=models.PROTECT, related_name='responses',
         db_column='event_recipient_id', null=True, blank=True,
+    )
+    rsvp_recipient = models.ForeignKey(
+        EventRsvpRecipient, on_delete=models.PROTECT, related_name='responses',
+        db_column='rsvp_recipient_id', null=True, blank=True,
     )
     learner_id = models.CharField(max_length=100, blank=True, default='')
     learner_name = models.CharField(max_length=255)

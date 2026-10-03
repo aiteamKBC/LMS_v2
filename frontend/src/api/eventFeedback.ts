@@ -55,7 +55,42 @@ export interface PublicEventFeedback {
   expiresAt: string;
 }
 
+export type EventEmailPurpose = 'event_rsvp' | 'post_event';
+export interface EventEmailCopy { templateId: number | null; subject: string; body: string; buttonText: string }
+export interface EventEmailTemplate extends Omit<EventEmailCopy, 'templateId'> { id: number; name: string; purpose: EventEmailPurpose }
+
+export interface EventRsvpCampaign {
+  event: { id: number; title: string };
+  form: { id: number; title: string } | null;
+  recipients: Array<{
+    id: number; name: string; email: string; learnerId: string | null;
+    inviteStatus: 'pending' | 'sent' | 'failed';
+    rsvpStatus: 'no_response' | 'yes' | 'no' | 'maybe';
+    sentAt: string | null; respondedAt: string | null; error: string;
+  }>;
+}
+
+export interface PublicEventRsvp {
+  event: { id: number; title: string; date: string; time: string; location: string };
+  recipient: { name: string };
+  rsvpStatus: 'no_response' | 'yes' | 'no' | 'maybe';
+  form: PublicEventForm;
+  expiresAt: string;
+}
+
 export const eventFeedbackApi = {
+  emailTemplates: async (purpose: EventEmailPurpose) => jsonResponse<{ templates: EventEmailTemplate[] }>(await fetch(`${BASE}/email-templates/?purpose=${purpose}`, { credentials: 'include' })),
+  createEmailTemplate: async (input: { name: string; purpose: EventEmailPurpose; subject: string; body: string; buttonText: string }) => jsonResponse<{ template: EventEmailTemplate }>(await fetch(`${BASE}/email-templates/`, {
+    method: 'POST', credentials: 'include',
+    headers: { 'X-CSRFToken': await csrfToken(), 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })),
+  emailSetting: async (eventId: string, purpose: EventEmailPurpose) => jsonResponse<{ setting: EventEmailCopy }>(await fetch(`${BASE}/events/${eventId}/email-settings/${purpose}/`, { credentials: 'include' })),
+  saveEmailSetting: async (eventId: string, purpose: EventEmailPurpose, setting: EventEmailCopy) => jsonResponse<{ setting: EventEmailCopy }>(await fetch(`${BASE}/events/${eventId}/email-settings/${purpose}/`, {
+    method: 'PATCH', credentials: 'include',
+    headers: { 'X-CSRFToken': await csrfToken(), 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/json' },
+    body: JSON.stringify(setting),
+  })),
   previewAttendance: async (eventId: string, file: File) => {
     const data = new FormData(); data.append('file', file); data.append('preview', 'true');
     return jsonResponse<{ preview: EventAttendancePreview }>(await fetch(`${BASE}/events/${eventId}/attendance-import/`, {
@@ -81,6 +116,17 @@ export const eventFeedbackApi = {
     headers: { 'X-CSRFToken': await csrfToken(), 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/json' },
     body: JSON.stringify({ resendAll }),
   })),
+  rsvpCampaign: async (eventId: string) => jsonResponse<EventRsvpCampaign>(await fetch(`${BASE}/events/${eventId}/rsvp/`, { credentials: 'include' })),
+  configureRsvp: async (eventId: string, formId: number, learnerIds: string[], guests: Array<{ name: string; email: string }>) => jsonResponse<{ campaignId: number; recipientCount: number }>(await fetch(`${BASE}/events/${eventId}/rsvp/`, {
+    method: 'POST', credentials: 'include',
+    headers: { 'X-CSRFToken': await csrfToken(), 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'configure', formId, learnerIds, guests }),
+  })),
+  sendRsvp: async (eventId: string, resendAll = false) => jsonResponse<{ attempted: number; sent: number; failed: number; remaining: number }>(await fetch(`${BASE}/events/${eventId}/rsvp/`, {
+    method: 'POST', credentials: 'include',
+    headers: { 'X-CSRFToken': await csrfToken(), 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'send', resendAll }),
+  })),
   publicAccess: async (token: string) => jsonResponse<PublicEventFeedback>(await fetch(`${BASE}/public-event/`, {
     method: 'POST', credentials: 'include',
     headers: { 'X-CSRFToken': await csrfToken(), 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/json' },
@@ -90,5 +136,15 @@ export const eventFeedbackApi = {
     method: 'POST', credentials: 'include',
     headers: { 'X-CSRFToken': await csrfToken(), 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/json' },
     body: JSON.stringify({ token, formId, answers, submit }),
+  })),
+  publicRsvp: async (token: string) => jsonResponse<PublicEventRsvp>(await fetch(`${BASE}/public-rsvp/`, {
+    method: 'POST', credentials: 'include',
+    headers: { 'X-CSRFToken': await csrfToken(), 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'read', token }),
+  })),
+  savePublicRsvp: async (token: string, rsvpStatus: 'yes' | 'no' | 'maybe', answers: Record<string, FeedbackAnswerValue>) => jsonResponse<{ rsvpStatus: 'yes' | 'no' | 'maybe'; response: { id: number; status: string; submittedAt: string | null } }>(await fetch(`${BASE}/public-rsvp/`, {
+    method: 'POST', credentials: 'include',
+    headers: { 'X-CSRFToken': await csrfToken(), 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ token, rsvpStatus, answers }),
   })),
 };

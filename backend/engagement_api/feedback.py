@@ -46,7 +46,7 @@ QUESTION_TYPES = {
     'name', 'email', 'photo_upload',
 }
 CHOICE_TYPES = {'single_choice', 'multiple_choice', 'dropdown', 'likert'}
-FORM_TYPES = {'general', 'post_lecture', 'post_event'}
+FORM_TYPES = {'general', 'post_lecture', 'post_event', 'event_rsvp'}
 SECTION_ICONS = {
     'ri-file-list-3-line', 'ri-user-line', 'ri-book-open-line',
     'ri-star-line', 'ri-chat-3-line', 'ri-lightbulb-line',
@@ -304,7 +304,7 @@ def _apply_curriculum_scope(form, payload):
     if requested_type not in FORM_TYPES:
         raise ValueError('Unsupported feedback form type.')
     form.form_type = requested_type
-    if requested_type in {'general', 'post_event'}:
+    if requested_type in {'general', 'post_event', 'event_rsvp'}:
         form.delivery_scope = 'manual'
         for field in (
             'programme_id', 'programme_name', 'cohort_id', 'cohort_name',
@@ -809,6 +809,7 @@ def learner_forms(request):
     forms = forms.filter(Q(start_date__isnull=True) | Q(start_date__lte=now))
     responses = {r.form_id: r for r in FeedbackResponse.objects.filter(
         learner_id=learner_id, delivery__isnull=True, event_recipient__isnull=True,
+        rsvp_recipient__isnull=True,
     )}
     items = []
     for form in forms:
@@ -1174,7 +1175,7 @@ def learner_form_detail(request, pk=None, delivery_id=None, event_recipient_id=N
     if event_recipient_id is not None:
         response_filter['event_recipient'] = recipient
     else:
-        response_filter.update({'delivery': delivery, 'event_recipient__isnull': True})
+        response_filter.update({'delivery': delivery, 'event_recipient__isnull': True, 'rsvp_recipient__isnull': True})
     response = FeedbackResponse.objects.filter(**response_filter).prefetch_related('answers').first()
     answers = {str(a.question_id): a.answer for a in response.answers.all()} if response else {}
     data = form_dict(form, include_structure=True)
@@ -1262,7 +1263,7 @@ def learner_response_save(request, pk=None, delivery_id=None, event_recipient_id
     if event_recipient_id is not None:
         response_filter['event_recipient'] = recipient
     else:
-        response_filter.update({'delivery': delivery, 'event_recipient__isnull': True})
+        response_filter.update({'delivery': delivery, 'event_recipient__isnull': True, 'rsvp_recipient__isnull': True})
     existing_response = FeedbackResponse.objects.filter(**response_filter).prefetch_related('answers').first()
     if existing_response and existing_response.status == 'completed' and not form.allow_edit_after_submission:
         return json_error('This response has already been submitted.', status=409)
