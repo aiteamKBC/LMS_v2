@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
@@ -47,7 +47,7 @@ function meeting(index: number, overrides: Partial<CoachCalendarEvent> = {}): Co
 const meetings = [
   meeting(1, { learner: 'Overdue Learner', targetDate: '2026-09-01' }),
   meeting(2, { learner: 'Due Soon Learner', learnerType: 'commercial' }),
-  meeting(3, { learner: 'Scheduled Learner', enrolmentId: '42', status: 'scheduled', scheduledDate: '2026-09-22', scheduledTime: '10:30', group: 'Beta' }),
+  meeting(3, { learner: 'Scheduled Learner', email: 'scheduled@example.com', programme: 'Leadership and Management', enrolmentId: '42', status: 'scheduled', scheduledDate: '2026-09-22', scheduledTime: '10:30', group: 'Beta' }),
   meeting(4, { learner: 'In Progress Learner', status: 'in-progress', scheduledDate: '2026-09-14' }),
   meeting(9, { learner: 'Awaiting Signature Learner', status: 'awaiting-signature', scheduledDate: '2026-09-11' }),
   meeting(5, { learner: 'Completed Learner', status: 'completed', scheduledDate: '2026-09-10', group: undefined, cohort: 'Gamma' }),
@@ -72,6 +72,10 @@ function mount(path = '/coach/monthly-coaching') {
 }
 
 const statusFilters = () => within(screen.getByRole('navigation', { name: 'Filter coaching meetings by status' }));
+function rowMenu(learner: string) {
+  fireEvent.click(screen.getByRole('button', { name: 'More actions for ' + learner }));
+  return within(screen.getByRole('menu', { name: 'Actions for ' + learner }));
+}
 const visibleLearners = () => Array.from(document.querySelectorAll('.ui-action-row'))
   .map(row => row.textContent);
 
@@ -165,6 +169,8 @@ describe('restored monthly coaching list', () => {
     ]);
     const sort = screen.getByRole('combobox', { name: 'Sort by' });
     expect(sort).toHaveValue('date-desc');
+    expect(within(sort).getByRole('option', { name: 'Date (earliest first)' })).toHaveValue('date-asc');
+    expect(within(sort).queryByRole('option', { name: /soonest/i })).not.toBeInTheDocument();
     fireEvent.change(sort, { target: { value: 'date-asc' } });
     expect(within(screen.getByRole('table')).getAllByRole('row')[1]).toHaveTextContent('Overdue Learner');
   });
@@ -195,20 +201,20 @@ describe('restored monthly coaching list', () => {
     mount();
     await screen.findByText('Scheduled Learner');
 
-    fireEvent.click(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'Reschedule' }));
+    fireEvent.click(rowMenu('Scheduled Learner').getByRole('menuitem', { name: 'Reschedule' }));
     let dialog = screen.getByRole('dialog', { name: 'Schedule meeting' });
     expect(within(dialog).getByRole('combobox', { name: 'Learner' })).toHaveValue('mcr:3');
     expect(within(dialog).getByLabelText('Date')).toHaveValue('2026-09-22');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
 
-    fireEvent.click(within(screen.getByText('Overdue Learner').closest('tr')!).getByRole('button', { name: 'Schedule' }));
+    fireEvent.click(rowMenu('Overdue Learner').getByRole('menuitem', { name: 'Schedule' }));
     dialog = screen.getByRole('dialog', { name: 'Schedule meeting' });
     expect(within(dialog).getByRole('combobox', { name: 'Learner' })).toHaveValue('mcr:1');
     expect(within(dialog).getByLabelText('Date')).toHaveValue('2026-09-01');
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/monthly-coaching');
   });
 
-  it('restores Schedule and Reschedule popups for imported Aptem meetings', async () => {
+  it('routes imported Aptem meetings to their own booking form', async () => {
     fetchEvents.mockResolvedValue({ events: [
       meeting(20, { id: 'imported-review:20', eventKey: 'imported-review:20', learner: 'Imported Unscheduled', status: 'not-scheduled', reviewSource: 'aptem', aptemReviewId: '20', hasReviewForm: false, reviewTemplateId: undefined }),
       meeting(21, { id: 'imported-review:21', eventKey: 'imported-review:21', learner: 'Imported Scheduled', status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00', reviewSource: 'aptem', aptemReviewId: '21', hasReviewForm: false, reviewTemplateId: undefined }),
@@ -217,20 +223,19 @@ describe('restored monthly coaching list', () => {
     await screen.findByText('Imported Scheduled');
 
     const unscheduledRow = within(screen.getByText('Imported Unscheduled').closest('tr')!);
-    expect(unscheduledRow.getByRole('button', { name: 'View Form' })).toBeVisible();
-    fireEvent.click(unscheduledRow.getByRole('button', { name: 'Schedule' }));
-    expect(screen.getByRole('dialog', { name: 'Schedule meeting' })).toBeVisible();
-    fireEvent.click(within(screen.getByRole('dialog', { name: 'Schedule meeting' })).getByRole('button', { name: 'Cancel' }));
-
-    fireEvent.click(within(screen.getByText('Imported Scheduled').closest('tr')!).getByRole('button', { name: 'Reschedule' }));
-    expect(within(screen.getByRole('dialog', { name: 'Schedule meeting' })).getByLabelText('Date')).toHaveValue('2026-09-23');
-    fireEvent.click(within(screen.getByRole('dialog', { name: 'Schedule meeting' })).getByRole('button', { name: 'Cancel' }));
+    expect(unscheduledRow.getByRole('button', { name: 'View form' })).toBeVisible();
+    const unscheduledMenu = rowMenu('Imported Unscheduled');
+    expect(unscheduledMenu.queryByRole('menuitem', { name: 'Schedule' })).toBeNull();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
 
     const scheduledRow = within(screen.getByText('Imported Scheduled').closest('tr')!);
-    expect(scheduledRow.getAllByRole('button').map(button => button.textContent)).toEqual([
-      'Reschedule', 'View', 'View Form', 'View Slides',
+    expect(scheduledRow.getByRole('button', { name: 'View form' })).toBeVisible();
+    const scheduledMenu = rowMenu('Imported Scheduled');
+    expect(scheduledMenu.getAllByRole('menuitem').map(item => item.textContent)).toEqual([
+      'View details', 'View slides',
     ]);
-    fireEvent.click(scheduledRow.getByRole('button', { name: 'View Form' }));
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    fireEvent.click(scheduledRow.getByRole('button', { name: 'View form' }));
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A21');
     expect(openReview).not.toHaveBeenCalled();
   });
@@ -241,7 +246,7 @@ describe('restored monthly coaching list', () => {
     ] });
     mount('/coach/monthly-coaching?filter=all');
     const row = within((await screen.findByText('Imported Completed')).closest('tr')!);
-    fireEvent.click(row.getByRole('button', { name: 'View Form' }));
+    fireEvent.click(row.getByRole('button', { name: 'View form' }));
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A21');
     expect(screen.getByTestId('route')).not.toHaveTextContent('/coach/learner-case-file');
   });
@@ -251,7 +256,7 @@ describe('restored monthly coaching list', () => {
       meeting(22, { id: 'imported-review:22', eventKey: 'imported-review:22', learner: 'Imported Draft', status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00', reviewSource: 'aptem', aptemReviewId: '22', hasReviewForm: true, reviewTemplateId: undefined }),
     ] });
     mount('/coach/monthly-coaching?filter=all');
-    fireEvent.click(within((await screen.findByText('Imported Draft')).closest('tr')!).getByRole('button', { name: 'View Form' }));
+    fireEvent.click(within((await screen.findByText('Imported Draft')).closest('tr')!).getByRole('button', { name: 'View form' }));
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A22');
     expect(openReview).not.toHaveBeenCalled();
   });
@@ -261,19 +266,23 @@ describe('restored monthly coaching list', () => {
     await screen.findByText('Scheduled Learner');
     const table = screen.getByRole('table');
     expect(within(table).getAllByRole('columnheader').map(header => header.textContent)).toEqual([
-      'Learner', 'Cohort', 'Date & time', 'Status', 'Schedule', 'Actions',
+      'Learner', 'Programme', 'Cohort', 'Date & time', 'Status', 'Actions',
     ]);
-    expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'View Form' })).toBeVisible();
-    expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'View Slides' })).toBeVisible();
-    expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'View' })).toBeVisible();
-    expect(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'Reschedule' })).toBeVisible();
+    const scheduledRow = within(screen.getByText('Scheduled Learner').closest('tr')!);
+    expect(scheduledRow.getByText('scheduled@example.com')).toBeVisible();
+    expect(scheduledRow.getByText('Leadership and Management')).toBeVisible();
+    expect(scheduledRow.getByRole('button', { name: 'View form' })).toBeVisible();
+    const menu = rowMenu('Scheduled Learner');
+    expect(menu.getByRole('menuitem', { name: 'View slides' })).toBeVisible();
+    expect(menu.getByRole('menuitem', { name: 'View details' })).toBeVisible();
+    expect(menu.getByRole('menuitem', { name: 'Reschedule' })).toBeVisible();
     expect(screen.getByText('Scheduled Learner').closest('tr')).toHaveTextContent('10:30 - 11:30');
   });
 
   it('opens the learner-owned MCM slides read-only from the meeting row', async () => {
     mount();
     await screen.findByText('Scheduled Learner');
-    fireEvent.click(within(screen.getByText('Scheduled Learner').closest('tr')!).getByRole('button', { name: 'View Slides' }));
+    fireEvent.click(rowMenu('Scheduled Learner').getByRole('menuitem', { name: 'View slides' }));
     // The learner creates and edits their MCM slides; the coach only views them.
     expect(await screen.findByRole('dialog')).toHaveTextContent('mcm slides for Scheduled Learner');
     expect(savePptx).toHaveBeenCalledWith(expect.objectContaining({ kind: 'mcm', access: 'viewer' }));
@@ -282,8 +291,11 @@ describe('restored monthly coaching list', () => {
   it('removes scheduling for completed and awaiting-signature meetings', async () => {
     mount();
     await screen.findByText('Scheduled Learner');
-    expect(within(screen.getByText('Completed Learner').closest('tr')!).queryByRole('button', { name: /Schedule/ })).toBeNull();
-    expect(within(screen.getByText('Awaiting Signature Learner').closest('tr')!).queryByRole('button', { name: /Schedule/ })).toBeNull();
+    for (const learner of ['Completed Learner', 'Awaiting Signature Learner']) {
+      const menu = rowMenu(learner);
+      expect(menu.queryByRole('menuitem', { name: /schedule/i })).toBeNull();
+      fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    }
   });
 
   it('keeps safe completed and awaiting-signature actions without scheduling', async () => {
@@ -291,10 +303,12 @@ describe('restored monthly coaching list', () => {
     await screen.findByText('Scheduled Learner');
     for (const learner of ['Completed Learner', 'Awaiting Signature Learner']) {
       const row = within(screen.getByText(learner).closest('tr')!);
-      expect(row.getByRole('button', { name: 'View' })).toBeVisible();
-      expect(row.getByRole('button', { name: 'View Form' })).toBeVisible();
-      expect(row.getByRole('button', { name: 'View Slides' })).toBeVisible();
-      expect(row.queryByRole('button', { name: 'Join' })).toBeNull();
+      expect(row.getByRole('button', { name: 'View form' })).toBeVisible();
+      const menu = rowMenu(learner);
+      expect(menu.getByRole('menuitem', { name: 'View details' })).toBeVisible();
+      expect(menu.getByRole('menuitem', { name: 'View slides' })).toBeVisible();
+      expect(menu.queryByRole('menuitem', { name: 'Join' })).toBeNull();
+      fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     }
   });
 
@@ -302,9 +316,10 @@ describe('restored monthly coaching list', () => {
     mount();
     await screen.findByText('Scheduled Learner');
     const row = within(screen.getByText('In Progress Learner').closest('tr')!);
-    expect(row.queryByRole('button', { name: /Schedule/ })).toBeNull();
-    expect(row.getByRole('button', { name: 'View Form' })).toBeVisible();
-    expect(row.getByRole('button', { name: 'View Slides' })).toBeVisible();
+    expect(row.getByRole('button', { name: 'View form' })).toBeVisible();
+    const menu = rowMenu('In Progress Learner');
+    expect(menu.queryByRole('menuitem', { name: /schedule/i })).toBeNull();
+    expect(menu.getByRole('menuitem', { name: 'View slides' })).toBeVisible();
   });
 
   it('shows only selected-month status counts and supports awaiting signature', async () => {
@@ -355,10 +370,14 @@ describe('restored monthly coaching list', () => {
     ] });
     mount();
     await screen.findByText('Joinable Meeting');
-    expect(screen.getByRole('button', { name: 'Join' })).toBeVisible();
-    expect(within(screen.getByText('Future Join').closest('.ui-action-row')!).queryByRole('button', { name: 'Join' })).toBeNull();
+    const openWindow = vi.spyOn(window, 'open').mockImplementation(() => null);
+    fireEvent.click(rowMenu('Joinable Meeting').getByRole('menuitem', { name: 'Join' }));
+    expect(openWindow).toHaveBeenCalledWith('https://teams.test/today', '_blank', 'noopener,noreferrer');
+    openWindow.mockRestore();
+    expect(rowMenu('Future Join').queryByRole('menuitem', { name: 'Join' })).toBeNull();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
     fireEvent.click(statusFilters().getByRole('button', { name: 'Completed1' }));
-    expect(within(screen.getByText('Completed Meeting').closest('.ui-action-row')!).queryByRole('button', { name: 'Join' })).toBeNull();
+    expect(rowMenu('Completed Meeting').queryByRole('menuitem', { name: 'Join' })).toBeNull();
   });
 
   it('returns from meeting details to the same MCM filters and page', async () => {
@@ -368,7 +387,8 @@ describe('restored monthly coaching list', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
     expect(visibleLearners()).toHaveLength(2);
     const returnTo = screen.getByTestId('route').textContent;
-    fireEvent.click(screen.getAllByRole('button', { name: 'View' })[0]);
+    const learner = document.querySelector('.ui-action-row strong')!.textContent!;
+    fireEvent.click(rowMenu(learner).getByRole('menuitem', { name: 'View details' }));
     const back = await screen.findByRole('link', { name: 'Back to Coaching Meetings' });
     expect(back).toHaveAttribute('href', returnTo);
     fireEvent.click(back);
@@ -386,7 +406,7 @@ describe('restored monthly coaching list', () => {
     });
     mount();
     await screen.findByText('Scheduled Learner');
-    fireEvent.click(screen.getByRole('button', { name: 'View' }));
+    fireEvent.click(rowMenu('Scheduled Learner').getByRole('menuitem', { name: 'View details' }));
     expect(await screen.findByRole('link', { name: 'Back to Coaching Meetings' })).toBeVisible();
     expect(screen.queryByText('Unable to load this meeting.')).toBeNull();
     expect(fetchEvents).toHaveBeenLastCalledWith(expect.any(AbortSignal), {
@@ -406,5 +426,103 @@ describe('restored monthly coaching list', () => {
     mount();
     expect(screen.getByText('Coach access is required to load coaching meetings.')).toBeVisible();
     expect(fetchEvents).not.toHaveBeenCalled();
+  });
+  it('shows the exact banner copy and a keyboard-scrollable six-column table', async () => {
+    mount();
+    await screen.findByText('Scheduled Learner');
+    expect(screen.getByRole('heading', { name: 'Support. Progress. Succeed.' })).toBeVisible();
+    expect(screen.getByText('Meaningful conversations help learners stay on track and reach their goals.')).toBeVisible();
+    const banner = screen.getByRole('region', { name: 'Monthly coaching support' });
+    expect(banner.querySelector('svg[aria-hidden="true"]')).toBeTruthy();
+    expect(banner.querySelector('img[src$="coach-meetings-calendar.webp"]')).toBeTruthy();
+    expect(screen.getByRole('region', { name: /Coaching meetings table/ })).toHaveAttribute('tabindex', '0');
+    expect(screen.getByText('Scheduled Learner').closest('td')).toBeTruthy();
+  });
+
+  it('omits unavailable forms and slides while preserving details and scheduling', async () => {
+    fetchEvents.mockResolvedValue({ events: [
+      meeting(30, { learner: 'No Form Or Slides', reviewTemplateId: undefined, hasReviewForm: false, enrolmentId: undefined }),
+      meeting(31, { learner: 'No Meeting Date', targetDate: undefined, scheduledDate: undefined }),
+    ] });
+    mount('/coach/monthly-coaching?months=all');
+    const row = within((await screen.findByText('No Form Or Slides')).closest('tr')!);
+    expect(row.queryByRole('button', { name: 'View form' })).toBeNull();
+    const menu = rowMenu('No Form Or Slides');
+    expect(menu.getAllByRole('menuitem').map(item => item.textContent)).toEqual(['View details', 'Schedule']);
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
+    expect(rowMenu('No Meeting Date').queryByRole('menuitem', { name: 'View slides' })).toBeNull();
+  });
+
+  it('supports arrow keys, Home, End and Escape and returns focus to the trigger', async () => {
+    mount();
+    await screen.findByText('Scheduled Learner');
+    const trigger = screen.getByRole('button', { name: 'More actions for Scheduled Learner' });
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+    const menu = screen.getByRole('menu', { name: 'Actions for Scheduled Learner' });
+    expect(within(menu).getByRole('menuitem', { name: 'View details' })).toHaveFocus();
+    fireEvent.keyDown(menu, { key: 'ArrowDown' });
+    expect(within(menu).getByRole('menuitem', { name: 'View slides' })).toHaveFocus();
+    fireEvent.keyDown(menu, { key: 'End' });
+    expect(within(menu).getByRole('menuitem', { name: 'Reschedule' })).toHaveFocus();
+    fireEvent.keyDown(menu, { key: 'Home' });
+    expect(within(menu).getByRole('menuitem', { name: 'View details' })).toHaveFocus();
+    fireEvent.keyDown(menu, { key: 'ArrowUp' });
+    expect(within(menu).getByRole('menuitem', { name: 'Reschedule' })).toHaveFocus();
+    fireEvent.keyDown(menu, { key: 'Escape' });
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(trigger).toHaveFocus();
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('portals the menu outside the table and closes on outside clicks, focus, scroll and filter changes', async () => {
+    mount();
+    await screen.findByText('Scheduled Learner');
+    rowMenu('Scheduled Learner');
+    expect(screen.getByRole('table').contains(screen.getByRole('menu'))).toBe(false);
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole('menu')).toBeNull();
+    rowMenu('Scheduled Learner');
+    act(() => screen.getByRole('button', { name: 'Schedule meeting' }).focus());
+    expect(screen.queryByRole('menu')).toBeNull();
+    rowMenu('Scheduled Learner');
+    fireEvent.scroll(screen.getByRole('region', { name: /Coaching meetings table/ }));
+    expect(screen.queryByRole('menu')).toBeNull();
+    rowMenu('Scheduled Learner');
+    fireEvent.click(statusFilters().getByRole('button', { name: 'Completed1' }));
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+
+  it('collapses a learner\'s many pending MCR occurrences into a single option in the generic Schedule-meeting dropdown', async () => {
+    fetchEvents.mockResolvedValue({ events: [
+      meeting(30, { learner: 'Repeat Learner', learnerId: '30', targetDate: '2026-09-20', status: 'not-scheduled' }),
+      meeting(31, { learner: 'Repeat Learner', learnerId: '30', targetDate: '2026-11-05', status: 'not-scheduled', eventKey: 'mcr:31', id: 'meeting-31' }),
+      meeting(32, { learner: 'Repeat Learner', learnerId: '30', targetDate: '2026-08-05', status: 'scheduled', scheduledDate: '2026-08-05', scheduledTime: '10:00', eventKey: 'mcr:32', id: 'meeting-32' }),
+    ] });
+    mount();
+    await screen.findByText('Repeat Learner');
+    fireEvent.click(screen.getByRole('button', { name: 'Schedule meeting' }));
+    const dialog = screen.getByRole('dialog', { name: 'Schedule meeting' });
+    const options = Array.from(within(dialog).getByRole('combobox', { name: 'Learner' }).querySelectorAll('option'))
+      .filter(option => option.textContent?.includes('Repeat Learner'));
+    expect(options).toHaveLength(1);
+    expect(options[0]).toHaveValue('mcr:30');
+  });
+
+  it.each([
+    ['the later occurrence', /05\s*Nov\s*2026/, 'mcr:31'],
+    ['the sooner occurrence', /20\s*Sept?\s*2026/, 'mcr:30'],
+  ])('still lets %s be scheduled individually from its own row even though the generic dropdown collapses them', async (_label, dateMatcher, expectedValue) => {
+    fetchEvents.mockResolvedValue({ events: [
+      meeting(30, { learner: 'Repeat Learner', learnerId: '30', targetDate: '2026-09-20', status: 'not-scheduled' }),
+      meeting(31, { learner: 'Repeat Learner', learnerId: '30', targetDate: '2026-11-05', status: 'not-scheduled', eventKey: 'mcr:31', id: 'meeting-31' }),
+    ] });
+    mount('/coach/monthly-coaching?filter=all&months=all');
+    await screen.findAllByText('Repeat Learner');
+
+    const row = screen.getByText(dateMatcher).closest('tr')!;
+    fireEvent.click(within(row).getByRole('button', { name: 'More actions for Repeat Learner' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Schedule' }));
+    expect(within(screen.getByRole('dialog', { name: 'Schedule meeting' })).getByRole('combobox', { name: 'Learner' })).toHaveValue(expectedValue);
   });
 });

@@ -147,3 +147,15 @@
   .decisionRow button { justify-content: center; }
 }
 @media (prefers-reduced-motion: reduce) { .loading span { animation: none; } }
+
+@container coach-content (max-width: 900px) {
+  .workspace, .loading { grid-template-columns: minmax(0, 1fr); }
+  .queueList { max-height: 320px; }
+  .heroRow, .feedbackHeading { align-items: stretch; flex-direction: column; }
+  .metrics, .declarationGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container coach-content (max-width: 480px) {
+  .metrics, .declarationGrid { grid-template-columns: minmax(0, 1fr); }
+  .decisionRow { align-items: stretch; flex-direction: column; }
+  .decisionRow button { justify-content: center; }
+}

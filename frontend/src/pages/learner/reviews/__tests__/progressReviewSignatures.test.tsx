@@ -23,6 +23,7 @@ vi.mock('@/pages/users/wizard/steps/SignaturePad', () => ({
 let selectedEvent: LearnerCalendarEvent;
 let review: LearnerReviewDefinition;
 vi.mock('@/pages/learner/reviews/useReviewSessions', () => ({
+  isMigratedContinuationEvent: (event: LearnerCalendarEvent | null) => Boolean(event?.migratedForm && event.eventKey.startsWith('imported-review:')),
   useReviewSessions: () => {
     const [sessions, setEvents] = useState([selectedEvent]);
     return { myLearner: { kind: 'apprenticeship', id: '12' },

@@ -15,8 +15,8 @@ export function ProgrammeReviews({ reviews: incoming, coach, kind, learnerId, to
   const learnerQuery = `kind=${encodeURIComponent(kind)}&learner=${encodeURIComponent(learnerId)}`;
   const calendarHref = (eventKey: string) => `/learner/calendar?${learnerQuery}&event=${encodeURIComponent(eventKey)}`;
 
-  return <section className={`${styles.panel} ${layout.reviews}`} aria-label="Programme reviews">
-    <div className={styles.panelHeading}><div><p className={styles.eyebrow}>Your coaching</p><h2>Programme reviews</h2></div><Users size={20} /></div>
+  return <section className={`${styles.panel} ${layout.reviews}`} aria-label="Progress reviews">
+    <div className={styles.panelHeading}><div><p className={styles.eyebrow}>Your coaching</p><h2>Progress reviews</h2></div><Users size={20} /></div>
     <p className={styles.hint}>{reviews.filter(review => review.status === 'completed').length} of {reviews.length} completed · Whole programme</p>
     <div className={`${styles.reviewList} ${layout.reviewList}`}>
       {reviews.length ? reviews.map(review => {

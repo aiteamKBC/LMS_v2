@@ -5614,16 +5614,64 @@ class TutorAssignmentNotificationTests(TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]['status'], 'seeded')
 
-    def test_the_wizard_module_step_triggers_the_mail_on_commit(self):
-        """save_tree_group_modules reaches this through notify_staff_assignment_change."""
+    def test_assigning_a_tutor_no_longer_mails_them(self):
+        """Assignment emails are sent from the module workspace, never on save.
+
+        save_tree_group_modules and every other assignment path still reach
+        notify_staff_assignment_change; it now schedules nothing.
+        """
         self.seed_tutor()
         self.seed_delivery(tutor_name='Amira Hassan')
 
         with self.sent_mail() as send:
-            with self.captureOnCommitCallbacks(execute=True):
+            with self.captureOnCommitCallbacks(execute=True) as callbacks:
                 views.notify_staff_assignment_change()
+        send.assert_not_called()
+        self.assertEqual(callbacks, [])
+        self.assertEqual(tutor_notifications.ledger_rows(), [])
+
+    def test_staff_email_the_tutor_of_one_module_on_request(self):
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+        self.assertEqual(tutor_notifications.module_tutor_status('MOD-ALPHA'), {
+            'moduleId': 'MOD-ALPHA', 'tutor': {'name': 'Amira Hassan', 'hasEmail': True}, 'lastSent': None,
+        })
+
+        with self.sent_mail() as send:
+            payload, status = tutor_notifications.send_module_tutor_email('MOD-ALPHA')
+        self.assertEqual((status, payload['sent'], payload['tutor']), (200, True, 'Amira Hassan'))
         send.assert_called_once()
         self.assertEqual(send.call_args.kwargs['to'], 'amira@example.com')
+        self.assertIn('Data Handling', send.call_args.kwargs['text_body'])
+        self.assertEqual(tutor_notifications.module_tutor_status('MOD-ALPHA')['lastSent']['status'], 'sent')
+
+        # Sending again is allowed (the button asks first) and still one row.
+        with self.sent_mail() as send:
+            tutor_notifications.send_module_tutor_email('MOD-ALPHA')
+        send.assert_called_once()
+        self.assertEqual(len(tutor_notifications.ledger_rows()), 1)
+
+    def test_a_manual_send_explains_why_it_cannot_go(self):
+        self.seed_delivery(tutor_name='')
+        with self.sent_mail() as send:
+            payload, status = tutor_notifications.send_module_tutor_email('MOD-ALPHA')
+            self.assertEqual(status, 409)
+            self.assertIn('Assign a tutor', payload['error'])
+            self.seed_tutor(email='')
+            self.seed_delivery(tutor_name='Amira Hassan')
+            payload, status = tutor_notifications.send_module_tutor_email('MOD-ALPHA')
+            self.assertEqual(status, 409)
+            self.assertIn('no email address', payload['error'])
+            self.assertEqual(tutor_notifications.send_module_tutor_email('MOD-MISSING')[1], 404)
+        send.assert_not_called()
+
+    def test_a_failed_manual_send_is_reported_and_recorded(self):
+        self.seed_tutor()
+        self.seed_delivery(tutor_name='Amira Hassan')
+        with patch.object(tutor_notifications.email_azure, 'send_mail', return_value=(False, 'mailbox unavailable')):
+            payload, status = tutor_notifications.send_module_tutor_email('MOD-ALPHA')
+        self.assertEqual((status, payload['code']), (502, 'send_failed'))
+        self.assertEqual(tutor_notifications.module_tutor_status('MOD-ALPHA')['lastSent']['status'], 'failed')
 
     def test_nothing_is_sent_while_the_transaction_is_still_open(self):
         """A save that rolls back must not have told anybody it happened."""

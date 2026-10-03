@@ -8,22 +8,21 @@ import {
   flattenJourney,
   formatAttemptGrade,
   formatHours,
-  formatPercent,
 } from '../data';
 import type { CaseFileTabProps } from '../types';
 import styles from '../learnerCaseFile.module.css';
 
 type CaseFileKsbSummary = {
-  total: number;
-  achieved: number;
-  remaining: number;
+  total: number | null;
+  achieved: number | null;
+  remaining: number | null;
   percent: number | null;
-  knowledge: { total: number; achieved: number; percent: number | null };
-  skills: { total: number; achieved: number; percent: number | null };
-  behaviours: { total: number; achieved: number; percent: number | null };
+  knowledge: { total: number | null; achieved: number | null; percent: number | null };
+  skills: { total: number | null; achieved: number | null; percent: number | null };
+  behaviours: { total: number | null; achieved: number | null; percent: number | null };
 };
 
-export default function OverviewTab({ data, ksbSummary, onOpenNotes }: CaseFileTabProps & { ksbSummary?: CaseFileKsbSummary; onOpenNotes?: () => void }) {
+export default function OverviewTab({ data, onOpenNotes }: CaseFileTabProps & { ksbSummary?: CaseFileKsbSummary; onOpenNotes?: () => void }) {
   const flatComponents = flattenJourney(data);
   const totalWeeks = data.journey.reduce((count, module) => count + module.weeks.length, 0);
   const weekPosition = trainingPlanWeekPosition(data.detail);
@@ -42,14 +41,6 @@ export default function OverviewTab({ data, ksbSummary, onOpenNotes }: CaseFileT
 
   return (
     <div className="space-y-5">
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-3 rounded-xl border border-background-200 bg-white px-4 py-3">
-        <LearningMetric label="Overall Progress" value={formatPercent(data.overallProgress)} />
-        <LearningMetric label="Attendance" value={formatPercent(data.attendanceRate)} tone="warning" />
-        <LearningMetric label="Actual" value={formatHours(data.otjhCompleted)} />
-        <LearningMetric label="Planned" value={formatHours(data.totalExpectedOtjh || null)} tone="positive" />
-        <LearningMetric label="Mapped KSBs" value={ksbSummary ? `${ksbSummary.achieved} / ${ksbSummary.total}` : '--'} />
-      </div>
-
       <div className={styles.learningGrid}>
         <section className={styles.panel}>
           <div className={styles.panelHeader}>
@@ -96,23 +87,6 @@ export default function OverviewTab({ data, ksbSummary, onOpenNotes }: CaseFileT
 
 function LegendDot({ tone, label }: { tone: string; label: string }) {
   return <span className="inline-flex items-center gap-1.5"><i className={`h-2 w-2 rounded-full ${tone}`} />{label}</span>;
-}
-
-function LearningMetric({
-  label,
-  value,
-  tone = 'brand',
-}: {
-  label: string;
-  value: string;
-  tone?: 'brand' | 'positive' | 'warning';
-}) {
-  return (
-    <div className={styles.learningMetric} data-tone={tone}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
 }
 
 function CoachPlanView({

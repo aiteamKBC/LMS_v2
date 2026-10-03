@@ -3,6 +3,7 @@ import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 import { EMPTY_VALUE, displayValue, getOtjhGapStatus, hasValue } from '../lib/format';
 import type { InsightMap } from '../lib/attention';
 import type { Learner, SortDirection, SortKey } from '../types';
+import { StatusPill } from './primitives';
 import styles from '../caseload.module.css';
 
 function percent(value: number | null | undefined, available = true, preservePrecision = false) {
@@ -103,7 +104,10 @@ export function LearnerTable({ learners, insights, sortKey, sortDirection, onSor
       <thead>
         <tr className={styles.primaryHead}>
           {selectionMode ? <th rowSpan={2} aria-label="Select learner" /> : null}
-          <th rowSpan={2} aria-sort={sortKey === 'name' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{sortHeader('Learner', 'name')}</th><th colSpan={4}>Progress</th>
+          <th rowSpan={2} aria-sort={sortKey === 'name' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{sortHeader('Learner', 'name')}</th>
+          {/* Programme status (Active, Withdrawn, On break...) from the learner record --
+              not the risk tier, which the Progress tones already convey. */}
+          <th rowSpan={2}>Status</th><th colSpan={4}>Progress</th>
           <th rowSpan={2} aria-sort={sortKey === 'activity' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{sortHeader('Last Activity', 'activity')}</th>
           <th rowSpan={2} aria-sort={sortKey === 'progress-review' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{sortHeader('Last PR', 'progress-review')}</th>
           <th rowSpan={2} aria-sort={sortKey === 'monthly-coaching' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{sortHeader('Last MCM', 'monthly-coaching')}</th>
@@ -122,6 +126,7 @@ export function LearnerTable({ learners, insights, sortKey, sortDirection, onSor
         return <tr key={learner.id}>
           {selectionMode ? <td><input type="checkbox" aria-label={`Select ${learner.name}`} checked={selectedLearnerIds.has(learner.id)} onChange={() => onToggleSelect(learner.id)} /></td> : null}
           <td><div className={styles.learner}><span className={styles.avatar}>{learner.initials}</span><span><strong>{learner.name}</strong><small>{displayValue(learner.programmeName || learner.cohortName)}</small></span></div></td>
+          <td>{hasValue(learner.rawProgramStatus) ? <StatusPill value={learner.rawProgramStatus} /> : EMPTY_VALUE}</td>
           <td className={styles.progressCell}><Progress label="OTJH" metric="otjh" tone={otjhTone(learner)} value={getOtjhGapStatus(learner.otjhCompleted, learner.otjhTarget).available ? percent(((learner.otjhCompleted / learner.otjhTarget) * 100)) : null} detail={otjhRatio(learner.otjhCompleted, learner.otjhTarget)} /></td>
           <td className={styles.progressCell}><Progress label="KSBs" metric="ksbs" value={percent(learner.ksbProgress, learner.ksbProgressAvailable, true)} detail={ratio(learner.ksbCompleted, learner.ksbTarget)} /></td>
           <td className={styles.progressCell}><Progress label="Activities" metric="activities" value={componentPercent(learner)} detail={ratio(learner.componentsCompleted, learner.componentsPlanned)} /></td>

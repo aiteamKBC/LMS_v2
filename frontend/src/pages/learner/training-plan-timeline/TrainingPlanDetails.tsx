@@ -18,6 +18,8 @@ import board from './MonthlyFocusBoard.module.css';
 import { ModuleTimeline } from './ModuleTimeline';
 import { ModuleOverview } from './ModuleOverview';
 import { ProgressCharts, type ProgrammeProgressSnapshot } from './ProgressCharts';
+import { OtjHoursSummary } from './OtjHoursSummary';
+import { monthlyHours } from './monthlyHours';
 import MeetingBookingDialog from '../reviews/MeetingBookingDialog';
 import AbsenceReportDialog from '../attendance/components/AbsenceReportDialog';
 import AbsenceReportForm from '../attendance/components/AbsenceReportForm';
@@ -288,6 +290,20 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
   </section>;
   const progressCharts = <ProgressCharts modules={modules} selected={selected} data={data} onModuleSelect={module => setSelectedId(module.id)}
     programmeStartMonth={minMonth} programmeEndMonth={maxMonth} programmeSnapshot={programmeSnapshot} />;
+  // Off-the-job hours summary for the sidebar beside Monthly focus. Values come
+  // from the same month-by-month source the OTJH chart below uses, so the card
+  // agrees with it. Minimum required and Forecast are not carried by the learner
+  // data path (only the coach caseload API has them) and render as unavailable.
+  const otjMonths = useMemo(() => monthlyHours(data, minMonth, maxMonth), [data, minMonth, maxMonth]);
+  const otjSubmitted = otjMonths.length && otjMonths.every(row => row.submitted != null) ? otjMonths.reduce((sum, row) => sum + row.submitted!, 0) : null;
+  const otjCompleted = otjMonths.length && otjMonths.every(row => row.completed != null) ? otjMonths.reduce((sum, row) => sum + row.completed!, 0) : null;
+  const otjPlanned = data.requiredOtjh ?? null;
+  // Off-the-job hours only apply to apprenticeships; hide for commercial learners
+  // and when the learner has no OTJH figures to show.
+  const showOtjSummary = kind === 'apprenticeship' && (otjPlanned != null || otjSubmitted != null || otjCompleted != null);
+  const otjSummaryCard = showOtjSummary
+    ? <OtjHoursSummary plannedIlr={otjPlanned} submitted={otjSubmitted} completed={otjCompleted} minimumRequired={null} forecast={null} />
+    : null;
   if (timelineOnly) {
     return <div className={`${styles.root} ${layout.root}`}>
       <ModuleTimeline canOpenActivities={canOpenActivities} data={data} modules={modules} kind={kind} learnerId={learnerId} today={today}
@@ -304,7 +320,7 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
         ? <div className={layout.activityOverviewMain}>{overviewOnly ? null : weeklyFocus}{progressCharts}</div>
         : !monthlyOnly ? weeklyFocus : null}
       {showMonthly && monthlyOnly && monthlyBoard}
-      {showMonthly && !monthlyOnly && <section className={layout.engagement} aria-label="Monthly study plan">
+      {showMonthly && !monthlyOnly && (() => { const monthlyFocusPanel = <section className={layout.engagement} aria-label="Monthly study plan">
         <div className={styles.panelHeading}><div className={layout.focusHeading}><p className={styles.eyebrow}>Monthly focus</p><h2>{monthLabel(selectedMonth)}</h2></div><div className={styles.controls}><button className={styles.iconButton} onClick={() => shiftMonth(-1)} disabled={!canGoPrevious} aria-label="Previous month"><ChevronLeft size={16} /></button><button className={styles.iconButton} onClick={() => shiftMonth(1)} disabled={!canGoNext} aria-label="Next month"><ChevronRight size={16} /></button></div></div>
         {!!month?.topics.length && <p className={styles.focusTitle}>{month.topics.join(' · ')}</p>}
         {data.contractStatus === 'loading' && <p role="status" className={styles.hint}>Loading study hour targets…</p>}
@@ -373,7 +389,7 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
           </section>
         </div>
         {canOpenActivities && selected && <Link className={`${styles.textLink} ${layout.monthFooterLink}`} to={subjectHref(selected.id)}>View all activities for {monthLabel(selectedMonth)}<ArrowRight size={14} /></Link>}
-      </section>}
+      </section>; return otjSummaryCard ? <div className={layout.focusStack}>{monthlyFocusPanel}{otjSummaryCard}</div> : monthlyFocusPanel; })()}
     </div>}
     {showTraining && !activityOverviewOnly && <section id="training-plan-details" aria-label="Monthly learning and coaching">
     {!activityOverviewOnly && <>

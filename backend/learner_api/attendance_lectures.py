@@ -182,8 +182,10 @@ def read_native_occurrences(source, *, module_ids=None):
     return result
 
 
-def lecture_register(source, *, module_ids=None):
-    records = combined_attendance_rows(source)
+def lecture_register(source, *, module_ids=None, records=None):
+    # Bulk consumers can preload source rows; all schedule, recovery and saved
+    # confirmation rules still run through this same learner register.
+    records = combined_attendance_rows(source) if records is None else records
     scheduled = read_native_occurrences(source, module_ids=module_ids)
     by_occurrence = {str(row['session_id']): row for row in scheduled}
     now = timezone.now()

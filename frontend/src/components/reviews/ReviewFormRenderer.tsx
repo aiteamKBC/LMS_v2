@@ -370,11 +370,24 @@ function ReviewFieldControl({
   if (field.fieldType === 'title_description') {
     const description = String(field.configuration?.description || '');
     const tableRows = importedTableRows(field.configuration);
+    // Imported Aptem records arrive with a generic "Imported text" placeholder
+    // as the title and carry the real prompt/content in `description`. Showing
+    // that placeholder as the heading turns the actual question into a mystery
+    // label (e.g. "Imported text" with "Meeting Summary" beneath it), so render
+    // the real content instead of the placeholder for these imported items.
+    const isGenericImportedText = field.configuration?.imported === true
+      && !tableRows
+      && field.title.trim().toLocaleLowerCase() === 'imported text';
     return (
       <div className="rounded-lg border border-background-200 bg-background-100/70 px-4 py-3">
         <div className="flex items-start gap-3">
           <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary-100 text-[12px] font-bold text-primary-700">{index + 1}</span>
           <div className="min-w-0 flex-1">
+            {isGenericImportedText ? (
+              description
+                ? <p className="whitespace-pre-wrap text-sm leading-5 text-foreground-700">{description}</p>
+                : <p className="text-sm font-semibold leading-5 text-foreground-900">Imported note</p>
+            ) : (<>
             <p className="text-sm font-semibold leading-5 text-foreground-900">{field.title}</p>
             {tableRows ? <div className="mt-3 max-w-full overflow-x-auto rounded-lg border border-background-200 bg-background-50">
               <table className="min-w-full border-collapse text-left text-sm">
@@ -385,6 +398,7 @@ function ReviewFieldControl({
                 </tr>)}</tbody>
               </table>
             </div> : description ? <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-foreground-500">{description}</p> : null}
+            </>)}
           </div>
         </div>
       </div>

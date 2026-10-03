@@ -292,6 +292,42 @@ class DashboardMetricsTests(SimpleTestCase):
         self.assertNotIn('offline', response.content.decode())
 
 
+class LearnerOverviewMetricsEndpointTests(SimpleTestCase):
+    def call(self, query, payload):
+        source = SimpleNamespace(pk=125)
+        model = MagicMock()
+        model.DoesNotExist = type('Missing', (Exception,), {})
+        model.all_learners.only.return_value.get.return_value = source
+        with patch.dict('learner_api.dashboard_metrics.SOURCE_MODELS', {'commercial': model}), \
+             patch('learner_api.dashboard_metrics.read_metrics', return_value=payload) as ordinary, \
+             patch('learner_api.dashboard_metrics.canonical_learning.metrics_bulk', return_value={125: payload}) as overview:
+            response = learner_metrics.__wrapped__.__wrapped__(RequestFactory().get('/', query), 'commercial', 125)
+        model.all_learners.only.return_value.get.assert_called_once_with(pk=125)
+        return response, ordinary, overview
+
+    def test_explicit_overview_uses_same_metrics_as_coach_caseload(self):
+        payload = {'ksb': {'completed': 498, 'total': 584, 'percent': 85.3},
+                   'otjh': {'actual': 164.87, 'planned': 576}, '_ksb_evidence_sources': []}
+        response, ordinary, overview = self.call({'view': 'learner-overview'}, payload)
+        self.assertEqual(response.status_code, 200)
+        ordinary.assert_not_called()
+        overview.assert_called_once_with([125], learner_workspace=True, include_ksb_points=True)
+        self.assertEqual(json.loads(response.content)['ksb']['total'], 584)
+        self.assertNotIn('_ksb_evidence_sources', json.loads(response.content))
+        self.assertEqual(response['Cache-Control'], 'private, no-store')
+
+    def test_existing_metrics_call_retains_its_source(self):
+        response, ordinary, overview = self.call({}, {'ksb': {'status': 'empty'}})
+        self.assertEqual(response.status_code, 200)
+        ordinary.assert_called_once()
+        overview.assert_not_called()
+
+    def test_missing_overview_identity_does_not_fallback_to_other_totals(self):
+        response, ordinary, overview = self.call({'view': 'learner-overview'}, None)
+        self.assertEqual(response.status_code, 409)
+        ordinary.assert_not_called()
+
+
 class CombinedAttendanceTests(SimpleTestCase):
     def row(self, **changes):
         return {'learner_id': 1, 'enrolment_id': 125, 'learner_name': 'Test',

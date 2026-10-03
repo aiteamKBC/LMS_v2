@@ -14,11 +14,12 @@ from .teams_week_meeting import (
     curriculum_week_teams_meeting,
     curriculum_week_teams_meeting_detail,
 )
-from . import session_results
+from . import session_results, tutor_notifications
 
 
 urlpatterns = [
     path('curriculum/modules/<str:module_id>/session-results/', session_results.module_results),
+    path('curriculum/modules/<str:module_id>/tutor-email/', tutor_notifications.module_tutor_email, name='curriculum-module-tutor-email'),
     path('curriculum/session-results/<str:series_id>/sync/', session_results.queue_sync),
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/', session_results.admin_session),
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/attendance-alias/', session_results.link_attendance_alias),
