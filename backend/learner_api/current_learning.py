@@ -18,9 +18,9 @@ def instant(value):
 def actual_time_seconds(value):
     """Return saved reflection time as seconds without changing its source value.
 
-    Native reflection saves use decimal hours, while marking-queue and imported
-    records can contain an ``HH:MM`` or ``HH:MM:SS`` duration.  Both forms are
-    authoritative recorded time; invalid or empty values remain unavailable.
+    Native reflection saves use decimal hours. Older submissions may contain a
+    legacy ``MM:SS`` clock, while imported records can contain ``HH:MM:SS``.
+    Invalid or empty values remain unavailable.
     """
     if value in (None, ''):
         return None
@@ -28,18 +28,26 @@ def actual_time_seconds(value):
     if not text:
         return None
     try:
-        if ':' not in text:
-            hours = float(text)
-            return hours * 3600 if isfinite(hours) and hours >= 0 else None
-        parts = text.split(':')
-        if len(parts) not in {2, 3} or not parts[0].isdigit() or not parts[1].isdigit():
+        if ':' in text:
+            parts = text.split(':')
+            if len(parts) == 2:
+                minutes, seconds = (int(part) for part in parts)
+                if minutes < 0 or not 0 <= seconds < 60:
+                    return None
+                return minutes * 60 + seconds
+            if len(parts) == 3:
+                hours_text, minutes_text, seconds_text = parts
+                if not hours_text.isdigit() or not minutes_text.isdigit():
+                    return None
+                hours = int(hours_text)
+                minutes = int(minutes_text)
+                seconds = float(seconds_text)
+                if not 0 <= minutes < 60 or not isfinite(seconds) or not 0 <= seconds < 60:
+                    return None
+                return hours * 3600 + minutes * 60 + seconds
             return None
-        hours = int(parts[0])
-        minutes = int(parts[1])
-        seconds = float(parts[2]) if len(parts) == 3 else 0
-        if not 0 <= minutes < 60 or not isfinite(seconds) or not 0 <= seconds < 60:
-            return None
-        return hours * 3600 + minutes * 60 + seconds
+        hours = float(text)
+        return hours * 3600 if isfinite(hours) and hours >= 0 else None
     except (TypeError, ValueError):
         return None
 

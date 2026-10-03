@@ -59,7 +59,12 @@ def calendar_reader():
                     if code == 'ErrorItemNotFound':
                         return None
             if response.status_code != 200:
-                raise CalendarStateError(f'Microsoft calendar status could not be verified (HTTP {response.status_code}).')
+                error = CalendarStateError(f'Microsoft calendar status could not be verified (HTTP {response.status_code}).')
+                # Carried, not parsed back out of the message: a caller that has
+                # to tell "Microsoft refused us" from "Microsoft is busy" can
+                # read it without the two ever being told apart by their prose.
+                error.status_code = response.status_code
+                raise error
             return response.json()
         yield read
 

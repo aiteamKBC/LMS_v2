@@ -31,8 +31,13 @@ def counts_as_actual(record):
     return record.get('accepted') is True
 
 
-def counts_as_completed(record):
-    """Completion and accepted OTJ hours are deliberately separate facts."""
+def counts_as_completed(record, include_source_evidence=True):
+    """Completion and accepted OTJ hours are deliberately separate facts.
+
+    Source completion is trusted for the old LMS lineage. Callers that are
+    projecting a non-journal/coach view can disable source evidence while still
+    retaining explicit completion and status-based completion.
+    """
     if record.get('completed') is True or record.get('accepted') is True:
         return True
     statuses = {str(record.get('activity_status') or '').strip().casefold()}
@@ -40,8 +45,10 @@ def counts_as_completed(record):
         str(source.get('activity_status') or '').strip().casefold()
         for source in (record.get('sources') or []) if isinstance(source, dict)
     )
-    if any(source.get('completed') is True
-           for source in (record.get('sources') or []) if isinstance(source, dict)):
+    if include_source_evidence and any(
+            source.get('completed') is True
+            and str(source.get('source_system') or '').strip().casefold() in {'', 'old_lms'}
+            for source in (record.get('sources') or []) if isinstance(source, dict)):
         return True
     return bool(statuses & {
         'accepted', 'complete', 'completed', 'passed',
@@ -67,7 +74,8 @@ def require_profile(learner_id):
 def profile(learner_id):
     records = query('''SELECT l.id,l.enrolment_id,l.aptem_id,l.programme_id,l.full_name AS name,
         l.programme,l.coach_name,l.coach_email,l.email,l.start_date,l.end_date,l.learner_type,
-        u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id
+        u.id AS account_record_id,u."Email" AS account_email,u.aptem_id AS account_aptem_id,
+        u."Planned_hours" AS programme_planned_hours
         FROM "Learner".learners l
         LEFT JOIN enrolment."Created_users" u ON u.id=l.enrolment_id
         WHERE l.enrolment_id=%s''', [learner_id])
@@ -86,6 +94,19 @@ def _validated_profile(owner):
             or (aptem and aptem != str(owner.get('aptem_id') or '').lstrip('0'))):
         raise ServiceError('The consolidated learner identity needs review.', 'identity_review_required', 409)
     return owner
+
+
+def programme_planned_hours(learner_id):
+    """The enrolment's overall plan is independent of the scheduled month totals."""
+    from math import isfinite
+
+    owner = profile(learner_id)
+    value = owner.get('programme_planned_hours') if owner else None
+    try:
+        hours = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return round(hours, 4) if isfinite(hours) and hours >= 0 else None
 
 
 def profile_by_aptem(aptem_id):
@@ -116,56 +137,83 @@ def entries_for(owner):
         WHERE progress.learner_id=%s AND progress.deleted_at IS NULL
     ), canonical AS (
         SELECT * FROM candidates WHERE canonical_rank=1
-    )
-        SELECT to_jsonb(p) AS payload,
-        coalesce((SELECT jsonb_agg(k.ksb_code ORDER BY k.position)
-          FROM "Learner".learner_progress_ksbs k WHERE k.progress_id=p.id),'[]'::jsonb) AS ksbs,
-        coalesce((SELECT jsonb_agg(to_jsonb(s) ORDER BY s.segment_order,s.id)
-          FROM "Learner".learner_activity_reporting_segments s
-          WHERE s.progress_id=p.id AND s.learner_id=p.learner_id),'[]'::jsonb) AS segments,
-        coalesce((SELECT jsonb_agg(jsonb_build_object(
+    ), progress_ksbs AS (
+        SELECT k.progress_id,jsonb_agg(k.ksb_code ORDER BY k.position) AS payload
+        FROM "Learner".learner_progress_ksbs k
+        JOIN canonical p ON p.id=k.progress_id
+        GROUP BY k.progress_id
+    ), reporting_segments AS (
+        SELECT s.progress_id,jsonb_agg(to_jsonb(s) ORDER BY s.segment_order,s.id) AS payload
+        FROM "Learner".learner_activity_reporting_segments s
+        JOIN canonical p ON p.id=s.progress_id AND p.learner_id=s.learner_id
+        GROUP BY s.progress_id
+    ), activity_sources AS (
+        SELECT s.canonical_progress_id AS progress_id,jsonb_agg(jsonb_build_object(
             'source_id',s.id,'source_system',s.source_system,'source_activity_id',s.source_activity_id,
+            'completed',s.completed,
             'source_course_ref',c.source_course_ref,'source_course_id',c.id,
             'course_title',c.source_course_title,'catalogue_id',a.id,
             'component_ref',coalesce(nullif(s.curriculum_component_ref,''),a.curriculum_component_ref),
             'module_ref',c.curriculum_module_ref,'group_ref',c.curriculum_group_ref,
-            'source_activity_kind',a.source_activity_kind,
-            'activity_status',s.activity_status,'completed',s.completed) ORDER BY s.id)
-          FROM "Learner".learner_activity_sources s
-          LEFT JOIN curriculum.source_activities a ON a.id=s.source_catalog_activity_id AND a.deleted_at IS NULL
-          LEFT JOIN curriculum.source_courses c ON c.id=a.source_course_id AND c.deleted_at IS NULL
-          WHERE s.canonical_progress_id=p.id AND s.learner_id=p.learner_id
-            AND s.deleted_at IS NULL),'[]'::jsonb) AS sources,
-        coalesce((SELECT jsonb_agg(jsonb_build_object(
-            'group_id',j.group_id,'activity_id',j.activity_id,'source_ref',j.source_ref) ORDER BY j.id)
-          FROM "Learner".learner_journal_rows j
-          JOIN "Learner".learner_activity_sources js ON js.id=j.source_id
-            AND js.learner_id=p.learner_id AND js.canonical_progress_id=p.id AND js.deleted_at IS NULL
-          WHERE j.progress_id=p.id AND j.canonical_learner_id=p.learner_id
-            AND j.deleted_at IS NULL),'[]'::jsonb) AS journal_routes,
-        coalesce((SELECT jsonb_agg(to_jsonb(h) ORDER BY h.id)
-          FROM "Learner".learner_progress_historical_components link
-          JOIN curriculum.historical_components h ON h.id=link.historical_component_ref
-            AND h.deleted_at IS NULL AND h.historical_only=true
-          WHERE link.progress_id=p.id),'[]'::jsonb) AS historical_components
+            'activity_status',s.activity_status,
+            'source_activity_kind',a.source_activity_kind) ORDER BY s.id) AS payload
+        FROM "Learner".learner_activity_sources s
+        JOIN canonical p ON s.canonical_progress_id=p.id AND s.learner_id=p.learner_id
+        LEFT JOIN curriculum.source_activities a ON a.id=s.source_catalog_activity_id AND a.deleted_at IS NULL
+        LEFT JOIN curriculum.source_courses c ON c.id=a.source_course_id AND c.deleted_at IS NULL
+        WHERE s.deleted_at IS NULL
+        GROUP BY s.canonical_progress_id
+    ), journal_routes AS (
+        SELECT j.progress_id,jsonb_agg(jsonb_build_object(
+            'group_id',j.group_id,'activity_id',j.activity_id,'source_ref',j.source_ref) ORDER BY j.id) AS payload,
+            sum(j.planned_hours) AS planned
+        FROM "Learner".learner_journal_rows j
+        JOIN canonical p ON j.progress_id=p.id AND j.canonical_learner_id=p.learner_id
+        JOIN "Learner".learner_activity_sources s ON s.id=j.source_id
+          AND s.learner_id=p.learner_id AND s.canonical_progress_id=p.id AND s.deleted_at IS NULL
+        WHERE j.deleted_at IS NULL
+        GROUP BY j.progress_id
+    ), historical_components AS (
+        SELECT link.progress_id,jsonb_agg(to_jsonb(h) ORDER BY h.id) AS payload
+        FROM "Learner".learner_progress_historical_components link
+        JOIN canonical p ON p.id=link.progress_id
+        JOIN curriculum.historical_components h ON h.id=link.historical_component_ref
+          AND h.deleted_at IS NULL AND h.historical_only=true
+        GROUP BY link.progress_id
+    )
+        SELECT to_jsonb(p) AS payload,
+          coalesce(k.payload,'[]'::jsonb) AS ksbs,
+          coalesce(seg.payload,'[]'::jsonb) AS segments,
+          coalesce(src.payload,'[]'::jsonb) AS sources,
+          coalesce(j.payload,'[]'::jsonb) AS journal_routes,
+          j.planned AS journal_planned_hours,
+          coalesce(h.payload,'[]'::jsonb) AS historical_components
         FROM canonical p
+        LEFT JOIN progress_ksbs k ON k.progress_id=p.id
+        LEFT JOIN reporting_segments seg ON seg.progress_id=p.id
+        LEFT JOIN activity_sources src ON src.progress_id=p.id
+        LEFT JOIN journal_routes j ON j.progress_id=p.id
+        LEFT JOIN historical_components h ON h.progress_id=p.id
         ORDER BY p.reporting_month,p.reporting_started_at NULLS LAST,p.id''',
         [owner['id']])
-    canonical_records = []
+    from learner_api import journal_sources
+    journal_enabled = journal_sources.enabled()
+    loaded = []
     for record in records:
-        payload = {**decoded(record['payload'], {}), **{
+        item = {**decoded(record['payload'], {}), **{
             field: decoded(record.get(field), [])
             for field in ('ksbs', 'segments', 'sources', 'journal_routes', 'historical_components')}}
-        payload['completed'] = counts_as_completed(payload)
-        canonical_records.append(payload)
-    result = current_records(owner, canonical_records)
-    from learner_api import journal_sources
-    if journal_sources.enabled():
-        planned = journal_sources.planned_by_progress(owner['id'], query)
+        if journal_enabled and record.get('journal_planned_hours') is not None:
+            item['expected_otjh'] = float(record['journal_planned_hours'])
+            item['journal_planned_hours'] = float(record['journal_planned_hours'])
+        loaded.append(item)
+    result = current_records(owner, loaded)
+    if journal_enabled:
+        # Completion is independent of accepted hours. Reapply the shared rule
+        # after current saves are projected so old-LMS source/status evidence is
+        # retained in the journal learner view only.
         for record in result:
-            if record['id'] in planned:
-                record['expected_otjh'] = planned[record['id']]
-                record['journal_planned_hours'] = planned[record['id']]
+            record['completed'] = counts_as_completed(record)
     return result
 
 
@@ -585,9 +633,31 @@ def source_subjects(learner_id, summarize):
     }
     result['module_count'] = max(len(subjects), len(canonical_modules))
     result['unresolved_source_routes'] = sum(len(values) != 1 for values in links.values())
-    monthly_targets = targets_for(owner)
-    result['audit_tp_planned'] = sum(monthly_targets.values()) if monthly_targets else None
+    from learner_api import journal_sources
+    if journal_sources.enabled():
+        result['audit_tp_planned'] = programme_planned_hours(learner_id)
+    else:
+        monthly_targets = targets_for(owner)
+        result['audit_tp_planned'] = sum(monthly_targets.values()) if monthly_targets else None
     return result
+
+
+def recorded_activity_schedule(record, course):
+    """Display owned course placement without rewriting reporting timestamps."""
+    from datetime import timedelta
+
+    at = local_instant(record.get('reporting_started_at') or record.get('reporting_ended_at'))
+    day = at.date() if at else None
+    monday = day - timedelta(days=day.weekday()) if day else None
+    placement = source_payload_metadata(record.get('source_payload')).get('course_display_placement')
+    introduction = (isinstance(placement, dict)
+        and str(placement.get('course_id')) == str(course)
+        and placement.get('section') == 'introduction')
+    return {'date': day.isoformat() if day else None,
+        'month': record.get('reporting_month'),
+        'week_start': monday.isoformat() if monday else None,
+        'week_end': (monday + timedelta(days=6)).isoformat() if monday else None,
+        'date_source': 'introduction' if introduction else 'consolidated_record'}
 
 
 def recorded_course_items(courses, catalogue, records):
@@ -642,7 +712,6 @@ def recorded_course_items(courses, catalogue, records):
         for course, definition in placements.items():
             kind, _, ident = definition['source_activity_id'].partition(':')
             numeric = ident.isdigit()
-            at = local_instant(record.get('reporting_started_at') or record.get('reporting_ended_at'))
             accepted = counts_as_actual(record)
             item = {'activity_id': f"record:{course}:{record['id']}",
                 'source_activity_id': int(ident) if numeric else 0, 'group_id': int(course),
@@ -652,9 +721,8 @@ def recorded_course_items(courses, catalogue, records):
                 'catalogue_kind': kind, 'can_open_material': numeric and kind == 'material',
                 'section_title': definition.get('source_section_title'),
                 'position': definition.get('position') or 0,
-                'date': at.date().isoformat() if at else None,
-                'month': record.get('reporting_month'), 'date_source': 'consolidated_record',
-                'completed': counts_as_completed(record),
+                **recorded_activity_schedule(record, course),
+                'completed': counts_as_completed(record, include_source_evidence='completed' in record),
                 'historical_completed': accepted,
                 'actual': recorded_seconds(record) / 3600 if accepted else 0,
                 'hours_mapped': accepted and any(p.get('actual_seconds') is not None for p in allocations(record)),
@@ -692,7 +760,8 @@ def metrics_from_records(records, monthly_targets):
     """
     counted = list(records)
     accepted = [item for item in counted if item.get('accepted') is True]
-    completed = [item for item in counted if counts_as_completed(item)]
+    completed = [item for item in counted if counts_as_completed(
+        item, include_source_evidence='completed' in item)]
     def ratio(done, total):
         return {'completed': done, 'total': total,
                 'percent': round(done / total * 100, 2) if total else None,
@@ -719,8 +788,15 @@ def metrics_from_records(records, monthly_targets):
 
 
 def metrics(learner_id):
+    """Return verified canonical dashboard metrics for one learner."""
     owner = require_profile(learner_id)
-    return metrics_from_records(entries_for(owner), targets_for(owner))
+    from learner_api import journal_sources
+    result = metrics_from_records(entries_for(owner), targets_for(owner))
+    if journal_sources.enabled():
+        planned = programme_planned_hours(learner_id)
+        result['otjh']['planned'] = planned
+        result['aptem_planned_total'] = planned
+    return result
 
 
 def metrics_bulk(learner_ids):
@@ -906,7 +982,9 @@ def overlay_subjects(payload, records, summarize):
             accepted = [r for r in matches if counts_as_actual(r)]
             recorded = [r for r in accepted if any(part.get('actual_seconds') is not None for part in allocations(r))]
             at = local_instant(latest.get('reporting_started_at') or latest.get('reporting_ended_at'))
-            item.update(completed=any(counts_as_completed(r) for r in matches),
+            item.update(completed=any(
+                counts_as_completed(r, include_source_evidence='completed' in r)
+                for r in matches),
                         historical_completed=bool(accepted),
                         actual=sum(recorded_seconds(r) for r in recorded) / 3600,
                         hours_mapped=bool(recorded), status=latest.get('activity_status'),

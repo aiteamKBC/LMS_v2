@@ -73,6 +73,7 @@ import {
   fetchCurriculumHolidays,
   fetchCurriculumStandards,
   fetchCurriculumTutors,
+  curriculumErrorMessage,
   tutorConflictMessage,
   updateCurriculumGroup,
 } from '@/lib/curriculumApi';
@@ -3247,7 +3248,10 @@ export default function ProgrammeDetailPage() {
       await showCurriculumAlert({
         title: 'Could not assign coach',
         text: tutorConflictMessage(updateError)
-          || (updateError instanceof Error ? updateError.message : 'The coach could not be saved. Please try again.'),
+          || curriculumErrorMessage(
+            updateError,
+            updateError instanceof Error ? updateError.message : 'The coach could not be saved. Please try again.',
+          ),
         icon: 'error',
       });
     } finally {

@@ -4,10 +4,9 @@ import type { WorkingHoursHoliday } from './componentAccessWindow';
 // ============================================================================
 // The working rules, as the browser sees them.
 //
-// This is UX only. The server decides: every Finish and every Final Submit is
-// re-validated by learner_api.working_rules, and a completion is written only
-// after it passes there. This copy exists so the correction dialog can grey out
-// an impossible date before the learner sends it, not to replace that check.
+// This is UX only. The server decides whether a Finish click needs the
+// correction dialog (learner_api.working_rules). This copy lets the dialog warn
+// about a selection outside the rules; it never blocks Final Submit.
 //
 // Learning itself is never restricted by any of this.
 // ============================================================================
@@ -77,7 +76,7 @@ export function workingRuleFailure(
     return {
       reason: 'holiday',
       holidayName: name,
-      message: name ? `College holiday: ${name}.` : 'This date is a college holiday.',
+      message: name ? `Bank holiday: ${name}.` : 'This date is a bank holiday.',
     };
   }
 
@@ -108,7 +107,7 @@ export function declaredCompletedAt(day: string, time: string): string {
 /** Plain-English heading for why the learner is being asked to correct. */
 export function reasonHeadline(reason: WorkingRuleReason | '', holidayName = ''): string {
   if (reason === 'holiday') {
-    return holidayName ? `College holiday: ${holidayName}` : 'College holiday';
+    return holidayName ? `Bank holiday: ${holidayName}` : 'Bank holiday';
   }
   if (reason === 'weekend') return 'Outside official working days';
   if (reason === 'outside_working_hours') return 'Outside official working hours';

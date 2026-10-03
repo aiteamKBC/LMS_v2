@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useId, useState } from 'react';
+import { lazy, Suspense, useEffect, useId, useMemo, useState } from 'react';
 import DOMPurify from 'dompurify';
 import { VideoPlayer, parseVideoUrl } from '@/components/feature/VideoPlayer';
 import { SlideDeckViewer } from '@/components/feature/SlideDeckViewer';
@@ -34,11 +34,19 @@ function previousSelections(data: SubjectMaterial): Record<string, string[]> {
 }
 
 function Html({ value }: { value: string }) {
-  const normalized = normalizeReadingHtml(value);
-  const clean = DOMPurify.sanitize(normalized, { FORBID_TAGS: ['form'], FORBID_ATTR: ['srcdoc'] });
-  const document = new DOMParser().parseFromString(normalized, 'text/html');
-  const embeds = [...document.querySelectorAll('iframe')].map((frame) => frame.getAttribute('src') || '').filter((url) => /^https?:\/\//i.test(url));
-  return <div className="space-y-4"><div className="prose max-w-none break-words" dangerouslySetInnerHTML={{ __html: clean }} />
+  // Memoised so a parent re-render (ticking a checkbox, picking a quiz answer)
+  // keeps the same innerHTML object: React 19 re-applies innerHTML on a new
+  // identity, which would restart any embedded <video>.
+  const { innerHtml, embeds } = useMemo(() => {
+    const normalized = normalizeReadingHtml(value);
+    const clean = DOMPurify.sanitize(normalized, { FORBID_TAGS: ['form'], FORBID_ATTR: ['srcdoc'] });
+    const document = new DOMParser().parseFromString(normalized, 'text/html');
+    return {
+      innerHtml: { __html: clean },
+      embeds: [...document.querySelectorAll('iframe')].map((frame) => frame.getAttribute('src') || '').filter((url) => /^https?:\/\//i.test(url)),
+    };
+  }, [value]);
+  return <div className="space-y-4"><div className="prose max-w-none break-words" dangerouslySetInnerHTML={innerHtml} />
     {embeds.map((url, index) => <Media key={`${index}:${url}`} value={url} kind="embed" title={`Embedded content ${index + 1}`} />)}
   </div>;
 }

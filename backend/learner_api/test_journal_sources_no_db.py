@@ -114,6 +114,7 @@ class JournalSourceTests(unittest.TestCase):
             {'accepted': True, 'actual_seconds': 7200},
             {'accepted': False, 'activity_status': 'Submitted', 'actual_seconds': 1800}],
             targets=lambda _: {'2026-01': 3, '2026-02': 2},
+            programme_planned_hours=lambda _: 20,
             recorded_seconds=lambda row: row['actual_seconds'])
         args = (SimpleNamespace(pk=1, aptem_id=None), 'commercial', [], [], [], [], date(2026, 1, 31))
         self.assertEqual(scope['read_home_progress'](*args)['otjh']['actual'], 999)
@@ -136,10 +137,10 @@ class JournalSourceTests(unittest.TestCase):
 
     def test_shared_metrics_use_supplied_targets_and_preserve_source_empty_semantics(self):
         tree = ast.parse((Path(__file__).parent / 'canonical_learning.py').read_text())
-        function = next(n for n in tree.body if isinstance(n, ast.FunctionDef)
-                        and n.name == 'metrics_from_records')
+        functions = [n for n in tree.body if isinstance(n, ast.FunctionDef)
+                     and n.name in {'counts_as_completed', 'metrics_from_records'}]
         scope = {'recorded_seconds': lambda row: row['actual_seconds']}
-        exec(compile(ast.Module(body=[function], type_ignores=[]), 'canonical_learning.py', 'exec'), scope)
+        exec(compile(ast.Module(body=functions, type_ignores=[]), 'canonical_learning.py', 'exec'), scope)
         metrics = scope['metrics_from_records']
         records = [{'accepted': True, 'actual_seconds': 3600}]
         self.assertEqual(metrics(records, {'2026-01': 2, '2026-02': 3})['otjh']['planned'], 5)

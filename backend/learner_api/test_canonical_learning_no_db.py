@@ -543,6 +543,11 @@ class CanonicalLearningTests(unittest.TestCase):
         self.assertIn('progress.deleted_at IS NULL', sql)
         self.assertIn('canonical_activity_key', sql)
         self.assertIn('canonical_rank=1', sql)
+        self.assertIn('progress_ksbs AS', sql)
+        self.assertIn('reporting_segments AS', sql)
+        self.assertIn('activity_sources AS', sql)
+        self.assertIn('journal_routes AS', sql)
+        self.assertNotIn('coalesce((SELECT', sql)
         self.assertEqual(params, [510])
         self.assertIn('s.canonical_progress_id=p.id', sql)
 

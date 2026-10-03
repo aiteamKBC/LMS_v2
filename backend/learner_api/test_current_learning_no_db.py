@@ -69,22 +69,29 @@ class CurrentLearningTests(unittest.TestCase):
         self.assertTrue(accepted['accepted'])
         self.assertEqual(accepted['actual_seconds'], 1800)
 
-    def test_saved_actual_time_accepts_decimal_and_clock_durations(self):
+    def test_saved_actual_time_accepts_decimal_legacy_and_extended_clocks(self):
         seconds = self.scope['actual_time_seconds']
         self.assertEqual(seconds('2.5'), 9000)
-        self.assertEqual(seconds('11:00'), 39600)
+        self.assertEqual(seconds('11:00'), 660)
+        self.assertEqual(seconds('02:30'), 150)
         self.assertEqual(seconds('02:30:15'), 9015)
-        self.assertEqual(seconds('60:00'), 216000)
+        self.assertEqual(seconds('60:00'), 3600)
 
     def test_invalid_saved_actual_time_remains_unavailable(self):
         seconds = self.scope['actual_time_seconds']
-        for value in (None, '', ' ', '1:60', '1:02:60', '-1', 'nan', 'not-a-duration'):
+        for value in (None, '', ' ', '1:60', '1:02:60', '-1', 'nan', 'not-a-duration', '1:2:3:4'):
             self.assertIsNone(seconds(value), value)
 
     def test_assignment_clock_duration_replaces_progress_time(self):
         p = {**self.native, 'kind': 'component', 'passed': None, 'component_type': 'assignment'}
         accepted = self.project([p], {'C1': {'status': 'accepted', 'actual_time_hours': '11:00'}})[0]
-        self.assertEqual(accepted['actual_seconds'], 11 * 3600)
+        self.assertEqual(accepted['actual_seconds'], 11 * 60)
+
+    def test_extra_activity_accepts_legacy_clock_duration(self):
+        submission = dict(id='legacy', submitted_at=self.native['submitted_at'],
+            activity_type='extra_activity', status='accepted', actual_time_hours='02:30', ksb_codes=[])
+        merged = self.scope['merge_submissions']([], [submission])
+        self.assertEqual(merged[0]['actual_seconds'], 150)
 
     def test_retries_do_not_add_hours_or_remove_previous_pass(self):
         rows = self.project([self.native, {**self.native, 'id': 2, 'claimed_seconds': 2400},

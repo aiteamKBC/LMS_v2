@@ -14,7 +14,7 @@ import { DEFAULT_MODULE_COVER } from './moduleCover';
 import { LearningMapHero, SubjectTimeline } from './SubjectTimeline';
 import { HolidayNoteHint } from '@/components/feature/HolidayNoteHint';
 import { weekHolidayNotes } from '@/pages/learner/training-plan-timeline/model';
-import { certificateEligible, learningDate, learningDeadlines, learningPlanSelection, learningHref, nextLearningWeek, continuingLearningWeek, currentLearningWeek, recommendedLearningSubject, resolveLearningSubject, subjectMapWeeks, subjectOpeningActivity } from './subjectLearning';
+import { certificateEligible, learningDate, learningDeadlines, learningPlanSelection, learningHref, nextLearningWeek, continuingLearningWeek, currentLearningWeek, recommendedLearningSubject, resolveLearningSubject, subjectMapWeeks, subjectOpeningActivity, subjectLearningStatus } from './subjectLearning';
 import type { LearningSchedule } from '@/api/learnerOverview';
 import type { PlanModule, PlanSession } from '@/api/trainingPlanDashboard';
 
@@ -446,7 +446,7 @@ function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfTo
   const completed = subject.activities.filter((activity) => activity.completed).length;
   const isComplete = total > 0 && completed === total;
   const certificateReady = certificateEligible(subject, template);
-  const status = isComplete ? 'Completed' : completed > 0 ? 'In progress' : total ? 'Not started' : 'Unavailable';
+  const status = subjectLearningStatus(subject);
   const next = nextLearningWeek(subject)?.activities.find(entry => !entry.completed);
   const moduleName = planModule?.title || subject.title;
   const tutorName = planModule?.tutor_name?.trim() || 'To be assigned';
@@ -458,7 +458,7 @@ function SubjectCard({ subject, cover, tone = 'purple', onOpen, template, csrfTo
       <div className="relative w-full"><Cover title={subject.title} url={cover} fallbackUrl={DEFAULT_MODULE_COVER} /></div>
       <div className={styles.cardBody}>
         <div className={styles.cardMetaRow}>
-          <span className={styles.status} data-state={isComplete ? 'complete' : completed > 0 ? 'started' : 'new'}>
+          <span className={styles.status} data-state={isComplete ? 'complete' : status === 'In progress' ? 'started' : 'new'}>
             <span aria-hidden="true" className={styles.statusDot} />{status}
           </span>
           <p className={styles.cardEyebrow}><Layers3 size={13} aria-hidden="true" />{total} {subject.recordedHistory ? 'recorded activities' : total === 1 ? 'activity' : 'activities'}</p>
