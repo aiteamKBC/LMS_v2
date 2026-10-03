@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LearnerCalendarEvent } from '@/api/learnerCalendar';
-import { isReviewSession, isReviewSessionWrite, mergeCompletedReviewHistory } from './useReviewSessions';
+import { isMigratedContinuationEvent, isReviewSession, isReviewSessionWrite, mergeCompletedReviewHistory } from './useReviewSessions';
 
 const event = (fields: Partial<LearnerCalendarEvent> = {}): LearnerCalendarEvent => ({
   id: 'review:1:REV-A:1', eventKey: 'review:1:REV-A:1', title: 'Renamed conversation',
@@ -41,6 +41,15 @@ describe('Review source ownership', () => {
     const pending = event({ id: 'imported:2', eventKey: 'imported:2' });
     expect(mergeCompletedReviewHistory([current], [complete, pending])).toEqual([current, complete]);
     expect(mergeCompletedReviewHistory([current, complete], [complete])).toEqual([current, complete]);
+  });
+
+  it('routes only an LMS calendar continuation to the migrated form', () => {
+    const key = 'imported-review:C5-TEST-MCM-20261002-001';
+    expect(isMigratedContinuationEvent(event({ eventKey: key, migratedForm: true }))).toBe(true);
+    expect(isMigratedContinuationEvent(event({ eventKey: key, migratedForm: true, status: 'completed' }))).toBe(true);
+    expect(isMigratedContinuationEvent(event({ eventKey: key, importedReview: { id: '1' } as LearnerCalendarEvent['importedReview'] }))).toBe(false);
+    expect(isMigratedContinuationEvent(event({ eventKey: key }))).toBe(false);
+    expect(isMigratedContinuationEvent(event())).toBe(false);
   });
 
   it('refreshes review pages only for Curriculum review writes', () => {

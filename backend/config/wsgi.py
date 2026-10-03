@@ -16,5 +16,6 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
 application = get_wsgi_application()
 
 from curriculum_api.session_sync_runtime import SessionSyncWSGI
+from learner_api.catchup_reminders import CatchupReminderWSGI
 
-application = SessionSyncWSGI(application)
+application = CatchupReminderWSGI(SessionSyncWSGI(application))

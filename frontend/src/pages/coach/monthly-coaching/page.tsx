@@ -9,11 +9,10 @@ import { FilterSelect, SearchInput } from '@/components/ui/FilterToolbar';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
 import { Pagination } from '@/components/ui/Pagination';
-import { Panel } from '@/components/ui/Panel';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { cn } from '@/lib/cn';
-import { statusTone, type StatusTone } from '@/lib/statusTone';
+import { type StatusTone } from '@/lib/statusTone';
 import { roleNavMap } from '@/mocks/navigation';
 import { coachSessionKey, readCoachSessionCache, writeCoachSessionCache } from '@/features/coach/shared/coachSessionCache';
 import { LearnerAvatar } from '../shared/LearnerIdentity';
@@ -42,6 +41,8 @@ import {
   statusLabel,
 } from '../shared/calendarEvents';
 import { normalizeResolvedReview, normalizeResolvedReviews, reviewActionMatrix } from '../shared/resolvedReviewRows';
+import { MeetingActionsMenu } from './components/MeetingActionsMenu';
+import styles from './monthlyCoaching.module.css';
 
 const coachNav = roleNavMap.coach;
 
@@ -61,6 +62,7 @@ const FILTER_COPY: Record<MeetingFilter, { label: string; description: string }>
 
 const MEETINGS_PER_PAGE = 10;
 const ALL_GROUPS_FILTER = 'all-groups';
+const CALENDAR_IMAGE_URL = `${import.meta.env.BASE_URL}coach-meetings-calendar.webp`;
 const FILTER_VALUES = new Set<MeetingFilter>(Object.keys(FILTER_COPY) as MeetingFilter[]);
 
 function groupCohortFilterKey(event: CoachCalendarEvent) {
@@ -220,10 +222,42 @@ export default function CoachMonthlyCoaching() {
     events.map(event => event.learner?.trim()).filter((learner): learner is string => Boolean(learner)),
   )).sort((a, b) => a.localeCompare(b)), [events]);
   const schedulableEvents = useMemo(
-    () => events.filter(event => event.source === 'mcr' && !isCompletedEvent(event) && event.status !== 'cancelled'),
+    () => events.filter(event => event.source === 'mcr' && event.reviewSource !== 'aptem' && !event.aptemReviewId && !isCompletedEvent(event) && event.status !== 'cancelled'),
     [events],
   );
   const selectedScheduleEvent = schedulableEvents.find(event => eventIdentity(event) === scheduleEventKey) || null;
+  // Each learner can have many future MCR occurrences still needing a slot; without
+  // this, the "+Schedule meeting" dropdown lists every one of them and the same
+  // learner name repeats many times, looking like duplicate entries. Collapse to
+  // the one occurrence per learner a coach would pick next (the soonest one still
+  // needing scheduling), while keeping a row's own "Schedule" action -- which can
+  // target a later occurrence directly -- selectable even if it isn't that pick.
+  const scheduleDropdownOptions = useMemo(() => {
+    const byLearner = new Map<string, CoachCalendarEvent>();
+    for (const event of schedulableEvents) {
+      const key = event.learnerId || event.learner || eventIdentity(event);
+      const current = byLearner.get(key);
+      if (!current) {
+        byLearner.set(key, event);
+        continue;
+      }
+      const currentNeeds = needsScheduling(current);
+      const eventNeeds = needsScheduling(event);
+      if (eventNeeds !== currentNeeds) {
+        if (eventNeeds) byLearner.set(key, event);
+        continue;
+      }
+      const currentDate = parseLocalDate(eventDisplayDate(current));
+      const eventDate = parseLocalDate(eventDisplayDate(event));
+      if (eventDate && (!currentDate || eventDate < currentDate)) byLearner.set(key, event);
+    }
+    const options = Array.from(byLearner.values());
+    if (scheduleEventKey && !options.some(event => eventIdentity(event) === scheduleEventKey)) {
+      const selected = schedulableEvents.find(event => eventIdentity(event) === scheduleEventKey);
+      if (selected) options.push(selected);
+    }
+    return options.sort((a, b) => (a.learner || '').localeCompare(b.learner || ''));
+  }, [schedulableEvents, scheduleEventKey]);
 
   const groupFilterOptions = useMemo(() => {
     const seen = new Set<string>();
@@ -391,55 +425,89 @@ export default function CoachMonthlyCoaching() {
 
   return (
     <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Monthly Coaching Meetings" pageSubtitle="Schedule and manage coaching sessions" userName={ownerName} userRole="Progress Coach">
-      <PageContainer>
+      <PageContainer className={styles.page}>
+        <section className={styles.banner} aria-label="Monthly coaching support">
+          <span aria-hidden="true" className={styles.dots} />
+          <svg aria-hidden="true" className={styles.waves} viewBox="0 0 800 200" preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="monthly-coaching-wave-a" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="var(--banner-wave-a)" stopOpacity="0" /><stop offset="1" stopColor="var(--banner-wave-a)" stopOpacity=".28" /></linearGradient>
+              <linearGradient id="monthly-coaching-wave-b" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stopColor="var(--banner-wave-b)" stopOpacity="0" /><stop offset="1" stopColor="var(--banner-wave-b)" stopOpacity=".24" /></linearGradient>
+              <linearGradient id="monthly-coaching-wave-c" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stopColor="var(--banner-wave-c)" stopOpacity="0" /><stop offset="1" stopColor="var(--banner-wave-c)" stopOpacity=".22" /></linearGradient>
+            </defs>
+            <path d="M0 200 C 180 200 260 60 430 70 S 650 170 800 120 L 800 200 Z" fill="url(#monthly-coaching-wave-a)" />
+            <path d="M120 200 C 300 190 380 20 560 30 S 720 110 800 60 L 800 200 Z" fill="url(#monthly-coaching-wave-b)" />
+            <path d="M340 200 C 470 170 560 110 680 130 S 770 170 800 150 L 800 200 Z" fill="url(#monthly-coaching-wave-c)" />
+            <path d="M60 170 C 240 160 330 40 500 50 S 700 140 800 95" fill="none" stroke="var(--banner-wave-line)" strokeWidth="1.5" />
+          </svg>
+          <span aria-hidden="true" className={styles.glow} />
+          <div>
+            <h2>Support. Progress. Succeed.</h2>
+            <p>Meaningful conversations help learners stay on track and reach their goals.</p>
+          </div>
+          <img src={CALENDAR_IMAGE_URL} alt="" aria-hidden="true" width={312} height={312} />
+        </section>
         {error ? <EmptyState variant="error" title="Unable to load coaching meetings." description={error} /> : null}
-
-        <Panel padding="none">
-          <div className="border-b border-foreground-100 px-4 py-5 md:px-5">
-            <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <div className="inline-flex items-center gap-2" aria-label="Meeting month">
-                  <button type="button" onClick={() => changeMonth(addMonths(selectedMonth, -1))} className="flex h-9 w-9 items-center justify-center rounded-lg border border-primary-100 bg-white text-primary-700 shadow-sm transition hover:bg-primary-50" aria-label="Previous month"><AppIcon className="ri-arrow-left-s-line text-lg" /></button>
-                  <span className="min-w-36 text-center text-[14px] font-bold text-primary-900">{selectedMonthLabel}</span>
-                  <button type="button" onClick={() => changeMonth(addMonths(selectedMonth, 1))} className="flex h-9 w-9 items-center justify-center rounded-lg border border-primary-100 bg-white text-primary-700 shadow-sm transition hover:bg-primary-50" aria-label="Next month"><AppIcon className="ri-arrow-right-s-line text-lg" /></button>
-                </div>
-                <button type="button" onClick={showAllMonths} aria-pressed={allMonths} className={cn('h-9 rounded-lg border px-3 text-[12px] font-semibold transition', allMonths ? 'border-primary-600 bg-primary-600 text-white' : 'border-primary-200 bg-primary-50 text-primary-700 hover:bg-primary-100')}>All months</button>
-                {!selectedMonthIsCurrent ? <button type="button" onClick={() => changeMonth(startOfMonth())} className="h-9 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-semibold text-primary-700 transition hover:bg-primary-100">Today</button> : null}
-              </div>
-              <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center xl:justify-end">
-                <div className="w-full sm:w-56"><SearchInput value={searchTerm} suggestions={learnerSuggestions} onChange={(value) => { setSearchTerm(value); setCurrentPage(1); }} placeholder="Search learner name..." ariaLabel="Search coaching meetings by learner" /></div>
-                <FilterSelect value={groupFilter} onChange={(value) => { setGroupFilter(value); setCurrentPage(1); }} options={groupFilterOptions} label="Group" icon="ri-group-line" widthClass="w-full sm:w-60" tone={groupFilter === ALL_GROUPS_FILTER ? 'default' : 'active'} />
-                <button type="button" onClick={() => scheduleMeeting()} className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-primary-700 px-4 text-[12px] font-bold text-white shadow-sm transition hover:bg-primary-800"><AppIcon className="ri-add-line text-lg" />Schedule meeting</button>
-              </div>
-            </div>
-            <div className="mt-5 border-t border-foreground-100 pt-4">
-              <PageTabs items={filterTabs} value={filter} onChange={(next) => changeFilter(next as MeetingFilter)} label="Filter coaching meetings by status" />
-            </div>
+        <section className={styles.controlsCard} aria-label="Coaching meeting filters and summary">
+          <div className={styles.toolbar}>
+          <div className={styles.monthNav} aria-label="Meeting month">
+            <button type="button" onClick={() => changeMonth(addMonths(selectedMonth, -1))} aria-label="Previous month"><AppIcon className="ri-arrow-left-s-line text-xl" /></button>
+            <span>{monthLabel(selectedMonth)}</span>
+            <button type="button" onClick={() => changeMonth(addMonths(selectedMonth, 1))} aria-label="Next month"><AppIcon className="ri-arrow-right-s-line text-xl" /></button>
           </div>
-
-          <div className="bg-background-100/55 p-3 sm:p-5">
-            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-              <div><h3 className="text-[16px] font-bold text-primary-900">{sortedFiltered.length} coaching meeting{sortedFiltered.length === 1 ? '' : 's'}</h3><p className="text-[12px] text-foreground-500">{allMonths && filter === 'all' ? 'Past and upcoming coaching meetings across all months.' : filter === 'this-month' || filter === 'all' ? `Meetings due or scheduled in ${selectedMonthLabel}.` : FILTER_COPY[filter].description}</p></div>
-              <label className="flex items-center gap-2 text-[12px] text-foreground-500">Sort by<select value={sortOrder} onChange={(event) => { setSortOrder(event.target.value as typeof sortOrder); setCurrentPage(1); }} className="h-9 rounded-lg border border-foreground-200 bg-white px-3 font-semibold text-foreground-700 outline-none focus:border-primary-400"><option value="date-asc">Date (earliest first)</option><option value="date-desc">Date (latest first)</option><option value="learner-asc">Learner (A-Z)</option></select></label>
-            </div>
-            {loading ? <RowsSkeleton rows={6} /> : null}
-            {!loading && !error && sortedFiltered.length === 0 ? <EmptyState variant={tabFiltered.length === 0 ? 'empty' : 'no-matches'} icon={tabFiltered.length === 0 ? 'ri-calendar-check-line' : 'ri-user-search-line'} title={tabFiltered.length === 0 ? 'No coaching meetings found.' : 'No learner matches this search.'} /> : null}
-            {!loading && sortedFiltered.length > 0 ? <div className="overflow-x-auto rounded-xl border border-primary-100 bg-white shadow-sm"><table className="w-full min-w-[1120px] border-collapse text-left"><caption className="sr-only">Coaching meetings for {selectedMonthLabel}</caption><thead><tr className="bg-primary-50/70 text-[11px] font-bold uppercase tracking-wide text-primary-800"><th className="whitespace-nowrap px-4 py-3 align-middle">Learner</th><th className="whitespace-nowrap px-4 py-3 align-middle">Cohort</th><th className="whitespace-nowrap px-4 py-3 align-middle">Date &amp; time</th><th className="whitespace-nowrap px-4 py-3 text-center align-middle">Status</th><th className="whitespace-nowrap px-4 py-3 align-middle">Schedule</th><th className="whitespace-nowrap px-4 py-3 text-right align-middle">Actions</th></tr></thead><tbody>{paginatedEvents.map(event => {
-              const rowTone = meetingTone(event);
-              const actions = reviewActionMatrix(event);
-              return <tr key={eventIdentity(event)} className="ui-action-row border-t border-primary-100/70 transition hover:bg-primary-50/35" onClick={() => openDetails(event)}>
-                <td className="px-4 py-3 align-middle"><div className="flex items-center gap-3"><LearnerAvatar name={event.learner} tone={rowTone} /><div className="min-w-0"><strong className="block text-[13px] font-bold text-primary-900">{event.learner || 'Unknown learner'}</strong><span className="block text-[11px] text-foreground-500">{event.programme || event.email || 'Monthly coaching meeting'}</span></div></div></td>
-                <td className="px-4 py-3 align-middle text-[12px] text-foreground-700"><span className="inline-flex items-center gap-1.5 whitespace-nowrap"><AppIcon className="ri-group-line text-primary-500" />{event.cohort || event.group || '--'}</span></td>
-                <td className="whitespace-nowrap px-4 py-3 align-middle text-[12px] text-foreground-700"><span className="inline-flex min-w-[150px] flex-col gap-1"><span className="flex items-center gap-1.5 whitespace-nowrap"><AppIcon className="ri-calendar-line shrink-0 text-primary-500" />{event.scheduledDate ? formatDateLabel(event.scheduledDate) : formatDateLabel(event.targetDate)}</span><span className="flex items-center gap-1.5 whitespace-nowrap text-foreground-500"><AppIcon className="ri-time-line shrink-0 text-primary-500" />{formatTimeRangeLabel(event)}</span></span></td>
-                <td className="px-4 py-3 text-center align-middle"><div className="flex flex-wrap justify-center gap-1.5"><StatusBadge tone={statusTone(event.status)} label={statusLabel(event.status)} size="sm" />{isAtRiskEvent(event) ? <StatusBadge tone="critical" label="Overdue" dot={false} size="sm" /> : null}{isDueSoonEvent(event) ? <StatusBadge tone="upcoming" label="Due Soon" dot={false} size="sm" /> : null}</div></td>
-                <td className="px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}>{actions.schedule ? <button type="button" onClick={() => scheduleMeeting(event)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-calendar-schedule-line" />{actions.schedule}</button> : null}</td>
-                <td className="min-w-[320px] px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}><div className="flex justify-end gap-1.5"><button type="button" onClick={() => openDetails(event)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-eye-line" />View</button>{actions.viewForm ? <button type="button" onClick={() => { void openForm(event); }} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-file-edit-line" />View Form</button> : null}{actions.presentation ? <button type="button" onClick={() => viewSlides(event)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-slideshow-2-line" />View Slides</button> : null}{actions.join ? <button type="button" onClick={() => openMeeting(event)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-video-on-line" />Join</button> : null}</div></td>
-              </tr>;
-            })}</tbody></table></div> : null}
-            {!loading && sortedFiltered.length > 0 ? <div className="mt-4 flex flex-col gap-3 text-[12px] text-foreground-500 sm:flex-row sm:items-center sm:justify-between"><span>Showing {Math.min(sortedFiltered.length, paginatedEvents.length)} of {sortedFiltered.length} meetings</span>{pageCount > 1 ? <Pagination page={activePage} totalPages={pageCount} total={sortedFiltered.length} pageSize={MEETINGS_PER_PAGE} onPageChange={setCurrentPage} noun="meetings" /> : null}</div> : null}
+          <button type="button" onClick={showAllMonths} aria-pressed={allMonths} className={styles.control}>All months<AppIcon className="ri-arrow-down-s-line" /></button>
+          {!selectedMonthIsCurrent ? <button type="button" onClick={() => changeMonth(startOfMonth())} className={styles.control}>Today</button> : null}
+          <SearchInput className={styles.search} value={searchTerm} suggestions={learnerSuggestions} onChange={(value) => { setSearchTerm(value); setCurrentPage(1); }} placeholder="Search learners..." ariaLabel="Search coaching meetings by learner" />
+          <FilterSelect value={groupFilter} onChange={(value) => { setGroupFilter(value); setCurrentPage(1); }} options={groupFilterOptions} label="Group" widthClass={styles.group} tone={groupFilter === ALL_GROUPS_FILTER ? 'default' : 'active'} />
+          <button type="button" onClick={() => scheduleMeeting()} className={cn(styles.control, styles.primary)}><AppIcon className="ri-add-line text-xl" />Schedule meeting</button>
           </div>
+          <PageTabs className={styles.tabs} items={filterTabs} value={filter} onChange={(next) => changeFilter(next as MeetingFilter)} label="Filter coaching meetings by status" />
+          <div className={styles.listMeta}>
+            <div><h3>{sortedFiltered.length} coaching meeting{sortedFiltered.length === 1 ? '' : 's'}</h3><p>{allMonths && filter === 'all' ? 'Past and upcoming coaching meetings across all months.' : filter === 'this-month' || filter === 'all' ? monthFilterDescription : FILTER_COPY[filter].description}</p></div>
+            <label className="flex items-center gap-2 text-[13px] text-foreground-500">Sort by<select value={sortOrder} onChange={(event) => { setSortOrder(event.target.value as typeof sortOrder); setCurrentPage(1); }} className="rounded-lg border border-foreground-200 bg-white px-3 font-semibold text-foreground-700"><option value="date-asc">Date (earliest first)</option><option value="date-desc">Date (latest first)</option><option value="learner-asc">Learner (A-Z)</option></select></label>
+          </div>
+        </section>
+        <div>
+          {loading ? <RowsSkeleton rows={6} /> : null}
+          {!loading && !error && sortedFiltered.length === 0 ? <EmptyState variant={tabFiltered.length === 0 ? 'empty' : 'no-matches'} icon={tabFiltered.length === 0 ? 'ri-calendar-check-line' : 'ri-user-search-line'} title={tabFiltered.length === 0 ? 'No coaching meetings found.' : 'No learner matches this search.'} /> : null}
+          {!loading && sortedFiltered.length > 0 ? (
+            <div className={styles.tableScroll} role="region" aria-label="Coaching meetings table; scroll horizontally on smaller screens" tabIndex={0}>
+              <table className={styles.table}>
+                <caption className="sr-only">Coaching meetings for {selectedMonthLabel}</caption>
+                <colgroup><col /><col /><col /><col /><col /><col /></colgroup>
+                <thead><tr><th scope="col">Learner</th><th scope="col">Programme</th><th scope="col">Cohort</th><th scope="col">Date &amp; time</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+                <tbody>{paginatedEvents.map(event => {
+                  const actions = reviewActionMatrix(event);
+                  const statusIcon = event.status === 'completed' ? 'ri-checkbox-circle-line' : event.status === 'scheduled' ? 'ri-calendar-line' : event.status === 'awaiting-signature' ? 'ri-edit-line' : 'ri-time-line';
+                  return (
+                    <tr key={eventIdentity(event)} className="ui-action-row" onClick={() => openDetails(event)}>
+                      <td><div className={styles.identity}><LearnerAvatar name={event.learner} tone={meetingTone(event)} size="lg" /><div><strong className={styles.learnerName}>{event.learner || 'Unknown learner'}</strong><span className={styles.learnerEmail}>{event.email || '--'}</span></div></div></td>
+                      <td>{event.programme || '--'}</td>
+                      <td>{event.cohort || event.group || '--'}</td>
+                      <td><span className={styles.date}><span>{formatDateLabel(event.scheduledDate || event.targetDate)}</span><span>{formatTimeRangeLabel(event)}</span></span></td>
+                      <td>
+                        <span className={styles.status} data-status={event.status}><AppIcon className={statusIcon} />{statusLabel(event.status)}</span>
+                        {isAtRiskEvent(event) || isDueSoonEvent(event) ? <div className={styles.alerts}>{isAtRiskEvent(event) ? <StatusBadge tone="critical" label="Overdue" dot={false} size="sm" /> : null}{isDueSoonEvent(event) ? <StatusBadge tone="upcoming" label="Due Soon" dot={false} size="sm" /> : null}</div> : null}
+                      </td>
+                      <td onClick={(clickEvent) => clickEvent.stopPropagation()}>
+                        <div className={styles.actions}>
+                          {actions.viewForm ? <button type="button" onClick={() => { void openForm(event); }} className={cn(styles.control, styles.primary, styles.formButton)}>View form</button> : null}
+                          <MeetingActionsMenu learner={event.learner || 'Unknown learner'} actions={[
+                            ...(actions.view ? [{ label: 'View details', icon: 'ri-eye-line', onSelect: () => openDetails(event) }] : []),
+                            ...(actions.presentation && eventDisplayDate(event) ? [{ label: 'View slides', icon: 'ri-file-text-line', onSelect: () => viewSlides(event) }] : []),
+                            ...(actions.schedule ? [{ label: actions.schedule, icon: 'ri-calendar-line', onSelect: () => scheduleMeeting(event) }] : []),
+                            ...(actions.join ? [{ label: 'Join', icon: 'ri-video-on-line', onSelect: () => openMeeting(event) }] : []),
+                          ]} />
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}</tbody>
+              </table>
+            </div>
+          ) : null}
+          {!loading && sortedFiltered.length > 0 ? <div className={styles.footer}><span>Showing {Math.min(sortedFiltered.length, paginatedEvents.length)} of {sortedFiltered.length} meetings</span>{pageCount > 1 ? <Pagination page={activePage} totalPages={pageCount} total={sortedFiltered.length} pageSize={MEETINGS_PER_PAGE} onPageChange={setCurrentPage} noun="meetings" /> : null}</div> : null}
           {slidesError ? <p role="alert" className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-semibold text-red-700">{slidesError}</p> : null}
-        </Panel>
+        </div>
         {slidesEvent ? (
           <ProgressReviewPptxModal kind="mcm" access="viewer" open target={slidesTargetFromEvent(slidesEvent)} onClose={() => setSlidesEvent(null)} />
         ) : null}
@@ -452,7 +520,7 @@ export default function CoachMonthlyCoaching() {
               <button type="button" aria-label="Close schedule meeting" disabled={scheduleBusy} onClick={() => setScheduleModalOpen(false)} className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-400 hover:bg-foreground-50"><AppIcon className="ri-close-line text-lg" /></button>
             </div>
             <div className="space-y-4 px-5 py-5">
-              <label className="block text-[12px] font-semibold text-foreground-700">Learner<select value={scheduleEventKey} onChange={(event) => { const next = schedulableEvents.find(item => eventIdentity(item) === event.target.value); setScheduleEventKey(event.target.value); setScheduleDate(next?.scheduledDate || next?.targetDate || isoDate(new Date())); setScheduleTime(next?.scheduledTime?.slice(0, 5) || '09:00'); setScheduleDuration(next?.durationMinutes || 60); }} className="mt-1 h-10 w-full rounded-lg border border-foreground-200 bg-white px-3 text-[13px] font-medium text-foreground-800 outline-none focus:border-primary-400"><option value="" disabled>Select learner</option>{schedulableEvents.map(event => <option key={eventIdentity(event)} value={eventIdentity(event)}>{event.learner || 'Unknown learner'}{event.group ? ` · ${event.group}` : ''}</option>)}</select></label>
+              <label className="block text-[12px] font-semibold text-foreground-700">Learner<select value={scheduleEventKey} onChange={(event) => { const next = schedulableEvents.find(item => eventIdentity(item) === event.target.value); setScheduleEventKey(event.target.value); setScheduleDate(next?.scheduledDate || next?.targetDate || isoDate(new Date())); setScheduleTime(next?.scheduledTime?.slice(0, 5) || '09:00'); setScheduleDuration(next?.durationMinutes || 60); }} className="mt-1 h-10 w-full rounded-lg border border-foreground-200 bg-white px-3 text-[13px] font-medium text-foreground-800 outline-none focus:border-primary-400"><option value="" disabled>Select learner</option>{scheduleDropdownOptions.map(event => <option key={eventIdentity(event)} value={eventIdentity(event)}>{event.learner || 'Unknown learner'}{event.group ? ` · ${event.group}` : ''}</option>)}</select></label>
               {selectedScheduleEvent ? <div className="rounded-lg border border-primary-100 bg-primary-50/60 px-3 py-2 text-[12px] text-primary-900"><span className="font-semibold">Meeting:</span> {selectedScheduleEvent.title || 'Monthly coaching meeting'}<span className="mx-2 text-primary-300">•</span><span>{selectedScheduleEvent.programme || 'Monthly coaching'}</span></div> : null}
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3"><label className="text-[12px] font-semibold text-foreground-700">Date<input type="date" value={scheduleDate} onChange={(event) => setScheduleDate(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-foreground-200 px-3 text-[13px] font-medium outline-none focus:border-primary-400" /></label><label className="text-[12px] font-semibold text-foreground-700">Start time<input type="time" value={scheduleTime} onChange={(event) => setScheduleTime(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-foreground-200 px-3 text-[13px] font-medium outline-none focus:border-primary-400" /></label><label className="text-[12px] font-semibold text-foreground-700">Duration<select value={scheduleDuration} onChange={(event) => setScheduleDuration(Number(event.target.value))} className="mt-1 h-10 w-full rounded-lg border border-foreground-200 bg-white px-3 text-[13px] font-medium outline-none focus:border-primary-400"><option value={30}>30 minutes</option><option value={45}>45 minutes</option><option value={60}>60 minutes</option><option value={90}>90 minutes</option><option value={120}>120 minutes</option></select></label></div>
               {scheduleError ? <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-semibold text-red-700">{scheduleError}</p> : null}

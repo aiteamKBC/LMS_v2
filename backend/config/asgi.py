@@ -20,11 +20,12 @@ from channels.routing import ProtocolTypeRouter, URLRouter
 
 from chat.routing import websocket_urlpatterns
 from curriculum_api.session_sync_runtime import SessionSyncASGI
+from learner_api.catchup_reminders import CatchupReminderASGI
 
 
 application = ProtocolTypeRouter(
     {
-        'http': SessionSyncASGI(django_application),
+        'http': CatchupReminderASGI(SessionSyncASGI(django_application)),
         'websocket': AuthMiddlewareStack(URLRouter(websocket_urlpatterns)),
     }
 )

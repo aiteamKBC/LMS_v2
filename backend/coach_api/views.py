@@ -48,7 +48,15 @@ from coach_api.cache.learners import (
     get_cached_caseload,
     release_caseload_lock,
 )
-from coach_api.models import CoachAbsenceReport, CoachAttendanceSourceAdjustment, CoachCalendarEvent, CoachCalendarSequence, CoachManualAttendance, ImportedReviewInstance
+from coach_api.models import CoachAbsenceReport, CoachAttendanceSourceAdjustment, CoachCalendarEvent, CoachCalendarSequence, CoachManualAttendance, ImportedReviewInstance, MigratedReviewTemplate
+from coach_api.migrated_reviews import (
+    EDITABLE_STATUSES as MIGRATED_EDITABLE_STATUSES,
+    initial_local_status, programme_key as migrated_programme_key,
+    render_sections as render_migrated_sections,
+    review_family as migrated_review_family,
+    source_is_completed as migrated_source_is_completed,
+    validate_answers as validate_migrated_answers,
+)
 from coach_api.services.learners.context import CaseloadRequestContext
 from coach_api.validation import (
     ObjectValidator,
@@ -6219,9 +6227,8 @@ def event_note_lines(base_event: dict, record: CoachCalendarEvent | None) -> lis
 
 def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None) -> dict:
     event = dict(base_event)
-    # Aptem owns the review lifecycle.  An LMS calendar row is only a booking
-    # overlay for those imported reviews; its absence (or booking status) must
-    # not erase the status imported from Aptem.
+    # Aptem's status remains provenance. A verified LMS meeting controls the
+    # calendar display status, while sourceStatus keeps the imported value.
     aptem_review = clean_text(base_event.get("reviewSource")).casefold() == "aptem"
     target_date = parse_date_value(base_event.get("targetDate"))
     if isinstance(target_date, datetime):
@@ -6249,12 +6256,20 @@ def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None)
         is_time_estimated = False
 
     if aptem_review:
-        status = clean_text(base_event.get("status")) or CoachCalendarEvent.STATUS_NOT_SCHEDULED
+        source_status = clean_text(base_event.get("status")) or CoachCalendarEvent.STATUS_NOT_SCHEDULED
+        historical_completed = source_status.casefold() == CoachCalendarEvent.STATUS_COMPLETED
+        verified_local_booking = bool(
+            not historical_completed and record and record.sync_state == CoachCalendarEvent.SYNC_SYNCED
+            and record.graph_event_id and calendar_record_has_launch_url(record)
+            and record.status in {CoachCalendarEvent.STATUS_SCHEDULED, CoachCalendarEvent.STATUS_IN_PROGRESS}
+        )
+        status = record.status if verified_local_booking else source_status
     else:
         status = record.status if record else CoachCalendarEvent.STATUS_NOT_SCHEDULED
-    meeting_link = clean_text(record.meeting_link) if record else ""
-    graph_web_link = clean_text(record.graph_web_link) if record else ""
-    meeting_provider = clean_text(record.meeting_provider) if record else ""
+    meeting_visible = bool(record and (not aptem_review or historical_completed or verified_local_booking))
+    meeting_link = clean_text(record.meeting_link) if meeting_visible else ""
+    graph_web_link = clean_text(record.graph_web_link) if meeting_visible else ""
+    meeting_provider = clean_text(record.meeting_provider) if meeting_visible else ""
 
     event.update(
         {
@@ -6270,7 +6285,7 @@ def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None)
             "timeLabel": time_label,
             "isTimeEstimated": is_time_estimated,
             "status": status,
-            "sourceStatus": schedule_status_label(status),
+            "sourceStatus": (base_event.get("sourceStatus") or schedule_status_label(source_status)) if aptem_review else schedule_status_label(status),
             "rawStatus": base_event.get("rawStatus") if aptem_review else schedule_status_label(status),
             "scheduledDate": (
                 record.scheduled_date.isoformat() if record and record.scheduled_date
@@ -8702,6 +8717,8 @@ def coach_meeting_artifact_content_response(request, record, event_key, artifact
 @coach_access_required
 @require_GET
 def coach_timetable_event_artifact_content(request, event_key, artifact_type, artifact_id):
+    if event_key.startswith("imported-review:") and is_coach_view_as(request):
+        return JsonResponse({"detail": "Admin view-as cannot fetch migrated Teams content.", "code": "coach_view_as_read_only"}, status=403)
     owner_email = authenticated_coach_email(request)
     record = coach_meeting_artifact_record(owner_email, event_key)
     if not record:
@@ -10750,6 +10767,9 @@ def coach_timetable_schedule_event(request):
     except ValidationError as exc:
         return validation_error_response(exc)
 
+    if event_key.startswith("imported-review:"):
+        return coach_error(request, code="BOOKING_CONFLICT", message="Open the migrated review and use Book Meeting to schedule it.", status=409)
+
     catchup_record, owner_name = find_catchup_calendar_record(owner_email, event_key)
     if catchup_record:
         learner_rows = fetch_owner_active_learner_profiles(owner_email)
@@ -10871,6 +10891,11 @@ def coach_timetable_schedule_event(request):
     base_event, owner_name = find_generated_timetable_event(owner_email, event_key)
     if not base_event:
         return JsonResponse({"detail": "Calendar event not found for this coach."}, status=404)
+    if (
+        base_event.get("reviewSource") == "aptem"
+        and base_event.get("status") == CoachCalendarEvent.STATUS_COMPLETED
+    ):
+        return JsonResponse({"detail": "This historical imported review is read-only."}, status=409)
 
     target_date = parse_date_value(base_event.get("targetDate"))
     if isinstance(target_date, datetime):
@@ -11140,6 +11165,9 @@ def coach_timetable_event_action(request):
     except ValidationError as exc:
         return validation_error_response(exc)
 
+    if event_key.startswith("imported-review:"):
+        return coach_error(request, code="BOOKING_CONFLICT", message="Open the migrated review for its meeting actions.", status=409)
+
     owner_email = authenticated_coach_email(request)
 
     catchup_record, owner_name = find_catchup_calendar_record(owner_email, event_key)
@@ -11188,6 +11216,11 @@ def coach_timetable_event_action(request):
     base_event, owner_name = find_generated_timetable_event(owner_email, event_key)
     if not base_event:
         return JsonResponse({"detail": "Calendar event not found for this coach."}, status=404)
+    if (
+        base_event.get("reviewSource") == "aptem"
+        and base_event.get("status") == CoachCalendarEvent.STATUS_COMPLETED
+    ):
+        return JsonResponse({"detail": "This historical imported review is read-only."}, status=409)
 
     record = CoachCalendarEvent.objects.filter(owner_email__iexact=owner_email, event_key=event_key).first()
     if not record:
@@ -13700,6 +13733,34 @@ def coach_evidence_awaiting_review(request):
 # same ownership boundary every other coach/timetable endpoint enforces.
 
 @coach_access_required
+def coach_aptem_review_reconciliation_preview(request, learner_id):
+    """Inspect one owned Aptem learner without creating an instance or booking."""
+    from .aptem_review_reconciliation import build_aptem_review_reconciliation_preview
+
+    if request.method != "GET":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+    owner_email = authenticated_coach_email(request)
+    learner = next(
+        (row for row in fetch_owner_active_learner_profiles(owner_email) if row.id == learner_id),
+        None,
+    )
+    if learner is None:
+        return JsonResponse({"detail": "Learner not found in your caseload."}, status=404)
+    aptem_ids, conflicts = resolve_effective_aptem_ids([learner])
+    if learner_id in conflicts:
+        return JsonResponse({"detail": "Aptem learner identity is conflicting."}, status=409)
+    if learner_id not in aptem_ids:
+        return JsonResponse({"detail": "This learner has no Aptem review identity."}, status=404)
+    learner.effective_aptem_id = aptem_ids[learner_id]
+    try:
+        preview = build_aptem_review_reconciliation_preview(learner, owner_email)
+    except (DatabaseError, RuntimeError):
+        logger.exception("Aptem review reconciliation preview unavailable for learner %s", learner_id)
+        return JsonResponse({"detail": "Review reconciliation preview is unavailable."}, status=503)
+    return JsonResponse(preview)
+
+
+@coach_access_required
 def coach_review_learner_addition_templates(request):
     """Enabled Review templates a coach may add a learner-specific Review
     from, scoped to ONE learner's own programme.
@@ -13942,8 +14003,22 @@ def _review_instance_meeting_summary_source(instance_row, definition=None):
     return source
 
 
+def _review_learner_identity(learner):
+    """Display identity from the linked learner profile, never route labels."""
+    return {
+        "learnerName": clean_text(getattr(learner, "full_name", None)) or clean_text(getattr(learner, "username", None)),
+        "learnerEmail": clean_text(getattr(learner, "email", None)),
+        "programme": clean_text(getattr(learner, "programme", None)),
+        "programmeId": clean_text(getattr(learner, "programme_id", None)),
+    }
+
+
 def _coach_review_instance_definition(instance_row):
     definition = curriculum_review_instances.review_instance_form_definition(instance_row)
+    learner = LearnerProfile.objects.filter(pk=instance_row.get("learner_id")).only(
+        "full_name", "email", "programme", "programme_id",
+    ).first()
+    definition.update(_review_learner_identity(learner))
     source = _review_instance_meeting_summary_source(instance_row, definition)
     if source is not None:
         definition["meetingSummarySource"] = source
@@ -14161,11 +14236,12 @@ def _imported_review_progress_snapshot(learner, review: dict, *, calculated_by: 
         return None
 
 
-def _imported_review_definition(owner_email: str, event_key: str) -> dict | None:
+def _imported_review_definition(owner_email: str, event_key: str, *, preview_only=False) -> dict | None:
     """Adapt one owned Aptem review to the native form-definition contract.
 
-    Summary-only imports remain read-only. Imports with a real form can store
-    LMS-local answers without changing the original Aptem data.
+    Summary-only imports remain read-only. An admin view-as may preview an
+    approved template without creating an overlay. Imports with a real form
+    can store LMS-local answers without changing the original Aptem data.
     ``event_key`` is the same stable identity used by the timetable row.
     """
     prefix = "imported-review:"
@@ -14210,23 +14286,66 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
     learner = next((item for item in learners if int(item.id) == profile_id), None)
     if learner is None:
         return None
+    source_learner_id = clean_text(review.get("aptemLearnerId"))
+    if source_learner_id and source_learner_id != str(aptem_by_profile[profile_id]):
+        return None
 
     normalized_sections = sections.get(row["id"]) or []
     form_available = _imported_review_has_usable_form(
         review,
         has_normalized_sections=bool(normalized_sections),
     )
-    summary_only = not form_available
+    historical_completed = migrated_source_is_completed(review)
     canonical_event_key = f"{prefix}{aptem_review_id}"
-    saved_instance = (
-        ImportedReviewInstance.objects.filter(
-            owner_email__iexact=owner_email,
-            event_key=canonical_event_key,
-        ).first()
-        if form_available
-        else None
+    canonical_owner = owner_email.strip().casefold()
+    saved_instance = ImportedReviewInstance.objects.filter(
+        owner_email__iexact=canonical_owner, event_key=canonical_event_key,
+    ).first()
+    source_review_id = getattr(saved_instance, "source_review_id", None)
+    overlay_learner_id = getattr(saved_instance, "learner_id", None)
+    if saved_instance and isinstance(source_review_id, int):
+        if source_review_id != row["id"] or overlay_learner_id != profile_id:
+            return None
+    if saved_instance and isinstance(overlay_learner_id, int) and overlay_learner_id != profile_id:
+        return None
+    snapshot = getattr(saved_instance, "template_snapshot", None)
+    migrated_form = not historical_completed and isinstance(snapshot, dict) and bool(snapshot.get("sections"))
+    if migrated_form and not getattr(saved_instance, "source_review_id", None):
+        return None
+    family = migrated_review_family(review.get("type"))
+    local_programme_key = migrated_programme_key(
+        getattr(learner, "programme_id", None), getattr(learner, "programme", None),
     )
-    saved_answers = saved_instance.answers if saved_instance and isinstance(saved_instance.answers, dict) else {}
+    eligible_for_template = bool(
+        not saved_instance and not historical_completed and not form_available
+        and family and local_programme_key and initial_local_status(review.get("status"))
+    )
+    approved_template = None
+    if eligible_for_template:
+        approved_template = MigratedReviewTemplate.objects.filter(
+            programme_key=local_programme_key, review_family=family, is_active=True,
+        ).first()
+    can_initialize = bool(eligible_for_template and approved_template and not preview_only)
+    no_approved_template = bool(eligible_for_template and not approved_template)
+    preview_sections = []
+    preview_warnings = []
+    preview_error = False
+    if preview_only and approved_template:
+        try:
+            preview_sections, preview_warnings = render_migrated_sections(
+                approved_template.definition_json, {},
+            )
+        except ValueError:
+            # An invalid active definition must never be presented as a usable form.
+            preview_error = True
+    is_template_preview = bool(preview_sections)
+    form_available = form_available or migrated_form or is_template_preview
+    summary_only = not form_available
+    saved_answers = (
+        saved_instance.answers
+        if not historical_completed and saved_instance and isinstance(saved_instance.answers, dict)
+        else {}
+    )
     review_type = clean_text(review.get("type"))
     monthly_types = {clean_text(value).casefold() for value in REVIEW_TYPES["monthly-coaching"]}
     review_type_code = "aptem_mcm" if review_type.casefold() in monthly_types else "aptem_progress_review"
@@ -14290,8 +14409,16 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
             "enabled": True,
             "fields": fields,
         })
+    field_warnings = []
+    if migrated_form:
+        try:
+            adapted_sections, field_warnings = render_migrated_sections(snapshot, saved_answers)
+        except ValueError:
+            return None
+    elif is_template_preview:
+        adapted_sections, field_warnings = preview_sections, preview_warnings
 
-    if is_mcm and adapted_sections:
+    if is_mcm and adapted_sections and not migrated_form and not is_template_preview:
         def _mcm_sort_key(item):
             index, section = item
             rank = _imported_mcm_section_rank(section["title"])
@@ -14314,27 +14441,42 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
         role: {"required": False, "signed": False, "signedBy": None, "signedName": None, "signedAt": None, "signature": None}
         for role in curriculum_review_instances.SIGNATURE_ROLES
     }
+    if migrated_form and saved_instance:
+        from coach_api.migrated_completion import signature_states
+        signatures = signature_states(saved_instance)
     instance_status = (
         clean_text(review.get("status")) or CoachCalendarEvent.STATUS_NOT_SCHEDULED
-        if summary_only
+        if summary_only or historical_completed or is_template_preview
         else saved_instance.status if saved_instance else ImportedReviewInstance.STATUS_IN_PROGRESS
     )
     instance_completed_at = (
         review.get("completedDate")
-        if summary_only
+        if summary_only or historical_completed or is_template_preview
         else saved_instance.completed_at.isoformat() if saved_instance and saved_instance.completed_at else None
     )
     definition = {
-        "readOnly": summary_only,
+        **_review_learner_identity(learner),
+        "readOnly": preview_only or summary_only or historical_completed or (
+            migrated_form and saved_instance.status not in MIGRATED_EDITABLE_STATUSES
+        ),
         "source": "aptem",
         "formAvailable": form_available,
         "summaryOnly": summary_only,
+        "migratedForm": migrated_form,
+        "previewOnly": is_template_preview,
+        "noApprovedMigratedTemplate": no_approved_template,
+        "migratedPreviewError": preview_error,
+        "canInitialize": can_initialize,
+        "migratedProgrammeKey": local_programme_key if can_initialize or migrated_form or is_template_preview else None,
+        "sourceStatus": clean_text(row.get("status")) or review.get("status"),
+        "localStatus": saved_instance.status if saved_instance else None,
+        "fieldWarnings": field_warnings,
         "instance": {
             "id": canonical_event_key,
             "reviewTemplateId": "",
             "learnerId": profile_id,
             "programmeId": clean_text(getattr(learner, "programme_id", None)),
-            "occurrenceNumber": 1,
+            "occurrenceNumber": None if migrated_form or can_initialize or is_template_preview else 1,
             "targetDate": target_date,
             "status": instance_status,
             "startedAt": None,
@@ -14342,9 +14484,11 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
         },
         "template": {
             "id": "",
-            "name": clean_text(review.get("name")) or review_type or "Imported review",
+            "name": (clean_text(snapshot.get("name")) if migrated_form else "")
+                    or (clean_text(approved_template.name) if is_template_preview else "")
+                    or clean_text(review.get("name")) or review_type or "Imported review",
             "reviewTypeCode": review_type_code,
-            "signatures": {role: False for role in curriculum_review_instances.SIGNATURE_ROLES},
+            "signatures": {role: signatures[role]["required"] for role in curriculum_review_instances.SIGNATURE_ROLES},
             "visibleTo": {role: role == "advisor" for role in curriculum_review_instances.SIGNATURE_ROLES},
             "recurrence": {"interval": 0, "unit": "none"},
             "notifications": {},
@@ -14359,10 +14503,278 @@ def _imported_review_definition(owner_email: str, event_key: str) -> dict | None
             if progress_snapshot is not None
             else []
         ),
+        "historicalReview": review,
     }
-    from curriculum_api.review_pdf import pdf_availability
-    definition["pdf"] = pdf_availability(definition)
+    if migrated_form:
+        from coach_api.models import MigratedReviewDocument
+        pdf_ready = bool(saved_instance and saved_instance.status == ImportedReviewInstance.STATUS_COMPLETED
+                         and MigratedReviewDocument.objects.filter(overlay=saved_instance).exists())
+        definition["pdf"] = {
+            "available": pdf_ready,
+            "reason": "" if pdf_ready else "Generate the LMS review PDF after completion." if saved_instance.status == ImportedReviewInstance.STATUS_COMPLETED else "Available after completion.",
+            "source": "lms-migrated",
+        }
+    else:
+        definition["pdf"] = {
+        "available": True,
+        "reason": "",
+        "source": "aptem",
+        }
+    if not historical_completed and (migrated_form or can_initialize or is_template_preview):
+        calendar_rows = list(CoachCalendarEvent.objects.filter(event_key=canonical_event_key)[:2])
+        calendar = calendar_rows[0] if calendar_rows else None
+        booking_template = getattr(saved_instance, "migrated_template", None) if saved_instance else None
+        association_valid = bool(
+            calendar and calendar.owner_email.casefold() == canonical_owner
+            and calendar.learner_id == profile_id
+            and not calendar.review_instance_id and not calendar.review_template_id
+            and calendar.event_type == ("mcr" if family == "MCM" else "progress-review")
+        )
+        booked = bool(
+            association_valid and calendar.sync_state == CoachCalendarEvent.SYNC_SYNCED
+            and calendar.graph_event_id and calendar_record_has_launch_url(calendar)
+            and calendar.status in {CoachCalendarEvent.STATUS_SCHEDULED, CoachCalendarEvent.STATUS_IN_PROGRESS}
+        )
+        definition["booking"] = {
+            "booked": booked,
+            "conflict": bool(calendar and not association_valid),
+            "canAttach": bool(
+                booked and migrated_form and saved_instance and booking_template
+                and booking_template.is_active and booking_template.review_family == family
+                and booking_template.programme_key == local_programme_key
+                and saved_instance.status == ImportedReviewInstance.STATUS_NOT_SCHEDULED
+                and not preview_only
+            ),
+            "canBook": bool(
+                migrated_form and saved_instance and booking_template
+                and booking_template.is_active and booking_template.review_family == family
+                and booking_template.programme_key == local_programme_key
+                and saved_instance.status in {
+                    ImportedReviewInstance.STATUS_NOT_SCHEDULED,
+                    ImportedReviewInstance.STATUS_SCHEDULED,
+                } and not booked and not preview_only and (not calendar or association_valid)
+            ),
+            "eventKey": canonical_event_key if association_valid else None,
+            "scheduledDate": calendar.scheduled_date.isoformat() if association_valid and calendar.scheduled_date else None,
+            "scheduledTime": format_time_value(calendar.scheduled_time) if association_valid and calendar.scheduled_time else None,
+            "durationMinutes": calendar.duration_minutes if association_valid else None,
+            "meetingLink": calendar.meeting_link if booked else None,
+            "syncState": calendar.sync_state if association_valid else None,
+        }
     return definition
+
+
+def _owned_migrated_overlay(owner_email, definition, *, lock=False):
+    query = ImportedReviewInstance.objects.filter(
+        owner_email__iexact=owner_email.strip().casefold(),
+        event_key=definition["instance"]["id"],
+    )
+    if lock:
+        query = query.select_for_update()
+    overlay = query.first()
+    source = definition.get("historicalReview") or {}
+    if not overlay or not isinstance(overlay.template_snapshot, dict) or not overlay.template_snapshot.get("sections"):
+        return None
+    if overlay.learner_id != definition["instance"]["learnerId"] or overlay.source_review_id != int(source["id"]):
+        return None
+    return overlay
+
+
+@coach_access_required
+def coach_review_instance_initialize(request, instance_id):
+    """Explicitly snapshot one approved migrated template; GET never writes."""
+    if request.method != "POST":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+    if not instance_id.startswith("imported-review:"):
+        return JsonResponse({"detail": "This action is for imported reviews only."}, status=409)
+    owner_email = authenticated_coach_email(request).strip().casefold()
+    definition = _imported_review_definition(owner_email, instance_id)
+    if not definition:
+        return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
+    if not definition.get("canInitialize") or definition.get("readOnly") is False:
+        return JsonResponse({"detail": "This imported review cannot be initialized."}, status=409)
+    family = migrated_review_family((definition.get("historicalReview") or {}).get("type"))
+    local_status = initial_local_status(definition.get("sourceStatus"))
+    source_id = int(definition["historicalReview"]["id"])
+    with transaction.atomic():
+        template = MigratedReviewTemplate.objects.filter(
+            programme_key=definition["migratedProgrammeKey"],
+            review_family=family, is_active=True,
+        ).first()
+        if template is None:
+            return JsonResponse({"detail": "No approved migrated template is assigned."}, status=409)
+        try:
+            from coach_api.migrated_reviews import validate_definition
+            validate_definition(template.definition_json)
+        except ValueError as exc:
+            return JsonResponse({"detail": str(exc)}, status=409)
+        try:
+            from coach_api.migrated_completion import requirements_for_family
+            with transaction.atomic():
+                overlay, created = ImportedReviewInstance.objects.get_or_create(
+                    owner_email=owner_email, event_key=definition["instance"]["id"],
+                    defaults={
+                        "learner_id": definition["instance"]["learnerId"],
+                        "source_review_id": source_id,
+                        "migrated_template": template,
+                        "template_snapshot": {"name": template.name, **json.loads(json.dumps(template.definition_json))},
+                        "signature_requirements": requirements_for_family(family),
+                        "answers": {}, "status": local_status,
+                    },
+                )
+        except IntegrityError:
+            return JsonResponse({"detail": "This source review is already associated with another overlay."}, status=409)
+        if not created and (
+            overlay.learner_id != definition["instance"]["learnerId"]
+            or overlay.source_review_id != source_id
+            or not overlay.template_snapshot
+        ):
+            return JsonResponse({"detail": "An existing overlay has a different source association."}, status=409)
+    return JsonResponse(_imported_review_definition(owner_email, instance_id))
+
+
+@coach_access_required
+def coach_review_instance_local_status(request, instance_id):
+    """Start an imported review only after its LMS meeting is verified."""
+    if request.method != "POST":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+    if not instance_id.startswith("imported-review:"):
+        return JsonResponse({"detail": "This action is for imported reviews only."}, status=409)
+    owner_email = authenticated_coach_email(request)
+    definition = _imported_review_definition(owner_email, instance_id)
+    if not definition:
+        return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
+    if not definition.get("migratedForm") or definition.get("readOnly"):
+        return JsonResponse({"detail": "This imported review is read-only."}, status=409)
+    try:
+        payload = parse_json_body(request)
+    except ValidationError as exc:
+        return validation_error_response(exc)
+    if payload.get("status") != ImportedReviewInstance.STATUS_IN_PROGRESS:
+        return JsonResponse({"detail": "Only the in-progress transition is available in Phase B."}, status=400)
+    with transaction.atomic():
+        overlay = _owned_migrated_overlay(owner_email, definition, lock=True)
+        if not overlay:
+            return JsonResponse({"detail": "Imported review association mismatch."}, status=409)
+        if overlay.status != ImportedReviewInstance.STATUS_SCHEDULED:
+            return JsonResponse({"detail": "Only a scheduled review can be started."}, status=409)
+        calendar = CoachCalendarEvent.objects.select_for_update().filter(event_key=instance_id).first()
+        if not calendar or calendar.owner_email.casefold() != owner_email or calendar.learner_id != overlay.learner_id or calendar.review_instance_id or calendar.review_template_id or calendar.sync_state != CoachCalendarEvent.SYNC_SYNCED or not calendar.graph_event_id or not calendar_record_has_launch_url(calendar):
+            return coach_error(request, code="BOOKING_CONFLICT", message="Book and confirm the Teams meeting before starting this review.", status=409)
+        overlay.status = ImportedReviewInstance.STATUS_IN_PROGRESS
+        overlay.save(update_fields=["status", "updated_at"])
+        calendar.status = CoachCalendarEvent.STATUS_IN_PROGRESS
+        calendar.save(update_fields=["status", "updated_at"])
+    return JsonResponse(_imported_review_definition(owner_email, instance_id))
+
+
+@coach_access_required
+def coach_review_instance_book(request, instance_id):
+    """Book one imported review by its Aptem identity, never by a native occurrence."""
+    if request.method != "POST":
+        return JsonResponse({"detail": "Method not allowed."}, status=405)
+    if not instance_id.startswith("imported-review:"):
+        return coach_error(request, code="BOOKING_CONFLICT", message="Only imported reviews can use this booking action.", status=409)
+    owner_email = authenticated_coach_email(request).strip().casefold()
+    definition = _imported_review_definition(owner_email, instance_id)
+    if not definition:
+        return coach_error(request, code="UNAUTHORIZED", message="Imported review not found for this coach.", status=404)
+    if not initial_local_status(definition.get("sourceStatus")):
+        return coach_error(request, code="BOOKING_CONFLICT", message="Historical or unsupported Aptem reviews cannot be booked.", status=409)
+    if not definition.get("migratedProgrammeKey"):
+        return coach_error(request, code="MISSING_PROGRAMME", message="This learner's programme could not be resolved.", status=409)
+    if not definition.get("migratedForm") or definition.get("readOnly"):
+        return coach_error(request, code="NO_APPROVED_TEMPLATE", message="An approved migrated form is required before booking.", status=409)
+    overlay = _owned_migrated_overlay(owner_email, definition)
+    family = migrated_review_family((definition.get("historicalReview") or {}).get("type"))
+    if (not overlay or not family or not initial_local_status(definition.get("sourceStatus"))
+        or not overlay.migrated_template_id or not overlay.migrated_template.is_active
+        or overlay.migrated_template.review_family != family
+        or overlay.migrated_template.programme_key != definition.get("migratedProgrammeKey")):
+        return coach_error(request, code="NO_APPROVED_TEMPLATE", message="An approved migrated form is required before booking.", status=409)
+    if overlay.status not in {ImportedReviewInstance.STATUS_NOT_SCHEDULED, ImportedReviewInstance.STATUS_SCHEDULED}:
+        return coach_error(request, code="BOOKING_CONFLICT", message="Only an unstarted migrated review can be booked.", status=409)
+    if definition.get("booking", {}).get("conflict"):
+        return coach_error(request, code="BOOKING_CONFLICT", message="This imported review has an inconsistent calendar link.", status=409)
+    try:
+        payload = parse_json_body(request)
+        validator = ObjectValidator(payload)
+        scheduled_date = validator.iso_date("scheduledDate", required=True)
+        scheduled_time = validator.clock_time("scheduledTime", required=True)
+        duration_minutes = validator.integer("durationMinutes", default=TIMETABLE_DEFAULT_DURATION_MINUTES, minimum=15, maximum=480)
+        timezone_offset_minutes = validator.integer("timezoneOffsetMinutes", default=0, minimum=-840, maximum=840)
+        if scheduled_date and scheduled_date < date.today():
+            validator.error("scheduledDate", "Choose today or a future date.")
+        validator.check()
+    except ValidationError as exc:
+        return validation_error_response(exc)
+    base_event, owner_name = find_generated_timetable_event(owner_email, instance_id)
+    learner_id = definition["instance"]["learnerId"]
+    event_type = "mcr" if family == "MCM" else "progress-review" if family == "PR" else None
+    if not event_type or not base_event or base_event.get("reviewSource") != "aptem" or int(base_event.get("learnerId") or 0) != learner_id or base_event.get("source") != event_type:
+        return coach_error(request, code="BOOKING_CONFLICT", message="The imported calendar event could not be verified.", status=409)
+    learner = next((row for row in fetch_caseload_dashboard_profiles(owner_email) if int(getattr(row, "id", 0) or 0) == learner_id), None)
+    if learner is None:
+        return coach_error(request, code="MISSING_LEARNER", message="The learner could not be resolved.", status=409)
+    if coach_learner_personal_calendar_conflicts(learner, scheduled_date, scheduled_time, duration_minutes, timezone_offset_minutes):
+        return coach_error(request, code="BOOKING_CONFLICT", message="This learner is busy at that time.", status=409)
+    target_date = parse_schedule_date(definition["instance"]["targetDate"])
+    if not target_date:
+        return coach_error(request, code="BOOKING_CONFLICT", message="This review has no valid target date.", status=409)
+    try:
+        with transaction.atomic():
+            lock_learner_calendar(learner_id)
+            record = CoachCalendarEvent.objects.select_for_update().filter(event_key=instance_id).first()
+            if record:
+                if (record.owner_email.casefold() != owner_email or record.learner_id != learner_id
+                    or record.event_type != event_type or record.review_instance_id or record.review_template_id):
+                    return coach_error(request, code="BOOKING_CONFLICT", message="This imported review has an inconsistent calendar link.", status=409)
+                if record.status != CoachCalendarEvent.STATUS_SCHEDULED:
+                    return coach_error(request, code="BOOKING_CONFLICT", message="This booking is no longer in a schedulable state.", status=409)
+                if (record.scheduled_date, record.scheduled_time, record.duration_minutes) != (scheduled_date, scheduled_time, duration_minutes):
+                    return coach_error(request, code="ALREADY_BOOKED", message="This review already has a different booking request.", status=409)
+                if record.sync_state in {CoachCalendarEvent.SYNC_SYNCING, CoachCalendarEvent.SYNC_RECONCILIATION}:
+                    return coach_error(request, code="BOOKING_CONFLICT", message="Calendar synchronization is in progress or needs reconciliation.", status=409)
+            else:
+                if england_non_delivery_reason(scheduled_date):
+                    return coach_error(request, code="BOOKING_CONFLICT", message=england_non_delivery_reason(scheduled_date), status=409)
+                ensure_learner_calendar_available(
+                    learner_id=learner_id, learner_email=clean_text(base_event.get("email")),
+                    scheduled_date=scheduled_date, scheduled_time=scheduled_time,
+                    duration_minutes=duration_minutes,
+                )
+                record = CoachCalendarEvent.objects.create(
+                    event_key=instance_id, idempotency_key=instance_id,
+                    owner_email=owner_email, owner_name=owner_name,
+                    learner_id=learner_id, learner_name=clean_text(base_event.get("learner")),
+                    learner_email=clean_text(base_event.get("email")), event_type=event_type,
+                    sequence=int(base_event.get("sequence") or 1), target_date=target_date,
+                    scheduled_date=scheduled_date, scheduled_time=scheduled_time,
+                    duration_minutes=duration_minutes, status=CoachCalendarEvent.STATUS_SCHEDULED,
+                    sync_state=CoachCalendarEvent.SYNC_PENDING,
+                )
+    except LearnerCalendarConflict as exc:
+        return coach_error(request, code="BOOKING_CONFLICT", message=str(exc), status=409)
+    except IntegrityError:
+        return coach_error(request, code="BOOKING_CONFLICT", message="A concurrent booking won. Reload this review.", status=409)
+    except Exception:
+        logger.exception("migrated_review_calendar_reservation_failed")
+        return coach_error(request, code="CALENDAR_CREATE_FAILED", message="The calendar operation could not be completed. Reload before retrying.", status=500)
+    try:
+        record, warning, _attempted = synchronize_reserved_calendar_event(record.pk, base_event)
+    except Exception:
+        logger.exception("migrated_review_graph_sync_failed")
+        return coach_error(request, code="GRAPH_CREATE_FAILED", message="The Teams meeting could not be confirmed. Reload before retrying with the same details.", status=502)
+    if warning or record.sync_state != CoachCalendarEvent.SYNC_SYNCED or not record.graph_event_id or not calendar_record_has_launch_url(record):
+        return coach_error(request, code="GRAPH_CREATE_FAILED", message="The Teams meeting could not be confirmed. The booking is safe to retry with the same details.", status=502)
+    with transaction.atomic():
+        saved = _owned_migrated_overlay(owner_email, definition, lock=True)
+        if not saved or saved.status not in {ImportedReviewInstance.STATUS_NOT_SCHEDULED, ImportedReviewInstance.STATUS_SCHEDULED}:
+            return coach_error(request, code="BOOKING_CONFLICT", message="The review changed during booking. Reload it.", status=409)
+        if saved.status != ImportedReviewInstance.STATUS_SCHEDULED:
+            saved.status = ImportedReviewInstance.STATUS_SCHEDULED
+            saved.save(update_fields=["status", "updated_at"])
+    return JsonResponse(_imported_review_definition(owner_email, instance_id))
 
 
 @coach_access_required
@@ -14385,6 +14797,11 @@ def coach_review_instance_for_event(request):
         return validation_error_response(exc)
 
     owner_email = authenticated_coach_email(request)
+    if event_key.startswith("imported-review:"):
+        base_event, _owner_name = find_generated_timetable_event(owner_email, event_key)
+        if not base_event:
+            return JsonResponse({"detail": "Calendar event not found for this coach."}, status=404)
+        return JsonResponse({"detail": "Imported reviews cannot be opened as native reviews."}, status=409)
     record = CoachCalendarEvent.objects.filter(event_key=event_key, owner_email__iexact=owner_email).first()
     if record and clean_text(record.review_instance_id):
         return JsonResponse({"instanceId": clean_text(record.review_instance_id)})
@@ -14490,7 +14907,10 @@ def coach_review_instance_detail(request, instance_id):
     if request.method != "GET":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
     if instance_id.startswith("imported-review:"):
-        definition = _imported_review_definition(authenticated_coach_email(request), instance_id)
+        definition = _imported_review_definition(
+            authenticated_coach_email(request), instance_id,
+            preview_only=is_coach_view_as(request),
+        )
         if not definition:
             return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
         return JsonResponse(definition)
@@ -14625,11 +15045,12 @@ def coach_review_instance_answers(request, instance_id):
         return JsonResponse({"detail": "Method not allowed."}, status=405)
     owner_email = authenticated_coach_email(request)
     if instance_id.startswith("imported-review:"):
+        owner_email = owner_email.strip().casefold()
         definition = _imported_review_definition(owner_email, instance_id)
         if not definition:
             return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
-        if definition.get("summaryOnly"):
-            return JsonResponse({"detail": "This imported review has summary information only and cannot be edited."}, status=409)
+        if definition.get("readOnly"):
+            return JsonResponse({"detail": "This imported review is read-only."}, status=409)
         try:
             payload = parse_json_body(request)
         except ValidationError as exc:
@@ -14637,6 +15058,18 @@ def coach_review_instance_answers(request, instance_id):
         answers = payload.get("answers")
         if not isinstance(answers, dict):
             return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
+        if definition.get("migratedForm"):
+            with transaction.atomic():
+                imported = _owned_migrated_overlay(owner_email, definition, lock=True)
+                if not imported or imported.status not in MIGRATED_EDITABLE_STATUSES:
+                    return JsonResponse({"detail": "Imported review association or status mismatch."}, status=409)
+                try:
+                    validate_migrated_answers(imported.template_snapshot, answers)
+                except ValueError as exc:
+                    return JsonResponse({"detail": str(exc)}, status=400)
+                imported.answers = answers
+                imported.save(update_fields=["answers", "updated_at"])
+            return JsonResponse(_imported_review_definition(owner_email, imported.event_key))
         field_ids = {
             field["id"]
             for section in definition.get("sections", [])
@@ -14917,11 +15350,12 @@ def coach_review_instance_complete(request, instance_id):
         return JsonResponse({"detail": "Method not allowed."}, status=405)
     owner_email = authenticated_coach_email(request)
     if instance_id.startswith("imported-review:"):
+        owner_email = owner_email.strip().casefold()
         definition = _imported_review_definition(owner_email, instance_id)
         if not definition:
             return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
-        if definition.get("summaryOnly"):
-            return JsonResponse({"detail": "This imported review has summary information only and cannot be completed."}, status=409)
+        if definition.get("readOnly"):
+            return JsonResponse({"detail": "This imported review is read-only."}, status=409)
         payload = {}
         if request.body:
             try:
@@ -14933,6 +15367,20 @@ def coach_review_instance_complete(request, instance_id):
         answers = payload.get("answers", {})
         if not isinstance(answers, dict):
             return JsonResponse({"detail": "answers must be an object keyed by field id."}, status=400)
+        if definition.get("migratedForm"):
+            with transaction.atomic():
+                imported = _owned_migrated_overlay(owner_email, definition, lock=True)
+                if not imported or imported.status != ImportedReviewInstance.STATUS_IN_PROGRESS:
+                    return JsonResponse({"detail": "Only an in-progress migrated review can be submitted."}, status=409)
+                final_answers = payload.get("answers", imported.answers)
+                try:
+                    from coach_api.migrated_completion import submit
+                    submit(imported, final_answers)
+                except ValueError as exc:
+                    return JsonResponse({"detail": str(exc)}, status=400)
+                from coach_api.migrated_completion_views import _mirror_status
+                _mirror_status(imported)
+            return JsonResponse(_imported_review_definition(owner_email, imported.event_key))
         field_ids = {
             field["id"]
             for section in definition.get("sections", [])
@@ -15106,6 +15554,11 @@ def coach_review_instance_reopen(request, instance_id):
 def coach_review_instance_signature(request, instance_id):
     if request.method != "POST":
         return JsonResponse({"detail": "Method not allowed."}, status=405)
+    if instance_id.startswith("imported-review:"):
+        definition = _imported_review_definition(authenticated_coach_email(request), instance_id)
+        if not definition:
+            return JsonResponse({"detail": "Imported review not found for this coach."}, status=404)
+        return JsonResponse({"detail": "Imported review signatures cannot be changed here."}, status=409)
     instance_row, error = _authorized_review_instance(request, instance_id)
     if error:
         return error
