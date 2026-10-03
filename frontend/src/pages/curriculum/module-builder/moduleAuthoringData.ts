@@ -2348,12 +2348,13 @@ export interface ComponentUploadResult {
   };
 }
 
-export async function uploadComponentResource(input: { moduleCatalogueId: string; componentId: string; componentType: 'podcast' | 'powerpoint' | 'reading' | 'assignment'; file: File }) {
+export async function uploadComponentResource(input: { moduleCatalogueId: string; componentId: string; componentType: 'podcast' | 'powerpoint' | 'reading' | 'assignment'; file: File; topicResource?: boolean }) {
   assertComponentUploadAllowed(input.file);
   const form = new FormData();
   form.set('file', input.file);
   form.set('moduleCatalogueId', input.moduleCatalogueId);
   form.set('componentType', input.componentType);
+  if (input.topicResource) form.set('topicResource', 'true');
   return uploadComponentFile<ComponentUploadResult>(`${API_BASE_URL}/curriculum/components/${encodeURIComponent(input.componentId)}/upload/`, form);
 }
 

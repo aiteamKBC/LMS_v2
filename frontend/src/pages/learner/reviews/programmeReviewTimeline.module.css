@@ -9,10 +9,10 @@
 .eyebrow { color: #7253a6; font-size: 9px; font-weight: 750; letter-spacing: .12em; }
 .heading h2 { margin-top: 2px; font-size: 16px; font-weight: 700; line-height: 1.2; }
 .count { flex-shrink: 0; border-radius: 999px; padding: 3px 7px; background: #f2ecfa; color: #6942a3; font-size: 10px; font-weight: 700; }
-.scroll { margin-top: 4px; overflow-x: auto; padding: 8px 8px 10px; scrollbar-color: #a6aec0 #edf0f5; scrollbar-width: auto; }
+.scroll { margin-top: 4px; overflow-x: auto; padding: 8px 8px 10px; scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track); scrollbar-width: auto; }
 .scroll::-webkit-scrollbar { height: 7px; }
-.scroll::-webkit-scrollbar-track { border-radius: 999px; background: #edf0f5; }
-.scroll::-webkit-scrollbar-thumb { border-radius: 999px; background: #a6aec0; }
+.scroll::-webkit-scrollbar-track { border-radius: 999px; background: var(--scrollbar-track); }
+.scroll::-webkit-scrollbar-thumb { border-radius: 999px; background: var(--scrollbar-thumb); }
 .scroll:focus-visible, .stepLink:focus-visible { outline: 3px solid #8758c6; outline-offset: 3px; }
 .steps { display: flex; width: max-content; min-width: 100%; margin: 0; padding: 0; list-style: none; }
 .step { --tone: #e9eff6; --tone-ink: #405670; --tone-ring: #8293aa; position: relative; width: 100px; flex: 1 0 100px; text-align: center; }

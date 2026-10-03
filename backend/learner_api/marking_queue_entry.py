@@ -106,7 +106,7 @@ def queue_for_marking(*, component_id, kind, learner_id, context):
             cur.execute(
                 'select id, status from "Learner"."learning_reflection_submissions" '
                 "where learner_kind = %s and learner_id = %s and activity_type = %s "
-                "and activity_id = %s",
+                "and activity_id = %s and assignment_topic_id = ''",
                 [kind, str(learner_id), context.get("activityType") or "", component_id],
             )
             existing = cur.fetchone()
@@ -129,7 +129,7 @@ def queue_for_marking(*, component_id, kind, learner_id, context):
                     %s::jsonb, %s, %s,
                     %s, %s, 'submitted_for_tutor_review'
                 )
-                on conflict (learner_kind, learner_id, activity_type, activity_id)
+                on conflict (learner_kind, learner_id, activity_type, activity_id, assignment_topic_id)
                 do update set
                     activity_title = excluded.activity_title,
                     module_title = excluded.module_title,

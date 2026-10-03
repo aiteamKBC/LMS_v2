@@ -1,3 +1,4 @@
+import { AssignmentTopicsEditor } from '../shared/AssignmentTopicsEditor';
 import { Fragment, Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { DndContext, DragOverlay, KeyboardSensor, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent, type DragStartEvent } from '@dnd-kit/core';
@@ -73,7 +74,7 @@ const GuidedQuizUpload = lazy(() => import('./GuidedQuizUpload').then(m => ({ de
 
 export type { WeekScope };
 export interface GroupOption { key: string; name: string; cohort?: string; cohortId?: string; programmeId?: string; programme?: string; moduleCount?: number }
-export type WeekComponentUploader = (componentId: string, file: File, componentType: 'reading' | 'podcast' | 'powerpoint' | 'assignment') => Promise<WeekComponentUploadResult>;
+export type WeekComponentUploader = (componentId: string, file: File, componentType: 'reading' | 'podcast' | 'powerpoint' | 'assignment', topicResource?: boolean) => Promise<WeekComponentUploadResult>;
 
 const curriculumNav = roleNavMap.curriculum;
 
@@ -2654,7 +2655,7 @@ function LinkedQuizPreviewModal({ preview, onClose }: { preview: LinkedQuizPrevi
   );
 }
 
-// Authors can write the question and attach a document for learner preview.
+// Topics share the component's planned hours and existing marking policy.
 function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadResource }: ComponentBodyProps) {
   const s = (key: string) => String(component.settings[key] ?? '');
 
@@ -2665,31 +2666,12 @@ function AssignmentBody({ component, onChange, setSetting, rulePoints, uploadRes
         <Field label="Description" className="mt-4"><textarea value={component.description} onChange={e => onChange({ description: e.target.value })} rows={2} placeholder="What this assignment asks the learner to do…" className={`${inputClass} resize-none`} /></Field>
 
         <div className="mt-4">
-          <RichTextDraft label="Assignment question" value={s('assignmentContent')} onChange={value => setSetting('assignmentContent', value)} rows={14} />
-          <p className="mt-2 text-[11px] text-foreground-400">The learner answers this question in the assignment form. You can also attach the question as a file below.</p>
-        </div>
-        <div className="mt-4">
-          <h4 className="mb-2 text-[12px] font-semibold">Assignment question file (optional)</h4>
-          <WeekComponentFileUpload
-            componentId={component.id}
-            componentType="assignment"
-            onUpload={uploadResource}
-            accept={READING_UPLOAD_ACCEPT}
-            uploadedName={s('uploadedFileName') || s('assignmentFileName')}
-            uploadedUrl={s('uploadedFileUrl') || s('assignmentFileUrl')}
-            uploadedSize={Number(component.settings.uploadedFileSize) || 0}
-            uploadedContentType={s('uploadedFileContentType')}
-            onUploaded={file => onChange({ settings: { ...component.settings,
-              uploadedFileName: file.fileName, uploadedFileUrl: file.url,
-              uploadedFileSize: file.size, uploadedFileContentType: file.contentType,
-              assignmentFileName: file.fileName, assignmentFileUrl: file.url,
-            } })}
-            onRemove={() => onChange({ settings: { ...component.settings,
-              uploadedFileName: '', uploadedFileUrl: '', uploadedFileSize: 0,
-              uploadedFileContentType: '', assignmentFileName: '', assignmentFileUrl: '',
-            } })}
-          />
-          <p className="mt-2 text-[11px] text-foreground-400">Upload a PDF, Word document or text file. Learners can preview the question on the assignment page without downloading it. PDF is recommended for preserving the layout.</p>
+          <AssignmentTopicsEditor value={component.settings.assignmentTopics}
+            legacyQuestion={s('assignmentContent') || s('assignmentBrief')}
+            legacyInstructions={s('submissionInstructions')}
+            legacyResources={(s('assignmentFileUrl') || s('uploadedFileUrl')) ? [{ fileName: s('assignmentFileName') || s('uploadedFileName'), url: s('assignmentFileUrl') || s('uploadedFileUrl'), size: Number(component.settings.uploadedFileSize) || 0, contentType: s('uploadedFileContentType') }] : []}
+            onChange={value => setSetting('assignmentTopics', value)}
+            onUpload={async file => (await (uploadResource || uploadWeekComponentResource)(component.id, file, 'assignment', true)).file} />
         </div>
       </Section>
 

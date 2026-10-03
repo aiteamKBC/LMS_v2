@@ -13,10 +13,13 @@ it('uploads the assignment question using the supplied module uploader and prese
   const uploadResource = vi.fn().mockResolvedValue({ file: uploaded });
   const component = { id: 'A1', type: 'assignment', title: 'Assignment', description: '', settings: { assignmentContent: '<p>Read the question.</p>' }, expectedOtjh: 2, points: 25, groupIds: [] } as unknown as ComponentProps<typeof ComponentEditor>['component'];
   const { container } = render(<ComponentEditor component={component} onChange={onChange} onBack={vi.fn()} groupOptions={[]} weekScope={{} as ComponentProps<typeof ComponentEditor>['weekScope']} uploadResource={uploadResource} />);
-  expect(screen.getByText('Assignment question file (optional)')).toBeVisible();
+  expect(screen.getByLabelText('Files and videos')).toBeVisible();
   fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [file] } });
-  await waitFor(() => expect(onChange).toHaveBeenCalledWith({ settings: { assignmentContent: '<p>Read the question.</p>', uploadedFileName: 'brief.pdf', uploadedFileUrl: uploaded.url, uploadedFileSize: 8, uploadedFileContentType: 'application/pdf', assignmentFileName: 'brief.pdf', assignmentFileUrl: uploaded.url } }));
-  expect(uploadResource).toHaveBeenCalledWith('A1', file, 'assignment');
+  await waitFor(() => expect(onChange).toHaveBeenCalled());
+  const settings = onChange.mock.calls.at(-1)![0].settings;
+  expect(settings.assignmentContent).toBe('<p>Read the question.</p>');
+  expect(JSON.parse(settings.assignmentTopics)[0]).toMatchObject({ id: '1', question: '<p>Read the question.</p>', resources: [uploaded] });
+  expect(uploadResource).toHaveBeenCalledWith('A1', file, 'assignment', true);
 });
 
 
