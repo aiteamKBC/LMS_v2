@@ -19,6 +19,7 @@ class EventRsvpSecurityTests(SimpleTestCase):
     def test_only_public_rsvp_routes_are_ungated(self):
         self.assertIsNone(rule_for('/engagement_api/feedback/public-rsvp/'))
         self.assertIsNone(rule_for('/engagement_api/feedback/public-rsvp/csrf/'))
+        self.assertIsNone(rule_for('/engagement_api/feedback/public-rsvp/photo/remove/'))
         self.assertIsNotNone(rule_for('/engagement_api/feedback/events/4/rsvp/'))
 
     def test_unknown_token_returns_safe_error(self):
@@ -28,6 +29,27 @@ class EventRsvpSecurityTests(SimpleTestCase):
         )
         with mock.patch.object(event_rsvp_views, 'recipient_for_token', return_value=None):
             response = event_rsvp_views.public_access(request)
+        self.assertEqual(response.status_code, 404)
+        self.assertIn(b'invalid or has expired', response.content)
+
+    def test_unknown_token_cannot_upload_a_photo(self):
+        request = RequestFactory().post(
+            '/engagement_api/feedback/public-rsvp/photo/',
+            data={'token': 'unknown', 'questionId': '11'},
+        )
+        with mock.patch.object(event_rsvp_views, 'recipient_for_token', return_value=None):
+            response = event_rsvp_views.public_photo_upload(request)
+        self.assertEqual(response.status_code, 404)
+        self.assertIn(b'invalid or has expired', response.content)
+
+    def test_unknown_token_cannot_remove_a_photo(self):
+        request = RequestFactory().post(
+            '/engagement_api/feedback/public-rsvp/photo/remove/',
+            data=json.dumps({'token': 'unknown', 'uploadId': '7a80cafd-637a-4ad9-b0b4-e481fb2d31d5'}),
+            content_type='application/json',
+        )
+        with mock.patch.object(event_rsvp_views, 'recipient_for_token', return_value=None):
+            response = event_rsvp_views.public_photo_remove(request)
         self.assertEqual(response.status_code, 404)
         self.assertIn(b'invalid or has expired', response.content)
 

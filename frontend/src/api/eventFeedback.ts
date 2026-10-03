@@ -1,4 +1,4 @@
-import type { FeedbackAnswerValue, FeedbackSection } from './feedback';
+import type { FeedbackAnswerValue, FeedbackPhotoAnswer, FeedbackSection } from './feedback';
 
 const BASE = '/engagement_api/feedback';
 let csrfPromise: Promise<string> | null = null;
@@ -147,4 +147,35 @@ export const eventFeedbackApi = {
     headers: { 'X-CSRFToken': await csrfToken(), 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/json' },
     body: JSON.stringify({ token, rsvpStatus, answers }),
   })),
+  uploadPublicRsvpPhoto: async (token: string, questionId: number, file: File): Promise<FeedbackPhotoAnswer> => {
+    const formData = new FormData();
+    formData.append('token', token);
+    formData.append('questionId', String(questionId));
+    formData.append('photo', file);
+    const response = await fetch(`${BASE}/public-rsvp/photo/`, {
+      method: 'POST', credentials: 'include', body: formData,
+      headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRFToken': await csrfToken() },
+    });
+    const body = await response.json().catch(() => ({})) as { answer?: FeedbackPhotoAnswer; error?: string };
+    if (!response.ok || !body.answer) throw new Error(body.error || `Upload failed (${response.status})`);
+    return body.answer;
+  },
+  removePublicRsvpPhoto: async (token: string, uploadId: string): Promise<void> => {
+    await jsonResponse<{ removed: boolean }>(await fetch(`${BASE}/public-rsvp/photo/remove/`, {
+      method: 'POST', credentials: 'include',
+      headers: { 'X-CSRFToken': await csrfToken(), 'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, uploadId }),
+    }));
+  },
+  loadPublicRsvpPhoto: async (token: string, uploadId: string): Promise<Blob> => {
+    const response = await fetch(`${BASE}/public-rsvp/uploads/${encodeURIComponent(uploadId)}/`, {
+      credentials: 'include',
+      headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-Event-Response-Token': token },
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({})) as { error?: string };
+      throw new Error(body.error || `Photo could not be loaded (${response.status})`);
+    }
+    return response.blob();
+  },
 };

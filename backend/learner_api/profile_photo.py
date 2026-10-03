@@ -26,12 +26,13 @@ MAX_PIXELS = 20_000_000
 REQUEST_OPTIONS = {'connection_timeout': 5, 'read_timeout': 15}
 
 
-def normalize_photo(upload):
-    if upload.size > MAX_UPLOAD_BYTES:
-        raise ValueError('Choose a photo smaller than 5 MB.')
-    raw = upload.read(MAX_UPLOAD_BYTES + 1)
-    if not raw or len(raw) > MAX_UPLOAD_BYTES:
-        raise ValueError('Choose a photo smaller than 5 MB.')
+def normalize_photo(upload, max_upload_bytes=MAX_UPLOAD_BYTES):
+    limit_mb = max_upload_bytes // (1024 * 1024)
+    if upload.size > max_upload_bytes:
+        raise ValueError(f'Choose a photo no larger than {limit_mb} MB.')
+    raw = upload.read(max_upload_bytes + 1)
+    if not raw or len(raw) > max_upload_bytes:
+        raise ValueError(f'Choose a photo no larger than {limit_mb} MB.')
     try:
         with warnings.catch_warnings():
             warnings.simplefilter('error', Image.DecompressionBombWarning)
