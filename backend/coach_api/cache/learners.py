@@ -8,8 +8,8 @@ from django.core.cache import cache
 from coach_api.auth import normalize_email
 
 
-# v13 uses learner Overview metrics and the full learner attendance register.
-CASELOAD_CACHE_VERSION = 13
+# v14 carries the API-owned OTJH target-to-date/RAG fields.
+CASELOAD_CACHE_VERSION = 14
 logger = logging.getLogger(__name__)
 
 

@@ -1,0 +1,17 @@
+{
+  "database": "neondb",
+  "fingerprint": "f205f4d777de240799cb4b540f1fc4e92f21c01d443e4fbc492b65856bf4746a",
+  "read_only": false,
+  "status": "COMPLETED",
+  "run_id": 1707,
+  "actor": "Ayman",
+  "held_evidence_count": 48,
+  "sources_soft_excluded": 23,
+  "parents_recalculated": 19,
+  "source_seconds_excluded": 514800,
+  "source_hours_excluded": "143:00:00",
+  "lms_excluded": 0,
+  "apt_mirror_changed": false,
+  "azure_changed": false,
+  "ambiguous_without_local_row": 25
+}
