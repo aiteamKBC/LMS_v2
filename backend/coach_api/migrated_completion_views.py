@@ -14,6 +14,7 @@ from coach_api.migrated_review_pdf import stored_pdf_response
 from coach_api.migrated_reviews import review_family
 from coach_api.models import CoachCalendarEvent, ImportedReviewInstance, MigratedReviewDocument
 from coach_api.migrated_summary_binding import AnswerConflict, check_answer_version, record_answer_edit
+from coach_api.migrated_template_sync import TemplateSyncConflict, active_answers, synchronize_definition_locked
 from learner_api.models import EnrolmentUser, LearnerProfile
 from login.permissions import authenticate_request
 
@@ -75,10 +76,14 @@ def migrated_review_submit(request, review_id):
             return JsonResponse({"detail": "Migrated review association mismatch."}, status=409)
         try:
             check_answer_version(overlay, payload)
-            answers = payload.get("answers", overlay.answers)
+            if synchronize_definition_locked(overlay, definition):
+                return JsonResponse({"detail": "The review template changed. Reopen the review and check its latest questions before submitting. Your saved answers are unchanged.", "code": "template_sync_changed"}, status=409)
+            answers = payload.get("answers", active_answers(overlay.template_snapshot, overlay.answers))
             record_answer_edit(overlay, answers, actor=owner,
                                edited_fields=payload.get("editedFields") if isinstance(payload.get("editedFields"), list) else ())
-            submit(overlay, payload.get("answers", overlay.answers))
+            submit(overlay, answers)
+        except TemplateSyncConflict as exc:
+            return JsonResponse({"detail": str(exc), "templateSync": exc.response()}, status=409)
         except AnswerConflict as exc:
             return JsonResponse({"detail": str(exc), "code": "ANSWER_CONFLICT"}, status=409)
         except ValueError as exc:

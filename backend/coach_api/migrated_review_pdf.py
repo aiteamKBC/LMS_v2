@@ -9,6 +9,7 @@ from curriculum_api.review_pdf_presentation import (
 )
 
 from .migrated_reviews import render_sections
+from .migrated_template_sync import active_answers
 
 
 FAMILIES = {"MCM", "PR", "PR_SKILLS_RADAR"}
@@ -36,7 +37,7 @@ def review_pdf_data(overlay, signatures, *, learner_name, learner_email,
     """Normalize display values without mutating the signed review state."""
     snapshot = overlay.template_snapshot
     family = pdf_family(overlay, source_family)
-    sections, _warnings = render_sections(snapshot, overlay.answers)
+    sections, _warnings = render_sections(snapshot, active_answers(snapshot, overlay.answers))
     # Array order is the frozen form order, including legacy definitions whose
     # numeric order metadata is stale. Native continues using its own ordering.
     for index, section in enumerate(sections):

@@ -15,9 +15,9 @@ def answer_version(overlay):
 
 
 def check_answer_version(overlay, payload):
-    # Legacy, unbound clients remain compatible. Bound whole-object writes must
-    # prove which version they edited, including on submission.
-    if meeting_summary_field(overlay.template_snapshot) and payload.get("answerVersion") != answer_version(overlay):
+    # Every initialized migrated form now exposes the same overlay version,
+    # including legacy/unbound forms whose definition has not changed yet.
+    if payload.get("answerVersion") != answer_version(overlay):
         raise AnswerConflict("This review changed. Reopen it and review the latest answers before saving. Your unsaved text has been kept on screen.")
 
 

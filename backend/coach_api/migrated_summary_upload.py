@@ -12,6 +12,7 @@ from .migrated_completion_views import _coach_review
 from .migrated_reviews import meeting_summary_field
 from .migrated_summary_binding import answer_version
 from .migrated_summary_generation import apply_suggestion, parse_upload, summary_binding_response
+from .migrated_template_sync import active_answers, snapshot_fingerprint
 
 logger = logging.getLogger(__name__)
 EDITABLE = {"scheduled", "in-progress"}
@@ -67,6 +68,8 @@ def migrated_review_summary_upload(request, review_id):
         error = _binding_error(locked)
         if error:
             return JsonResponse({"detail": error, "code": "INVALID_SUMMARY_BINDING"}, status=409)
+        if snapshot_fingerprint(locked.template_snapshot) != snapshot_fingerprint(overlay.template_snapshot):
+            return JsonResponse({"detail": "The review template changed during generation. Reopen the review before generating its summary again. Your saved answers are unchanged.", "code": "template_sync_changed"}, status=409)
         state = deepcopy(locked.meeting_intelligence or {})
         result = {}
         if summary is not None:
@@ -78,5 +81,5 @@ def migrated_review_summary_upload(request, review_id):
         locked.meeting_intelligence = state
         locked.save(update_fields=["meeting_intelligence", "updated_at"] + (["answers"] if result.get("status") == "populated" else []))
         return JsonResponse({"artifacts": [], "summaryBinding": summary_binding_response(locked),
-                             "answerVersion": answer_version(locked), "reviewAnswers": locked.answers,
+                             "answerVersion": answer_version(locked), "reviewAnswers": active_answers(locked.template_snapshot, locked.answers),
                              "partial": summary is None}, status=200 if summary is not None else 207)

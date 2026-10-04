@@ -208,6 +208,9 @@ class MigratedPreviewTests(SimpleTestCase):
         )
         self._patch("coach_api.views.authenticated_coach_email", return_value="coach@example.invalid")
         self.view_as = self._patch("coach_api.views.is_coach_view_as", return_value=True)
+        # These reader fixtures isolate rendering/identity. Persisted GET sync is
+        # exercised with real overlays in test_migrated_template_sync.
+        self._patch("coach_api.migrated_template_sync.synchronize_on_open", side_effect=lambda owner, key, definition: definition)
 
     def _patch(self, target, **kwargs):
         patcher = patch(target, **kwargs)
@@ -558,7 +561,9 @@ class MigratedModelTests(TestCase):
                 self.assertEqual(response.status_code, 200)
                 overlay = ImportedReviewInstance.objects.get(source_review_id=500 + index)
                 before = copy.deepcopy(overlay.template_snapshot)
-                self.assertEqual(before, snapshot_for(template))
+                expected = snapshot_for(template)
+                expected["templateSync"]["synchronizedAt"] = before["templateSync"]["synchronizedAt"]
+                self.assertEqual(before, expected)
                 self.assertEqual(overlay.migrated_template_id, template.pk)
                 self.assertEqual(overlay.answers, {})
                 self.assertEqual(overlay.status, "scheduled")
@@ -594,6 +599,7 @@ class MigratedModelTests(TestCase):
 
 class MigratedWriteTests(TestCase):
     def setUp(self):
+        from .migrated_templates import snapshot_for
         self.definition_json = candidate_definition(SOURCE)
         self.template = MigratedReviewTemplate.objects.create(
             programme_key="id:P-42", review_family="PR", name="Approved",
@@ -602,16 +608,20 @@ class MigratedWriteTests(TestCase):
         self.overlay = ImportedReviewInstance.objects.create(
             event_key="imported-review:A-7", owner_email="coach@example.invalid",
             learner_id=21, source_review_id=407, migrated_template=self.template,
-            template_snapshot=copy.deepcopy(self.definition_json), answers={}, status="scheduled",
+            template_snapshot=snapshot_for(self.template), answers={}, status="scheduled",
         )
         self.definition = {
             "migratedForm": True, "readOnly": False, "sourceStatus": "scheduled",
             "localStatus": "scheduled", "instance": {"id": self.overlay.event_key, "learnerId": 21},
             "historicalReview": {"id": "407", "type": "Progress Review"},
+            "migratedProgrammeKey": "id:P-42",
         }
         self.factory = RequestFactory()
 
     def _post(self, view, suffix, body):
+        from .migrated_summary_binding import answer_version
+        self.overlay.refresh_from_db()
+        body = {"answerVersion": answer_version(self.overlay), **body}
         with patch("coach_api.views.authenticated_coach_email", return_value="coach@example.invalid"), \
              patch("coach_api.views._imported_review_definition", return_value=self.definition):
             return unwrap(view)(
@@ -774,8 +784,11 @@ class MigratedBookingTests(TestCase):
         self.assertEqual(self.overlay.status, "scheduled")
 
     def test_future_mcm_uses_same_imported_identity_without_native_occurrence(self):
+        from .migrated_templates import snapshot_for
         self.template.review_family = "MCM"
         self.template.save(update_fields=["review_family"])
+        self.overlay.template_snapshot = snapshot_for(self.template)
+        self.overlay.save(update_fields=["template_snapshot"])
         self.definition["historicalReview"]["type"] = "Monthly Coaching Meeting"
         self.base_event["source"] = "mcr"
         response, calls = self.book()

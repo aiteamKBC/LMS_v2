@@ -1,5 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import userEvent from '@testing-library/user-event';
 import { ReviewInstanceModal } from './ReviewInstanceModal';
 import { MigratedMeetingIntelligence } from './MigratedMeetingIntelligence';
 import * as api from '@/api/reviewInstances';
@@ -67,6 +68,7 @@ describe('bound migrated review answers', () => {
     const field = await screen.findByRole('textbox', { name: 'Discussion record' });
     expect(field).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Generate from Teams' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Upload Transcript' })).toBeEnabled();
     fireEvent.click(await screen.findByRole('button', { name: 'Check Session' }));
     await waitFor(() => expect(field).toHaveValue('AI form answer'));
     expect(screen.getAllByDisplayValue('AI form answer')).toHaveLength(1);
@@ -275,12 +277,45 @@ describe('bound migrated review answers', () => {
     expect(field).toBeEnabled();
   });
 
-  it('keeps admin view-as read-only without generation or upload actions', async () => {
+  it.each(['aptem_mcm', 'aptem_progress_review'])('shows disabled admin summary controls for %s without a file picker or mutation', async reviewTypeCode => {
+    const user = userEvent.setup();
     identity.viewAs = true;
+    const saved = definition();
+    saved.readOnly = true;
+    saved.template.reviewTypeCode = reviewTypeCode;
+    saved.sections[0].fields[0].answer = 'Saved coach summary';
+    saved.summaryBinding = { ...saved.summaryBinding, suggestionSource: 'uploaded_transcript' };
+    vi.mocked(api.fetchReviewInstanceForm).mockResolvedValue(saved);
+    mount();
+    const field = await screen.findByRole('textbox', { name: 'Discussion record' });
+    expect(field).toBeDisabled();
+    expect(field).toHaveValue('Saved coach summary');
+    expect(screen.getByText('Latest AI summary generated from uploaded transcript.')).toBeVisible();
+    for (const name of ['Generate from Teams', 'Upload Transcript']) {
+      const button = screen.getByRole('button', { name });
+      expect(button).toBeDisabled();
+      expect(button).toHaveAccessibleDescription('Available to the assigned Coach only.');
+      await user.click(button);
+      button.focus();
+      expect(button).not.toHaveFocus();
+      await user.keyboard('{Enter} ');
+      fireEvent.drop(button, { dataTransfer: { files: [new File(['Transcript'], 'meeting.txt')] } });
+    }
+    expect(document.querySelector('input[type="file"]')).not.toBeInTheDocument();
+    expect(api.fetchMigratedReviewIntelligence).toHaveBeenCalledTimes(1);
+    expect(api.fetchMigratedReviewIntelligence).toHaveBeenCalledWith(id, expect.any(AbortSignal), { refresh: false });
+    expect(api.uploadMigratedSummaryTranscript).not.toHaveBeenCalled();
+    expect(api.generateReviewMeetingSummary).not.toHaveBeenCalled();
+    expect(api.saveReviewInstanceAnswers).not.toHaveBeenCalled();
+  });
+
+  it.each(['awaiting-signature', 'completed'])('keeps admin %s summary actions hidden', async status => {
+    identity.viewAs = true;
+    vi.mocked(api.fetchReviewInstanceForm).mockResolvedValue(definition(status));
     mount();
     expect(await screen.findByRole('textbox', { name: 'Discussion record' })).toBeDisabled();
-    expect(screen.queryByRole('button', { name: 'Upload Transcript' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Generate from Teams' })).not.toBeInTheDocument();
-    expect(api.uploadMigratedSummaryTranscript).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Upload Transcript' })).not.toBeInTheDocument();
+    expect(document.querySelector('input[type="file"]')).not.toBeInTheDocument();
   });
 });

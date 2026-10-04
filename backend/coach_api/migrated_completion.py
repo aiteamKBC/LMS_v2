@@ -14,6 +14,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from .migrated_reviews import validate_answers
+from .migrated_template_sync import active_answers, preserve_inactive_answers
 from .models import ImportedReviewInstance, MigratedReviewDocument, MigratedReviewSignature
 
 
@@ -56,7 +57,7 @@ def submit(overlay, answers):
         raise ValueError("Only an in-progress migrated review can be submitted.")
     validate_answers(overlay.template_snapshot, answers, completing=True)
     overlay.signature_requirements = requirements_for_family(overlay.migrated_template.review_family)
-    overlay.answers = answers
+    overlay.answers = preserve_inactive_answers(overlay.template_snapshot, overlay.answers or {}, answers)
     overlay.status = ImportedReviewInstance.STATUS_AWAITING_SIGNATURE
     overlay.save(update_fields=["answers", "signature_requirements", "status", "updated_at"])
 
@@ -104,7 +105,7 @@ def sign(overlay, role, *, account, signature):
 def complete(overlay):
     if overlay.status != ImportedReviewInstance.STATUS_AWAITING_SIGNATURE:
         raise ValueError("Only a review awaiting signatures can be completed.")
-    validate_answers(overlay.template_snapshot, overlay.answers, completing=True)
+    validate_answers(overlay.template_snapshot, active_answers(overlay.template_snapshot, overlay.answers), completing=True)
     signed = set(overlay.migrated_signatures.values_list("role", flat=True))
     if set(required_roles(overlay)) - signed:
         raise ValueError("All required signatures must be saved before completion.")
@@ -120,7 +121,7 @@ def build_pdf(overlay, *, learner_name, learner_email, programme, scheduled_date
 
     if overlay.status != ImportedReviewInstance.STATUS_COMPLETED or not overlay.completed_at:
         raise ValueError("The migrated review must be completed before PDF generation.")
-    validate_answers(overlay.template_snapshot, overlay.answers, completing=True)
+    validate_answers(overlay.template_snapshot, active_answers(overlay.template_snapshot, overlay.answers), completing=True)
     signatures = {row.role: row for row in overlay.migrated_signatures.all()}
     rules = overlay.signature_requirements or requirements_for_family(pdf_family(overlay, source_family))
     required = {role for role in ROLES if rules.get(role) is True}
