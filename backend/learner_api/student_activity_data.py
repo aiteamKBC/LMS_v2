@@ -314,7 +314,7 @@ def read_audit_hour_totals(cursor, aptem_id):
 
 
 def read_audit_hour_totals_bulk(cursor, aptem_ids):
-    """Shared coach/learner totals, with each canonical allocation counted once."""
+    """Shared coach/learner totals from accepted, non-deleted progress rows."""
     ids = sorted({int(str(value).strip()) for value in aptem_ids or []
                   if str(value or '').strip().isdigit() and int(str(value).strip()) > 0})
     if not ids:
@@ -322,12 +322,7 @@ def read_audit_hour_totals_bulk(cursor, aptem_ids):
     cursor.execute('''SELECT l.aptem_id,
         (SELECT sum(t.target_hours) FROM "Learner".learner_monthly_targets t
           WHERE t.learner_id=l.id) AS planned,
-        coalesce((SELECT sum(CASE WHEN EXISTS (
-            SELECT 1 FROM "Learner".learner_activity_reporting_segments s WHERE s.progress_id=p.id
-              AND s.learner_id=p.learner_id)
-          THEN (SELECT sum(s.actual_seconds) FROM "Learner".learner_activity_reporting_segments s
-                WHERE s.progress_id=p.id AND s.learner_id=p.learner_id)
-          ELSE p.actual_seconds END) / 3600.0
+        coalesce((SELECT sum(p.actual_seconds) / 3600.0
           FROM "Learner".learner_progress_entries p
           WHERE p.learner_id=l.id AND p.deleted_at IS NULL AND p.accepted IS TRUE),0) AS actual
         FROM "Learner".learners l WHERE l.aptem_id=ANY(%s)

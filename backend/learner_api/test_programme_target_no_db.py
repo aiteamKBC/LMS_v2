@@ -25,11 +25,11 @@ class ProgrammeTargetTests(unittest.TestCase):
         token = journal_sources._current.set(True)
         self.addCleanup(journal_sources._current.reset, token)
 
-    def test_overall_plan_does_not_use_partial_months_or_duplicate_segmented_hours(self):
+    def test_overall_plan_is_unchanged_and_actual_uses_progress_seconds(self):
         metrics = self.scope['metrics'](20)
         self.assertEqual(metrics['otjh']['planned'], 300)
         self.assertEqual(metrics['aptem_planned_total'], 300)
-        self.assertEqual(metrics['otjh']['actual'], 1.5)
+        self.assertEqual(metrics['otjh']['actual'], 2)
         self.assertEqual(self.scope['targets_for'](self.owner), {'2026-06': 12, '2026-07': 18})
         self.assertEqual(self.query.call_args.args[1], [20])
 
@@ -47,7 +47,7 @@ class ProgrammeTargetTests(unittest.TestCase):
                 metrics = self.scope['metrics'](20)
                 self.assertIsNone(metrics['otjh']['planned'])
                 self.assertIsNone(metrics['aptem_planned_total'])
-                self.assertEqual(metrics['otjh']['actual'], 1.5)
+                self.assertEqual(metrics['otjh']['actual'], 2)
         self.owner['programme_planned_hours'] = '0'
         self.assertEqual(self.scope['metrics'](20)['otjh']['planned'], 0)
 

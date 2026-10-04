@@ -22,12 +22,7 @@ def is_legacy_record(record):
 
 
 def counts_as_actual(record):
-    """Accepted canonical rows count regardless of their source lineage.
-
-    Duplicate source observations are removed by ``canonical_activity_key`` in
-    the SSOT query.  ``source_system`` says where the surviving canonical row
-    came from; it is not a reason to throw that learner evidence away.
-    """
+    """Count accepted progress rows, independently of their source lineage."""
     return record.get('accepted') is True
 
 
@@ -103,16 +98,10 @@ def entries(learner_id):
 
 
 def entries_for(owner):
-    records = query('''WITH candidates AS (
-        SELECT progress.*,
-            row_number() OVER (
-                PARTITION BY coalesce(nullif(progress.canonical_activity_key,''),concat('progress:',progress.id))
-                ORDER BY progress.actual_seconds DESC NULLS LAST,progress.id
-            ) AS canonical_rank
+    records = query('''WITH canonical AS (
+        SELECT progress.*
         FROM "Learner".learner_progress_entries progress
         WHERE progress.learner_id=%s AND progress.deleted_at IS NULL
-    ), canonical AS (
-        SELECT * FROM candidates WHERE canonical_rank=1
     ), progress_ksbs AS (
         SELECT k.progress_id,jsonb_agg(k.ksb_code ORDER BY k.position) AS payload
         FROM "Learner".learner_progress_ksbs k
@@ -182,7 +171,7 @@ def entries_for(owner):
             item['expected_otjh'] = float(record['journal_planned_hours'])
             item['journal_planned_hours'] = float(record['journal_planned_hours'])
         loaded.append(item)
-    result = current_records(owner, loaded)
+    result = progress_records_with_completion(loaded, current_records(owner, loaded))
     if journal_enabled:
         for record in result:
             # Source completion is independent of hours eligibility. Excluded
@@ -193,14 +182,25 @@ def entries_for(owner):
     return result
 
 
+def progress_records_with_completion(records, current):
+    """Enrich progress completion without replacing stored hours or adding rows.
+
+    Counts, acceptance, seconds and reporting months belong to progress entries.
+    Newer attempts may still supply completion and scores for those same entries.
+    Unpersisted submissions cannot become extra accepted-hour records on a read.
+    """
+    by_id = {str(record['id']): record for record in current}
+    result = []
+    for record in records:
+        latest = by_id.get(str(record['id']), {})
+        result.append({**record, **{key: latest[key] for key in (
+            'completed', 'achieved_score', 'total_score') if key in latest}})
+    return result
+
+
 def allocations(entry):
-    """Segments replace the parent's allocation; source observations never add time."""
-    segments = entry.get('segments') or []
-    if not segments:
-        return [entry]
-    return [{**entry, **{key: segment.get(key) for key in (
-        'actual_seconds', 'reporting_month', 'reporting_started_at', 'reporting_ended_at')},
-        'segment_id': segment['id']} for segment in segments]
+    """Use the progress row's own month and seconds; retain segments as history."""
+    return [entry]
 
 
 def recorded_seconds(entry):
@@ -827,16 +827,7 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
         return result
 
     learner_profile_ids = [int(owner['id']) for owner in valid_owners.values()]
-    progress_rows = query('''WITH candidates AS (
-        SELECT p.*,
-          row_number() OVER (
-            PARTITION BY p.learner_id,coalesce(nullif(p.canonical_activity_key,''),concat('progress:',p.id))
-            ORDER BY p.actual_seconds DESC NULLS LAST,p.id
-          ) AS canonical_rank
-        FROM "Learner".learner_progress_entries p
-        WHERE p.learner_id=ANY(%s) AND p.deleted_at IS NULL
-    )
-        SELECT p.learner_id AS owner_id,p.id,p.kind,
+    progress_rows = query('''SELECT p.learner_id AS owner_id,p.id,p.kind,
         p.module_title,p.component_ref,p.component_title,p.component_type,p.quiz_ref,
         p.passed,p.feedback,p.reported_time,p.submitted_at,p.started_at,
         p.time_tracking_source,p.claimed_seconds,p.verified_seconds,p.expected_otjh,
@@ -846,8 +837,8 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
         CASE WHEN p.source_payload ? 'original_source_ref'
              THEN jsonb_build_object('original_source_ref',p.source_payload->>'original_source_ref')
              ELSE '{}'::jsonb END AS source_payload
-        FROM candidates p
-        WHERE p.canonical_rank=1
+        FROM "Learner".learner_progress_entries p
+        WHERE p.learner_id=ANY(%s) AND p.deleted_at IS NULL
         ORDER BY p.learner_id,p.reporting_month,p.reporting_started_at NULLS LAST,p.id''',
         [learner_profile_ids])
     records_by_learner = {profile_id: [] for profile_id in learner_profile_ids}
@@ -917,7 +908,10 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
             targets_by_learner.setdefault(int(target['learner_id']), {})[target['report_month']] = float(target['target_hours'])
 
     for enrolment_id, owner in valid_owners.items():
-        records = current_by_enrolment.get(enrolment_id, [])
+        records = progress_records_with_completion(
+            records_by_learner.get(int(owner['id']), []),
+            current_by_enrolment.get(enrolment_id, []),
+        )
         if learner_workspace:
             # Match entries_for's learner journal completion rule, including
             # completed source activities that are excluded from OTJ hours.
