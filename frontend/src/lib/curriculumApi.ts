@@ -1718,6 +1718,14 @@ export interface CurriculumAuditChange {
 
 export interface CurriculumAuditEvent {
   id: string;
+  /**
+   * Where the event comes from: the revision log saw the save happen, or it
+   * was recovered from a timestamp the record keeps, from before its record
+   * type's revision history began. Recovered events never carry a before and
+   * after, and name an author only where the record itself recorded one.
+   */
+  provenance?: 'revision' | 'timestamps';
+  provenanceLabel?: string;
   /** ISO stamp of the write itself, not a display date. */
   at: string;
   action: CurriculumAuditAction;
@@ -1725,6 +1733,9 @@ export interface CurriculumAuditEvent {
   actionLabel: string;
   entity: 'programme' | 'module' | 'week' | 'component' | 'cohort' | 'group' | string;
   entityLabel: string;
+  /** Workspace owning the record, or the page workspace that made the save. */
+  workspace?: string;
+  workspaceLabel?: string;
   entityId: string;
   revisionNo: number;
   title: string;
@@ -1798,7 +1809,22 @@ export interface CurriculumAuditActor {
 
 export interface CurriculumAuditTrail {
   workspaces?: { value: string; label: string }[];
+  /** Every workspace this response can speak for, whichever reading covers it. */
   changeWorkspaces?: string[];
+  /** Covered by the revision log: who saved, and what each field held before and after. */
+  revisionWorkspaces?: string[];
+  /** Covered only by the records' own timestamps: what moved and when, rarely who. */
+  derivedWorkspaces?: string[];
+  /** Nothing in this database records what changed there. */
+  uncoveredWorkspaces?: string[];
+  /** How many events in the whole window came from each reading. */
+  provenanceCounts?: { revision: number; timestamps: number };
+  /** Whether history from before the revision log was recovered into this feed. */
+  recoveredHistory?: boolean;
+  /** The recovered history could not be read this time; the log is shown alone. */
+  recoveryFailed?: boolean;
+  /** Where each record type's revision history begins; null when it has none yet. */
+  revisionStartedAt?: Record<string, string | null>;
   generatedAt: string;
   windowDays: number;
   since: string;

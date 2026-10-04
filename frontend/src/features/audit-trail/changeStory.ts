@@ -64,7 +64,7 @@ const ACTION_VERBS: Record<string, string> = {
   deleted: 'Deleted',
   moved: 'Moved',
   reordered: 'Reordered',
-  recorded: 'First recorded',
+  recorded: 'First seen',
   file_uploaded: 'Uploaded a file to',
   file_replaced: 'Replaced the file on',
   file_removed: 'Removed the file from',
@@ -93,7 +93,7 @@ export function changeTone(action: string): ChangeTone {
 export function actionMeaning(change: CurriculumAuditEvent): string {
   switch (change.action) {
     case 'recorded':
-      return 'The first activity for this record was captured in the audit history. It does not mean someone edited it just now.';
+      return 'This is the first timestamp at which the audit could see this record. It identifies when the record was present, but it does not prove that it was created at that moment or preserve the field values entered then.';
     case 'created':
       return 'This record was created. The details below are what it was created with.';
     case 'updated':

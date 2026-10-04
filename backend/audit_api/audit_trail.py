@@ -56,11 +56,16 @@ ANNOTATION_SQL = _sql(ANNOTATION_COLUMNS)
 #: read as an edit to the other's.
 ACTIVITY_OVERRIDE_COLUMNS = (
     'override_key', 'aptem_id', 'activity_id', 'operation', 'payload', 'source_payload',
-    'updated_by', 'updated_at',
+    'updated_by', 'updated_at', 'created_at',
 )
 ACTIVITY_OVERRIDE_RETURNING = (
     'aptem_id', 'activity_id', 'operation', 'payload', 'source_payload',
     'updated_by', 'updated_at',
+    # Last, so every positional read above is unchanged. Not a snapshot column
+    # (the registration lists its own): it is read so a correction this write
+    # inserted -- both stamps from the insert's `now()` -- reads as created,
+    # while the upsert's `updated_at = now()` keeps an older one an edit.
+    'created_at',
 )
 ACTIVITY_OVERRIDE_SQL = _sql(ACTIVITY_OVERRIDE_RETURNING)
 
@@ -77,6 +82,9 @@ EVIDENCE_OVERRIDE_COLUMNS = (
     'evidence_kind', 'evidence_status', 'evidence_date',
     'source_evidence_id', 'source_activity_id', 'source_activity_month',
     'source_activity_category', 'uploaded_by', 'updated_at',
+    # Read for the created-or-first-recorded decision only; the registration
+    # keeps its own snapshot list. Every update path moves `updated_at`.
+    'created_at',
 )
 EVIDENCE_OVERRIDE_SQL = _sql(EVIDENCE_OVERRIDE_COLUMNS)
 

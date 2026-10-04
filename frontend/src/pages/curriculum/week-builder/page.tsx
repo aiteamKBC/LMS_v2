@@ -1877,7 +1877,11 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
   const sessionDate = s('sessionDate') || weekSessionDate || '';
   const sessionTime = s('sessionTime') || String(weekSessionTime || '').slice(0, 5) || '';
   const hasMeeting = Boolean(s('liveSessionUrl') || s('teamsMeetingUrl'));
-  const teamsLiveSessionId = s('teamsLiveSessionId');
+  // A live session delivered by its own additional meeting reads that
+  // meeting's results (a single event, so always session 1); every other live
+  // session reads its occurrence of the module's calendar.
+  const additionalLiveSessionId = s('extraTeamsMeetingUrl') ? s('extraTeamsLiveSessionId') : '';
+  const teamsLiveSessionId = additionalLiveSessionId || s('teamsLiveSessionId');
 
   return (
     <>
@@ -1907,13 +1911,13 @@ function LiveSessionBody({ component, onChange, setSetting, rulePoints, weekSess
             session={{
               liveSessionId: teamsLiveSessionId,
               title: component.title,
-              dateIso: s('sessionDateTimeUtc') || s('teamsStartDateTimeUtc') || sessionDate,
+              dateIso: (additionalLiveSessionId && s('extraTeamsStartDateTimeUtc')) || s('sessionDateTimeUtc') || s('teamsStartDateTimeUtc') || sessionDate,
               date: sessionDate,
               actualStart: '',
               artifactsSyncedAt: '',
             }}
-            sessionNumber={Number(s('teamsSessionNumber')) || undefined}
-            occurrenceId={s('teamsOccurrenceId') || undefined}
+            sessionNumber={additionalLiveSessionId ? 1 : Number(s('teamsSessionNumber')) || undefined}
+            occurrenceId={additionalLiveSessionId ? undefined : s('teamsOccurrenceId') || undefined}
           />
         </Section>
       )}
