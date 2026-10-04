@@ -51,8 +51,9 @@ describe('migrated meeting intelligence', () => {
       intelligence: { attendanceStatus: 'available', recordingStatus: 'not-available', transcriptStatus: 'available', summaryStatus: 'ready', errorCodes: [] },
       meetingSummary: { status: 'ready', summary: { title: 'MCM recap', overview: 'Initial recap', keyPoints: [], actions: [], nextSteps: [], support: [] } },
     });
-    api.save.mockResolvedValue({ meetingSummary: { status: 'edited', summary: { title: 'MCM recap', overview: 'Coach revision', keyPoints: [], actions: [], nextSteps: [], support: [] } } });
-    render(<MigratedMeetingIntelligence instanceId={id} family="aptem_mcm" status="in-progress" viewAs={false} />);
+    api.save.mockResolvedValue({ answerVersion: 'after-summary', progressVersion: 'after-summary', reviewAnswers: { note: 'Saved words' }, meetingSummary: { status: 'edited', summary: { title: 'MCM recap', overview: 'Coach revision', keyPoints: [], actions: [], nextSteps: [], support: [] } } });
+    const onCheckComplete = vi.fn();
+    render(<MigratedMeetingIntelligence instanceId={id} family="aptem_mcm" status="in-progress" viewAs={false} onCheckComplete={onCheckComplete} />);
     expect(await screen.findByText('Initial recap')).toBeInTheDocument();
     expect(screen.getAllByText(/30 minutes/).length).toBeGreaterThan(0);
     expect(screen.getByText(/Synthetic learner/)).toBeInTheDocument();
@@ -63,12 +64,19 @@ describe('migrated meeting intelligence', () => {
     await user.type(editor, 'Coach revision');
     await user.click(screen.getByRole('button', { name: 'Save recap' }));
     await waitFor(() => expect(api.save).toHaveBeenCalledWith(id, expect.objectContaining({ overview: 'Coach revision' })));
+    expect(onCheckComplete).toHaveBeenCalledWith(expect.objectContaining({ answerVersion: 'after-summary', reviewAnswers: { note: 'Saved words' } }));
   });
 
-  it('is read-only for admin view-as and completed reviews', async () => {
+  it('shows an inert Check Session for admin view-as and hides it on completed reviews', async () => {
+    const user = userEvent.setup();
     const { rerender } = render(<MigratedMeetingIntelligence instanceId={id} family="aptem_mcm" status="in-progress" viewAs />);
     await screen.findByText(/Admin view-as is read-only/);
-    expect(screen.queryByRole('button', { name: 'Check Session' })).not.toBeInTheDocument();
+    const button = await screen.findByRole('button', { name: 'Check Session' });
+    expect(button).toBeDisabled();
+    await user.click(button);
+    button.focus();
+    expect(button).not.toHaveFocus();
+    await user.keyboard('{Enter} ');
     rerender(<MigratedMeetingIntelligence instanceId={id} family="aptem_mcm" status="completed" viewAs={false} />);
     expect(screen.queryByRole('button', { name: 'Check Session' })).not.toBeInTheDocument();
     expect(api.fetch.mock.calls.every(call => call[2]?.refresh === false)).toBe(true);
@@ -80,5 +88,14 @@ describe('migrated meeting intelligence', () => {
     render(<MigratedMeetingIntelligence instanceId={id} family="aptem_progress_review" status="scheduled" viewAs={false} />);
     expect(await screen.findByText('Pending; check again later')).toBeInTheDocument();
     expect(screen.getByText('ATTENDANCE_NOT_AVAILABLE')).toBeInTheDocument();
+  });
+
+  it('blocks checks and summary edits during a template conflict without labeling the coach as an admin', async () => {
+    api.fetch.mockResolvedValue({ ...empty, meetingSummary: { status: 'ready', summary: { title: 'Summary', overview: 'Saved summary', keyPoints: [], actions: [], nextSteps: [], support: [] } } });
+    render(<MigratedMeetingIntelligence instanceId={id} family="aptem_mcm" status="in-progress" viewAs={false} readOnly />);
+    expect(await screen.findByText('Saved summary')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Check Session' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit' })).not.toBeInTheDocument();
+    expect(screen.queryByText(/Admin view-as/)).not.toBeInTheDocument();
   });
 });

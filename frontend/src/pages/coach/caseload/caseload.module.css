@@ -167,6 +167,8 @@
 .date strong, .date small { white-space: nowrap; }
 .date strong { display: inline-flex; align-items: center; gap: 7px; color: #262044; }
 .date strong svg { width: 14px; height: 14px; color: #5143a7; }
+.date[data-tone="warning"] small { color: #b77905; }
+.date[data-tone="critical"] small { color: #d83441; }
 .actions { display: flex; align-items: center; justify-content: flex-end; gap: 12px; }
 .profileButton { min-width: 104px; padding: 9px 13px; border: 1px solid #cfc4ff; border-radius: 7px; color: #5e36d2; font-size: 12px; font-weight: 800; white-space: nowrap; transition: background .15s, color .15s; }
 .profileButton:hover { background: #6840d8; color: #fff; }
