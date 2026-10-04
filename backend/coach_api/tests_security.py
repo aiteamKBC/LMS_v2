@@ -28,6 +28,7 @@ from .models import CoachAbsenceReport, CoachCalendarEvent
 
 
 COACH_ENDPOINTS = (
+    ("POST", "/coach_api/migrated-reviews/imported-review%3Asynthetic/progress", {"progressVersion": "synthetic"}),
     ("GET", "/coach_api/coach/dashboard", None),
     ("GET", "/coach_api/coach/caseload", None),
     ("GET", "/coach_api/coach/learners/101/case-file", None),

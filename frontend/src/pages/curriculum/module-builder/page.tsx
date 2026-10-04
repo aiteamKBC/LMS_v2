@@ -45,6 +45,7 @@ import {
   moduleIdentity,
   namedCurriculumWorkspacePath,
   sortEntities,
+  workspaceEditPath,
   MODULE_SORT_OPTIONS,
 } from '../shared/entities/model';
 import { COMPONENT_UPLOAD_MAX_LABEL } from '../shared/componentUploadPolicy';
@@ -8038,13 +8039,20 @@ const FACT_TONE_CLASSES: Record<FactTone, string> = {
   info: 'border-sky-200 bg-sky-50 text-sky-700',
 };
 
-/** The same labelled fact as a badge, for the delivery rows under the card. */
-function ModuleFact({ icon, label, value, tone = 'default', title }: {
+/**
+ * The same labelled fact as a badge, for the delivery rows under the card.
+ *
+ * `value` stays the plain text of the fact even when `children` render it, so
+ * the hover title still reads the whole fact in one line.
+ */
+function ModuleFact({ icon, label, value, tone = 'default', title, children }: {
   icon: string;
   label: string;
   value: string;
   tone?: FactTone;
   title?: string;
+  /** A richer rendering of the same `value` — links, for instance. */
+  children?: ReactNode;
 }) {
   return (
     <span
@@ -8053,7 +8061,52 @@ function ModuleFact({ icon, label, value, tone = 'default', title }: {
     >
       <AppIcon className={`${icon} text-[12px] opacity-70`}></AppIcon>
       <span className="text-[9px] font-bold uppercase tracking-wide opacity-70">{label}</span>
-      <span className="font-bold">{value}</span>
+      <span className="font-bold">{children || value}</span>
+    </span>
+  );
+}
+
+/**
+ * The delivery's cohort and group, each one a link to that record's own
+ * workspace with its edit drawer open.
+ *
+ * A reader who notices the wrong group or the wrong cohort dates here wants to
+ * correct them, and both are edited on their own page — this card never becomes
+ * a second place to edit them. A part without an id stays plain text: there is
+ * nothing to open.
+ */
+function DeliveryScopeValue({ usage }: { usage: ModuleDeliveryUsage }) {
+  const cohort = cleanModuleMeta(usage.cohort);
+  const group = cleanModuleMeta(usage.group);
+  if (!cohort && !group) return <>{formatDeliveryUsage(usage)}</>;
+  const cohortId = String(usage.cohortId || '').trim();
+  const groupId = String(usage.groupId || '').trim();
+  const linkClass = 'rounded-sm underline decoration-dotted underline-offset-2 transition-smooth hover:decoration-solid hover:text-primary-900 focus:outline-none focus:ring-2 focus:ring-primary-300';
+  return (
+    <span className="inline-flex items-center gap-1">
+      {cohort && (cohortId ? (
+        <Link
+          to={workspaceEditPath(`/curriculum/cohorts/${encodeURIComponent(cohortId)}`)}
+          className={linkClass}
+          title={`Open ${cohort} and edit this cohort`}
+        >
+          {cohort}
+        </Link>
+      ) : (
+        <span>{cohort}</span>
+      ))}
+      {cohort && group && <span className="opacity-50" aria-hidden="true">/</span>}
+      {group && (groupId ? (
+        <Link
+          to={workspaceEditPath(namedCurriculumWorkspacePath('groups', groupId, group))}
+          className={linkClass}
+          title={`Open ${group} and edit this group`}
+        >
+          {group}
+        </Link>
+      ) : (
+        <span>{group}</span>
+      ))}
     </span>
   );
 }
@@ -8117,7 +8170,9 @@ function ModuleDeliveryRows({ module, teamsSummary, expectedSessions }: {
               label="Cohort / group"
               value={formatDeliveryUsage(usage)}
               tone="accent"
-            />
+            >
+              <DeliveryScopeValue usage={usage} />
+            </ModuleFact>
             <ModuleFact
               icon="ri-calendar-event-line"
               label="Runs"

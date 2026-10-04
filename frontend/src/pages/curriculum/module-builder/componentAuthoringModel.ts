@@ -197,7 +197,7 @@ const definitions: ComponentAuthoringDefinition[] = [
     supportedSources: PODCAST_SOURCE_TYPES,
     requiredSettings: [],
     capabilities: ['media', 'preview', 'ksb-mapping', 'reflection', 'tutor-validation'],
-    defaultSettings: { ...advancedDefaults('podcast'), podcastSource: 'External URL', podcastUrl: '', embedCode: '', shortcode: '', uploadedFileName: '', uploadedFileUrl: '', uploadedFileSize: 0, uploadedFileContentType: '', uploadSource: '', durationMinutes: 20, requiredProgressPercentage: 0, listeningFocus: '', podcastReflectionQuestion: '', transcript: '' },
+    defaultSettings: { ...advancedDefaults('podcast'), podcastSource: 'External URL', podcastUrl: '', embedCode: '', shortcode: '', componentFiles: '', uploadedFileName: '', uploadedFileUrl: '', uploadedFileSize: 0, uploadedFileContentType: '', uploadSource: '', durationMinutes: 20, requiredProgressPercentage: 0, listeningFocus: '', podcastReflectionQuestion: '', transcript: '' },
   },
   {
     type: 'reading',
@@ -219,6 +219,7 @@ const definitions: ComponentAuthoringDefinition[] = [
       requirement: 'Required',
       readingSource: 'Written in LMS',
       resourceUrl: '',
+      componentFiles: '',
       uploadedFileName: '',
       uploadedFileUrl: '',
       uploadedFileSize: 0,
@@ -261,7 +262,7 @@ const definitions: ComponentAuthoringDefinition[] = [
     supportedSources: ['External URL', 'LMS resource', 'Device upload'],
     requiredSettings: [],
     capabilities: ['preview', 'ksb-mapping', 'reflection', 'tutor-validation'],
-    defaultSettings: { ...advancedDefaults('powerpoint'), fileName: '', presentationUrl: '', uploadedFileName: '', uploadedFileUrl: '', uploadedFileSize: 0, uploadedFileContentType: '', uploadSource: '', slideRange: '', speakerNotes: '', downloadAllowed: true },
+    defaultSettings: { ...advancedDefaults('powerpoint'), fileName: '', presentationUrl: '', componentFiles: '', uploadedFileName: '', uploadedFileUrl: '', uploadedFileSize: 0, uploadedFileContentType: '', uploadSource: '', slideRange: '', speakerNotes: '', downloadAllowed: true },
   },
   {
     type: 'quiz',
@@ -826,18 +827,19 @@ function settingValuesMatch(left: unknown, right: unknown) {
  * programme's points rules at creation, so a component nobody has opened can
  * already hold a number the definition does not.
  */
-export function componentLooksUnedited(component: ComponentAuthoringSnapshot, typeLabel?: string): boolean {
+export function componentLooksUnedited(component: ComponentAuthoringSnapshot, typeLabel?: string | readonly string[]): boolean {
   const definition = getComponentDefinition(component.type);
   const title = String(component.title || '').trim();
-  // The auto-generated title an author never touched depends on where the
-  // component was added from: the module builder stamps `definition.label`
-  // ("Video 3"), but the week builder's rail -- which both surfaces share --
-  // stamps its own display label instead ("Recorded Session 1" for the same
-  // `video` type; see `weekTypeLabel`). A caller using a different label
-  // convention passes it in; otherwise this falls back to the definition's.
-  const label = typeLabel || definition.label;
+  // The auto-generated title an author never touched depends on where and when
+  // the component was added: the module builder stamps `definition.label`
+  // ("Video 3"), while the week builder's rail -- which both surfaces share --
+  // stamps its own display label, which for `video` was "Recorded Session 1"
+  // until that type took the shared model's own name (see `weekTypeLabel` and
+  // `weekAutoTitleLabels`). A caller using other label conventions passes them
+  // in, one or several; otherwise this falls back to the definition's own.
+  const labels = typeLabel === undefined ? [] : typeof typeLabel === 'string' ? [typeLabel] : typeLabel;
   const autoTitlePattern = (text: string) => new RegExp(`^${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\s+\\d+)?$`, 'i');
-  const matchesAutoTitle = autoTitlePattern(definition.label).test(title) || autoTitlePattern(label).test(title);
+  const matchesAutoTitle = [definition.label, ...labels].some(text => Boolean(text) && autoTitlePattern(text).test(title));
   if (title && !matchesAutoTitle) return false;
   const description = String(component.description || '').trim();
   // Same story as the title: one add button leaves this empty, the other

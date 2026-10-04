@@ -20,7 +20,7 @@ import {
   HeroSecondaryButton,
   InlineError,
 } from '@/pages/curriculum/shared/entities/ui';
-import { auditEventHref, auditFieldValueLabel, auditValueLabel, auditValueTitle, clockLabel, durationLabel, parseActivityStamp, spanLabel, stampLabel, timeMetaLabel } from './activityTime';
+import { auditEventHref, auditFieldLabel, auditFieldValueLabel, auditValueLabel, auditValueTitle, clockLabel, durationLabel, parseActivityStamp, spanLabel, stampLabel, timeMetaLabel } from './activityTime';
 import { actionMeaning, changeStory, snapshotEntries, type ChangeTone } from './changeStory';
 import { useAuditRecordNames } from './auditNames';
 import { DEFAULT_WINDOW_DAYS, windowLimitFor, windowOptionsFor, type AuditTrailScope } from './scope';
@@ -677,7 +677,7 @@ function ChangeTableRow({ change, count, names }: { change: CurriculumAuditEvent
                 <dl className="grid gap-2">
                   {change.changes.map(field => (
                     <div key={field.field} className="rounded-lg border border-background-200 bg-background-50 px-3 py-2.5">
-                      <dt className="text-[10px] font-bold uppercase tracking-wide text-foreground-600">{field.label}</dt>
+                      <dt className="text-[10px] font-bold uppercase tracking-wide text-foreground-600">{auditFieldLabel(field.label)}</dt>
                       <dd className="mt-2 grid gap-2 sm:grid-cols-2">
                         <AuditValue label="Before" value={field.before} tone="muted" field={field} fields={change.changes} side="before" names={names} />
                         <AuditValue label="After" value={field.after} tone="changed" field={field} fields={change.changes} side="after" names={names} />

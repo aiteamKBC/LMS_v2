@@ -42,8 +42,8 @@ export function CalendarActionDialog({ target, onClose, onChanged }: {
   /**
    * The change email, once Microsoft has confirmed every change.
    * Learners each get their own copy -- what their sessions were and are now,
-   * nobody else's details -- and the organiser, co-organisers and presenters a copy that
-   * also lists the invited learners. Accepted messages are never sent twice.
+   * nobody else's details. The organiser, co-organisers and presenters are not
+   * emailed by the LMS. Accepted messages are never sent twice.
    */
   const sendEmails = async (outcome: ActionResult, retryFailed = false) => {
     if (outcome.status !== 'done' || !outcome.changeNotice) return;
@@ -180,6 +180,7 @@ export function CalendarActionDialog({ target, onClose, onChanged }: {
           <strong>{cancelling ? 'Cancellation emails: ' : 'Change emails: '}</strong>
           {!notify ? 'Not sent — you chose not to email.'
             : emailing ? `Sending… ${email ? `${email.accepted} of ${email.total} submitted to Microsoft` : ''}`
+              : email && !email.total ? 'None to send — no learners are invited.'
               : email ? `${email.accepted} of ${email.total} submitted to Microsoft${email.failed ? ` · ${email.failed} failed` : ''}${email.uncertain ? ` · ${email.uncertain} awaiting verification (not sent again automatically)` : ''}`
                 : result?.status === 'done' && !result.changeNotice ? 'Not sent — no session date changed.'
                   : result?.status === 'done' ? 'Not sent.'

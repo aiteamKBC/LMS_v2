@@ -1,0 +1,16 @@
+{
+  "read_only": false,
+  "database": "neondb",
+  "fingerprint": "c3ebdd6d45719f2ef0242aa194456feec530582bcef2d696fad3bdb5050dd1db",
+  "actor": "Ayman",
+  "new_candidates": 57,
+  "repair_candidates": 86,
+  "lms_excluded": 0,
+  "status": "COMPLETED",
+  "run_id": 1719,
+  "created_rows": 57,
+  "documents_added": 103,
+  "seconds_added": 2076300,
+  "parent_rows_updated": 50,
+  "source_rows_updated": 86
+}

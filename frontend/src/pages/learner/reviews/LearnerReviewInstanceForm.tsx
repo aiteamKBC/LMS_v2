@@ -307,7 +307,8 @@ export function LearnerReviewInstanceForm({
       {/* The same frozen figures the coach calculated and the signed PDF
           renders. Read-only here: a learner never calculates, and nothing on
           this page recalculates against their current progress. */}
-      {definition.template.reviewTypeCode === 'progress_review' ? (
+      {(definition.template.reviewTypeCode === 'progress_review'
+        || (definition.migratedForm && definition.template.reviewTypeCode === 'aptem_progress_review')) ? (
         <ReviewProgressPanel
           snapshot={definition.progressSnapshot}
           ragHistory={definition.ragHistory}

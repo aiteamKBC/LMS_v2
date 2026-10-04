@@ -1,0 +1,1952 @@
+{
+  "read_only": true,
+  "scope": {
+    "groups": [
+      "G1-Keith Customer Journey Optimisation",
+      "G2-Keith Customer Journey Optimisation"
+    ],
+    "requested_names": 27,
+    "unique_names": 27,
+    "duplicate_requested_names": [],
+    "target_months": "ALL"
+  },
+  "database": "neondb",
+  "groups": {
+    "G1-Keith Customer Journey Optimisation": {
+      "group_id": "GROUP-20260928143455519285CEBAAAED556C",
+      "module_id": "MOD-20260911124647037289",
+      "coach": "Omar Badr",
+      "requested_roster_count": 13,
+      "unique_aptem_learners": 13,
+      "additional_valid_seconds": 63000,
+      "additional_valid": "17:30:00",
+      "ssot_before_seconds": 5169959,
+      "ssot_before": "1436:05:59",
+      "new_candidate_seconds": 0,
+      "new_candidate": "0:00:00",
+      "parent_repair_candidate_seconds": 25200,
+      "parent_repair_candidate": "7:00:00",
+      "expected_after_seconds": 5195159,
+      "expected_after": "1443:05:59",
+      "review_learners": 1,
+      "membership_review_count": 13
+    },
+    "G2-Keith Customer Journey Optimisation": {
+      "group_id": "GROUP-20260930135400889703823E0C35DCAE",
+      "module_id": "MOD-202609301354380952694569FE544702",
+      "coach": "Omar Badr",
+      "requested_roster_count": 14,
+      "unique_aptem_learners": 14,
+      "additional_valid_seconds": 532800,
+      "additional_valid": "148:00:00",
+      "ssot_before_seconds": 6867831,
+      "ssot_before": "1907:43:51",
+      "new_candidate_seconds": 0,
+      "new_candidate": "0:00:00",
+      "parent_repair_candidate_seconds": 0,
+      "parent_repair_candidate": "0:00:00",
+      "expected_after_seconds": 6867831,
+      "expected_after": "1907:43:51",
+      "review_learners": 2,
+      "membership_review_count": 14
+    }
+  },
+  "learners": [
+    {
+      "aptem_id": 15791,
+      "learner": "Abigail Hindle",
+      "target_groups": [
+        "G1-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+      "canonical_group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-05-28",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G1-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+          "canonical_group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 0,
+      "additional_accepted_valid_seconds": 0,
+      "additional_accepted_valid": "0:00:00",
+      "additional_excluded": [],
+      "candidates": [],
+      "source_inventory": {
+        "assignment_rows": 19,
+        "assignment_actual_hours": 43.25,
+        "activity_actual_rows": 393,
+        "activity_actual_hours": 63.7879,
+        "journal_rows": 65,
+        "journal_actual_hours": 43.9167,
+        "attendance_rows": 0,
+        "attendance_present_rows": 0,
+        "manual_documents": 32,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 537845,
+      "ssot_accepted_before": "149:24:05",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 537845,
+      "expected_after_if_approved": "149:24:05",
+      "raw_diff_after_vs_aptem_additional_seconds": 537845,
+      "timestamp_violations": [],
+      "decision": "READY"
+    },
+    {
+      "aptem_id": 10624,
+      "learner": "Adam Anson",
+      "target_groups": [
+        "G1-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+      "canonical_group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-05-21",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G1-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+          "canonical_group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 0,
+      "additional_accepted_valid_seconds": 0,
+      "additional_accepted_valid": "0:00:00",
+      "additional_excluded": [],
+      "candidates": [],
+      "source_inventory": {
+        "assignment_rows": 19,
+        "assignment_actual_hours": 20.833333333333332,
+        "activity_actual_rows": 19,
+        "activity_actual_hours": 20.833333333333332,
+        "journal_rows": 34,
+        "journal_actual_hours": 20.8333,
+        "attendance_rows": 0,
+        "attendance_present_rows": 0,
+        "manual_documents": 25,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 352970,
+      "ssot_accepted_before": "98:02:50",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 352970,
+      "expected_after_if_approved": "98:02:50",
+      "raw_diff_after_vs_aptem_additional_seconds": 352970,
+      "timestamp_violations": [],
+      "decision": "READY"
+    },
+    {
+      "aptem_id": 14880,
+      "learner": "Amber Coakes",
+      "target_groups": [
+        "G1-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+      "canonical_group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-05-18",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G1-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+          "canonical_group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 0,
+      "additional_accepted_valid_seconds": 0,
+      "additional_accepted_valid": "0:00:00",
+      "additional_excluded": [],
+      "candidates": [],
+      "source_inventory": {
+        "assignment_rows": 20,
+        "assignment_actual_hours": 25.333333333333332,
+        "activity_actual_rows": 394,
+        "activity_actual_hours": 48.40453333333333,
+        "journal_rows": 45,
+        "journal_actual_hours": 26.25,
+        "attendance_rows": 1,
+        "attendance_present_rows": 1,
+        "manual_documents": 20,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 356795,
+      "ssot_accepted_before": "99:06:35",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 356795,
+      "expected_after_if_approved": "99:06:35",
+      "raw_diff_after_vs_aptem_additional_seconds": 356795,
+      "timestamp_violations": [],
+      "decision": "READY"
+    },
+    {
+      "aptem_id": 17705,
+      "learner": "Annie Mannion",
+      "target_groups": [
+        "G2-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+      "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-06-09",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G2-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+          "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 1,
+      "additional_accepted_valid_seconds": 7200,
+      "additional_accepted_valid": "2:00:00",
+      "additional_excluded": [],
+      "candidates": [
+        {
+          "aptem_id": 17705,
+          "learner": "Annie Mannion",
+          "evidence_id": 47252,
+          "component_id": 83281,
+          "component_name": "M.MI&P 1:Additional Job Activity + Face to Face Workshop (Optional)",
+          "evidence_name": "Content Calendar template CGN Fin Sector Q3 Q4 2026 - AM.xlsx",
+          "evidence_name_metadata": {
+            "characters": 61,
+            "sha256": "54af4f1243fcf2508790af2528ee286857b1749055e641a2216eb03014026b8c"
+          },
+          "spent_minutes": 120,
+          "evidence_date": "2026-06-25",
+          "status": "DURATION_CONFLICT",
+          "reason": "active_aptem_lineage_duration_differs_from_evidence",
+          "resolution": "DO_NOT_ADD_UNTIL_DURATION_REVIEW",
+          "source_ids": [
+            865107
+          ],
+          "parent_ids": [
+            704219
+          ],
+          "source_actual_seconds": [
+            7200
+          ],
+          "parent_actual_seconds": 14400,
+          "aggregate_expected_seconds": 7200,
+          "aggregate_source_actual_seconds": 7200,
+          "journal_ids": [],
+          "file_blob_present": true,
+          "report_blob_present": true,
+          "note_present": false,
+          "evidence_kind": "File",
+          "evidence_type": null,
+          "feedback_present": true
+        }
+      ],
+      "source_inventory": {
+        "assignment_rows": 19,
+        "assignment_actual_hours": 12.5,
+        "activity_actual_rows": 392,
+        "activity_actual_hours": 43.2245,
+        "journal_rows": 121,
+        "journal_actual_hours": 79.1309,
+        "attendance_rows": 1,
+        "attendance_present_rows": 1,
+        "manual_documents": 28,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 1,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 505369,
+      "ssot_accepted_before": "140:22:49",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 505369,
+      "expected_after_if_approved": "140:22:49",
+      "raw_diff_after_vs_aptem_additional_seconds": 498169,
+      "timestamp_violations": [],
+      "decision": "REVIEW"
+    },
+    {
+      "aptem_id": 19694,
+      "learner": "Brooke Elmer",
+      "target_groups": [
+        "G2-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+      "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-06-10",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G2-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+          "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 0,
+      "additional_accepted_valid_seconds": 0,
+      "additional_accepted_valid": "0:00:00",
+      "additional_excluded": [],
+      "candidates": [],
+      "source_inventory": {
+        "assignment_rows": 19,
+        "assignment_actual_hours": 37.0,
+        "activity_actual_rows": 390,
+        "activity_actual_hours": 52.6547,
+        "journal_rows": 134,
+        "journal_actual_hours": 98.6965,
+        "attendance_rows": 0,
+        "attendance_present_rows": 0,
+        "manual_documents": 26,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 573660,
+      "ssot_accepted_before": "159:21:00",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 573660,
+      "expected_after_if_approved": "159:21:00",
+      "raw_diff_after_vs_aptem_additional_seconds": 573660,
+      "timestamp_violations": [],
+      "decision": "READY"
+    },
+    {
+      "aptem_id": 18616,
+      "learner": "Christian Beckett",
+      "target_groups": [
+        "G2-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+      "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-06-09",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G2-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+          "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 1,
+      "additional_accepted_valid_seconds": 525600,
+      "additional_accepted_valid": "146:00:00",
+      "additional_excluded": [],
+      "candidates": [
+        {
+          "aptem_id": 18616,
+          "learner": "Christian Beckett",
+          "evidence_id": 54128,
+          "component_id": 82673,
+          "component_name": "M.MI&P 2:Additional Job Activity",
+          "evidence_name": "Application of Marketing Strategy and Planning During Interim Marketing Management.docx",
+          "evidence_name_metadata": {
+            "characters": 87,
+            "sha256": "a822d6e2560d5eab5c9ec8594136cd2d91207cdcc23f0d5f8d1a4b8e8d968c0c"
+          },
+          "spent_minutes": 8760,
+          "evidence_date": "2026-07-30",
+          "status": "BLOCKED",
+          "reason": "active_source_points_to_missing_parent",
+          "resolution": "RECOVER_PARENT_AFTER_EVIDENCE_REVIEW",
+          "source_ids": [
+            859284
+          ],
+          "parent_ids": [],
+          "source_actual_seconds": [
+            0
+          ],
+          "parent_actual_seconds": 0,
+          "aggregate_expected_seconds": 0,
+          "aggregate_source_actual_seconds": 0,
+          "journal_ids": [],
+          "file_blob_present": true,
+          "report_blob_present": true,
+          "note_present": false,
+          "evidence_kind": "File",
+          "evidence_type": null,
+          "feedback_present": true
+        }
+      ],
+      "source_inventory": {
+        "assignment_rows": 19,
+        "assignment_actual_hours": 3.5,
+        "activity_actual_rows": 19,
+        "activity_actual_hours": 3.5,
+        "journal_rows": 44,
+        "journal_actual_hours": 20.4666,
+        "attendance_rows": 0,
+        "attendance_present_rows": 0,
+        "manual_documents": 52,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 1
+      },
+      "ssot_accepted_before_seconds": 604807,
+      "ssot_accepted_before": "168:00:07",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 604807,
+      "expected_after_if_approved": "168:00:07",
+      "raw_diff_after_vs_aptem_additional_seconds": 79207,
+      "timestamp_violations": [],
+      "decision": "BLOCKED"
+    },
+    {
+      "aptem_id": 15751,
+      "learner": "Donna Sharpe",
+      "target_groups": [
+        "G1-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+      "canonical_group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-05-19",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G1-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+          "canonical_group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 0,
+      "additional_accepted_valid_seconds": 0,
+      "additional_accepted_valid": "0:00:00",
+      "additional_excluded": [],
+      "candidates": [],
+      "source_inventory": {
+        "assignment_rows": 20,
+        "assignment_actual_hours": 28.5,
+        "activity_actual_rows": 394,
+        "activity_actual_hours": 45.4169,
+        "journal_rows": 29,
+        "journal_actual_hours": 41.1667,
+        "attendance_rows": 1,
+        "attendance_present_rows": 1,
+        "manual_documents": 59,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 593508,
+      "ssot_accepted_before": "164:51:48",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 593508,
+      "expected_after_if_approved": "164:51:48",
+      "raw_diff_after_vs_aptem_additional_seconds": 593508,
+      "timestamp_violations": [],
+      "decision": "READY"
+    },
+    {
+      "aptem_id": 15951,
+      "learner": "Emma Taylor",
+      "target_groups": [
+        "G1-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+      "canonical_group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-05-18",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G1-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+          "canonical_group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 0,
+      "additional_accepted_valid_seconds": 0,
+      "additional_accepted_valid": "0:00:00",
+      "additional_excluded": [],
+      "candidates": [],
+      "source_inventory": {
+        "assignment_rows": 19,
+        "assignment_actual_hours": 24.333333333333332,
+        "activity_actual_rows": 393,
+        "activity_actual_hours": 61.26273333333334,
+        "journal_rows": 45,
+        "journal_actual_hours": 25.6667,
+        "attendance_rows": 0,
+        "attendance_present_rows": 0,
+        "manual_documents": 14,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 379569,
+      "ssot_accepted_before": "105:26:09",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 379569,
+      "expected_after_if_approved": "105:26:09",
+      "raw_diff_after_vs_aptem_additional_seconds": 379569,
+      "timestamp_violations": [],
+      "decision": "READY"
+    },
+    {
+      "aptem_id": 6409,
+      "learner": "Francesca Sinclair Reid",
+      "target_groups": [
+        "G2-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+      "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-06-04",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G2-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+          "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 0,
+      "additional_accepted_valid_seconds": 0,
+      "additional_accepted_valid": "0:00:00",
+      "additional_excluded": [],
+      "candidates": [],
+      "source_inventory": {
+        "assignment_rows": 19,
+        "assignment_actual_hours": 25.0,
+        "activity_actual_rows": 393,
+        "activity_actual_hours": 49.557900000000004,
+        "journal_rows": 19,
+        "journal_actual_hours": 30.8098,
+        "attendance_rows": 2,
+        "attendance_present_rows": 2,
+        "manual_documents": 29,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 341700,
+      "ssot_accepted_before": "94:55:00",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 341700,
+      "expected_after_if_approved": "94:55:00",
+      "raw_diff_after_vs_aptem_additional_seconds": 341700,
+      "timestamp_violations": [],
+      "decision": "READY"
+    },
+    {
+      "aptem_id": 18716,
+      "learner": "Hannah Chantler",
+      "target_groups": [
+        "G2-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-8d927c1d07f2da52cf6d9316f1535f07",
+      "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-06-08",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G2-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-8d927c1d07f2da52cf6d9316f1535f07",
+          "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026"
+        }
+      ],
+      "additional_accepted_valid_count": 0,
+      "additional_accepted_valid_seconds": 0,
+      "additional_accepted_valid": "0:00:00",
+      "additional_excluded": [],
+      "candidates": [],
+      "source_inventory": {
+        "assignment_rows": 17,
+        "assignment_actual_hours": 13.0,
+        "activity_actual_rows": 395,
+        "activity_actual_hours": 169.1789,
+        "journal_rows": 125,
+        "journal_actual_hours": 91.6364,
+        "attendance_rows": 10,
+        "attendance_present_rows": 8,
+        "manual_documents": 11,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 485610,
+      "ssot_accepted_before": "134:53:30",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 485610,
+      "expected_after_if_approved": "134:53:30",
+      "raw_diff_after_vs_aptem_additional_seconds": 485610,
+      "timestamp_violations": [],
+      "decision": "READY"
+    },
+    {
+      "aptem_id": 16749,
+      "learner": "Hasan Syed Mohammed Salam",
+      "target_groups": [
+        "G1-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+      "canonical_group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-05-18",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G1-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+          "canonical_group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 0,
+      "additional_accepted_valid_seconds": 0,
+      "additional_accepted_valid": "0:00:00",
+      "additional_excluded": [],
+      "candidates": [],
+      "source_inventory": {
+        "assignment_rows": 19,
+        "assignment_actual_hours": 26.833333333333332,
+        "activity_actual_rows": 393,
+        "activity_actual_hours": 43.763333333333335,
+        "journal_rows": 26,
+        "journal_actual_hours": 41.7502,
+        "attendance_rows": 1,
+        "attendance_present_rows": 1,
+        "manual_documents": 41,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 230100,
+      "ssot_accepted_before": "63:55:00",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 230100,
+      "expected_after_if_approved": "63:55:00",
+      "raw_diff_after_vs_aptem_additional_seconds": 230100,
+      "timestamp_violations": [],
+      "decision": "READY"
+    },
+    {
+      "aptem_id": 17825,
+      "learner": "Isabella Francis",
+      "target_groups": [
+        "G2-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+      "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-06-09",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G2-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+          "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 0,
+      "additional_accepted_valid_seconds": 0,
+      "additional_accepted_valid": "0:00:00",
+      "additional_excluded": [],
+      "candidates": [],
+      "source_inventory": {
+        "assignment_rows": 19,
+        "assignment_actual_hours": 22.5,
+        "activity_actual_rows": 393,
+        "activity_actual_hours": 39.0664,
+        "journal_rows": 26,
+        "journal_actual_hours": 38.7499,
+        "attendance_rows": 2,
+        "attendance_present_rows": 2,
+        "manual_documents": 33,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 509820,
+      "ssot_accepted_before": "141:37:00",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 509820,
+      "expected_after_if_approved": "141:37:00",
+      "raw_diff_after_vs_aptem_additional_seconds": 509820,
+      "timestamp_violations": [],
+      "decision": "READY"
+    },
+    {
+      "aptem_id": 16476,
+      "learner": "Kimberley Gurney",
+      "target_groups": [
+        "G2-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+      "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-06-10",
+        "end": "2028-08-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G2-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+          "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 0,
+      "additional_accepted_valid_seconds": 0,
+      "additional_accepted_valid": "0:00:00",
+      "additional_excluded": [],
+      "candidates": [],
+      "source_inventory": {
+        "assignment_rows": 29,
+        "assignment_actual_hours": 31.5,
+        "activity_actual_rows": 403,
+        "activity_actual_hours": 53.4638,
+        "journal_rows": 114,
+        "journal_actual_hours": 70.2882,
+        "attendance_rows": 2,
+        "attendance_present_rows": 2,
+        "manual_documents": 36,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 416640,
+      "ssot_accepted_before": "115:44:00",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 416640,
+      "expected_after_if_approved": "115:44:00",
+      "raw_diff_after_vs_aptem_additional_seconds": 416640,
+      "timestamp_violations": [],
+      "decision": "READY"
+    },
+    {
+      "aptem_id": 17930,
+      "learner": "Kimberley Hatch",
+      "target_groups": [
+        "G2-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+      "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-06-03",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G2-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+          "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 0,
+      "additional_accepted_valid_seconds": 0,
+      "additional_accepted_valid": "0:00:00",
+      "additional_excluded": [],
+      "candidates": [],
+      "source_inventory": {
+        "assignment_rows": 19,
+        "assignment_actual_hours": 34.0,
+        "activity_actual_rows": 393,
+        "activity_actual_hours": 56.1057,
+        "journal_rows": 148,
+        "journal_actual_hours": 115.4869,
+        "attendance_rows": 2,
+        "attendance_present_rows": 2,
+        "manual_documents": 44,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 655860,
+      "ssot_accepted_before": "182:11:00",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 655860,
+      "expected_after_if_approved": "182:11:00",
+      "raw_diff_after_vs_aptem_additional_seconds": 655860,
+      "timestamp_violations": [],
+      "decision": "READY"
+    },
+    {
+      "aptem_id": 17952,
+      "learner": "Lucy Beirne",
+      "target_groups": [
+        "G2-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+      "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-06-08",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G2-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+          "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 0,
+      "additional_accepted_valid_seconds": 0,
+      "additional_accepted_valid": "0:00:00",
+      "additional_excluded": [],
+      "candidates": [],
+      "source_inventory": {
+        "assignment_rows": 19,
+        "assignment_actual_hours": 24.0,
+        "activity_actual_rows": 390,
+        "activity_actual_hours": 36.03,
+        "journal_rows": 124,
+        "journal_actual_hours": 69.9198,
+        "attendance_rows": 0,
+        "attendance_present_rows": 0,
+        "manual_documents": 11,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 431644,
+      "ssot_accepted_before": "119:54:04",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 431644,
+      "expected_after_if_approved": "119:54:04",
+      "raw_diff_after_vs_aptem_additional_seconds": 431644,
+      "timestamp_violations": [],
+      "decision": "READY"
+    },
+    {
+      "aptem_id": 15433,
+      "learner": "Marco Badchkam",
+      "target_groups": [
+        "G1-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-38a1153b1d667cf1d42ba93fef2f82e7",
+      "canonical_group_name": "Keith | Strategy & Planning – June 2026",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-05-18",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G1-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-38a1153b1d667cf1d42ba93fef2f82e7",
+          "canonical_group_name": "Keith | Strategy & Planning – June 2026"
+        }
+      ],
+      "additional_accepted_valid_count": 0,
+      "additional_accepted_valid_seconds": 0,
+      "additional_accepted_valid": "0:00:00",
+      "additional_excluded": [],
+      "candidates": [],
+      "source_inventory": {
+        "assignment_rows": 17,
+        "assignment_actual_hours": 24.5,
+        "activity_actual_rows": 395,
+        "activity_actual_hours": 170.17340000000002,
+        "journal_rows": 67,
+        "journal_actual_hours": 48.1667,
+        "attendance_rows": 10,
+        "attendance_present_rows": 10,
+        "manual_documents": 8,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 617518,
+      "ssot_accepted_before": "171:31:58",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 617518,
+      "expected_after_if_approved": "171:31:58",
+      "raw_diff_after_vs_aptem_additional_seconds": 617518,
+      "timestamp_violations": [],
+      "decision": "READY"
+    },
+    {
+      "aptem_id": 16482,
+      "learner": "Matthew ODonohoe",
+      "target_groups": [
+        "G2-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+      "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-05-28",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G2-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+          "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 0,
+      "additional_accepted_valid_seconds": 0,
+      "additional_accepted_valid": "0:00:00",
+      "additional_excluded": [],
+      "candidates": [],
+      "source_inventory": {
+        "assignment_rows": 19,
+        "assignment_actual_hours": 26.5,
+        "activity_actual_rows": 393,
+        "activity_actual_hours": 44.47,
+        "journal_rows": 62,
+        "journal_actual_hours": 42.0057,
+        "attendance_rows": 2,
+        "attendance_present_rows": 2,
+        "manual_documents": 14,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 410883,
+      "ssot_accepted_before": "114:08:03",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 410883,
+      "expected_after_if_approved": "114:08:03",
+      "raw_diff_after_vs_aptem_additional_seconds": 410883,
+      "timestamp_violations": [],
+      "decision": "READY"
+    },
+    {
+      "aptem_id": 15073,
+      "learner": "Miranda Hartley",
+      "target_groups": [
+        "G1-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+      "canonical_group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-05-29",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G1-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+          "canonical_group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 0,
+      "additional_accepted_valid_seconds": 0,
+      "additional_accepted_valid": "0:00:00",
+      "additional_excluded": [],
+      "candidates": [],
+      "source_inventory": {
+        "assignment_rows": 19,
+        "assignment_actual_hours": 23.0,
+        "activity_actual_rows": 19,
+        "activity_actual_hours": 23.0,
+        "journal_rows": 59,
+        "journal_actual_hours": 24.0,
+        "attendance_rows": 0,
+        "attendance_present_rows": 0,
+        "manual_documents": 6,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 500897,
+      "ssot_accepted_before": "139:08:17",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 500897,
+      "expected_after_if_approved": "139:08:17",
+      "raw_diff_after_vs_aptem_additional_seconds": 500897,
+      "timestamp_violations": [],
+      "decision": "READY"
+    },
+    {
+      "aptem_id": 15489,
+      "learner": "Natalie Parrish",
+      "target_groups": [
+        "G1-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+      "canonical_group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-05-21",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G1-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+          "canonical_group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 1,
+      "additional_accepted_valid_seconds": 25200,
+      "additional_accepted_valid": "7:00:00",
+      "additional_excluded": [],
+      "candidates": [
+        {
+          "aptem_id": 15489,
+          "learner": "Natalie Parrish",
+          "evidence_id": 48742,
+          "component_id": 74252,
+          "component_name": "M.MI&P 1:Additional Job Activity + Face to Face Workshop (Optional)",
+          "evidence_name": "June additional LMS.pdf",
+          "evidence_name_metadata": {
+            "characters": 23,
+            "sha256": "fd4afd4232e0cb20c1e953a1e8c94c7cf0af5d06d8889410339fbf4eec4aa2ca"
+          },
+          "spent_minutes": 420,
+          "evidence_date": "2026-06-05",
+          "status": "PARENT_NEEDS_ACTUAL_REPAIR",
+          "reason": "exact_evidence_lineage_exists_but_parent_and_source_have_zero_actual_seconds",
+          "resolution": "UPDATE_EXISTING_PARENT_NO_NEW_ACTIVITY",
+          "source_ids": [
+            855837
+          ],
+          "parent_ids": [
+            699711
+          ],
+          "source_actual_seconds": [
+            0
+          ],
+          "parent_actual_seconds": 0,
+          "aggregate_expected_seconds": 25200,
+          "aggregate_source_actual_seconds": 0,
+          "journal_ids": [],
+          "file_blob_present": true,
+          "report_blob_present": true,
+          "note_present": false,
+          "evidence_kind": "File",
+          "evidence_type": null,
+          "feedback_present": true
+        }
+      ],
+      "source_inventory": {
+        "assignment_rows": 19,
+        "assignment_actual_hours": 13.333333333333334,
+        "activity_actual_rows": 391,
+        "activity_actual_hours": 30.293133333333333,
+        "journal_rows": 30,
+        "journal_actual_hours": 14.5,
+        "attendance_rows": 0,
+        "attendance_present_rows": 0,
+        "manual_documents": 5,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 1,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 176305,
+      "ssot_accepted_before": "48:58:25",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 25200,
+      "expected_after_if_approved_seconds": 201505,
+      "expected_after_if_approved": "55:58:25",
+      "raw_diff_after_vs_aptem_additional_seconds": 176305,
+      "timestamp_violations": [],
+      "decision": "REVIEW"
+    },
+    {
+      "aptem_id": 17417,
+      "learner": "Natalie Rogers",
+      "target_groups": [
+        "G2-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+      "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-05-28",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G2-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+          "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 0,
+      "additional_accepted_valid_seconds": 0,
+      "additional_accepted_valid": "0:00:00",
+      "additional_excluded": [],
+      "candidates": [],
+      "source_inventory": {
+        "assignment_rows": 19,
+        "assignment_actual_hours": 12.75,
+        "activity_actual_rows": 392,
+        "activity_actual_hours": 38.5538,
+        "journal_rows": 71,
+        "journal_actual_hours": 60.6767,
+        "attendance_rows": 1,
+        "attendance_present_rows": 1,
+        "manual_documents": 11,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 514348,
+      "ssot_accepted_before": "142:52:28",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 514348,
+      "expected_after_if_approved": "142:52:28",
+      "raw_diff_after_vs_aptem_additional_seconds": 514348,
+      "timestamp_violations": [],
+      "decision": "READY"
+    },
+    {
+      "aptem_id": 16549,
+      "learner": "Paul Brooks",
+      "target_groups": [
+        "G1-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+      "canonical_group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-06-19",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G1-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+          "canonical_group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 0,
+      "additional_accepted_valid_seconds": 0,
+      "additional_accepted_valid": "0:00:00",
+      "additional_excluded": [],
+      "candidates": [],
+      "source_inventory": {
+        "assignment_rows": 19,
+        "assignment_actual_hours": 1.0,
+        "activity_actual_rows": 19,
+        "activity_actual_hours": 1.0,
+        "journal_rows": 16,
+        "journal_actual_hours": 1.8333,
+        "attendance_rows": 0,
+        "attendance_present_rows": 0,
+        "manual_documents": 1,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 76210,
+      "ssot_accepted_before": "21:10:10",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 76210,
+      "expected_after_if_approved": "21:10:10",
+      "raw_diff_after_vs_aptem_additional_seconds": 76210,
+      "timestamp_violations": [],
+      "decision": "READY"
+    },
+    {
+      "aptem_id": 18705,
+      "learner": "Rebecca Badby",
+      "target_groups": [
+        "G2-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+      "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-06-04",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G2-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+          "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 0,
+      "additional_accepted_valid_seconds": 0,
+      "additional_accepted_valid": "0:00:00",
+      "additional_excluded": [],
+      "candidates": [],
+      "source_inventory": {
+        "assignment_rows": 19,
+        "assignment_actual_hours": 68.91666666666667,
+        "activity_actual_rows": 392,
+        "activity_actual_hours": 79.80606666666667,
+        "journal_rows": 23,
+        "journal_actual_hours": 105.0001,
+        "attendance_rows": 0,
+        "attendance_present_rows": 0,
+        "manual_documents": 33,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 447448,
+      "ssot_accepted_before": "124:17:28",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 447448,
+      "expected_after_if_approved": "124:17:28",
+      "raw_diff_after_vs_aptem_additional_seconds": 447448,
+      "timestamp_violations": [],
+      "decision": "READY"
+    },
+    {
+      "aptem_id": 15588,
+      "learner": "Sanjit Kaur",
+      "target_groups": [
+        "G1-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+      "canonical_group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-05-15",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G1-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+          "canonical_group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 0,
+      "additional_accepted_valid_seconds": 0,
+      "additional_accepted_valid": "0:00:00",
+      "additional_excluded": [],
+      "candidates": [],
+      "source_inventory": {
+        "assignment_rows": 19,
+        "assignment_actual_hours": 18.333333333333332,
+        "activity_actual_rows": 392,
+        "activity_actual_hours": 42.52193333333334,
+        "journal_rows": 70,
+        "journal_actual_hours": 19.25,
+        "attendance_rows": 1,
+        "attendance_present_rows": 1,
+        "manual_documents": 9,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 576920,
+      "ssot_accepted_before": "160:15:20",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 576920,
+      "expected_after_if_approved": "160:15:20",
+      "raw_diff_after_vs_aptem_additional_seconds": 576920,
+      "timestamp_violations": [],
+      "decision": "READY"
+    },
+    {
+      "aptem_id": 17753,
+      "learner": "Shelley Hart",
+      "target_groups": [
+        "G1-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+      "canonical_group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-05-27",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G1-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+          "canonical_group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 0,
+      "additional_accepted_valid_seconds": 0,
+      "additional_accepted_valid": "0:00:00",
+      "additional_excluded": [],
+      "candidates": [],
+      "source_inventory": {
+        "assignment_rows": 19,
+        "assignment_actual_hours": 26.75,
+        "activity_actual_rows": 390,
+        "activity_actual_hours": 33.7788,
+        "journal_rows": 58,
+        "journal_actual_hours": 70.5971,
+        "attendance_rows": 1,
+        "attendance_present_rows": 1,
+        "manual_documents": 16,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 413885,
+      "ssot_accepted_before": "114:58:05",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 413885,
+      "expected_after_if_approved": "114:58:05",
+      "raw_diff_after_vs_aptem_additional_seconds": 413885,
+      "timestamp_violations": [],
+      "decision": "READY"
+    },
+    {
+      "aptem_id": 16474,
+      "learner": "Sophie Lee",
+      "target_groups": [
+        "G1-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+      "canonical_group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-05-15",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G1-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-29c5adc0a823a62254e8aed6a691b239",
+          "canonical_group_name": "Keith | Strategy & Planning – June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 1,
+      "additional_accepted_valid_seconds": 37800,
+      "additional_accepted_valid": "10:30:00",
+      "additional_excluded": [],
+      "candidates": [
+        {
+          "aptem_id": 16474,
+          "learner": "Sophie Lee",
+          "evidence_id": 47274,
+          "component_id": 76237,
+          "component_name": "M.MI&P 1:Additional Job Activity + Face to Face Workshop (Optional)",
+          "evidence_name": "LSM 1.docx",
+          "evidence_name_metadata": {
+            "characters": 10,
+            "sha256": "037323e1bd24af4f33a2ab83a401f4d4c574348cebab27f62e91681ef4abc7c9"
+          },
+          "spent_minutes": 630,
+          "evidence_date": "2026-06-30",
+          "status": "ALREADY_REPRESENTED",
+          "reason": "active_aptem_source_and_parent_match_evidence_duration",
+          "resolution": "KEEP_EXISTING_LINEAGE",
+          "source_ids": [
+            857154
+          ],
+          "parent_ids": [
+            700365
+          ],
+          "source_actual_seconds": [
+            37800
+          ],
+          "parent_actual_seconds": 37800,
+          "aggregate_expected_seconds": 37800,
+          "aggregate_source_actual_seconds": 37800,
+          "journal_ids": [],
+          "file_blob_present": true,
+          "report_blob_present": true,
+          "note_present": false,
+          "evidence_kind": "File",
+          "evidence_type": null,
+          "feedback_present": true
+        }
+      ],
+      "source_inventory": {
+        "assignment_rows": 19,
+        "assignment_actual_hours": 28.833333333333332,
+        "activity_actual_rows": 392,
+        "activity_actual_hours": 40.414033333333336,
+        "journal_rows": 24,
+        "journal_actual_hours": 56.4166,
+        "attendance_rows": 1,
+        "attendance_present_rows": 1,
+        "manual_documents": 11,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 1,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 357437,
+      "ssot_accepted_before": "99:17:17",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 357437,
+      "expected_after_if_approved": "99:17:17",
+      "raw_diff_after_vs_aptem_additional_seconds": 319637,
+      "timestamp_violations": [],
+      "decision": "READY"
+    },
+    {
+      "aptem_id": 16477,
+      "learner": "Steven Howell",
+      "target_groups": [
+        "G2-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+      "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-06-05",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G2-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+          "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 0,
+      "additional_accepted_valid_seconds": 0,
+      "additional_accepted_valid": "0:00:00",
+      "additional_excluded": [],
+      "candidates": [],
+      "source_inventory": {
+        "assignment_rows": 19,
+        "assignment_actual_hours": 13.0,
+        "activity_actual_rows": 19,
+        "activity_actual_hours": 13.0,
+        "journal_rows": 62,
+        "journal_actual_hours": 52.5041,
+        "attendance_rows": 0,
+        "attendance_present_rows": 0,
+        "manual_documents": 9,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 488463,
+      "ssot_accepted_before": "135:41:03",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 488463,
+      "expected_after_if_approved": "135:41:03",
+      "raw_diff_after_vs_aptem_additional_seconds": 488463,
+      "timestamp_violations": [],
+      "decision": "READY"
+    },
+    {
+      "aptem_id": 17254,
+      "learner": "Tom Lowes",
+      "target_groups": [
+        "G2-Keith Customer Journey Optimisation"
+      ],
+      "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+      "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)",
+      "cohort": "Jun 2026",
+      "programme": "Marketing Manager Level 6",
+      "period": {
+        "start": "2026-06-08",
+        "end": "2027-10-01"
+      },
+      "membership_review": [
+        {
+          "target_group": "G2-Keith Customer Journey Optimisation",
+          "canonical_group_id": "APTEM-GROUP-bb3452c042ae88c4ad088e6d20d8205f",
+          "canonical_group_name": "G2 - Keith - Strategy and Planning - June 2026(Recorded Sessions)"
+        }
+      ],
+      "additional_accepted_valid_count": 0,
+      "additional_accepted_valid_seconds": 0,
+      "additional_accepted_valid": "0:00:00",
+      "additional_excluded": [],
+      "candidates": [],
+      "source_inventory": {
+        "assignment_rows": 19,
+        "assignment_actual_hours": 11.0,
+        "activity_actual_rows": 393,
+        "activity_actual_hours": 44.4315,
+        "journal_rows": 85,
+        "journal_actual_hours": 81.0872,
+        "attendance_rows": 2,
+        "attendance_present_rows": 2,
+        "manual_documents": 11,
+        "candidate_documents_linked": 0
+      },
+      "counts": {
+        "already_represented": 0,
+        "new_legitimate": 0,
+        "lineage_only": 0,
+        "duration_conflict": 0,
+        "ambiguous": 0,
+        "parent_needs_actual_repair": 0,
+        "blocked": 0
+      },
+      "ssot_accepted_before_seconds": 481579,
+      "ssot_accepted_before": "133:46:19",
+      "additional_new_candidate_seconds": 0,
+      "parent_repair_candidate_seconds": 0,
+      "expected_after_if_approved_seconds": 481579,
+      "expected_after_if_approved": "133:46:19",
+      "raw_diff_after_vs_aptem_additional_seconds": 481579,
+      "timestamp_violations": [],
+      "decision": "READY"
+    }
+  ],
+  "candidates": [
+    {
+      "aptem_id": 15489,
+      "learner": "Natalie Parrish",
+      "evidence_id": 48742,
+      "component_id": 74252,
+      "component_name": "M.MI&P 1:Additional Job Activity + Face to Face Workshop (Optional)",
+      "evidence_name": "June additional LMS.pdf",
+      "evidence_name_metadata": {
+        "characters": 23,
+        "sha256": "fd4afd4232e0cb20c1e953a1e8c94c7cf0af5d06d8889410339fbf4eec4aa2ca"
+      },
+      "spent_minutes": 420,
+      "evidence_date": "2026-06-05",
+      "status": "PARENT_NEEDS_ACTUAL_REPAIR",
+      "reason": "exact_evidence_lineage_exists_but_parent_and_source_have_zero_actual_seconds",
+      "resolution": "UPDATE_EXISTING_PARENT_NO_NEW_ACTIVITY",
+      "source_ids": [
+        855837
+      ],
+      "parent_ids": [
+        699711
+      ],
+      "source_actual_seconds": [
+        0
+      ],
+      "parent_actual_seconds": 0,
+      "aggregate_expected_seconds": 25200,
+      "aggregate_source_actual_seconds": 0,
+      "journal_ids": [],
+      "file_blob_present": true,
+      "report_blob_present": true,
+      "note_present": false,
+      "evidence_kind": "File",
+      "evidence_type": null,
+      "feedback_present": true
+    },
+    {
+      "aptem_id": 16474,
+      "learner": "Sophie Lee",
+      "evidence_id": 47274,
+      "component_id": 76237,
+      "component_name": "M.MI&P 1:Additional Job Activity + Face to Face Workshop (Optional)",
+      "evidence_name": "LSM 1.docx",
+      "evidence_name_metadata": {
+        "characters": 10,
+        "sha256": "037323e1bd24af4f33a2ab83a401f4d4c574348cebab27f62e91681ef4abc7c9"
+      },
+      "spent_minutes": 630,
+      "evidence_date": "2026-06-30",
+      "status": "ALREADY_REPRESENTED",
+      "reason": "active_aptem_source_and_parent_match_evidence_duration",
+      "resolution": "KEEP_EXISTING_LINEAGE",
+      "source_ids": [
+        857154
+      ],
+      "parent_ids": [
+        700365
+      ],
+      "source_actual_seconds": [
+        37800
+      ],
+      "parent_actual_seconds": 37800,
+      "aggregate_expected_seconds": 37800,
+      "aggregate_source_actual_seconds": 37800,
+      "journal_ids": [],
+      "file_blob_present": true,
+      "report_blob_present": true,
+      "note_present": false,
+      "evidence_kind": "File",
+      "evidence_type": null,
+      "feedback_present": true
+    },
+    {
+      "aptem_id": 17705,
+      "learner": "Annie Mannion",
+      "evidence_id": 47252,
+      "component_id": 83281,
+      "component_name": "M.MI&P 1:Additional Job Activity + Face to Face Workshop (Optional)",
+      "evidence_name": "Content Calendar template CGN Fin Sector Q3 Q4 2026 - AM.xlsx",
+      "evidence_name_metadata": {
+        "characters": 61,
+        "sha256": "54af4f1243fcf2508790af2528ee286857b1749055e641a2216eb03014026b8c"
+      },
+      "spent_minutes": 120,
+      "evidence_date": "2026-06-25",
+      "status": "DURATION_CONFLICT",
+      "reason": "active_aptem_lineage_duration_differs_from_evidence",
+      "resolution": "DO_NOT_ADD_UNTIL_DURATION_REVIEW",
+      "source_ids": [
+        865107
+      ],
+      "parent_ids": [
+        704219
+      ],
+      "source_actual_seconds": [
+        7200
+      ],
+      "parent_actual_seconds": 14400,
+      "aggregate_expected_seconds": 7200,
+      "aggregate_source_actual_seconds": 7200,
+      "journal_ids": [],
+      "file_blob_present": true,
+      "report_blob_present": true,
+      "note_present": false,
+      "evidence_kind": "File",
+      "evidence_type": null,
+      "feedback_present": true
+    },
+    {
+      "aptem_id": 18616,
+      "learner": "Christian Beckett",
+      "evidence_id": 54128,
+      "component_id": 82673,
+      "component_name": "M.MI&P 2:Additional Job Activity",
+      "evidence_name": "Application of Marketing Strategy and Planning During Interim Marketing Management.docx",
+      "evidence_name_metadata": {
+        "characters": 87,
+        "sha256": "a822d6e2560d5eab5c9ec8594136cd2d91207cdcc23f0d5f8d1a4b8e8d968c0c"
+      },
+      "spent_minutes": 8760,
+      "evidence_date": "2026-07-30",
+      "status": "BLOCKED",
+      "reason": "active_source_points_to_missing_parent",
+      "resolution": "RECOVER_PARENT_AFTER_EVIDENCE_REVIEW",
+      "source_ids": [
+        859284
+      ],
+      "parent_ids": [],
+      "source_actual_seconds": [
+        0
+      ],
+      "parent_actual_seconds": 0,
+      "aggregate_expected_seconds": 0,
+      "aggregate_source_actual_seconds": 0,
+      "journal_ids": [],
+      "file_blob_present": true,
+      "report_blob_present": true,
+      "note_present": false,
+      "evidence_kind": "File",
+      "evidence_type": null,
+      "feedback_present": true
+    }
+  ],
+  "blocked": [
+    {
+      "aptem_id": 18616,
+      "learner": "Christian Beckett",
+      "evidence_id": 54128,
+      "component_id": 82673,
+      "component_name": "M.MI&P 2:Additional Job Activity",
+      "evidence_name": "Application of Marketing Strategy and Planning During Interim Marketing Management.docx",
+      "evidence_name_metadata": {
+        "characters": 87,
+        "sha256": "a822d6e2560d5eab5c9ec8594136cd2d91207cdcc23f0d5f8d1a4b8e8d968c0c"
+      },
+      "spent_minutes": 8760,
+      "evidence_date": "2026-07-30",
+      "status": "BLOCKED",
+      "reason": "active_source_points_to_missing_parent",
+      "resolution": "RECOVER_PARENT_AFTER_EVIDENCE_REVIEW",
+      "source_ids": [
+        859284
+      ],
+      "parent_ids": [],
+      "source_actual_seconds": [
+        0
+      ],
+      "parent_actual_seconds": 0,
+      "aggregate_expected_seconds": 0,
+      "aggregate_source_actual_seconds": 0,
+      "journal_ids": [],
+      "file_blob_present": true,
+      "report_blob_present": true,
+      "note_present": false,
+      "evidence_kind": "File",
+      "evidence_type": null,
+      "feedback_present": true
+    }
+  ],
+  "azure": {
+    "checked": 8,
+    "found": 8,
+    "missing": [],
+    "sdk": true
+  },
+  "summary": {
+    "unique_learners": 27,
+    "additional_valid_seconds": 595800,
+    "additional_valid": "165:30:00",
+    "ssot_before_seconds": 12037790,
+    "ssot_before": "3343:49:50",
+    "new_candidate_seconds": 0,
+    "new_candidate": "0:00:00",
+    "parent_repair_candidate_seconds": 25200,
+    "parent_repair_candidate": "7:00:00",
+    "review_learners": 3,
+    "blocked_candidates": 1,
+    "azure_missing": 0
+  },
+  "decision": "BLOCKED",
+  "write_performed": false,
+  "evidence_content_review": {
+    "artifact": "backend/reports/femi_commercial_intelligence_evidence_review.json",
+    "read_required_before_write": true,
+    "raw_text_saved": false
+  },
+  "module_scope_note": "Current learner progress contains many legacy rows with null or unrelated module_ref/group_ref values. SSOT-before is therefore a learner-wide accepted ledger total for this read-only comparison, not proof of current-module-only hours. No membership or historical row was changed.",
+  "source_inventory_note": "Last_audit assignments, activity_actual_hours, learner_attendance, Learner journals, activity sources, progress, documents, and attendance details were inventoried read-only.",
+  "membership_scope_note": "The supplied roster and target curriculum group IDs are authoritative for this dry run. Existing Learner.group_id values are legacy/missing for several learners and were not changed.",
+  "next_safe_step": "Review this Dry Run and explicitly approve rows before any Write/Soft Delete."
+}

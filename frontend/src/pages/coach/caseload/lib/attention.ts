@@ -20,11 +20,10 @@ import {
   formatCount,
   formatDayOffset,
   formatHours,
-  getOtjhStatusKey,
   getProgramStatusKey,
   hasValue,
   parseDisplayDate,
-  parseNumeric,
+  otjhProgressAsOfToday,
 } from './format';
 import type { Learner } from '../types';
 
@@ -81,8 +80,7 @@ const GATEWAY_HORIZON_DAYS = 90;
 /** No recorded session for this long is a coaching signal in its own right. */
 const STALE_ACTIVITY_DAYS = 28;
 
-function otjhReason(learner: Learner, delta: number | null): AttentionReason | null {
-  const statusKey = getOtjhStatusKey(learner.otjhStatus);
+function otjhReason(learner: Learner, delta: number | null, statusKey: string): AttentionReason | null {
   if (statusKey !== 'at-risk' && statusKey !== 'need-attention') return null;
 
   const behind = delta !== null && delta < 0 ? Math.abs(delta) : null;
@@ -255,14 +253,12 @@ export function buildLearnerInsight(learner: Learner, today: Date): LearnerInsig
   const lastActivity = parseDisplayDate(learner.lastActivityDate || learner.attendanceLastSessionDate);
   const lastActivityDaysAgo = lastActivity ? Math.max(0, -daysBetween(today, lastActivity)) : null;
 
-  // `otjhProgressHours` is Django's own "completed - target" column. When it is
-  // blank the same figure comes straight from the two hour totals.
-  const reportedDelta = parseNumeric(learner.otjhProgressHours);
-  const otjhDeltaHours = reportedDelta !== null
-    ? reportedDelta
-    : learner.overallProgressAvailable
-      ? learner.otjhCompleted - learner.otjhTarget
-      : null;
+  // Risk must use the same paced, as-of-today target as the card and table.
+  // The persisted status/progress fields can still be based on a whole-plan
+  // denominator after an audit overlay, which made the legend disagree with
+  // the number shown beside the learner.
+  const otjhProgress = otjhProgressAsOfToday(learner, today);
+  const otjhDeltaHours = otjhProgress.deltaHours;
 
   const programStatus = getProgramStatusKey(learner.rawProgramStatus);
   if (programStatus === 'break' || programStatus === 'withdrawn' || programStatus === 'ready-to-enrol') {
@@ -280,7 +276,7 @@ export function buildLearnerInsight(learner: Learner, today: Date): LearnerInsig
   }
 
   const reasons = [
-    otjhReason(learner, otjhDeltaHours),
+    otjhReason(learner, otjhDeltaHours, otjhProgress.status),
     ...attendanceReasons(learner),
     componentsReason(learner),
     ksbReason(learner),

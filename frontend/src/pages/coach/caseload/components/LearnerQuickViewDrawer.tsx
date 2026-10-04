@@ -31,6 +31,7 @@ import {
   formatRatio,
   hasValue,
   learnerProgramme,
+  otjhProgressAsOfToday,
 } from '../lib/format';
 import type { LearnerInsight } from '../lib/attention';
 import type { Learner, QuickViewTab } from '../types';
@@ -66,14 +67,14 @@ function DataRow({ label, value, tone = 'default' }: { label: string; value: str
   );
 }
 
-function MetricBar({ label, value, percent }: { label: string; value: string; percent: number | null }) {
+function MetricBar({ label, value, percent, tone }: { label: string; value: string; percent: number | null; tone?: string }) {
   return (
     <div>
       <div className="mb-1 flex items-baseline justify-between gap-3">
         <span className="text-[12px] text-foreground-600">{label}</span>
         <span className="text-[12px] font-semibold tabular-nums text-foreground-900">{value}</span>
       </div>
-      <ProgressBar percent={percent} height="h-1.5" />
+      <ProgressBar percent={percent} height="h-1.5" tone={tone} />
     </div>
   );
 }
@@ -84,6 +85,14 @@ function EmptyNote({ children }: { children: string }) {
 
 function OverviewTab({ learner, insight }: { learner: Learner; insight: LearnerInsight }) {
   const componentPercent = learner.attendanceRateAvailable ? learner.attendanceRate : null;
+  const otjhProgress = otjhProgressAsOfToday(learner);
+  const otjhTone = otjhProgress.status === 'at-risk'
+    ? 'bg-red-500'
+    : otjhProgress.status === 'need-attention'
+      ? 'bg-amber-500'
+      : otjhProgress.status === 'on-track'
+        ? 'bg-emerald-500'
+        : undefined;
 
   return (
     <div className="space-y-5">
@@ -113,8 +122,9 @@ function OverviewTab({ learner, insight }: { learner: Learner; insight: LearnerI
         <SectionLabel>Progress</SectionLabel>
         <MetricBar
           label="OTJH against expected hours"
-          value={learner.overallProgressAvailable ? `${learner.overallProgress}%` : EMPTY_VALUE}
-          percent={learner.overallProgressAvailable ? learner.overallProgress : null}
+          value={otjhProgress.percent === null ? EMPTY_VALUE : `${Math.round(otjhProgress.percent)}%`}
+          percent={otjhProgress.percent}
+          tone={otjhTone}
         />
         <MetricBar
           label="Components complete"
@@ -138,7 +148,7 @@ function OverviewTab({ learner, insight }: { learner: Learner; insight: LearnerI
           />
           <DataRow
             label="Off-the-job hours"
-            value={learner.overallProgressAvailable ? formatHoursRatio(learner.otjhCompleted, learner.otjhTarget) : EMPTY_VALUE}
+            value={formatHoursRatio(learner.otjhCompleted, otjhProgress.targetHours)}
           />
           <DataRow label="Components" value={formatRatio(learner.componentsCompleted, learner.componentsPlanned)} />
           <DataRow label="KSBs" value={formatRatio(learner.ksbCompleted, learner.ksbTarget)} />
@@ -269,7 +279,15 @@ function AttendanceTab({ learner, insight }: { learner: Learner; insight: Learne
 }
 
 function OtjhTab({ learner, insight }: { learner: Learner; insight: LearnerInsight }) {
-  if (!learner.overallProgressAvailable) {
+  const otjhProgress = otjhProgressAsOfToday(learner);
+  const otjhTone = otjhProgress.status === 'at-risk'
+    ? 'bg-red-500'
+    : otjhProgress.status === 'need-attention'
+      ? 'bg-amber-500'
+      : otjhProgress.status === 'on-track'
+        ? 'bg-emerald-500'
+        : undefined;
+  if (otjhProgress.targetHours === null) {
     return <EmptyNote>No off-the-job hours target has been set for this learner yet.</EmptyNote>;
   }
 
@@ -281,7 +299,7 @@ function OtjhTab({ learner, insight }: { learner: Learner; insight: LearnerInsig
         <SectionLabel>Hours against the current-week target</SectionLabel>
         <div className="mt-1.5 flex items-end gap-3">
           <span className="text-2xl font-bold tabular-nums text-foreground-900">
-            {formatHoursRatio(learner.otjhCompleted, learner.otjhTarget)}
+            {formatHoursRatio(learner.otjhCompleted, otjhProgress.targetHours)}
           </span>
           {delta !== null ? (
             <span className={`pb-1 text-[12px] font-semibold ${delta < -0.5 ? 'text-red-700' : delta > 0.5 ? 'text-emerald-700' : 'text-foreground-500'}`}>
@@ -294,7 +312,7 @@ function OtjhTab({ learner, insight }: { learner: Learner; insight: LearnerInsig
           ) : null}
         </div>
         <div className="mt-2">
-          <ProgressBar percent={learner.overallProgress} />
+          <ProgressBar percent={otjhProgress.percent} tone={otjhTone} />
         </div>
         <p className="mt-1.5 text-[12px] leading-snug text-foreground-400">
           The target is the hours planned up to and including the current week, not the whole programme.
@@ -305,7 +323,7 @@ function OtjhTab({ learner, insight }: { learner: Learner; insight: LearnerInsig
         <SectionLabel>Breakdown</SectionLabel>
         <div className="mt-1">
           <DataRow label="Hours recorded" value={formatHours(learner.otjhCompleted)} />
-          <DataRow label="Expected by now" value={formatHours(learner.otjhTarget)} />
+          <DataRow label="Expected by now" value={formatHours(otjhProgress.targetHours)} />
           {learner.otjhPlanned ? <DataRow label="Planned for programme" value={formatHours(learner.otjhPlanned)} /> : null}
           {learner.otjhMinimum ? <DataRow label="Minimum required" value={formatHours(learner.otjhMinimum)} /> : null}
           {delta !== null ? (
@@ -315,7 +333,15 @@ function OtjhTab({ learner, insight }: { learner: Learner; insight: LearnerInsig
               tone={delta < -0.5 ? 'critical' : delta > 0.5 ? 'positive' : 'default'}
             />
           ) : null}
-          <DataRow label="Status" value={displayValue(learner.otjhStatus)} />
+          <DataRow
+            label="Status"
+            value={{
+              'at-risk': 'At Risk',
+              'need-attention': 'Need Attention',
+              'on-track': 'On Track',
+              unavailable: EMPTY_VALUE,
+            }[otjhProgress.status]}
+          />
         </div>
       </div>
     </div>

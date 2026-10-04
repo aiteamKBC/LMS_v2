@@ -18,12 +18,16 @@ from django.views.decorators.http import require_GET, require_POST
 from coach_api.auth import coach_access_required
 from coach_api.migrated_completion_views import _coach_review
 from coach_api.models import CoachCalendarEvent, ImportedReviewInstance
+from coach_api.migrated_reviews import meeting_summary_field
+from coach_api.migrated_summary_binding import answer_version, binding_state, populate_answer, preserve_original
+from coach_api.migrated_summary_generation import apply_suggestion, summary_binding_response
+from coach_api.migrated_template_sync import active_answers, snapshot_fingerprint
 
 
 logger = logging.getLogger(__name__)
 
 
-def _association(request, review_id):
+def _association(request, review_id, *, lock=False):
     from coach_api.views import _owned_migrated_overlay
 
     owner, definition = _coach_review(request, review_id)
@@ -32,10 +36,13 @@ def _association(request, review_id):
     overlay = _owned_migrated_overlay(owner, definition)
     if not overlay:
         return None, None, None
-    rows = list(CoachCalendarEvent.objects.filter(event_key=overlay.event_key)[:2])
+    query = CoachCalendarEvent.objects.filter(event_key=overlay.event_key)
+    if lock:
+        query = query.select_for_update()
+    rows = list(query[:2])
     record = rows[0] if len(rows) == 1 else None
     family = definition["template"]["reviewTypeCode"]
-    if not record or (
+    if family not in {"aptem_mcm", "aptem_progress_review"} or not record or (
         record.owner_email.casefold() != owner
         or record.learner_id != overlay.learner_id
         or record.review_instance_id or record.review_template_id
@@ -73,6 +80,7 @@ def _response(overlay, record, snapshot=None, *, errors=None, status=200):
 
     snapshot = snapshot if snapshot is not None else stored_coach_meeting_snapshot(record)
     state = overlay.meeting_intelligence or {}
+    binding = summary_binding_response(overlay)
     return JsonResponse({
         "event": {
             "eventKey": record.event_key,
@@ -85,6 +93,10 @@ def _response(overlay, record, snapshot=None, *, errors=None, status=200):
         "attendance": snapshot["attendance"],
         "artifacts": [public_coach_meeting_artifact(item) for item in snapshot["artifacts"]],
         "meetingSummary": _summary(state),
+        "summaryBinding": binding,
+        "progressVersion": answer_version(overlay),
+        "answerVersion": answer_version(overlay),
+        "reviewAnswers": active_answers(overlay.template_snapshot, overlay.answers),
         "intelligence": {
             "lastCheckedAt": state.get("lastCheckedAt"),
             "attendanceStatus": state.get("attendanceStatus", "not-checked"),
@@ -116,6 +128,7 @@ def migrated_review_intelligence(request, review_id):
 def migrated_review_check_session(request, review_id):
     from coach_api.views import (
         fetch_coach_meeting_graph_snapshot, openai_meeting_summary,
+        meeting_summary_transcript_excerpt,
         persist_coach_meeting_snapshots, stored_coach_meeting_snapshot,
         stored_coach_meeting_transcript_for_summary,
     )
@@ -123,6 +136,8 @@ def migrated_review_check_session(request, review_id):
     overlay, record, _definition = _association(request, review_id)
     if not overlay:
         return JsonResponse({"detail": "Migrated review not found for this coach."}, status=404)
+    if binding_state(overlay).get("status") == "invalid-binding":
+        return JsonResponse({"detail": binding_state(overlay)["message"], "code": "INVALID_SUMMARY_BINDING"}, status=409)
     if not record:
         return JsonResponse({"detail": "Migrated Teams meeting association is missing or inconsistent.", "code": "MEETING_NOT_FOUND"}, status=409)
     if overlay.status not in {ImportedReviewInstance.STATUS_SCHEDULED, ImportedReviewInstance.STATUS_IN_PROGRESS}:
@@ -179,7 +194,20 @@ def migrated_review_check_session(request, review_id):
         locked = ImportedReviewInstance.objects.select_for_update().get(pk=overlay.pk)
         if locked.status not in {ImportedReviewInstance.STATUS_SCHEDULED, ImportedReviewInstance.STATUS_IN_PROGRESS}:
             return JsonResponse({"detail": "Review status changed during Check Session."}, status=409)
+        current, current_record, _ = _association(request, review_id, lock=True)
+        if (not current or not current_record or current.pk != locked.pk
+                or any(getattr(locked, key, None) != getattr(current, key, None)
+                       for key in ("owner_email", "learner_id", "source_review_id", "event_key"))
+                or any(getattr(record, key, None) != getattr(current_record, key, None)
+                       for key in ("graph_event_id", "event_type", "scheduled_date", "scheduled_time", "duration_minutes"))):
+            return JsonResponse({"detail": "Review ownership or meeting association changed during Check Session."}, status=409)
+        binding = binding_state(locked)
+        if binding.get("status") == "invalid-binding":
+            return JsonResponse({"detail": binding["message"], "code": "INVALID_SUMMARY_BINDING"}, status=409)
+        if snapshot_fingerprint(locked.template_snapshot) != snapshot_fingerprint(overlay.template_snapshot):
+            return JsonResponse({"detail": "The review template changed during Check Session. Reopen the review before checking again. Your saved answers are unchanged.", "code": "template_sync_changed"}, status=409)
         state = dict(locked.meeting_intelligence or {})
+        preserve_original(state)
         state.update({
             "lastCheckedAt": timezone.now().isoformat(),
             "attendanceStatus": "available" if snapshot["attendanceReports"] or retained_attendance else "fetch-failed" if attendance_failed else "not-available",
@@ -201,14 +229,38 @@ def migrated_review_check_session(request, review_id):
                     "transcriptHash": transcript_hash,
                     "model": model,
                     "summaryError": "",
+                    "source": "teams", "eventKey": record.event_key,
+                    "graphEventId": record.graph_event_id, "generatedBy": locked.owner_email,
+                    "transcriptTruncated": meeting_summary_transcript_excerpt(transcript["text"])[1],
                 })
+                preserve_original(state)
             except Exception as exc:  # The Graph results remain useful if AI is unavailable.
                 logger.warning("Migrated meeting summary failed overlay_id=%s error_type=%s", locked.pk, type(exc).__name__)
                 state["summaryStatus"] = "failed"
                 state["summaryError"] = "AI summary generation failed. Check Session can retry."
                 codes.append("AI_SUMMARY_FAILED")
+        # Reuse the existing generation policy; new transcript segments never
+        # silently regenerate or replace a review answer.
+        if transcript and isinstance(state.get("summary"), dict) and state.get("summaryStatus") == "ready":
+            if binding_state(locked, state).get("fieldKey"):
+                provenance = {key: state.get(key) for key in (
+                    "generatedAt", "generatedBy", "model", "transcriptArtifactId", "transcriptHash",
+                )}
+                # A reused summary keeps the meeting identity captured when it
+                # was generated, even if the current calendar link has changed.
+                provenance.update(source="teams", eventKey=state.get("eventKey") or record.event_key, graphEventId=state.get("graphEventId"),
+                                  transcriptTruncated=bool(state.get("transcriptTruncated")))
+                result = apply_suggestion(locked, state, state["summary"], provenance)
+            else:
+                result = populate_answer(locked, state, "")
+        else:
+            result = populate_answer(locked, state, "")
+            if result.get("fieldKey"):
+                state["summaryGeneration"] = {"status": "failed" if state.get("summaryStatus") == "failed" else "unavailable",
+                    "source": "teams", "attemptedAt": timezone.now().isoformat(), "attemptedBy": locked.owner_email,
+                    "bindingResult": result.get("status")}
         locked.meeting_intelligence = state
-        locked.save(update_fields=["meeting_intelligence", "updated_at"])
+        locked.save(update_fields=["meeting_intelligence", "updated_at"] + (["answers"] if result.get("status") == "populated" else []))
     return _response(locked, record, errors=errors, status=207 if errors else 200)
 
 
@@ -234,9 +286,17 @@ def migrated_review_summary(request, review_id):
         locked = ImportedReviewInstance.objects.select_for_update().get(pk=overlay.pk)
         if locked.status != ImportedReviewInstance.STATUS_IN_PROGRESS:
             return JsonResponse({"detail": "Only in-progress migrated summaries can be edited."}, status=409)
+        if snapshot_fingerprint(locked.template_snapshot) != snapshot_fingerprint(overlay.template_snapshot):
+            return JsonResponse({"detail": "The review template changed. Reopen the review before editing its summary.", "code": "template_sync_changed"}, status=409)
+        try:
+            if meeting_summary_field(getattr(locked, "template_snapshot", {}) or {}):
+                return JsonResponse({"detail": "Edit the Meeting Summary answer in the review form."}, status=409)
+        except ValueError as exc:
+            return JsonResponse({"detail": str(exc)}, status=409)
         state = dict(locked.meeting_intelligence or {})
         if not isinstance(state.get("summary"), dict):
             return JsonResponse({"detail": "Generate the meeting summary before editing it."}, status=409)
+        preserve_original(state)
         state.update({
             "summary": summary,
             "summaryStatus": "edited",
@@ -245,4 +305,6 @@ def migrated_review_summary(request, review_id):
         })
         locked.meeting_intelligence = state
         locked.save(update_fields=["meeting_intelligence", "updated_at"])
-    return JsonResponse({"meetingSummary": _summary(state)})
+    return JsonResponse({"meetingSummary": _summary(state), "answerVersion": answer_version(locked),
+                         "progressVersion": answer_version(locked), "summaryBinding": summary_binding_response(locked),
+                         "reviewAnswers": active_answers(locked.template_snapshot, locked.answers)})

@@ -1,6 +1,7 @@
 """Read current LMS saves alongside consolidated records; never write or sync."""
 from datetime import datetime
 import json
+from math import isfinite
 from zoneinfo import ZoneInfo
 
 from old_otjh.repository import query
@@ -15,21 +16,38 @@ def instant(value):
 
 
 def actual_time_seconds(value):
-    """Return saved hours as seconds, including legacy ``MM:SS`` values."""
+    """Return saved reflection time as seconds without changing its source value.
+
+    Native reflection saves use decimal hours. Older submissions may contain a
+    legacy ``MM:SS`` clock, while imported records can contain ``HH:MM:SS``.
+    Invalid or empty values remain unavailable.
+    """
     if value in (None, ''):
         return None
-    if isinstance(value, str) and ':' in value:
-        parts = value.split(':')
-        if len(parts) == 2:
-            try:
-                minutes, seconds = (int(part) for part in parts)
-            except ValueError:
-                return None
-            if minutes >= 0 and 0 <= seconds < 60:
-                return minutes * 60 + seconds
-            return None
+    text = str(value).strip()
+    if not text:
+        return None
     try:
-        return float(value) * 3600
+        if ':' in text:
+            parts = text.split(':')
+            if len(parts) == 2:
+                minutes, seconds = (int(part) for part in parts)
+                if minutes < 0 or not 0 <= seconds < 60:
+                    return None
+                return minutes * 60 + seconds
+            if len(parts) == 3:
+                hours_text, minutes_text, seconds_text = parts
+                if not hours_text.isdigit() or not minutes_text.isdigit():
+                    return None
+                hours = int(hours_text)
+                minutes = int(minutes_text)
+                seconds = float(seconds_text)
+                if not 0 <= minutes < 60 or not isfinite(seconds) or not 0 <= seconds < 60:
+                    return None
+                return hours * 3600 + minutes * 60 + seconds
+            return None
+        hours = float(text)
+        return hours * 3600 if isfinite(hours) and hours >= 0 else None
     except (TypeError, ValueError):
         return None
 
@@ -61,10 +79,9 @@ def project_current(records, markings):
         marking = markings.get(str(component))
         if p.get('component_type') == 'assignment':
             accepted = bool(marking and marking.get('status') in {'accepted', 'partial'})
-            if marking and marking.get('actual_time_hours') is not None:
-                saved_seconds = actual_time_seconds(marking['actual_time_hours'])
-                if saved_seconds is not None:
-                    seconds = saved_seconds
+            marked_seconds = actual_time_seconds(marking.get('actual_time_hours')) if marking else None
+            if marked_seconds is not None:
+                seconds = marked_seconds
         p.update(accepted=accepted, completed=accepted, actual_seconds=seconds,
                  reporting_month=at.strftime('%Y-%m'), reporting_started_at=at,
                  reporting_ended_at=at, activity_status='Completed' if accepted else 'Submitted')

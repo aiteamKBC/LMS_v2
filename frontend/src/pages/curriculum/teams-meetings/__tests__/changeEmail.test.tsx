@@ -99,12 +99,12 @@ it('sends the full schedule to the people an update added, without a change emai
   await pending;
 });
 
-it('says so when everyone added had already been sent the schedule', async () => {
+it('says so when nobody added is a learner to send the schedule to', async () => {
   vi.mocked(submitAddedPeopleEmails).mockResolvedValue({ total: 0, accepted: 0, queued: 0, failed: 0, uncertain: 0, status: 'complete' });
   const pending = finishTeamsUpdate({ updated: true, meeting: { liveSessionId: 'LIVE-ONE' } },
     { ...calendar, addedPeople: ['back.again@example.invalid'] });
   await resultOpen();
-  expect(screen.getByText('Already sent to everyone added')).toBeVisible();
+  expect(screen.getByText('None to send — no learners were added')).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: 'Done' }));
   await pending;
 });

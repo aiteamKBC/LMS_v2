@@ -5,6 +5,7 @@ export type EvidencePreviewTarget = {
   title: string;
   category?: string;
   linked?: boolean;
+  mappedComponents?: boolean;
   activities: Array<{
     title: string;
     type: string;
@@ -19,6 +20,7 @@ export type EvidencePreviewTarget = {
     activityId?: string;
     completedAt?: string;
     status?: string;
+    achievesKsb?: boolean;
     module?: string;
   }>;
 };
@@ -106,6 +108,18 @@ export function selectCaseFileKsbSummary(rows: CaseFileKsbBrowserRow[]) {
   };
 }
 
+/** Display metadata never changes the canonical code used by existing interactions. */
+export function resolveKsbPointDisplayCode(point: {
+  code: string; ksbDefinitionId?: string | null; definitionCode?: string | null;
+}): string {
+  const stored = point.code.trim().toUpperCase();
+  if (/^[KSB]\d+(?:\.\d+)+$/.test(stored)) return stored;
+  const definition = point.definitionCode?.trim().toUpperCase();
+  if (point.ksbDefinitionId && definition && /^[KSB]\d+(?:\.\d+)*$/.test(definition)
+    && definition.split('.')[0] === stored.split('.')[0]) return definition;
+  return stored;
+}
+
 /** One row for each canonical activity/code point; framework titles only enrich labels. */
 export function selectCaseFileKsbPointRows(
   data: CoachLearnerCaseFileData,
@@ -120,6 +134,8 @@ export function selectCaseFileKsbPointRows(
     return {
       id: JSON.stringify([point.activityId, point.code]),
       code: point.code,
+      displayCode: resolveKsbPointDisplayCode(point),
+      typeLetter: /^[KSB]/i.test(point.code.trim()) ? point.code.trim()[0].toUpperCase() : '',
       description,
       activityTitle: point.title || 'Activity title unavailable',
       category: ksbCategoryFromCode(point.code.trim().toUpperCase()),
