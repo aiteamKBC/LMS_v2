@@ -3,15 +3,18 @@ import json
 
 from django.db import connections, transaction
 from django.db.models import Q
-from django.http import HttpResponse, JsonResponse
+from django.http import JsonResponse
 from django.middleware.csrf import get_token
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_GET, require_POST
 
 from coach_api.auth import authenticated_coach_email, coach_access_required
 from coach_api.migrated_completion import complete, ensure_document, required_roles, sign, submit
+from coach_api.migrated_review_pdf import stored_pdf_response
+from coach_api.migrated_reviews import review_family
 from coach_api.models import CoachCalendarEvent, ImportedReviewInstance, MigratedReviewDocument
 from coach_api.migrated_summary_binding import AnswerConflict, check_answer_version, record_answer_edit
+from coach_api.migrated_template_sync import TemplateSyncConflict, active_answers, synchronize_definition_locked
 from learner_api.models import EnrolmentUser, LearnerProfile
 from login.permissions import authenticate_request
 
@@ -24,12 +27,12 @@ def _payload(request):
     return value if isinstance(value, dict) else None
 
 
-def _coach_review(request, review_id):
+def _coach_review(request, review_id, *, pdf_only=False):
     from coach_api.views import _imported_review_definition
     if not review_id.startswith("imported-review:"):
         return None, None
     owner = authenticated_coach_email(request).strip().casefold()
-    definition = _imported_review_definition(owner, review_id)
+    definition = _imported_review_definition(owner, review_id, **({"pdf_only": True} if pdf_only else {}))
     return owner, definition if definition and definition.get("migratedForm") else None
 
 
@@ -73,10 +76,14 @@ def migrated_review_submit(request, review_id):
             return JsonResponse({"detail": "Migrated review association mismatch."}, status=409)
         try:
             check_answer_version(overlay, payload)
-            answers = payload.get("answers", overlay.answers)
+            if synchronize_definition_locked(overlay, definition):
+                return JsonResponse({"detail": "The review template changed. Reopen the review and check its latest questions before submitting. Your saved answers are unchanged.", "code": "template_sync_changed"}, status=409)
+            answers = payload.get("answers", active_answers(overlay.template_snapshot, overlay.answers))
             record_answer_edit(overlay, answers, actor=owner,
                                edited_fields=payload.get("editedFields") if isinstance(payload.get("editedFields"), list) else ())
-            submit(overlay, payload.get("answers", overlay.answers))
+            submit(overlay, answers)
+        except TemplateSyncConflict as exc:
+            return JsonResponse({"detail": str(exc), "templateSync": exc.response()}, status=409)
         except AnswerConflict as exc:
             return JsonResponse({"detail": str(exc), "code": "ANSWER_CONFLICT"}, status=409)
         except ValueError as exc:
@@ -158,6 +165,8 @@ def migrated_review_party_detail(request, review_id):
     if not definition or not definition.get("migratedForm"):
         return JsonResponse({"detail": "Migrated form unavailable."}, status=404)
     definition["readOnly"] = True
+    definition["canCalculateProgress"] = False
+    definition.pop("progressVersion", None)
     definition.pop("historicalReview", None)
     definition.pop("ragHistory", None)
     definition.pop("summaryBinding", None)
@@ -176,9 +185,7 @@ def migrated_review_party_pdf(request, review_id):
     document = MigratedReviewDocument.objects.filter(overlay=overlay).first()
     if not document:
         return JsonResponse({"detail": "The LMS PDF has not been generated yet."}, status=409)
-    response = HttpResponse(bytes(document.pdf_bytes), content_type="application/pdf")
-    response["Content-Disposition"] = f'attachment; filename="LMS-Migrated-Review-{overlay.pk}.pdf"'
-    return response
+    return stored_pdf_response(overlay, document)
 
 
 @require_POST
@@ -230,15 +237,16 @@ def _pdf_context(overlay, definition):
         "learner_name": definition.get("learnerName") or "",
         "learner_email": definition.get("learnerEmail") or "",
         "programme": definition.get("programme") or "",
-        "scheduled_date": f"{calendar.scheduled_date} {calendar.scheduled_time}" if calendar else definition["instance"].get("targetDate"),
+        "scheduled_date": calendar.scheduled_date if calendar and calendar.scheduled_date else definition["instance"].get("targetDate"),
         "coach_name": overlay.owner_email,
+        "source_family": review_family((definition.get("historicalReview") or {}).get("type")),
     }
 
 
 @coach_access_required
 @require_POST
 def migrated_review_generate_pdf(request, review_id):
-    owner, definition = _coach_review(request, review_id)
+    owner, definition = _coach_review(request, review_id, pdf_only=True)
     if not definition:
         return JsonResponse({"detail": "Migrated review not found."}, status=404)
     with transaction.atomic():
@@ -261,6 +269,4 @@ def migrated_review_pdf_response(request, review_id, definition):
     document = MigratedReviewDocument.objects.filter(overlay=overlay).first()
     if not document:
         return JsonResponse({"detail": "The LMS PDF has not been generated yet."}, status=409)
-    response = HttpResponse(bytes(document.pdf_bytes), content_type="application/pdf")
-    response["Content-Disposition"] = f'attachment; filename="LMS-Migrated-Review-{overlay.pk}.pdf"'
-    return response
+    return stored_pdf_response(overlay, document)

@@ -136,6 +136,8 @@ export interface CoachCalendarBookingInput {
   durationMinutes: number;
   timezoneOffsetMinutes: number;
   notes: string;
+  /** The missed-lecture report a new coach catch-up must make up. */
+  absenceReportId?: string;
 }
 
 export type CalendarAction = 'start' | 'complete' | 'sign' | 'cancel';
@@ -252,9 +254,16 @@ export interface MigratedSummaryBinding {
   suggestionText?: string;
   answerPresent?: boolean;
   answer?: unknown;
+  suggestionSource?: 'teams' | 'uploaded_transcript';
+  generatedAt?: string;
+  generationStatus?: 'ready' | 'failed' | 'unavailable';
+  replacementAvailable?: boolean;
+  transcriptTruncated?: boolean;
+  summaryTooLong?: boolean;
 }
 
 export interface CoachMeetingArtifactsResponse {
+  progressVersion?: string;
   summaryBinding?: MigratedSummaryBinding;
   answerVersion?: string;
   reviewAnswers?: Record<string, unknown>;
@@ -322,6 +331,7 @@ export async function calendarBookingIdempotencyKey(input: CoachCalendarBookingI
     scheduledTime: input.scheduledTime.slice(0, 5),
     durationMinutes: input.durationMinutes,
     notes: input.notes.trim(),
+    absenceReportId: input.absenceReportId || '',
   });
   return `coach-book:${await sha256Hex(fingerprint)}`;
 }

@@ -45,6 +45,12 @@ type LocationState = {
   /** enrolment."Created_users".id -- see useCoachLearnerCaseFileData's enrolmentId doc. */
   enrolmentId?: string;
   tab?: string;
+  activitySnapshot?: {
+    learnerId: string;
+    completed: number | null;
+    total: number | null;
+    percent: number | null;
+  };
 };
 
 export default function LearnerCaseFile() {
@@ -84,6 +90,10 @@ export default function LearnerCaseFile() {
   const nextLiveSession = caseFileNextSession.data;
   const headerOtjh = data ? selectCaseFileOtjh(data) : null;
   const headerKsb = data?.metricsAvailable === false ? null : data ? selectCaseFileKsbProgress(data) : null;
+  // Keep the table-to-profile drill-down on the same read snapshot. A query
+  // selecting another learner must never reuse the previous row's figures.
+  const tableActivities = data && state.activitySnapshot?.learnerId === data.learnerId
+    && state.activitySnapshot.learnerId === learnerId ? state.activitySnapshot : null;
 
   const handleOpenReviewMeeting = (item: CaseFileReviewMeeting) => {
     const returnParams = new URLSearchParams(location.search);
@@ -127,6 +137,9 @@ export default function LearnerCaseFile() {
           activityOverviewOnly
           programmeSnapshot={{
             overall: data.overallProgress,
+            activitiesCompleted: tableActivities ? tableActivities.completed : data.activitiesCompleted ?? null,
+            activitiesTotal: tableActivities ? tableActivities.total : data.activitiesTotal ?? null,
+            activitiesPercent: tableActivities ? tableActivities.percent : data.overallProgress,
             otjhActual: headerOtjh?.logged ?? null,
             otjhTarget: headerOtjh?.target ?? null,
             ksb: headerKsb?.percent ?? null,
@@ -225,6 +238,8 @@ export default function LearnerCaseFile() {
           ksb={headerKsb?.percent == null ? '--' : formatPercent(headerKsb.percent)}
           attendance={formatAttendanceFraction(caseFileAttendance.data?.present ?? null, caseFileAttendance.data?.sessions ?? null)}
           nextSession={nextLiveSession?.summary || '--'}
+          nextPr={caseFileReviews.error ? 'Unavailable' : caseFileReviews.loading ? 'Loading…' : caseFileReviews.nextMeetings?.pr || '--'}
+          nextMcm={caseFileReviews.error ? 'Unavailable' : caseFileReviews.loading ? 'Loading…' : caseFileReviews.nextMeetings?.mcm || '--'}
         />
 
         <CaseFileTabs activeTab={activeTab} onChange={setActiveTab} />

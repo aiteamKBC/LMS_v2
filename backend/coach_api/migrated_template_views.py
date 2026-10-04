@@ -17,6 +17,7 @@ from .migrated_templates import (
     serialize_template, validate_managed_definition, validate_slot,
 )
 from .models import MigratedReviewTemplate
+from .migrated_template_sync import lock_template_family
 
 
 def management_endpoint(methods):
@@ -79,6 +80,7 @@ def collection(request):
     validate_slot(scope, family, key)
     name = template_name(payload.get("name"))
     with transaction.atomic():
+        lock_template_family(family)
         if scope == "PROGRAMME":
             # Only create overrides from an approved Global definition. A copy is
             # a new inactive record; editing/activation remains an explicit action.
@@ -105,6 +107,10 @@ def detail(request, template_id):
     with transaction.atomic():
         query = MigratedReviewTemplate.objects
         if request.method == "PATCH":
+            family = query.filter(pk=template_id).values_list("review_family", flat=True).first()
+            if family is None:
+                return JsonResponse({"detail": "Migrated template not found."}, status=404)
+            lock_template_family(family)
             query = query.select_for_update()
         template = query.filter(pk=template_id).first()
         if template is None:
@@ -161,6 +167,7 @@ def reset(request):
     key, family = payload.get("programme_key", ""), payload.get("review_family")
     validate_slot("PROGRAMME", family, key)
     with transaction.atomic():
+        lock_template_family(family)
         active = MigratedReviewTemplate.objects.select_for_update().filter(
             scope="PROGRAMME", programme_key=key, review_family=family, is_active=True).first()
         # Bind the action to the active version the administrator actually saw.
