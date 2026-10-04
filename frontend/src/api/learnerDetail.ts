@@ -63,6 +63,10 @@ export interface LearnerComponentEntry {
   contentHtml?: string | null;          // reading rich-text content
   hasReadingContent?: boolean;         // list response; HTML is loaded when opened
   fileName?: string | null;             // powerpoint / document file name
+  /** Every file attached to the component, in the author's order. Entry 0
+   *  is the same file `resourceUrl` points at; the rest are the extra
+   *  attachments a reading / deck / podcast can now carry. */
+  files?: import('@/lib/componentFiles').ComponentFile[];
   downloadAllowed?: boolean;            // powerpoint download flag
   reflectionPrompt?: string | null;     // authored reflection prompt / learner guidance
   reflectionRequired?: boolean;         // false completes the activity without the reflection flow

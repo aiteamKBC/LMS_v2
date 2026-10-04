@@ -2,6 +2,7 @@ from django.urls import path
 
 from .ai_marking import coach_marking_ai_feedback, coach_marking_ai_prompt
 from .csrf import coach_csrf_token
+from .bulk_attendance import coach_bulk_attendance
 from . import personal_learning
 from .monthly_reports import coach_monthly_report_detail, coach_monthly_reports
 from .meeting_reminders import coach_meeting_reminder
@@ -18,6 +19,8 @@ from .migrated_completion_views import (
 from .migrated_intelligence_views import (
     migrated_review_intelligence, migrated_review_check_session, migrated_review_summary,
 )
+from .migrated_summary_upload import migrated_review_summary_upload
+from .migrated_progress_views import migrated_review_progress
 from .dashboard_view import coach_dashboard
 from .views import (
     coach_attendance,
@@ -62,9 +65,11 @@ from .views import (
 
 
 urlpatterns = [
+    path('migrated-reviews/<str:review_id>/progress', migrated_review_progress, name='migrated-review-progress'),
     path('migrated-reviews/<str:review_id>/intelligence', migrated_review_intelligence, name='migrated-review-intelligence'),
     path('migrated-reviews/<str:review_id>/check-session', migrated_review_check_session, name='migrated-review-check-session'),
     path('migrated-reviews/<str:review_id>/summary', migrated_review_summary, name='migrated-review-summary'),
+    path('migrated-reviews/<str:review_id>/summary/from-upload', migrated_review_summary_upload, name='migrated-review-summary-upload'),
     path('migrated-reviews/<str:review_id>/submit', migrated_review_submit, name='migrated-review-submit'),
     path('migrated-reviews/<str:review_id>/coach-sign', migrated_review_coach_sign, name='migrated-review-coach-sign'),
     path('migrated-reviews/<str:review_id>/complete', migrated_review_complete, name='migrated-review-complete'),
@@ -88,6 +93,7 @@ urlpatterns = [
     path('coach/imported-review-history', coach_imported_review_history, name='coach-imported-review-history'),
     path('coach/caseload/<int:learner_id>/coach-rag', coach_caseload_coach_rag, name='coach-caseload-coach-rag'),
     path('coach/attendance', coach_attendance, name='coach-attendance'),
+    path('coach/attendance/bulk', coach_bulk_attendance, name='coach-bulk-attendance'),
     path('coach/attendance/details', coach_attendance_details, name='coach-attendance-details'),
     path('coach/attendance/manual', coach_manual_attendance, name='coach-manual-attendance-create'),
     path('coach/attendance/manual/<int:record_id>', coach_manual_attendance, name='coach-manual-attendance-detail'),

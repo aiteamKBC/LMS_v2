@@ -23,7 +23,8 @@ export default function CoachAttendanceProfile() {
   const coach = useCoachIdentity();
   const { learnerId = '' } = useParams();
   const detail = useAttendanceDetail(learnerId, coach.isInitialized && Boolean(coach.email));
-  const { learner, recorded } = detail;
+  const { learner } = detail;
+  const recorded = detail.recorded;
   const [page, setPage] = useState(1);
   const pageCount = Math.max(1, Math.ceil(recorded.length / 10));
   const currentPage = Math.min(page, pageCount);
@@ -39,7 +40,7 @@ export default function CoachAttendanceProfile() {
   const resetDraft = () => { setDraft({ date: '', module: '', sessionTitle: '', status: 'absent' }); setEditingRecord(null); setMutationError(null); };
   const editRecord = (row: CoachAttendanceSession) => {
     setEditingRecord(row);
-    setDraft({ date: row.sessionDate || '', module: row.sessionType, sessionTitle: row.sessionTitle, status: row.status as AttendanceStatus });
+    setDraft({ date: row.sessionDate || '', module: row.module || '', sessionTitle: row.sessionTitle, status: row.status as AttendanceStatus });
     setMutationError(null);
   };
   const submitRecord = async (event: React.FormEvent) => {
@@ -76,7 +77,7 @@ export default function CoachAttendanceProfile() {
     {!loading && !error && learner && <><section className={`${styles.card} ${styles.hero}`}><div><p className={styles.eyebrow}>Learner attendance</p><h1>{learner.learner}</h1><p>{show(learner.email)}</p><div className={styles.meta}><span><b>Programme</b>{show(learner.programme)}</span><span><b>Cohort</b>{show(learner.cohort)}</span><span><b>Group</b>{show(learner.group)}</span></div></div><div className={styles.actions}><button type="button" onClick={() => window.print()}>Export PDF</button><BackButton fallback="/coach/attendance">Back</BackButton></div></section>
       <section className={styles.summary} aria-label="Attendance summary"><Summary title="Coach" lines={[coach.name, coach.email || '--', 'Phone not available']} /><Summary title="Tutor" lines={['Not assigned', '--']} /><Summary title="Attendance" lines={[formatAttendancePercentage(learner.attendance), `${learner.present ?? 0} present out of ${learner.sessions ?? 0}`]} accent /></section>
       <section className={`${styles.card} ${styles.tableCard}`}><header className={styles.sectionHeader}><div><h2>Attendance</h2><p>{recorded.length} records</p></div></header><form onSubmit={submitRecord}><fieldset className={styles.addRecord} disabled={saving || coach.isViewingAsCoach}><legend>{editingRecord ? 'Edit attendance record' : 'Add attendance record'}</legend><label>Date<input aria-label="Manual attendance date" type="date" required value={draft.date} onChange={event => updateDraft('date', event.target.value)} /></label><label>Module<input aria-label="Manual attendance module" required value={draft.module} onChange={event => updateDraft('module', event.target.value)} /></label><label>Lecture / Session<input aria-label="Manual attendance session" required value={draft.sessionTitle} onChange={event => updateDraft('sessionTitle', event.target.value)} /></label><label>Status<select aria-label="Manual attendance status" value={draft.status} onChange={event => updateDraft('status', event.target.value)}><option value="present">Present</option><option value="absent">Absent</option></select></label><button type="submit">{saving ? 'Saving…' : editingRecord ? 'Save changes' : 'Add attendance record'}</button>{editingRecord && <button type="button" onClick={resetDraft}>Cancel edit</button>}<small>Edits and deletions are saved for this learner and appear in both learner and coach attendance.</small>{mutationError && <small role="alert">{mutationError}</small>}</fieldset></form>
-        <div className={styles.tableScroll}><table><thead><tr><th>Date</th><th>Module</th><th>Lecture / Session</th><th>Status</th><th>Actions</th></tr></thead><tbody>{recorded.length ? visibleRecords.map((row, index) => <tr key={`${row.sessionId}-${row.sessionDate}-${index}`} data-status={row.status}><td>{show(row.sessionDateLabel)}</td><td>{show(row.sessionType)}</td><td><strong>{show(row.sessionTitle)}</strong>{row.status === 'absent' && <small className={styles.report}>Absent report: {row.absenceReport ? 'Uploaded' : 'Not uploaded'}{row.absenceReport?.url && <a href={row.absenceReport.url}>View report</a>}</small>}</td><td><span className={styles.status} data-status={row.status}>{titleCase(row.status)}</span></td><td><span className={styles.rowActions}><button type="button" onClick={() => editRecord(row)}>Edit</button><button type="button" onClick={() => void removeRecord(row)}>Delete</button></span></td></tr>) : <tr><td colSpan={5}><EmptyState size="sm" title="No attendance records found for this learner." /></td></tr>}</tbody></table></div>
+        <div className={styles.tableScroll}><table><thead><tr><th>Date</th><th>Module</th><th>Lecture / Session</th><th>Status</th><th>Actions</th></tr></thead><tbody>{recorded.length ? visibleRecords.map((row, index) => <tr key={`${row.sessionId}-${row.sessionDate}-${index}`} data-status={row.status}><td>{show(row.sessionDateLabel)}</td><td>{show(row.module)}</td><td><strong>{show(row.sessionTitle)}</strong>{Boolean(row.legacyAmbiguity?.length) && <small>Ambiguous legacy match: records kept separate</small>}{(row.rawStatus === 'absent' || row.status === 'absent') && <small className={styles.report}>Absent report: {row.absenceReport ? 'Uploaded' : 'Not uploaded'}{row.absenceReport?.url && <a href={row.absenceReport.url}>View report</a>}</small>}</td><td><span className={styles.status} data-status={row.status}>{titleCase(row.status)}</span></td><td><span className={styles.rowActions}><button type="button" onClick={() => editRecord(row)}>Edit</button><button type="button" onClick={() => void removeRecord(row)}>Delete</button></span></td></tr>) : <tr><td colSpan={5}><EmptyState size="sm" title="No attendance records found for this learner." /></td></tr>}</tbody></table></div>
       </section>
       {recorded.length > 0 && <nav className={styles.pagination} aria-label="Attendance pagination"><span aria-live="polite">Showing {pageStart + 1}–{Math.min(pageStart + 10, recorded.length)} of {recorded.length} records</span><div><button type="button" disabled={currentPage === 1} onClick={() => setPage(currentPage - 1)}>Previous</button><span>Page {currentPage} of {pageCount}</span><button type="button" disabled={currentPage === pageCount} onClick={() => setPage(currentPage + 1)}>Next</button></div></nav>}
       <AttendancePrintReport learner={learner} coachName={learner.coachName || coach.name} rows={recorded} />
@@ -86,8 +87,8 @@ export default function CoachAttendanceProfile() {
 function Summary({ title, lines, accent = false }: { title: string; lines: string[]; accent?: boolean }) { return <article className={styles.summaryCard} data-accent={accent}><h2>{title}</h2>{lines.map((line, index) => <p key={`${line}-${index}`} className={index === 0 ? styles.summaryLead : undefined}>{line}</p>)}</article>; }
 
 function AttendancePrintReport({ learner, coachName, rows }: { learner: NonNullable<ReturnType<typeof useAttendanceDetail>['learner']>; coachName: string; rows: CoachAttendanceSession[] }) {
-  const total = (learner.present || 0) + (learner.absent || 0);
-  const attendanceRate = total ? Math.round(((learner.present || 0) / total) * 100) : 0;
+  const total = learner.sessions || 0;
+  const attendanceRate = formatAttendancePercentage(learner.attendance);
   const programmeDates = learner.programmeStartDate || learner.programmeEndDate
     ? `${show(learner.programmeStartDate)} — ${show(learner.programmeEndDate)}`
     : '--';
@@ -109,12 +110,12 @@ function AttendancePrintReport({ learner, coachName, rows }: { learner: NonNulla
       <PrintStat label="Total lectures" value={total} />
       <PrintStat label="Present" value={learner.present || 0} />
       <PrintStat label="Absent" value={learner.absent || 0} />
-      <PrintStat label="Attendance rate" value={`${attendanceRate}%`} />
+      <PrintStat label="Attendance rate" value={attendanceRate} />
     </section>
     <table className={styles.printTable}>
       <colgroup><col className={styles.numberColumn} /><col className={styles.dateColumn} /><col className={styles.moduleColumn} /><col className={styles.lectureColumn} /><col className={styles.statusColumn} /></colgroup>
       <thead><tr><th>#</th><th>Date</th><th>Module</th><th>Lecture Name</th><th>Status</th></tr></thead>
-      <tbody>{rows.length ? rows.map((row, index) => <tr key={`print-${row.sessionId}-${row.sessionDate}-${index}`}><td>{index + 1}</td><td>{show(row.sessionDate || row.sessionDateLabel)}</td><td>{show(row.sessionType)}</td><td>{show(row.sessionTitle)}</td><td data-status={row.status}>{titleCase(row.status)}</td></tr>) : <tr><td colSpan={5}>No attendance records found for this learner.</td></tr>}</tbody>
+      <tbody>{rows.length ? rows.map((row, index) => <tr key={`print-${row.sessionId}-${row.sessionDate}-${index}`}><td>{index + 1}</td><td>{show(row.sessionDate || row.sessionDateLabel)}</td><td>{show(row.module)}</td><td>{show(row.sessionTitle)}</td><td data-status={row.status}>{titleCase(row.status)}</td></tr>) : <tr><td colSpan={5}>No attendance records found for this learner.</td></tr>}</tbody>
     </table>
     <footer className={styles.printFooter}><span>KBC LearningOS · Confidential attendance record</span><span className={styles.pageNumber}>Page </span></footer>
   </article>;

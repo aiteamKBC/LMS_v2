@@ -9761,22 +9761,149 @@ def authoring_session_links(module_catalogue_id):
     return authoring_session_links_by_catalogue([module_catalogue_id]).get(module_catalogue_id, [])
 
 
-def authoring_session_links_by_catalogue(module_catalogue_ids):
+def resolved_live_session_date(
+    settings, offset, week_slots, session_plan, *, stored_date='', booked_at_microsoft=False,
+):
+    """The date one live-session component of a week actually runs on.
+
+    ``offset`` is its position among the week's live sessions in
+    ``(display_order, id)`` order, and ``week_slots`` the week's planned
+    delivery slots in delivery order, so the Nth live session takes the Nth
+    slot.
+
+    * A live session with a planned slot runs on it and follows it. Its stored
+      date is a copy of that plan, not a second opinion, so a stale copy may
+      not outvote the delivery pattern -- that is what let a week header and
+      the session inside it name different days. A Mon+Fri week moves BOTH of
+      its planned sessions when the week moves, each to its own new day.
+    * A live session beyond the week's slots is an ADDITIONAL one: it runs on
+      its own ``sessionDate`` and nothing else. It never borrows another
+      session's day, and without a date it stays undated, which keeps it out of
+      the calendar and out of Teams.
+    * A session Microsoft has confirmed keeps its own date either way. That is
+      where a meeting real people were invited to sits, and it moves through
+      the reschedule flow -- unless a saved override already rescheduled it,
+      which is that flow's own record of the move.
+
+    The twin of the branch inside ``apply_module_session_plan_to_weeks``; the
+    two must agree, because one serves the Module Builder and the other serves
+    the session list, the Teams calendar and its sync verdict.
+    """
+    slots = week_slots if isinstance(week_slots, list) else []
+    planned = slots[offset] if offset < len(slots) else {}
+    planned = planned if isinstance(planned, dict) else {}
+    # A component that already names a session number is matched to THAT
+    # session rather than to its position in the week, so a booked session
+    # keeps hold of its own plan entry when the weeks around it move.
+    explicit_number = parse_int(settings.get('teamsSessionNumber'), 0)
+    if explicit_number:
+        planned = next(
+            (item for item in (session_plan or []) if item.get('sessionNumber') == explicit_number),
+            planned,
+        )
+    if booked_at_microsoft and not planned.get('rescheduled'):
+        return stored_date
+    # A week the plan gives no date leaves the session on whatever it has
+    # rather than clearing a date somebody chose.
+    return format_date(planned.get('date')) or stored_date
+
+
+def delivery_slots_by_catalogue(
+    weeks_by_catalogue, *, modules_by_catalogue=None, groups_by_id=None, holidays_by_cohort=None,
+):
+    """Each module's planned week slots, for dating its primary live sessions.
+
+    Returns ``{catalogue_id: (slots_by_week, session_plan)}``, the shape
+    ``module_week_delivery_slots`` gives. A module whose plan cannot be
+    built is simply absent, and its components keep their own stored dates --
+    the behaviour the session links had before they read a plan at all.
+
+    Rows a caller already holds are used as given; only what is missing is
+    read. ``holidays_by_cohort`` supplied but silent about a cohort means that
+    cohort has no ticked holidays, which is how
+    ``build_sessions_from_authoring_modules`` reads it too -- passing ``None``
+    instead would send the planner to the database for every module.
+    """
+    catalogue_ids = [clean_str(value) for value in weeks_by_catalogue if clean_str(value)]
+    if not catalogue_ids:
+        return {}
+    modules = {clean_str(key): value for key, value in (modules_by_catalogue or {}).items()}
+    missing = [value for value in catalogue_ids if value not in modules]
+    if missing:
+        try:
+            placeholders = ','.join(['%s'] * len(missing))
+            for row in authoring_fetch_all(
+                AUTHORING_MODULES_TABLE, f'module_catalogue_id in ({placeholders})', missing,
+            ):
+                modules[clean_str(row.get('module_catalogue_id'))] = row
+        except (Exception, AssertionError):
+            logger.debug('Unable to read modules for the live-session plan.', exc_info=True)
+    groups = {clean_str(key): value for key, value in (groups_by_id or {}).items()}
+    if groups_by_id is None:
+        wanted = unique([
+            clean_str((modules.get(value) or {}).get('group_id')) for value in catalogue_ids
+        ])
+        wanted = [value for value in wanted if value]
+        if wanted:
+            try:
+                placeholders = ','.join(['%s'] * len(wanted))
+                for row in authoring_fetch_all(GROUPS_TABLE, f'group_id in ({placeholders})', wanted):
+                    groups[clean_str(row.get('group_id'))] = row
+            except (Exception, AssertionError):
+                logger.debug('Unable to read groups for the live-session plan.', exc_info=True)
+    plans = {}
+    for catalogue_id in catalogue_ids:
+        module_row = modules.get(catalogue_id)
+        week_count = len(weeks_by_catalogue.get(catalogue_id) or [])
+        if not module_row or not week_count:
+            continue
+        holidays = None
+        if holidays_by_cohort is not None:
+            holidays = holidays_by_cohort.get(clean_str(module_row.get('cohort_id'))) or []
+        try:
+            plans[catalogue_id] = module_week_delivery_slots(
+                module_row,
+                groups.get(clean_str(module_row.get('group_id'))) or {},
+                week_count,
+                holidays=holidays,
+            )
+        except (Exception, AssertionError):
+            # One module's plan failing leaves that module on its stored dates;
+            # it must not blank the session links of every other module here.
+            logger.debug('Unable to plan live-session dates for %s.', catalogue_id, exc_info=True)
+    return plans
+
+
+def authoring_session_links_by_catalogue(
+    module_catalogue_ids, *, modules_by_catalogue=None, groups_by_id=None, holidays_by_cohort=None,
+):
     """Every authored live session of each module, in course-structure order.
 
     **One live-session component is one live session.** The course structure is
     the authority for how many a module has and for when each one runs, so this
-    returns one entry per live-session component -- not one per week. A week
-    delivering twice (a Mon+Fri module) owns two of them, and each carries its
-    own component id, so both get their own Teams occurrence and their own join
-    link instead of the second one landing on nothing.
+    returns one entry per live-session component -- not one per week. Each
+    carries its own component id, so each gets its own Teams occurrence and its
+    own join link instead of the second one landing on nothing.
 
-    Each entry also carries the date the component itself holds
-    (``settings.sessionDate`` and its clock), which is what dates the session
-    list and, through it, everything sent to the Teams calendar. A component
-    that has never been dated carries an empty ``date`` and is a gap for the
-    screens to report -- no caller may date it from the generated plan, because
-    a date nobody chose still creates a real calendar entry and a real meeting.
+    **A week's date belongs to its primary live session.** The primary is the
+    first live-session component of the week in ``(display_order, id)`` order --
+    the order this read and both structure reads already spell, so every process
+    picks the same one whatever the database returns rows in. It runs on the
+    week's planned date and follows it: move the week and the primary moves with
+    it. Any further live session in the same week is an ADDITIONAL one, dated
+    only by its own ``settings.sessionDate``; it never borrows the week's, and
+    with no date of its own it stays undated and makes no Teams occurrence.
+
+    This is the same resolution ``apply_module_session_plan_to_weeks`` applies
+    when it serves the structure, and the two must not drift: reading only the
+    stored ``settings.sessionDate`` here is what let the Module Builder show a
+    module's thirteen dated weeks while this told the Teams dialog it had no
+    sessions at all.
+
+    The plan is read from the module, group and cohort holidays a caller
+    already holds; it is fetched here only when they are not supplied. A plan
+    that cannot be built leaves each component on its own stored date, which is
+    what this returned before the plan was read at all.
 
     Weeks with no live session contribute nothing. A week is a week -- reading,
     assignments and the rest stand -- but it delivers no live session, so there
@@ -9819,38 +9946,58 @@ def authoring_session_links_by_catalogue(module_catalogue_ids):
         if week_id:
             live_components_by_week[week_id].append(row)
 
+    # The weeks of each module, in the order this read already asked for them
+    # (`display_order, week_number, id`). Authored week N is the Nth of these,
+    # which is the index its planned slot is numbered by.
+    weeks_by_catalogue = defaultdict(list)
+    for week_row in week_rows:
+        weeks_by_catalogue[clean_str(week_row.get('module_catalogue_id'))].append(week_row)
+    plans_by_catalogue = delivery_slots_by_catalogue(
+        weeks_by_catalogue,
+        modules_by_catalogue=modules_by_catalogue,
+        groups_by_id=groups_by_id,
+        holidays_by_cohort=holidays_by_cohort,
+    )
+
     links_by_catalogue = defaultdict(list)
     settings_by_catalogue = defaultdict(list)
-    for week_row in week_rows:
-        week_id = clean_str(week_row.get('id'))
-        catalogue_id = clean_str(week_row.get('module_catalogue_id'))
-        for component in live_components_by_week.get(week_id) or []:
-            settings = component_builder_settings(component)
-            settings = settings if isinstance(settings, dict) else {}
-            settings_by_catalogue[catalogue_id].append(settings)
-            links_by_catalogue[catalogue_id].append({
-                'weekId': week_id,
-                'componentId': clean_str(component.get('id')),
-                'title': component.get('title') or week_row.get('title') or '',
-                # Delivered by its own additional meeting rather than by the
-                # module's calendar. Flagged, never dropped: the week still runs
-                # a live session and every screen that lists sessions must still
-                # show it. Only the Teams paths exclude it -- the module series
-                # neither books it nor should be judged against it.
-                'additionalMeeting': bool(clean_str(settings.get('extraTeamsMeetingUrl'))),
-                # The component's own schedule. Empty for one never dated, which
-                # the caller reads as "take this position's planned slot".
-                'date': format_date(settings.get('sessionDate')),
-                'startTime': clean_str(settings.get('sessionTime')),
-                'timeZone': clean_str(settings.get('sessionTimeZone')),
-                'durationMinutes': parse_int(
-                    settings.get('durationMinutes') or settings.get('teamsDurationMinutes'), 0,
-                ),
-                'bookedAtMicrosoft': bool(
+    for catalogue_id, module_week_rows in weeks_by_catalogue.items():
+        slots_by_week, session_plan = plans_by_catalogue.get(catalogue_id) or ([], [])
+        for week_index, week_row in enumerate(module_week_rows):
+            week_id = clean_str(week_row.get('id'))
+            week_slots = slots_by_week[week_index] if week_index < len(slots_by_week) else []
+            # `display_order, id` within the week, as the SQL asked for it, so
+            # the Nth live session takes the Nth delivery slot in every process.
+            for offset, component in enumerate(live_components_by_week.get(week_id) or []):
+                settings = component_builder_settings(component)
+                settings = settings if isinstance(settings, dict) else {}
+                stored_date = format_date(settings.get('sessionDate'))
+                booked_at_microsoft = bool(
                     clean_str(settings.get('teamsLiveSessionId'))
                     and parse_int(settings.get('teamsSessionNumber'), 0) > 0
-                ),
-            })
+                )
+                settings_by_catalogue[catalogue_id].append(settings)
+                links_by_catalogue[catalogue_id].append({
+                    'weekId': week_id,
+                    'componentId': clean_str(component.get('id')),
+                    'title': component.get('title') or week_row.get('title') or '',
+                    # Delivered by its own additional meeting rather than by the
+                    # module's calendar. Flagged, never dropped: the week still runs
+                    # a live session and every screen that lists sessions must still
+                    # show it. Only the Teams paths exclude it -- the module series
+                    # neither books it nor should be judged against it.
+                    'additionalMeeting': bool(clean_str(settings.get('extraTeamsMeetingUrl'))),
+                    'date': resolved_live_session_date(
+                        settings, offset, week_slots, session_plan,
+                        stored_date=stored_date, booked_at_microsoft=booked_at_microsoft,
+                    ),
+                    'startTime': clean_str(settings.get('sessionTime')),
+                    'timeZone': clean_str(settings.get('sessionTimeZone')),
+                    'durationMinutes': parse_int(
+                        settings.get('durationMinutes') or settings.get('teamsDurationMinutes'), 0,
+                    ),
+                    'bookedAtMicrosoft': booked_at_microsoft,
+                })
     # Which calendar delivers each one. Only 'main' belongs to the module's own
     # series; an 'additional' or still 'pending' live session is listed like any
     # other but never booked, counted or judged by it.
@@ -10358,9 +10505,20 @@ def build_sessions_from_authoring_modules(authoring_module_rows, holidays_by_coh
     """
     sessions = []
     modules = [module for module in (authoring_module_rows or []) if clean_str(module.get('module_catalogue_id'))]
-    live_sessions_by_catalogue = authoring_session_links_by_catalogue([
-        clean_str(module.get('module_catalogue_id')) for module in modules
-    ])
+    # The module rows and ticked holidays this caller already holds, so dating
+    # each week's primary live session costs no further round trips for them.
+    #
+    # `groups_by_id` is deliberately NOT forwarded: here it carries a group's
+    # CLOCK only, which is all `module_live_session_clock` needs below. Read as
+    # a delivery pattern it would say the group names no weekday, and
+    # `module_delivery_row` takes a group that delivers on no day at its word --
+    # so every primary would come back undated. The planner reads the real
+    # group rows instead.
+    live_sessions_by_catalogue = authoring_session_links_by_catalogue(
+        [clean_str(module.get('module_catalogue_id')) for module in modules],
+        modules_by_catalogue={clean_str(module.get('module_catalogue_id')): module for module in modules},
+        holidays_by_cohort=holidays_by_cohort,
+    )
     for module in modules:
         status = clean_str(module.get('status')).lower()
         if status == 'archived':
@@ -10772,6 +10930,45 @@ def module_week_session_plan(module_row, week_count=0):
         module_row,
         module_stored_session_count(module_row, week_count),
     ).get('sessions') or []
+
+
+def module_week_delivery_slots(module_row, group_row, week_count, *, holidays=None):
+    """Every planned delivery slot of each authored week, in delivery order.
+
+    **A week owns one planned slot per delivery day its group runs.** A group
+    that meets on Monday gives each week one; a Mon+Fri group gives each week
+    two. The Nth live session of the week takes the Nth of them, matched by the
+    component's position in ``(display_order, id)`` order -- the one order every
+    reader of these rows already walks (the two structure reads, the session
+    links and the join-link attach all spell it the same way), so the pairing is
+    the same in every process whatever the database returns rows in.
+
+    A live session beyond the week's slot count is an ADDITIONAL one: the group
+    does not deliver again that week, so there is no planned date to give it. It
+    runs on the date its author gave it, or on none at all.
+
+    The order within a week is the plan's own and is never re-derived here:
+    ``build_module_session_plan`` walks a date cursor and emits a slot whenever
+    that day is a delivery day, so its slots are already in calendar order and a
+    group listed as ``[Friday, Monday]`` still yields Monday before Friday.
+    Holiday closures travel on the slots themselves, so a shifted or closed day
+    arrives here exactly as the scheduler produced it -- there is no weekday
+    arithmetic in this function or in its callers.
+
+    Returns ``(slots_by_week, session_plan)``: one list per authored week in
+    week order (empty for a week the plan gives no delivery day at all), and the
+    flat plan, so a caller can still match a booked component to its own
+    numbered session.
+    """
+    delivery_module = module_delivery_row(module_row, group_row)
+    session_plan = module_session_plan_for_weeks(
+        delivery_module, week_count, holidays=holidays,
+    ).get('sessions') or []
+    slots_by_week_number = defaultdict(list)
+    for planned_session in session_plan:
+        slots_by_week_number[parse_int(planned_session.get('weekNumber'), 0)].append(planned_session)
+    slots_by_week = [list(slots_by_week_number.get(index + 1) or []) for index in range(week_count)]
+    return slots_by_week, session_plan
 
 
 def module_session_clock(module_row, group_row=None, session_date=None):
@@ -15470,6 +15667,7 @@ COMPONENT_SETTINGS_SCHEMA = {
         'podcastUrl': '',
         'embedCode': '',
         'shortcode': '',
+        'componentFiles': '',
         'uploadedFileName': '',
         'uploadedFileUrl': '',
         'uploadedFileSize': 0,
@@ -15487,6 +15685,7 @@ COMPONENT_SETTINGS_SCHEMA = {
         'requirement': 'Required',
         'readingSource': 'Written in LMS',
         'resourceUrl': '',
+        'componentFiles': '',
         'uploadedFileName': '',
         'uploadedFileUrl': '',
         'uploadedFileSize': 0,
@@ -15518,6 +15717,7 @@ COMPONENT_SETTINGS_SCHEMA = {
         **BASE_COMPONENT_SETTINGS,
         'fileName': '',
         'presentationUrl': '',
+        'componentFiles': '',
         'uploadedFileName': '',
         'uploadedFileUrl': '',
         'uploadedFileSize': 0,
@@ -17690,7 +17890,9 @@ def module_expected_teams_occurrence_keys(module_row, holidays=None, group_row=N
     """
     catalogue_id = clean_str((module_row or {}).get('module_catalogue_id'))
     if live_sessions is None and catalogue_id:
-        live_sessions = authoring_session_links_by_catalogue([catalogue_id]).get(catalogue_id) or []
+        live_sessions = authoring_session_links_by_catalogue(
+            [catalogue_id], modules_by_catalogue={catalogue_id: module_row},
+        ).get(catalogue_id) or []
     # A session delivered by its own additional meeting -- or not yet assigned
     # to either calendar -- is not part of this series: the module calendar
     # never books it, so judging the calendar against it would report a
@@ -17888,8 +18090,15 @@ def teams_calendar_sync_verdicts(module_catalogue_ids, occurrences_by_module, oc
 
     # The authored live sessions of every module on the page, in one read. The
     # verdict is decided against them, so reading them per module would be the
-    # per-row round trip this function exists to avoid.
-    live_sessions_by_module = authoring_session_links_by_catalogue(list(modules_by_id.keys()))
+    # per-row round trip this function exists to avoid. The module, group and
+    # holiday rows read above are handed over with them, so dating each week's
+    # primary live session adds no round trip of its own.
+    live_sessions_by_module = authoring_session_links_by_catalogue(
+        list(modules_by_id.keys()),
+        modules_by_catalogue=modules_by_id,
+        groups_by_id=groups_by_id,
+        holidays_by_cohort=holidays_by_cohort,
+    )
 
     verdicts = {}
     for module_id in wanted:
@@ -18269,27 +18478,23 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
     # Planned on the group's delivery days and clock, falling back to the
     # module's own only where the group states none -- so moving the group
     # re-dates the weeks of every module delivered to it.
-    delivery_module = module_delivery_row(module, group_row)
-    session_plan = module_session_plan_for_weeks(
-        delivery_module,
-        len(weeks),
-        holidays=holidays,
-    ).get('sessions') or []
-    # The plan, split into the Mon-Sun windows it was numbered into. Authored
-    # week N takes window N, so a week with no delivery day in its own window
-    # (a module whose group pauses a week) simply gets nothing rather than
-    # borrowing the next week's date.
-    sessions_by_week_number = defaultdict(list)
-    for planned_session in session_plan:
-        sessions_by_week_number[parse_int(planned_session.get('weekNumber'), 0)].append(planned_session)
+    #
+    # One slot per delivery day the week runs: a Monday group gives each week
+    # one, a Mon+Fri group two, and the week's Nth live session takes the Nth of
+    # them. Authored week N takes window N, so a week with no delivery day in
+    # its own window (a module whose group pauses a week) simply gets nothing
+    # rather than borrowing the next week's date.
+    slots_by_week, session_plan = module_week_delivery_slots(
+        module, group_row, len(weeks), holidays=holidays,
+    )
     session_start_time, _session_end_time, session_duration = module_session_clock(module, group_row)
     for week_index, week in enumerate(weeks):
         live_components = [component for component in week.get('components') or [] if component.get('type') == 'live-session']
-        slots = sessions_by_week_number.get(week_index + 1) or []
+        slots = slots_by_week[week_index] if week_index < len(slots_by_week) else []
+        # The week itself runs on the first of its delivery days.
         first_planned = slots[0] if slots else {}
         if live_components:
             for offset, component in enumerate(live_components):
-                planned = slots[offset] if offset < len(slots) else {}
                 settings = component.get('settings') if isinstance(component.get('settings'), dict) else {}
                 # A live session runs on the day its week runs on. The date on
                 # the component is a copy of the plan's, so it follows the plan
@@ -18317,6 +18522,12 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
                     clean_str(settings.get('teamsLiveSessionId'))
                     and parse_int(settings.get('teamsSessionNumber'), 0) > 0
                 )
+                # The Nth live session of the week takes the Nth delivery slot.
+                # A live session beyond them is an ADDITIONAL one: the group
+                # does not deliver again that week, so there is no planned date
+                # to give it and the `continue` below leaves it on whatever its
+                # author stored -- which may be nothing at all.
+                planned = slots[offset] if offset < len(slots) else {}
                 # A component that already names a session number is matched to
                 # THAT session rather than to its position in the week, so a
                 # booked session keeps hold of its own plan entry when the weeks
@@ -18334,6 +18545,8 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
                 session_date = format_date(planned.get('date'))
                 if not session_date:
                     continue
+                planned_day = clean_str(planned.get('day'))
+                planned_rescheduled = bool(planned.get('rescheduled'))
                 slot_time, _slot_end, slot_duration = module_live_session_clock(
                     module, settings.get('sessionTime'), settings.get('durationMinutes'),
                     booked=booked_at_microsoft, group_row=group_row, session_date=session_date,
@@ -18341,7 +18554,7 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
                 planned_settings = {
                     **settings,
                     'sessionDate': session_date,
-                    'sessionDay': clean_str(planned.get('day')),
+                    'sessionDay': planned_day,
                     'sessionTime': slot_time,
                     'durationMinutes': slot_duration,
                     'teamsDurationMinutes': slot_duration,
@@ -18350,7 +18563,7 @@ def apply_module_session_plan_to_weeks(module, group_row, weeks, *, holidays=Non
                 if planned_instant:
                     planned_settings['sessionDateTimeUtc'] = planned_instant
                     planned_settings['teamsStartDateTimeUtc'] = planned_instant
-                if planned.get('rescheduled'):
+                if planned_rescheduled:
                     planned_settings['sessionRescheduled'] = True
                 component['settings'] = planned_settings
         # The week runs on the day its live session is delivered on. A closed
@@ -21045,6 +21258,10 @@ def save_free_programme_modules(programme_id, payload):
         used_course_ids = set(existing_free_course_ids)
         course_ids_by_key = {}
         course_groups = {}
+        # One stored object per distinct incoming cover, per save. A course's
+        # weeks all carry the same picture, so without this the same bytes would
+        # be uploaded once per week of the course.
+        stored_cover_urls = {}
         for module_index, module in enumerate(modules):
             if not isinstance(module, dict):
                 continue
@@ -21064,6 +21281,27 @@ def save_free_programme_modules(programme_id, payload):
             elif course_id not in used_course_ids:
                 used_course_ids.add(course_id)
             module_id = free_programme_module_id(programme_id, module, module_index)
+            # The Free Courses picker reads the chosen file in the browser and
+            # sends it as a `data:image/...;base64,...` URL. Writing that string
+            # into `cover_image_url` puts up to 3 MB of base64 into a column that
+            # both free-course tables carry and every free-course read selects --
+            # the exact regression `stored_module_cover_image` was written to
+            # stop for `curriculum.modules`, and the one
+            # `backfill_free_course_cover_images` had to clean up here
+            # afterwards. Cleaning history is pointless while the save path can
+            # put it back, so the bytes go where every other authoring upload
+            # goes (Azure when configured, local disk when not) and the column
+            # keeps the same /curriculum_api/curriculum/uploads/ URL shape.
+            #
+            # `course_key` above deliberately still reads the raw incoming value:
+            # it decides which weeks group into one course, and keying that on a
+            # freshly stored URL would split a course whose weeks were saved
+            # together.
+            raw_cover = clean_str(module.get('coverImageUrl') or module.get('cover_image_url') or '')
+            cover_cache_key = (course_id, raw_cover)
+            if cover_cache_key not in stored_cover_urls:
+                stored_cover_urls[cover_cache_key] = stored_module_cover_image(course_id, raw_cover)
+            cover_image_url = stored_cover_urls[cover_cache_key]
             week_payload = free_programme_week_payload(course_id, module, module_index)
             week_id = week_payload['id']
             components = active_components_payload(module.get('components') if isinstance(module.get('components'), list) else [])
@@ -21079,7 +21317,7 @@ def save_free_programme_modules(programme_id, payload):
                 'week_id': week_id,
                 'course_name': module.get('courseName') or module.get('course_name') or module.get('title') or module.get('name') or f'Free course {module_index + 1}',
                 'description': module.get('description') or '',
-                'cover_image_url': module.get('coverImageUrl') or module.get('cover_image_url') or '',
+                'cover_image_url': cover_image_url,
                 'week_number': week_payload['week_number'],
                 'week_title': week_payload['title'],
                 'display_order': module_index,
@@ -21089,7 +21327,7 @@ def save_free_programme_modules(programme_id, payload):
             group = course_groups.setdefault(course_id, {
                 'course_name': module.get('courseName') or module.get('course_name') or module.get('title') or module.get('name') or f'Free course {len(course_groups) + 1}',
                 'description': module.get('description') or '',
-                'cover_image_url': module.get('coverImageUrl') or module.get('cover_image_url') or '',
+                'cover_image_url': cover_image_url,
                 'display_order': len(course_groups),
                 'week_count': 0,
                 'component_count': 0,

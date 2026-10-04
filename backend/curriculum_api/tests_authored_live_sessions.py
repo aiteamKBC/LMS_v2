@@ -169,24 +169,83 @@ class AuthoredLiveSessionSourceTests(SimpleTestCase):
         self.components.clear()
         self.assertEqual(self.sessions(), [])
 
-    def test_a_live_session_with_no_date_is_not_placed_on_one(self):
+    def test_an_additional_live_session_with_no_date_is_not_placed_on_one(self):
         """A date nobody chose is not a date.
 
-        The generated plan used to supply it, which put the session on the
-        calendar and in the Teams series on a day the author never picked. It is
-        reported as undated instead (the rail's "No date" mark).
+        COMP-2 is the SECOND live session of week 1 and this group delivers
+        once a week, so the week's only slot is COMP-1's and this one has just
+        what its author gave it. Undated it stays undated (the rail's "No date"
+        mark) -- it may not fall back to its week, which would put two meetings
+        on 17 Sep, nor to the generated plan, which is the stand-in this file
+        exists to keep out.
         """
         self.components[1]['settings_json'] = {'sessionTime': '14:00', 'durationMinutes': 90}
         sessions = self.sessions()
         self.assertEqual([session['componentId'] for session in sessions], ['COMP-1', 'COMP-3'])
         self.assertEqual([session['date'] for session in sessions], ['2026-09-17', '2026-09-24'])
 
+    # ----------------------------------------------- planned vs additional
+    #
+    # A week owns one planned slot per delivery day its group runs, and its Nth
+    # live session takes the Nth of them, matched in `(display_order, id)`
+    # order -- the order every reader of these rows already asks for. This
+    # module delivers on Thursday only, so each week has ONE slot: COMP-1 and
+    # COMP-3 are planned, COMP-2 is the additional second session of week 1.
+    # `TwoDeliveryDayTests` below covers a week with two slots.
+
+    def test_a_planned_live_session_runs_on_its_slot_with_no_date_of_its_own(self):
+        """The 0-sessions bug: dated weeks, and a Teams dialog that saw none.
+
+        A live session's stored date is a copy of its week's, written when the
+        structure is served and persisted only on the next save. Reading just
+        that copy told the Teams calendar a freshly authored module had no
+        session dates at all, while the Module Builder beside it listed every
+        week with a date.
+        """
+        self.components[0]['settings_json'] = {'sessionTime': '09:00', 'durationMinutes': 120}
+        self.components[2]['settings_json'] = {'sessionTime': '09:00', 'durationMinutes': 120}
+        sessions = self.sessions()
+        self.assertEqual([session['componentId'] for session in sessions], ['COMP-1', 'COMP-2', 'COMP-3'])
+        self.assertEqual(
+            [session['date'] for session in sessions],
+            ['2026-09-17', '2026-09-18', '2026-09-24'],
+        )
+
+    def test_a_stale_date_on_a_planned_session_does_not_outvote_its_slot(self):
+        """The copy follows the plan; it is never a second opinion.
+
+        Otherwise a module moved to another start date keeps its sessions -- and
+        its Teams occurrences -- on the days it was first stamped with, while
+        the week headers above them already read the new ones.
+        """
+        self.components[0]['settings_json'] = {
+            **self.components[0]['settings_json'], 'sessionDate': '2026-08-06',
+        }
+        self.assertEqual([session['date'] for session in self.sessions()][0], '2026-09-17')
+
+    def test_moving_the_week_moves_the_planned_session_and_leaves_the_additional_alone(self):
+        """One week later: the planned session follows, the additional stays put."""
+        later = {**MODULE, 'start_date': '2026-09-24'}
+        sessions = views.build_sessions_from_authoring_modules([later], self.HOLIDAYS)
+        self.assertEqual(
+            [(session['componentId'], session['date']) for session in sessions],
+            [('COMP-1', '2026-09-24'), ('COMP-2', '2026-09-18'), ('COMP-3', '2026-10-01')],
+        )
+
+    def test_a_booked_planned_session_keeps_the_date_microsoft_holds_it_on(self):
+        """Only the reschedule flow moves a meeting real people were invited to."""
+        self.components[0]['settings_json'] = {
+            **self.components[0]['settings_json'],
+            'sessionDate': '2026-08-06', 'teamsLiveSessionId': 'LIVE-1', 'teamsSessionNumber': 1,
+        }
+        self.assertEqual([session['date'] for session in self.sessions()][0], '2026-08-06')
+
     def test_teams_expects_nothing_for_a_module_with_nothing_authored(self):
         self.components.clear()
         keys, _plan = views.module_expected_teams_occurrence_keys(MODULE, [], {}, self.links())
         self.assertEqual(keys, [])
 
-    def test_teams_never_expects_an_occurrence_for_an_undated_live_session(self):
+    def test_teams_never_expects_an_occurrence_for_an_undated_additional_session(self):
         self.components[1]['settings_json'] = {'sessionTime': '14:00'}
         keys, _plan = views.module_expected_teams_occurrence_keys(MODULE, [], {}, self.links())
         self.assertEqual([key[:10] for key in keys], ['2026-09-17', '2026-09-24'])
@@ -327,3 +386,132 @@ class LiveSessionFollowsItsWeekTests(SimpleTestCase):
             'sessionDateTimeUtc': '2026-10-08T08:00:00Z',
         })
         self.assertEqual(settings['sessionDate'], '2026-09-17')
+
+
+#: A Mon+Fri group. Both delivery days are planned slots, so a week owns two.
+TWO_DAY_MODULE = {
+    'module_catalogue_id': 'MOD-2DAY',
+    'title': 'Twice weekly',
+    'cohort_id': 'COHORT-2',
+    'cohort_name': 'C2',
+    'group_id': 'GROUP-2',
+    'group_name': 'G2',
+    'programme_name': 'Marketing',
+    'sessions_number': 9,
+    'start_date': '2026-10-05',
+    'session_week_day': 'Monday, Friday',
+    'session_start_time': '09:00',
+    'session_end_time': '11:00',
+}
+
+TWO_DAY_WEEK_ROWS = [
+    {'id': 'W2D-1', 'module_catalogue_id': 'MOD-2DAY', 'display_order': 1, 'week_number': 1, 'title': 'W1'},
+    {'id': 'W2D-2', 'module_catalogue_id': 'MOD-2DAY', 'display_order': 2, 'week_number': 2, 'title': 'W2'},
+]
+
+
+def two_day_component(component_id, week_id, order, settings=None):
+    return {
+        'id': component_id, 'week_id': week_id, 'module_catalogue_id': 'MOD-2DAY',
+        'type': 'live_session', 'title': f'Live {component_id}', 'display_order': order,
+        'settings_json': settings or {}, 'live_sessions_link': '',
+    }
+
+
+class TwoDeliveryDayTests(SimpleTestCase):
+    """A week owns one planned slot per delivery day, paired by position.
+
+    The Nth live session of a week takes the Nth delivery slot, in
+    ``(display_order, id)`` order. A Mon+Fri group therefore plans BOTH of a
+    week's first two live sessions and moves both when the week moves. Only a
+    live session beyond the week's delivery days is additional, dated by its
+    author or not at all.
+
+    The slots are the scheduler's own and are never re-derived here:
+    ``build_module_session_plan`` walks a date cursor and emits one per
+    delivery day, so they arrive in calendar order with their closures already
+    attached -- which is why a group listed Friday-first still delivers Monday
+    first.
+    """
+
+    def setUp(self):
+        # Week 1 holds three live sessions against two delivery days; week 2
+        # holds one. So A and B are planned, C is additional, D is planned.
+        self.components = [
+            two_day_component('C2D-A', 'W2D-1', 1, {'sessionTime': '09:00', 'durationMinutes': 120}),
+            two_day_component('C2D-B', 'W2D-1', 2, {'sessionTime': '09:00', 'durationMinutes': 120}),
+            two_day_component('C2D-C', 'W2D-1', 3, {'sessionDate': '2026-10-07', 'sessionTime': '14:00'}),
+            two_day_component('C2D-D', 'W2D-2', 1, {'sessionTime': '09:00', 'durationMinutes': 120}),
+        ]
+        self.holidays = {}
+        real = views.authoring_fetch_all
+        views.authoring_fetch_all = self._fetch_all
+        self.addCleanup(setattr, views, 'authoring_fetch_all', real)
+
+    def _fetch_all(self, table, where_sql='', params=None, order_sql='', **kwargs):
+        if table == views.AUTHORING_WEEKS_TABLE:
+            return [dict(row) for row in TWO_DAY_WEEK_ROWS]
+        if table == views.AUTHORING_COMPONENTS_TABLE:
+            self.assertIn('live_session', where_sql)
+            return [dict(row) for row in self.components]
+        if table == views.AUTHORING_MODULES_TABLE:
+            return [dict(TWO_DAY_MODULE)]
+        return []
+
+    def dated(self, module=None):
+        sessions = views.build_sessions_from_authoring_modules([module or TWO_DAY_MODULE], self.holidays)
+        return [(session['componentId'], session['date']) for session in sessions]
+
+    def test_each_delivery_day_of_the_week_is_a_planned_slot(self):
+        # Monday 5 Oct and Friday 9 Oct: the week's first two live sessions
+        # take one each, in delivery order, with no date of their own stored.
+        self.assertEqual(self.dated()[:2], [('C2D-A', '2026-10-05'), ('C2D-B', '2026-10-09')])
+
+    def test_a_third_live_session_keeps_its_own_manual_date(self):
+        # The group does not deliver a third time that week, so C is additional
+        # and runs on the Wednesday its author chose.
+        self.assertEqual(dict(self.dated())['C2D-C'], '2026-10-07')
+
+    def test_an_undated_third_live_session_stays_undated_and_never_reaches_teams(self):
+        self.components[2]['settings_json'] = {'sessionTime': '14:00'}
+        self.assertEqual(
+            self.dated(),
+            [('C2D-A', '2026-10-05'), ('C2D-B', '2026-10-09'), ('C2D-D', '2026-10-12')],
+        )
+        links = views.authoring_session_links_by_catalogue(['MOD-2DAY']).get('MOD-2DAY') or []
+        keys, _plan = views.module_expected_teams_occurrence_keys(TWO_DAY_MODULE, [], {}, links)
+        self.assertEqual([key[:10] for key in keys], ['2026-10-05', '2026-10-09', '2026-10-12'])
+
+    def test_moving_the_week_moves_both_planned_sessions_to_their_own_new_days(self):
+        # One week on: Monday 12 Oct and Friday 16 Oct. The additional session
+        # is untouched -- it was put on 7 Oct deliberately.
+        later = {**TWO_DAY_MODULE, 'start_date': '2026-10-12'}
+        self.assertEqual(self.dated(later), [
+            ('C2D-A', '2026-10-12'), ('C2D-B', '2026-10-16'),
+            ('C2D-C', '2026-10-07'), ('C2D-D', '2026-10-19'),
+        ])
+
+    def test_stale_stored_dates_never_outvote_the_delivery_slots(self):
+        self.components[0]['settings_json']['sessionDate'] = '2026-08-03'
+        self.components[1]['settings_json']['sessionDate'] = '2026-08-07'
+        self.assertEqual(self.dated()[:2], [('C2D-A', '2026-10-05'), ('C2D-B', '2026-10-09')])
+
+    def test_a_booked_planned_session_is_not_moved_by_a_changed_delivery_slot(self):
+        # B sits where Microsoft holds it; A, unbooked, still follows its slot.
+        self.components[1]['settings_json'] = {
+            'sessionDate': '2026-09-25', 'sessionTime': '09:00',
+            'teamsLiveSessionId': 'LIVE-2', 'teamsSessionNumber': 2,
+        }
+        self.assertEqual(self.dated()[:2], [('C2D-A', '2026-10-05'), ('C2D-B', '2026-09-25')])
+
+    def test_a_closure_is_read_off_the_scheduler_not_recalculated_here(self):
+        # A ticked holiday on the Friday. The slot keeps its own date -- a
+        # holiday warns, it never moves the run -- and the session says which
+        # closure lands on it. Both facts come from the plan the scheduler
+        # built, so nothing here does weekday arithmetic of its own.
+        self.holidays = {'COHORT-2': [{'date': '2026-10-09', 'label': 'Autumn closure'}]}
+        sessions = views.build_sessions_from_authoring_modules([TWO_DAY_MODULE], self.holidays)
+        by_id = {session['componentId']: session for session in sessions}
+        self.assertEqual(by_id['C2D-B']['date'], '2026-10-09')
+        self.assertEqual(by_id['C2D-B']['skippedHolidays'], ['2026-10-09'])
+        self.assertEqual(by_id['C2D-A']['skippedHolidays'], [])

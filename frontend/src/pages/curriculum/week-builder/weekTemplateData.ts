@@ -30,21 +30,35 @@ export type { KsbMapping, ModuleComponent, ModuleComponentType, ModuleStatus };
 
 // --- Week-builder component palette -----------------------------------------
 // The week builder curates its own set of offered component types, independent
-// of the module builder's `componentTypes`. Notably it presents ONE "Recorded
-// Session" (backed by the rich `video` type) instead of separate Video +
-// Recording Placeholder, and it offers Assignment. Labels are overridden only
-// for the week builder — the shared model (and module builder) are untouched.
-const WEEK_TYPE_LABELS: Partial<Record<string, string>> = {
-  video: 'Recorded Session',
+// of the module builder's `componentTypes`. Notably it presents ONE video type
+// (the rich `video` one) instead of separate Video + Recording Placeholder, and
+// it offers Assignment.
+//
+// That single type used to be labelled "Recorded Session" here, which described
+// only one of the things it holds: the same component takes a YouTube link, an
+// external link or an embed, none of which is a recording of a session. It now
+// carries the shared model's own name, "Video", in both builders.
+const WEEK_TYPE_LABELS: Partial<Record<string, string>> = {};
+
+// Retired labels this type was offered under. A component created back then was
+// auto-titled from the label of the day ("Recorded Session 3"), so the rail has
+// to keep recognising those or every untouched one would read as authored.
+const WEEK_RETIRED_TYPE_LABELS: Partial<Record<string, readonly string[]>> = {
+  video: ['Recorded Session'],
 };
 
 export function weekTypeLabel(type: string): string {
   return WEEK_TYPE_LABELS[type] || getComponentDefinition(type).label;
 }
 
+/** Every label an untouched component of this type may have been named from. */
+export function weekAutoTitleLabels(type: string): readonly string[] {
+  return [weekTypeLabel(type), ...(WEEK_RETIRED_TYPE_LABELS[type] || [])];
+}
+
 export const WEEK_BUILDER_TYPES: ModuleComponentType[] = [
   'live-session',
-  'video',        // presented as "Recorded Session"
+  'video',
   'reading',
   'podcast',
   'powerpoint',

@@ -19,24 +19,45 @@ import {
   fetchCurriculumOverview,
 } from '@/lib/curriculumApi';
 import type { CurriculumAuditEvent } from '@/lib/curriculumApi';
-import { auditIdList } from './activityTime';
+import { auditIdList, RECORD_ID } from './activityTime';
 
-/** Ids referenced by fields whose label matches, across both sides of the diff. */
-function idsForFields(events: CurriculumAuditEvent[], label: RegExp): string[] {
-  return [...new Set(events.flatMap(event => (event.changes || [])
-    .filter(field => label.test(field.label))
-    .flatMap(field => [...auditIdList(field.before), ...auditIdList(field.after)])))];
+/**
+ * Every record id the events on screen refer to, from both sides of each diff.
+ *
+ * Gathered from the values rather than from the field names. The labels the
+ * backend derives from a column are not a reliable index of where ids live —
+ * it only ever looked at fields spelled "module ids" and "group ids", so a
+ * link column under any other name was never looked up, and its values were
+ * written out as raw identifiers.
+ */
+function recordIdsIn(events: CurriculumAuditEvent[]): string[] {
+  const found = new Set<string>();
+  for (const event of events) {
+    for (const field of event.changes || []) {
+      for (const side of [field.before, field.after]) {
+        for (const id of auditIdList(side)) {
+          if (RECORD_ID.test(id)) found.add(id);
+        }
+        if (typeof side === 'string' && RECORD_ID.test(side.trim())) found.add(side.trim());
+      }
+    }
+  }
+  return [...found];
 }
 
-const MODULE_FIELD = /module\s+ids?/i;
-const GROUP_FIELD = /group\s+ids?/i;
+const MODULE_ID = /^(?:APTEM-)?MOD-/i;
+const GROUP_ID = /^(?:APTEM-)?GROUP-/i;
 
 export function useAuditRecordNames(events: CurriculumAuditEvent[]): ReadonlyMap<string, string> {
   const [moduleTitles, setModuleTitles] = useState<ReadonlyMap<string, string>>(new Map());
   const [groupNames, setGroupNames] = useState<ReadonlyMap<string, string>>(new Map());
 
-  const moduleIdKey = useMemo(() => idsForFields(events, MODULE_FIELD).join('|'), [events]);
-  const groupIdKey = useMemo(() => idsForFields(events, GROUP_FIELD).join('|'), [events]);
+  // Still nothing fetched unless ids of that kind are actually on screen: the
+  // two reads are keyed on the ids they would resolve, so a page of edits that
+  // links nothing makes no extra request at all.
+  const referenced = useMemo(() => recordIdsIn(events), [events]);
+  const moduleIdKey = useMemo(() => referenced.filter(id => MODULE_ID.test(id)).join('|'), [referenced]);
+  const groupIdKey = useMemo(() => referenced.filter(id => GROUP_ID.test(id)).join('|'), [referenced]);
 
   useEffect(() => {
     if (!moduleIdKey) return undefined;

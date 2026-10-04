@@ -524,40 +524,30 @@ export function moduleTeamsPlannedSessions(
   (module.weekStructure || []).forEach((week, weekIndex) => {
     const weekDates = liveDatesByWeek[weekIndex] || [];
     const live = (week.components || []).filter(component => component.type === 'live-session');
-    // A week can deliver more than one live session, so it owns one planned date
-    // per delivery day -- the same walk the Course structure rail makes.
+    // A week owns one planned date per delivery day, and its Nth live session
+    // takes the Nth of them -- paired by position in the order the server
+    // sends the week's components (`display_order, id`), which is the order
+    // `live` is already in. The plan decides WHICH DAY, because a component
+    // keeps the date it was last stamped with while the plan is recomputed
+    // from the group -- so a group moved from Thursday to Wednesday leaves the
+    // component holding its Thursday, and taking the day from the plan is what
+    // stops this dialog offering Teams the old one while the Course structure
+    // beside it reads the new.
     //
-    // The plan decides WHICH DAY, the component decides WHICH SESSION. Both are
-    // written by the same backend planner, but a component keeps the date it was
-    // last stamped with while the plan is recomputed from the group, so a group
-    // moved from Thursday to Wednesday leaves every component still holding its
-    // Thursday. Taking the day from the plan is what stops this dialog offering
-    // Teams the old one while the Course structure beside it already reads the
-    // new.
+    // A live session beyond the week's delivery slots is an ADDITIONAL one: it
+    // runs on its own `sessionDate` and nothing else. It must not borrow
+    // another session's day -- that would put two meetings on one date and
+    // move a session somebody had deliberately placed elsewhere.
     //
-    // Paired in the order the sessions RUN, never the order the author dragged
-    // them into: the plan's dates are chronological, so a week whose components
-    // were reordered in the rail must still keep its earlier session on the
-    // earlier date rather than swapping the two.
-    const runOrder = live.map((component, index) => ({ component, index })).sort((left, right) => {
-      const leftDate = trimmed(left.component.settings?.sessionDate);
-      const rightDate = trimmed(right.component.settings?.sessionDate);
-      if (leftDate && rightDate && leftDate !== rightDate) return leftDate.localeCompare(rightDate);
-      // An undated session has no place in the running order yet, so it takes
-      // what is left over after the dated ones, in the order it was authored.
-      if (leftDate !== rightDate) return leftDate ? -1 : 1;
-      return left.index - right.index;
-    });
-    const plannedDateByIndex = new Map<number, string>();
-    runOrder.forEach((entry, slot) => {
-      if (weekDates[slot]) plannedDateByIndex.set(entry.index, weekDates[slot]);
-    });
+    // No re-sorting by stored date: position now decides which slot a session
+    // resolves to, so sorting the components BY that date would be circular,
+    // and the authored order is the deterministic one both ends already share.
     live.forEach((component, index) => {
       const settings = component.settings || {};
-      // The component's own stamp is the fallback for a plan that could not be
-      // read at all -- the caller passes `null` on a failed load -- which is the
-      // one case where that stamp is the best answer available.
-      const date = plannedDateByIndex.get(index) || trimmed(settings.sessionDate) || trimmed(week.sessionDate);
+      // The component's own stamp answers for a planned session when the plan
+      // could not be read at all -- the caller passes `null` on a failed load
+      // -- which is the one case where that stamp is the best answer available.
+      const date = weekDates[index] || trimmed(settings.sessionDate);
       const planned = plan?.sessions.find(session => session.date === date);
       const { startTime, durationMinutes } = liveSessionClock(module, settings, date, week, planned);
       sessions.push({
@@ -776,6 +766,18 @@ export function applyModuleWeekSessionPlan(
     let components = week.components;
     if (liveComponents.length) {
       const plannedByComponentId = new Map<string, ModuleWeekSessionPlan['sessions'][number] | undefined>();
+      // A week owns one planned slot per delivery day its group runs, and its
+      // Nth live session takes the Nth of them -- matched by position in the
+      // order the server sends the week's components (`display_order, id`),
+      // which is the order this array is already in. So a Mon+Fri week moves
+      // both of its planned sessions when the week moves, each onto its own
+      // new day.
+      //
+      // A live session beyond those slots is an ADDITIONAL one: the group does
+      // not deliver again that week, so `slots[offset]` is undefined, the walk
+      // below returns it untouched, and it keeps the date its author gave it.
+      //
+      // Mirrors `apply_module_session_plan_to_weeks` in curriculum_api/views.py.
       liveComponents.forEach((component, offset) => {
         plannedByComponentId.set(component.id, slots[offset]);
       });

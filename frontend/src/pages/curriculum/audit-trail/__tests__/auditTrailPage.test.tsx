@@ -249,7 +249,11 @@ describe('Curriculum audit trail page', () => {
     const before = (await screen.findByText(/^Before:$/)).parentElement;
     expect(before?.textContent).toContain('Quiz 1');
     expect(screen.getByText(/^After:$/).parentElement?.textContent).toContain('Final Knowledge Check');
-    expect(screen.getByText('Title')).toBeInTheDocument();
+    // Twice, by design: the changed field is named once as a chip -- which is
+    // what a reader is left with when the before/after cards are folded away --
+    // and once as the heading of its own card. Asserted as two rather than
+    // relaxed to "at least one", so losing either one still fails here.
+    expect(screen.getAllByText('Title')).toHaveLength(2);
   });
 
   it('offers the source and actor-type filters only when the server can answer them', async () => {

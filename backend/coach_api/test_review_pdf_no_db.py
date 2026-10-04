@@ -61,6 +61,43 @@ class ImportedReviewPdfTests(SimpleTestCase):
         self.assertEqual(response.content, b"%PDF-original")
         profile_filter.assert_called_once_with(pk=42)
 
+    def test_historical_8671_direct_archive_pdf_returns_200(self):
+        definition = {
+            "instance": {"id": "imported-review:8671", "learnerId": 422},
+            "historicalReview": {
+                "id": "3195",
+                "aptemLearnerId": "6320",
+                "aptemReviewId": "8671",
+                "name": "Monthly Coaching Meeting",
+                "type": "Monthly Coaching Meeting",
+                "sections": [],
+            },
+        }
+        with (
+            patch("coach_api.views._imported_review_definition", return_value=definition),
+            patch("coach_api.auth.authenticated_coach_email", return_value="coach@example.test"),
+            patch("learner_api.models.LearnerProfile.objects.filter") as profile_filter,
+            patch("learner_api.models.EnrolmentUser.all_learners.filter") as source_filter,
+            patch(
+                "learner_api.aptem_review_pdf._direct_pdf_locations",
+                return_value={("reviews", "original-review-pdfs/8671.pdf")},
+            ),
+            patch("learner_api.aptem_review_pdf._read_verified_pdf", return_value=b"%PDF-8671"),
+            patch("learner_api.aptem_review_pdf._probe_pdf_locations") as probe,
+        ):
+            profile_filter.return_value.first.return_value = None
+            source_filter.return_value.first.return_value = None
+
+            response = unwrap(coach_mcm_pdf)(
+                RequestFactory().get("/coach/reviews/imported-review:8671/pdf"),
+                "imported-review:8671",
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["X-Review-PDF-Source"], "aptem-original")
+        self.assertEqual(response.content, b"%PDF-8671")
+        probe.assert_not_called()
+
     def test_imported_review_pdf_does_not_regenerate_when_the_original_is_missing(self):
         definition = {
             "instance": {"id": "imported-review:A-4399", "learnerId": 42},

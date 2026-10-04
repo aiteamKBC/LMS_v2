@@ -31,6 +31,7 @@ from .wizard_steps import (
     read_projection,
     without_ilr_details,
 )
+from .wizard_layout import project_custom_fields
 
 KINDS = {"apprenticeship": EnrolmentUser, "commercial": CommercialUser}
 
@@ -233,6 +234,9 @@ def extended_ilr(request, kind, learner_id):
                 # tables can never disagree with the draft they came from.
                 if draft is not None:
                     project_draft(kind, int(learner_id), draft)
+                    # The wizard builder's custom fields, into their own columns.
+                    # Conditions on Extended ILR questions read the stored answers.
+                    project_custom_fields(kind, int(learner_id), draft, answers=row.answers)
         except DatabaseError as exc:
             return _error(f"Database error: {exc}", 502)
 

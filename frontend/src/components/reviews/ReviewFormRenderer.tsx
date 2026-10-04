@@ -362,7 +362,7 @@ function ReviewFieldControl({
 }) {
   const value = answers[field.id];
   const invalid = Boolean(errors?.missingFieldIds.has(field.id));
-  const isMeetingSummary = field.configuration?.semanticKey === 'meeting_summary';
+  const isMeetingSummary = field.configuration?.semanticKey === 'meeting_summary' && field.configuration?.migrated !== true;
   const effectiveReadOnly = fieldReadOnly ? fieldReadOnly(field) : Boolean(readOnly);
   const canRespond = respondentRole ? fieldAllowsRespondent(field, respondentRole) : false;
   const respondentLabel = respondentRole === 'employer' ? 'Employer response' : 'Your response';
@@ -479,10 +479,11 @@ function ReviewFieldInput({
     case 'text_multiline':
       return (
         <textarea
+          aria-label={field.configuration?.migrated === true && field.configuration?.semanticKey === 'meeting_summary' ? field.title : undefined}
           value={stringValue}
           onChange={(e) => onChange(e.target.value)}
           rows={3}
-          maxLength={field.configuration?.semanticKey === 'meeting_summary' ? undefined : 4000}
+          maxLength={field.configuration?.semanticKey === 'meeting_summary' && field.configuration?.migrated !== true ? undefined : 4000}
           disabled={readOnly}
           placeholder={String(field.configuration?.placeholder || '')}
           className="w-full resize-y rounded-lg border border-background-300 bg-white px-3.5 py-3 text-sm text-foreground-800 outline-none transition placeholder:text-foreground-300 focus:border-primary-400 focus:ring-2 focus:ring-primary-200 disabled:bg-background-100"

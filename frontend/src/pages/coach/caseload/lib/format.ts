@@ -27,6 +27,7 @@ import {
   parseDisplayDate,
   parseNumeric,
   startOfToday,
+  targetHoursAsOfToday,
   daysBetween,
 } from '@/lib/format';
 import { statusTone } from '@/lib/statusTone';
@@ -54,12 +55,32 @@ export {
   parseDisplayDate,
   parseNumeric,
   startOfToday,
+  targetHoursAsOfToday,
   daysBetween,
 };
 
 // --- programme status -------------------------------------------------------
 
 export type ProgramStatusKey = 'active' | 'withdrawn' | 'break' | 'ready-to-enrol' | 'other';
+
+export function normalizeCaseloadProgrammeStatus(value?: string | null): string {
+  return displayValue(value).toLocaleLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+export function isHiddenCaseloadProgrammeStatus(value?: string | null): boolean {
+  const normalized = normalizeCaseloadProgrammeStatus(value);
+  return normalized.startsWith('onboarding')
+    || normalized === 'enteredepa'
+    || normalized === 'withdrawn';
+}
+
+export function isVisibleCaseloadLearner(
+  learner: { rawProgramStatus?: string | null; enrollmentStatus?: string | null },
+): boolean {
+  const rawStatus = displayValue(learner.rawProgramStatus);
+  const status = rawStatus === EMPTY_VALUE ? learner.enrollmentStatus : rawStatus;
+  return !isHiddenCaseloadProgrammeStatus(status);
+}
 
 export function getProgramStatusKey(value?: string | null): ProgramStatusKey {
   const normalized = displayValue(value).toLowerCase().replace(/\s+/g, '');
@@ -68,6 +89,18 @@ export function getProgramStatusKey(value?: string | null): ProgramStatusKey {
   if (normalized === 'break' || normalized === 'onbreak' || normalized === 'onabreak') return 'break';
   if (normalized === 'readytoenrol') return 'ready-to-enrol';
   return 'other';
+}
+
+/**
+ * These programme states do not have a meaningful OTJH target to calculate.
+ * Keep the status visible in the OTJH cell instead of showing a misleading
+ * hours ratio when the learner is onboarding or has withdrawn.
+ */
+export function getOtjhStatusOverride(value?: string | null): 'Withdrawn' | 'Onboarding' | null {
+  const normalized = displayValue(value).toLowerCase().replace(/[\s_-]+/g, '');
+  if (normalized === 'withdrawn') return 'Withdrawn';
+  if (normalized === 'onboarding' || normalized.startsWith('onboarding')) return 'Onboarding';
+  return null;
 }
 
 /**
@@ -109,6 +142,98 @@ export function getOtjhGapStatus(actual?: number | null, target?: number | null)
     : gapHours > 20 ? 'need-attention' as const
     : 'on-track' as const;
   return { gapHours, status, available: true };
+}
+
+export type OtjhRiskStatus = 'at-risk' | 'need-attention' | 'on-track' | 'unavailable';
+
+export interface OtjhProgress {
+  actualHours: number | null;
+  targetHours: number | null;
+  percent: number | null;
+  gapHours: number | null;
+  deltaHours: number | null;
+  status: OtjhRiskStatus;
+}
+
+export type OtjhProgressInput = Partial<Pick<
+  Learner,
+  | 'otjhCompleted'
+  | 'otjhTarget'
+  | 'otjhPlanned'
+  | 'otjhTargetAsOfToday'
+  | 'otjhProgressAsOfToday'
+  | 'otjhShortfallHours'
+  | 'otjhDeltaHours'
+  | 'otjhRagStatus'
+  | 'startDate'
+  | 'plannedEndDate'
+>>;
+
+/**
+ * Resolve the one OTJH denominator used by the caseload cards, table and
+ * dashboard risk distribution.  ``otjhPlanned`` is the whole-programme plan;
+ * the risk question is how many of those hours should have been completed by
+ * today.  When the programme window is unavailable, the API's current target
+ * remains the explicit fallback rather than inventing a date.
+ */
+export function otjhProgressAsOfToday(
+  learner: OtjhProgressInput,
+  today: Date = startOfToday(),
+): OtjhProgress {
+  const actual = typeof learner.otjhCompleted === 'number' && Number.isFinite(learner.otjhCompleted)
+    ? learner.otjhCompleted
+    : null;
+  const apiTargetAsOfToday = typeof learner.otjhTargetAsOfToday === 'number'
+    && Number.isFinite(learner.otjhTargetAsOfToday)
+    ? learner.otjhTargetAsOfToday
+    : null;
+  const apiStatus = learner.otjhRagStatus;
+  if (apiTargetAsOfToday !== null && apiStatus) {
+    const target = apiTargetAsOfToday;
+    const available = target > 0 && actual !== null;
+    const shortfall = typeof learner.otjhShortfallHours === 'number'
+      && Number.isFinite(learner.otjhShortfallHours)
+      ? Math.max(learner.otjhShortfallHours, 0)
+      : available ? Math.max(target - actual!, 0) : null;
+    const delta = typeof learner.otjhDeltaHours === 'number'
+      && Number.isFinite(learner.otjhDeltaHours)
+      ? learner.otjhDeltaHours
+      : available ? actual! - target : null;
+    const percent = typeof learner.otjhProgressAsOfToday === 'number'
+      && Number.isFinite(learner.otjhProgressAsOfToday)
+      ? Math.max(0, Math.min(100, learner.otjhProgressAsOfToday))
+      : available ? Math.max(0, Math.min(100, (actual! / target) * 100)) : null;
+    return {
+      actualHours: actual,
+      targetHours: target,
+      percent,
+      gapHours: shortfall,
+      deltaHours: delta,
+      status: apiStatus,
+    };
+  }
+  const wholePlan = typeof learner.otjhPlanned === 'number' && Number.isFinite(learner.otjhPlanned)
+    ? learner.otjhPlanned
+    : null;
+  const pacedTarget = wholePlan !== null
+    ? targetHoursAsOfToday(wholePlan, learner.startDate, learner.plannedEndDate, today)
+    : null;
+  const apiTarget = typeof learner.otjhTarget === 'number' && Number.isFinite(learner.otjhTarget) && learner.otjhTarget > 0
+    ? learner.otjhTarget
+    : null;
+  const target = pacedTarget !== null ? pacedTarget : apiTarget;
+  const gap = getOtjhGapStatus(actual, target);
+  const percent = gap.available && target !== null && target > 0 && actual !== null
+    ? Math.max(0, Math.min(100, (actual / target) * 100))
+    : null;
+  return {
+    actualHours: actual,
+    targetHours: target,
+    percent,
+    gapHours: gap.gapHours,
+    deltaHours: actual !== null && target !== null && target > 0 ? actual - target : null,
+    status: gap.status,
+  };
 }
 
 export function normalizeAttendanceRisk(value?: string | null): AttendanceRisk | null {
@@ -161,7 +286,9 @@ export function normalizeLearner(
     && attendance.attendance !== undefined
     && attendance.hasAttendance !== false,
   );
-  const programme = displayValue(attendance?.programme ?? learner.programmeName);
+  const programme = hasValue(learner.programmeName)
+    ? displayValue(learner.programmeName)
+    : displayValue(attendance?.programme);
   const learningActivityDate = learner.lastActivityDate || null;
   const attendanceActivityDate = attendance?.lastSessionDate || null;
   const attendanceIsLatest = Boolean(

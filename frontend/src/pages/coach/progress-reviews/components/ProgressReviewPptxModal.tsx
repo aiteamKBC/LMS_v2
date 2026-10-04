@@ -246,6 +246,7 @@ export default function ProgressReviewPptxModal({
   ];
   const busy = phase === 'working';
 
+  // Keep fixed overlays outside transformed table rows and scrolling containers.
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-[rgba(10,12,24,0.6)] backdrop-blur-sm" onClick={busy ? undefined : onClose} />
