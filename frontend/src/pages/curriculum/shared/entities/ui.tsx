@@ -183,6 +183,8 @@ export interface FilterSelect {
   value: string;
   onChange: (value: string) => void;
   options: Array<{ value: string; label: string }>;
+  /** Show an explicit "Select all" choice that clears this filter. */
+  includeSelectAll?: boolean;
   disabled?: boolean;
   /** Why the control is disabled — shown in place of the hint when set. */
   disabledHint?: string;
@@ -243,7 +245,11 @@ export function EntityFilterBar({
     // This toolbar reports its own searches, filters and sorts below, by name.
     // The mark tells the LMS-wide capture listener to leave it alone, so one
     // filter change is one row in the audit trail rather than two.
-    <div data-audit="manual" className="rounded-2xl border border-foreground-200/60 bg-background-50 p-3.5">
+    <div
+      data-audit="manual"
+      aria-busy={loading}
+      className="rounded-2xl border border-foreground-200/60 bg-background-50 p-3.5"
+    >
       <div className="flex flex-col gap-2.5 xl:flex-row xl:items-end xl:justify-between">
         <div className="grid flex-1 gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
           <label className="block">
@@ -282,7 +288,8 @@ export function EntityFilterBar({
                 disabled={disabled || select.disabled}
                 disabledHint={disabled ? 'Filters become available when this list has records.' : select.disabledHint}
                 ariaLabelledBy={`filter-${slug(select.label)}`}
-                placeholder={select.options[0]?.label || 'All'}
+                clearable={select.includeSelectAll}
+                placeholder={select.includeSelectAll ? 'Select all' : (select.options[0]?.label || 'All')}
               />
             </div>
           ))}
@@ -321,10 +328,18 @@ export function EntityFilterBar({
         </div>
       </div>
       {summary && (
-        <p className="mt-3 flex items-center gap-1.5 text-[11px] font-semibold text-foreground-400">
-          {loading && <AppIcon className="ri-loader-4-line animate-spin text-sm text-primary-500"></AppIcon>}
-          {summary}
-        </p>
+        <div
+          role={loading ? 'status' : undefined}
+          aria-live="polite"
+          aria-label={loading ? summary : undefined}
+          className={`mt-3 flex min-h-9 items-center gap-2 rounded-lg text-[11px] font-bold ${loading
+            ? 'border border-primary-200 bg-primary-50 px-3 text-primary-700 shadow-sm'
+            : 'text-foreground-400'}`}
+        >
+          {loading && <AppIcon className="ri-loader-4-line animate-spin text-base text-primary-600"></AppIcon>}
+          <span>{summary}</span>
+          {loading && <span className="ml-auto hidden text-[10px] font-semibold text-primary-500 sm:inline">Please wait…</span>}
+        </div>
       )}
     </div>
   );

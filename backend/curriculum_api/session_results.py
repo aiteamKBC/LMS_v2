@@ -507,6 +507,9 @@ def module_results(request, module_id):
 def admin_session(request, series_id, session_number):
     try:
         series = read('SELECT * FROM curriculum.live_sessions WHERE id=%s', [series_id])
+        if series:
+            from .teams_week_meeting import ensure_week_meeting_occurrence
+            ensure_week_meeting_occurrence(series[0])
         sessions = result_rows(series[0], session_number=session_number) if series else []
         if not sessions:
             return JsonResponse({'error': 'Session not found.'}, status=404)
@@ -588,8 +591,11 @@ def learner_join(request, kind, learner_id, series_id, session_number):
 @require_role('admin', 'staff')
 def queue_sync(request, series_id):
     try:
-        if not read('SELECT id FROM curriculum.live_sessions WHERE id=%s', [series_id]):
+        series = read('SELECT * FROM curriculum.live_sessions WHERE id=%s', [series_id])
+        if not series:
             return JsonResponse({'error': 'Session not found.'}, status=404)
+        from .teams_week_meeting import ensure_week_meeting_occurrence
+        ensure_week_meeting_occurrence(series[0])
         with transaction.atomic(), connections['default'].cursor() as cursor:
             cursor.execute('''INSERT INTO curriculum.session_result_jobs(live_session_id,force_refresh) VALUES (%s,true)
                 ON CONFLICT(live_session_id) DO UPDATE SET state='queued',requested_at=now(),next_attempt_at=now(),attempts=0,last_error='',force_refresh=true

@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type {
@@ -61,7 +61,7 @@ const fetchArchivedCurriculumModules = vi.fn(async (): Promise<CurriculumArchive
   archivedModule,
   otherArchivedModule,
 ]);
-const fetchArchivedModuleStructure = vi.fn(async () => null);
+const fetchArchivedModuleStructure = vi.fn(async (): Promise<unknown> => null);
 const restoreCurriculumModule = vi.fn(async () => ({ restored: true, id: 'MOD-ARCHIVED' }));
 
 vi.mock('@/hooks/useAuth', () => ({
@@ -143,5 +143,79 @@ describe('Curriculum archive', { timeout: 15000 }, () => {
     // The other archived module is real and still archived; the link asked for
     // one record, so the list has to be filtered rather than merely scrolled.
     expect(screen.queryByText('Data Foundations')).not.toBeInTheDocument();
+  });
+
+  it('opens the archived module an audit link names, at its week, with the component marked', async () => {
+    fetchArchivedModuleStructure.mockResolvedValueOnce({
+      weekStructure: [
+        { id: 'WEEK-1', weekNumber: 1, title: 'Kick-off', components: [{ id: 'COMP-0', title: 'Welcome', type: 'reading' }] },
+        { id: 'WEEK-2', weekNumber: 2, title: 'Planning', components: [
+          { id: 'COMP-1', title: 'Gantt charts', type: 'reading' },
+          { id: 'COMP-2', title: 'Risk logs', type: 'reading' },
+        ] },
+      ],
+    });
+    renderArchive('/curriculum/archive?type=module&q=MOD-ARCHIVED&open=module%3AMOD-ARCHIVED&week=WEEK-2&component=COMP-1');
+
+    // The panel, not just the filtered list: the week is open and the named
+    // component is the marked one, while week 1 stays shut.
+    expect(await screen.findByText('Gantt charts')).toBeInTheDocument();
+    expect(fetchArchivedModuleStructure).toHaveBeenCalledWith('MOD-ARCHIVED', expect.anything());
+    expect(screen.getByText('Gantt charts').closest('[data-focused]')).toHaveAttribute('data-focused', 'true');
+    expect(screen.getByText('Risk logs').closest('[data-focused]')).toBeNull();
+    expect(screen.queryByText('Welcome')).not.toBeInTheDocument();
+  });
+
+  it('sends an item archived out of a still-live module on to the Module Builder at its week', async () => {
+    function BuilderStub() {
+      const location = useLocation();
+      return <p data-testid="builder-location">{location.pathname}{location.search}</p>;
+    }
+    render(
+      <MemoryRouter initialEntries={['/curriculum/archive?type=module&q=MOD-LIVE&open=module%3AMOD-LIVE&week=WEEK-9&component=COMP-9&archived=component&archivedName=Quiz&archivedAt=2026-10-04T10%3A56%3A00Z']}>
+        <Routes>
+          <Route path="/curriculum/archive" element={<CurriculumArchivePage />} />
+          <Route path="/curriculum/module-builder" element={<BuilderStub />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    const target = await screen.findByTestId('builder-location');
+    const [path, query] = (target.textContent || '').split('?');
+    expect(path).toBe('/curriculum/module-builder');
+    expect(Object.fromEntries(new URLSearchParams(query))).toEqual({
+      module: 'MOD-LIVE',
+      week: 'WEEK-9',
+      component: 'COMP-9',
+      focus: 'component',
+      archived: 'component',
+      archivedName: 'Quiz',
+      archivedAt: '2026-10-04T10:56:00Z',
+    });
+  });
+
+  it('hands a live module on to the Builder even when the programme list fails', async () => {
+    // The programme list is the archive's slowest read and it has nothing to
+    // say about whether a module is archived; its failure must not strand the
+    // reader on the archive.
+    fetchCurriculumProgrammes.mockRejectedValueOnce(new Error('Curriculum API returned 502'));
+    function BuilderStub() {
+      const location = useLocation();
+      return <p data-testid="builder-location">{location.pathname}{location.search}</p>;
+    }
+    render(
+      <MemoryRouter initialEntries={['/curriculum/archive?type=module&q=MOD-LIVE&open=module%3AMOD-LIVE&week=WEEK-9']}>
+        <Routes>
+          <Route path="/curriculum/archive" element={<CurriculumArchivePage />} />
+          <Route path="/curriculum/module-builder" element={<BuilderStub />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    expect(await screen.findByTestId('builder-location')).toHaveTextContent('/curriculum/module-builder?module=MOD-LIVE&week=WEEK-9');
+  });
+
+  it('says so when the record a link names is no longer archived', async () => {
+    renderArchive('/curriculum/archive?type=cohort&q=COH-GONE&open=cohort%3ACOH-GONE');
+    expect(await screen.findByText(/no longer in the archive/i)).toBeInTheDocument();
   });
 });

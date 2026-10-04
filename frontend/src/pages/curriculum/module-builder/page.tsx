@@ -42,6 +42,7 @@ import {
   cleanText,
   findByIdentifierThenName,
   formatDateLabel,
+  formatDateTimeLabel,
   moduleIdentity,
   namedCurriculumWorkspacePath,
   sortEntities,
@@ -173,6 +174,7 @@ import {
   validateModuleAuthoringStructure,
 } from './componentAuthoringModel';
 import { RichTextDraft } from './RichTextEditor';
+import { componentTypeCounts, mergeFilteredComponents } from './courseStructureFilter';
 
 // Course structure accordion: whether expanding a week collapses the others.
 // false = classic single-open accordion (the current default look/feel).
@@ -492,6 +494,10 @@ export default function ModuleBuilder() {
   const sessionPlanRef = useRef<ModuleWeekSessionPlan | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [focusedComponentId, setFocusedComponentId] = useState('');
+  // Said when a link (the audit trail's "archived" row) names an item archived
+  // out of this module: it is no longer on screen, so without this the reader
+  // lands on its week and sees nothing of what they followed.
+  const [archivedItemNotice, setArchivedItemNotice] = useState('');
   const [expandedWeekIds, setExpandedWeekIds] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [placementModule, setPlacementModule] = useState<ModuleFormTarget | null>(null);
@@ -1385,6 +1391,9 @@ export default function ModuleBuilder() {
         const params = new URLSearchParams(previous);
         if (next.catalogueId) params.set('module', next.catalogueId);
         params.delete('moduleTitle');
+        // Read into the notice above; left in the address they would follow the
+        // reader into the next module they open.
+        ['archived', 'archivedName', 'archivedAt'].forEach(key => params.delete(key));
         return params;
       }, { replace: historyMode === 'replace' });
       setWorkingModule(next);
@@ -1393,6 +1402,7 @@ export default function ModuleBuilder() {
         ? deepLinkTarget.selection.componentId
         : '');
       setSettingsOpen(openSettings || deepLinkTarget.openSettings);
+      setArchivedItemNotice(archivedItemNoticeFor(next, new URLSearchParams(window.location.search)));
       await finishLoadingProgress(setOpeningModuleComplete);
     } catch (err) {
       setActionMessage(err instanceof Error ? err.message : 'Unable to load module structure.');
@@ -2253,6 +2263,7 @@ export default function ModuleBuilder() {
     // Announced about the module being left. Carrying it into the next one
     // would report somebody else's write on a module it never happened to.
     setRemoteUpdate(null);
+    setArchivedItemNotice('');
     liveSyncReadAtRef.current = 0;
     setSaveFailure(null);
     setSavingSnapshot('');
@@ -2274,7 +2285,8 @@ export default function ModuleBuilder() {
     // with it: they only mean anything inside the module that owns them.
     setSearchParams(previous => {
       const params = new URLSearchParams(previous);
-      ['module', 'moduleId', 'catalogueId', 'moduleTitle', 'week', 'weekId', 'component', 'componentId', 'settings', 'focus']
+      ['module', 'moduleId', 'catalogueId', 'moduleTitle', 'week', 'weekId', 'component', 'componentId', 'settings', 'focus',
+        'archived', 'archivedName', 'archivedAt']
         .forEach(key => params.delete(key));
       return params;
     }, { replace: true });
@@ -2794,6 +2806,24 @@ export default function ModuleBuilder() {
           </div>
           {sessionResultsOpen && <SessionResultsDialog moduleId={workingModule.catalogueId || workingModule.id} onClose={() => setSessionResultsOpen(false)} />}
           {aiMaterialOpen && <AiMaterialModal moduleCatalogueId={workingModule.catalogueId || workingModule.id} moduleTitle={workingModule.title} onClose={() => setAiMaterialOpen(false)} />}
+          {archivedItemNotice && (
+            <div
+              data-testid="module-builder-archived-item"
+              className="flex items-start justify-between gap-3 rounded-xl border border-amber-200/70 bg-amber-50 px-4 py-3 text-[12px] font-medium text-amber-800"
+            >
+              <span className="flex min-w-0 items-start gap-2">
+                <AppIcon className="ri-archive-line mt-0.5 shrink-0 text-base"></AppIcon>
+                <span className="min-w-0">{archivedItemNotice}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setArchivedItemNotice('')}
+                className="shrink-0 rounded-lg border border-amber-200 bg-white px-3 py-1.5 font-bold text-amber-800 hover:bg-amber-100"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
           {(saving || (actionMessage && !deletingModuleId)) && (
             <SaveStatusPanel
               saving={saving}
@@ -3917,7 +3947,40 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
     });
   };
 
+  // The component-type filter. Empty is "All". A type that no longer exists in
+  // the module (its last component was deleted) reads as All rather than an
+  // empty rail. While filtering, every week holding a match is open; the
+  // author can still fold one away without touching the normal accordion.
+  const typeCounts = componentTypeCounts(module.weekStructure);
+  const [typeFilter, setTypeFilter] = useState('');
+  const activeTypeFilter = typeCounts.some(item => item.type === typeFilter) ? typeFilter : '';
+  const activeTypeLabel = typeCounts.find(item => item.type === activeTypeFilter)?.label || '';
+  const [filterFoldedWeekIds, setFilterFoldedWeekIds] = useState<Set<string>>(new Set());
+  const chooseTypeFilter = (type: string) => {
+    setTypeFilter(type);
+    setFilterFoldedWeekIds(new Set());
+  };
+  const shownComponentsOf = (week: ModuleWeek) => (activeTypeFilter
+    ? week.components.filter(component => component.type === activeTypeFilter)
+    : week.components);
+  // With a filter on, a month's heading moves to the first week of that month
+  // still shown, so hiding the month's opening week does not lose its label.
+  const filteredMonthHeadingWeekIds = new Map<string, string>();
+  if (activeTypeFilter) {
+    monthGroups.forEach(group => {
+      const first = group.weeks[0];
+      const shown = group.weeks.find(week => shownComponentsOf(week).length > 0);
+      if (first && shown) filteredMonthHeadingWeekIds.set(shown.id, first.id);
+    });
+  }
+
   const toggleExpanded = (weekId: string) => {
+    if (activeTypeFilter) {
+      const folded = new Set(filterFoldedWeekIds);
+      if (folded.has(weekId)) folded.delete(weekId); else folded.add(weekId);
+      setFilterFoldedWeekIds(folded);
+      return;
+    }
     const next = new Set(expandedWeekIds);
     if (next.has(weekId)) {
       next.delete(weekId);
@@ -3986,7 +4049,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
       window.removeEventListener('resize', updateStructureScrollbar);
       observer?.disconnect();
     };
-  }, [expandedWeekIds.size, module.weekStructure.length, updateStructureScrollbar]);
+  }, [expandedWeekIds.size, module.weekStructure.length, activeTypeFilter, filterFoldedWeekIds.size, updateStructureScrollbar]);
 
   useEffect(() => {
     if (!focusedComponentId) return;
@@ -4069,6 +4132,27 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
           <MiniStructureMetric label="OTJH" value={module.totalOtjh.toFixed(1)} />
           <MiniStructureMetric label="KSBs" value={String(module.ksbCount)} />
         </div>
+        {typeCounts.length > 1 && (
+          <div role="group" aria-label="Show components by type" className="mt-2.5 flex flex-wrap gap-1">
+            {[{ type: '', label: 'All', icon: 'ri-stack-line', count: totalComponents }, ...typeCounts].map(item => {
+              const pressed = activeTypeFilter === item.type;
+              return (
+                <button
+                  key={item.type || 'all'}
+                  type="button"
+                  aria-pressed={pressed}
+                  onClick={() => chooseTypeFilter(item.type)}
+                  title={item.type ? `Show only ${item.label} components, across every week` : 'Show every component'}
+                  className={`inline-flex h-7 items-center gap-1 rounded-full border px-2.5 text-[10px] font-bold transition-smooth ${pressed ? 'border-primary-500 bg-primary-500 text-white' : 'border-background-200 bg-background-50 text-foreground-600 hover:border-primary-200 hover:text-primary-700'}`}
+                >
+                  <AppIcon className={item.icon}></AppIcon>
+                  {item.label}
+                  <span className={`tabular-nums ${pressed ? 'text-white/80' : 'text-foreground-400'}`}>{item.count}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
       <div className="relative min-h-0 flex-1">
         {structureScrollbar.visible && (
@@ -4090,9 +4174,13 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
           const selectedChild = selection?.kind === 'component' && selection.weekId === week.id;
           const active = selected || selectedChild;
           const dragging = dragState?.type === 'week' && dragState.weekId === week.id;
-          const expanded = expandedWeekIds.has(week.id);
+          const shownComponents = shownComponentsOf(week);
+          if (activeTypeFilter && !shownComponents.length) return null;
+          const expanded = activeTypeFilter ? !filterFoldedWeekIds.has(week.id) : expandedWeekIds.has(week.id);
           const totalOtjh = weekExpectedOtjhTotal(week);
-          const monthHeading = monthHeadings.get(week.id);
+          const monthHeading = activeTypeFilter
+            ? monthHeadings.get(filteredMonthHeadingWeekIds.get(week.id) || '')
+            : monthHeadings.get(week.id);
           const monthId = monthGroupIdByWeekId.get(week.id);
           const monthCollapsed = Boolean(monthId && collapsedMonthIds.has(monthId));
           const weekHolidayNotices = holidayNoticesByWeekId.get(week.id) || [];
@@ -4167,7 +4255,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                 <button onClick={() => onSelectWeek(week.id)} className="min-w-0 flex-1 text-left">
                   <p onMouseEnter={showFullTextWhenTruncated} className="truncate text-[12px] font-bold text-foreground-900">{week.title || `Week ${week.weekNumber}`}</p>
                   <p className="mt-0.5 flex items-center gap-1.5 text-[10px] font-medium text-foreground-400">
-                    <span>{week.components.length} components</span>
+                    <span>{activeTypeFilter ? `${shownComponents.length} ${activeTypeLabel} of ${week.components.length}` : `${week.components.length} components`}</span>
                     <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
                     <span>{totalOtjh.toFixed(1)}h</span>
                     {week.sessionDate && (
@@ -4252,11 +4340,13 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                       week and its Teams meeting. */}
                   <WeekComponentRail
                     weekId={week.id}
-                    components={week.components}
+                    components={shownComponents}
                     selectedId={selection?.kind === 'component' && selection.weekId === week.id ? selection.componentId : null}
                     focusedId={focusedComponentId}
                     onSelectId={componentId => { if (componentId) onSelectComponent(week.id, componentId); }}
-                    onChange={next => onComponentsChange(week.id, next)}
+                    onChange={next => onComponentsChange(week.id, activeTypeFilter
+                      ? mergeFilteredComponents(week.components, new Set(shownComponents.map(component => component.id)), next)
+                      : next)}
                     pointsByType={pointsByType}
                     variant="nested"
                     weekSessionDate={week.sessionDate}
@@ -8712,6 +8802,43 @@ function moduleStructureIdentifier(module: ModuleCatalogueItem) {
   if (canonicalId) return canonicalId;
   const sourceId = String(module.sourceModule?.id || module.id || '');
   return sourceId.startsWith('training-module-') ? sourceId : module.catalogueId;
+}
+
+/**
+ * The sentence for an item a link says was archived out of this module, or ''
+ * when there is nothing to say: no such link, or the item is back on screen
+ * because it has been restored since.
+ */
+function archivedItemNoticeFor(module: ModuleCatalogueItem, params: URLSearchParams): string {
+  const kind = String(params.get('archived') || '').trim();
+  if (!['week', 'component', 'ksb_mapping'].includes(kind)) return '';
+  // Only about the module the link named, never one opened after it.
+  if (String(params.get('module') || '').trim() !== module.catalogueId) return '';
+  const name = String(params.get('archivedName') || '').trim();
+  const at = String(params.get('archivedAt') || '').trim();
+  const weekId = String(params.get('week') || '').trim();
+  const componentId = String(params.get('component') || '').trim();
+  const week = module.weekStructure.find(item => item.id === weekId);
+  const component = module.weekStructure
+    .flatMap(item => item.components)
+    .find(item => item.id === componentId);
+  const when = at ? ` on ${formatDateTimeLabel(at)}` : '';
+  if (kind === 'ksb_mapping') {
+    const named = name ? `The KSB mapping ${name}` : 'A KSB mapping';
+    return component
+      ? `${named} was archived from the component "${component.title}"${when}. The component is selected below.`
+      : `${named} was archived${when}. The component it belonged to is no longer in this module either.`;
+  }
+  if (kind === 'component') {
+    if (component) return '';
+    const named = name ? `The component "${name}"` : 'This component';
+    return week
+      ? `${named} was archived${when}, so it is no longer in this module. The week it was in is selected below.`
+      : `${named} was archived${when}, so it is no longer in this module.`;
+  }
+  if (week) return '';
+  const named = name ? `The week "${name}"` : 'This week';
+  return `${named} was archived${when}, so it is no longer in this module.`;
 }
 
 function moduleBuilderDeepLinkTarget(module: ModuleCatalogueItem, params: URLSearchParams): { selection: Selection | null; openSettings: boolean } {
