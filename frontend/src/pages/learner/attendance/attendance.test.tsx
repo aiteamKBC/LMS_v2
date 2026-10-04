@@ -2,7 +2,8 @@ import * as React from 'react';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import AttendancePage, { lectureCounts } from './page';
+import AttendancePage from './page';
+import { lectureCounts } from './lectureCounts';
 import AbsenceReportForm from './components/AbsenceReportForm';
 import { AppIcon } from '@/components/feature/AppIcon';
 import type { AttendanceLecture, AttendanceWorkspace } from '@/api/attendanceLectures';
@@ -80,6 +81,13 @@ function CurrentLocation() {
 const mount = () => render(<MemoryRouter><AttendancePage /><CurrentLocation /></MemoryRouter>);
 
 describe('Attendance lecture workspace', () => {
+  it('shows ended unmarked attendance without changing the percentage denominator', async () => {
+    payload.lectures = [lecture(), lecture({ id: 'unmarked', title: 'Unverified lecture', status: 'unmarked' })];
+    expect(lectureCounts(payload.lectures)).toMatchObject({ attended: 1, absent: 0, rate: 100 });
+    mount();
+    expect(await screen.findByText('Unmarked')).toBeInTheDocument();
+  });
+
   it('features today ahead of future lectures and credits its full hours once', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-14T08:00:00Z'));
     payload.lectures = [lecture({ id: 'later', date: '2026-10-01', status: 'upcoming' }),

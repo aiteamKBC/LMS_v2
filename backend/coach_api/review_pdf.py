@@ -42,7 +42,14 @@ def coach_mcm_pdf(request, instance_id):
         profile = LearnerProfile.objects.filter(pk=profile_id).first() if profile_id else None
         source = EnrolmentUser.all_learners.filter(pk=profile.enrolment_id).first() if profile and profile.enrolment_id else None
         from learner_api.aptem_review_pdf import original_review_pdf
-        historical_review = definition.get('historicalReview') or {}
+        historical_review = {
+            **(definition.get('historicalReview') or {}),
+            # ``_serialize_review`` intentionally carries source identity only
+            # in the learner-owned path. The coach definition already passed
+            # the authorised mirror id in ``instance``; preserve it for the
+            # direct archive ownership check without trusting client input.
+            'learnerId': profile_id,
+        }
         information = learner_information(
             source,
             name=getattr(profile, 'username', '') or historical_review.get('learnerName', ''),

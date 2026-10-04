@@ -93,6 +93,28 @@ beforeEach(() => {
 });
 
 describe('ProgressReviewPptxModal', () => {
+  it('opens outside the transformed meeting row and closes without changing the deck', async () => {
+    fetchLatestRun.mockResolvedValue({ exists: true, reviewId: 'run-1', generationStatus: 'completed' });
+    const onClose = vi.fn();
+    const user = userEvent.setup();
+    const { container, rerender } = render(
+      <table><tbody><tr style={{ transform: 'translateY(-1px)' }}><td>
+        <ProgressReviewPptxModal open kind="mcm" access="viewer" target={slidesTargetFromEvent(REVIEW)} onClose={onClose} />
+      </td></tr></tbody></table>,
+    );
+
+    const dialog = screen.getByRole('dialog', { name: 'Monthly Coaching Meeting slides' });
+    expect(dialog.parentElement?.parentElement).toBe(document.body);
+    expect(container.querySelector('[role="dialog"]')).toBeNull();
+    expect(await screen.findByText('View slides')).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Close' }));
+    expect(onClose).toHaveBeenCalledOnce();
+    expect(generateProgressReview).not.toHaveBeenCalled();
+    expect(publishProgressReview).not.toHaveBeenCalled();
+    rerender(<ProgressReviewPptxModal open={false} kind="mcm" access="viewer" target={slidesTargetFromEvent(REVIEW)} onClose={onClose} />);
+    expect(screen.queryByRole('dialog')).toBeNull();
+  });
+
   it('asks for the enrolment id, never the profile id', async () => {
     render(<ProgressReviewPptxModal open target={slidesTargetFromEvent(REVIEW)} onClose={vi.fn()} />);
 

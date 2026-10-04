@@ -20,7 +20,7 @@ export type ReviewedCalendar = Pick<TeamsMeetingInput, 'title' | 'organizerEmail
 
 /** What the author chose in the review, beyond confirming it. */
 export interface CalendarReviewChoice {
-  /** Email every learner their own copy of the change, and the organisers theirs. */
+  /** Email every learner their own copy of the change. */
   notifyAttendees: boolean;
 }
 
@@ -133,7 +133,7 @@ export function calendarReviewHtml(input: ReviewedCalendar, zone: string): strin
         <div><dt>Language</dt><dd>${displaySetting(input.spokenLanguage, { 'en-GB': 'English (UK)', 'en-US': 'English (US)', 'ar-EG': 'Arabic (Egypt)', 'fr-FR': 'French' })}</dd></div>
       </dl></section>
     </aside></div>
-    <p class="teams-review-send-note">${input.settingsOnly ? 'Only the recording, lobby, language and meeting roles will be updated. The join link and every session date stay as they are.' : input.peopleOnly ? 'Only the invitation list and participant roles will be updated.' : 'These are the dates that will be sent to Microsoft.'} Save and send applies this calendar now${input.peopleOnly || input.settingsOnly ? '. Nobody already invited is told about it: Microsoft is asked not to announce this save, and anyone added is sent the meeting invitation on their own' : input.notifyOnUpdate ? ' and Microsoft will announce the calendar change to existing invitees' : ', but Microsoft will not announce it to existing invitees'}${input.summaryEmail ? '. One separate schedule email will also be submitted for each learner, with the complete timetable and verified Teams links; the organiser, co-organisers and presenters each receive a copy that also lists the meeting settings and the invited learners.' : ''}${input.notifyOnUpdate ? ' The LMS change email is sent automatically for this update.' : input.peopleOnly || input.settingsOnly ? '' : ' No LMS change email will be sent.'}</p>
+    <p class="teams-review-send-note">${input.settingsOnly ? 'Only the recording, lobby, language and meeting roles will be updated. The join link and every session date stay as they are.' : input.peopleOnly ? 'Only the invitation list and participant roles will be updated.' : 'These are the dates that will be sent to Microsoft.'} Save and send applies this calendar now${input.peopleOnly || input.settingsOnly ? '. Nobody already invited is told about it: Microsoft is asked not to announce this save, and anyone added is sent the meeting invitation on their own' : input.notifyOnUpdate ? ' and Microsoft will announce the calendar change to existing invitees' : ', but Microsoft will not announce it to existing invitees'}${input.summaryEmail ? '. One separate schedule email will also be submitted for each learner, with the complete timetable and verified Teams links. The organiser, co-organisers and presenters are not emailed by the LMS.' : ''}${input.notifyOnUpdate ? ' The LMS change email is sent automatically for this update.' : input.peopleOnly || input.settingsOnly ? '' : ' No LMS change email will be sent.'}</p>
   </div>`;
 }
 

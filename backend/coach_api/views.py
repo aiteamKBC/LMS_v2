@@ -12015,36 +12015,10 @@ def fetch_attendance_detail_rows(learner: dict) -> list[dict]:
     ]
 
 
-def canonical_attendance_detail_rows(source) -> tuple[dict | None, list[dict]]:
-    """Return detail rows from the exact register used by the learner page."""
-    from learner_api.attendance_lectures import lecture_register
-
-    summary = _summarize_attendance(lecture_register(source))
-    if not summary:
-        return None, []
-
-    sessions = [
-        {
-            "learnerId": clean_text(summary.get("learnerId")),
-            "learnerName": clean_text(summary.get("learnerName")) or "Learner",
-            "learnerEmail": clean_text(summary.get("learnerEmail")),
-            "sessionId": clean_text(item.get("id")) or "--",
-            "source": clean_text(item.get("source")) or "microsoft-teams",
-            "sourceId": clean_text(item.get("sourceId")),
-            "sessionTitle": clean_text(item.get("title")) or "--",
-            "sessionType": clean_text(item.get("sessionType")) or "--",
-            "sessionDate": clean_text(item.get("date")),
-            "sessionDateLabel": format_date_value(item.get("date")),
-            "startTime": clean_text(item.get("startTime")) or "--",
-            "endTime": clean_text(item.get("endTime")) or "--",
-            "status": "absent" if item.get("status") == "missed" else "present",
-            "reason": "--",
-            "catchupCompleted": False,
-            "attendedSeconds": None,
-        }
-        for item in summary.get("sessionHistory", [])
-    ]
-    return summary, sessions
+def canonical_attendance_detail_rows(source, *, learner_profile_id):
+    from learner_api.attendance_lectures import attendance_read_contract
+    payload = attendance_read_contract(source, learner_profile_id=learner_profile_id)
+    return payload['summary'], payload['history']
 
 
 def serialize_manual_attendance(row: CoachManualAttendance) -> dict:
@@ -12123,6 +12097,11 @@ def coach_manual_attendance(request, record_id=None):
     }
     if record is None:
         source = getattr(profile, "_caseload_source", None)
+        # Identical retries reuse a record; ambiguous entries remain separate.
+        existing = CoachManualAttendance.objects.filter(
+            learner_id=int(learner["id"]), **values).order_by("id").first()
+        if existing is not None:
+            return JsonResponse(serialize_manual_attendance(existing), status=200)
         record = CoachManualAttendance.objects.create(
             owner_email=owner_email,
             learner_id=int(learner["id"]),
@@ -12160,6 +12139,14 @@ def coach_source_attendance(request):
     profile, learner = _manual_attendance_learner(owner_email, learner_id)
     if profile is None or learner is None:
         return JsonResponse({"detail": "Learner not found in this coach caseload."}, status=404)
+
+    from learner_api.attendance_lectures import lecture_register
+    enrolment_source = getattr(profile, '_caseload_source', None)
+    if enrolment_source is None:
+        return JsonResponse({"detail": "Learner attendance source is unavailable."}, status=404)
+    register = lecture_register(enrolment_source, learner_profile_id=profile.id, apply_adjustments=False)
+    if not any(row.get('source') == source_name and str(row.get('session_id')) == source_id for row in register):
+        return JsonResponse({"detail": "Attendance source does not belong to this learner register."}, status=404)
 
     lookup = {"learner_id": int(learner_id), "source": source_name, "source_id": source_id}
     if request.method == "DELETE":
@@ -12224,15 +12211,7 @@ def coach_attendance_details(request):
         source = getattr(profile_row, "_caseload_source", None)
         if source is None:
             return JsonResponse({"detail": "Learner attendance source is unavailable."}, status=404)
-        summary, sessions = canonical_attendance_detail_rows(source)
-        manual_sessions = [
-            serialize_manual_attendance(row)
-            for row in CoachManualAttendance.objects.filter(
-                owner_email__iexact=owner_email, learner_id=int(learner["id"]),
-            )
-        ]
-        sessions.extend(manual_sessions)
-        sessions.sort(key=lambda item: item.get("sessionDate") or "", reverse=True)
+        summary, sessions = canonical_attendance_detail_rows(source, learner_profile_id=profile_row.id)
     except Exception:
         logger.exception("coach_attendance_details_failed coach_account_id=%s learner_id=%s", owner_email, learner_id)
         return coach_error(
@@ -12242,8 +12221,6 @@ def coach_attendance_details(request):
             status=503,
         )
 
-    present = sum(1 for item in sessions if item.get("status") == "present")
-    absent = sum(1 for item in sessions if item.get("status") == "absent")
     return JsonResponse(
         {
             "learner": {
@@ -12262,12 +12239,9 @@ def coach_attendance_details(request):
                 "programmeEndDate": format_date(getattr(profile_row, "end_date", None)),
                 "coachName": learner.get("coachName"),
             },
-            "summary": {
-                "total": present + absent,
-                "present": present,
-                "absent": absent,
-                "unknown": 0,
-            },
+            "summary": summary,
+            "history": sessions,
+            "recentAttendance": [row for row in sessions if row['counted']][:4],
             "sessions": sessions,
         }
     )
@@ -12983,39 +12957,18 @@ def coach_attendance(request):
         active_learners = [
             learner for learner in caseload_learners if should_include_in_attendance_metrics(learner)
         ]
-        learner_ids = [int(learner["id"]) for learner in caseload_learners if learner.get("id")]
-        active_learner_ids = [int(learner["id"]) for learner in active_learners if learner.get("id")]
-        email_keys = [normalize_email(learner.get("email")) for learner in caseload_learners]
-        active_email_keys = [normalize_email(learner.get("email")) for learner in active_learners]
-        attendance_data = fetch_attendance_detail_summary_data(
-            learner_ids, email_keys, include_reported_participants=True,
-        )
-        active_attendance_data = filter_attendance_detail_summary_data(
-            attendance_data,
-            active_learner_ids,
-            active_email_keys,
-        )
-        metrics_by_id = attendance_data["metricsById"]
-        metrics_by_email = attendance_data["metrics"]
-        missing_fallback_emails = [
-            normalize_email(learner.get("email"))
-            for learner in caseload_learners
-            if (
-                normalize_email(learner.get("email"))
-                and not metrics_by_id.get(int(learner["id"]))
-                and not metrics_by_email.get(normalize_email(learner.get("email")))
-            )
-        ]
-        fallback_attendance_data = fetch_learner_absence_data(missing_fallback_emails)
-        fallback_metrics_by_email = fallback_attendance_data["metrics"]
-        aptem_by_profile, kbc_attendance_by_profile = caseload_kbc_attendance_rates(caseload_rows)
-        # Aptem-linked learners use dated KBC register evidence. Everyone else
-        # uses completed occurrences with a verified Teams attendance report.
-        attendance_records = coach_last_four_attendance_rows(
-            attendance_data, caseload_rows, aptem_by_profile,
-        )
-        non_aptem_rows = [row for row in caseload_rows if int(row.id) not in aptem_by_profile]
-        canonical_attendance_by_profile = caseload_canonical_attendance(non_aptem_rows)
+        from learner_api.attendance_lectures import attendance_read_contract
+        canonical_by_profile = {}
+        canonical_history = []
+        attendance_records = []
+        for profile in caseload_rows:
+            source = getattr(profile, '_caseload_source', None)
+            if source is None:
+                continue
+            contract = attendance_read_contract(source, learner_profile_id=profile.id)
+            canonical_by_profile[int(profile.id)] = contract['summary']
+            attendance_records.extend(contract['recentAttendance'])
+            canonical_history.extend(contract['history'])
         catchup_records = list(
             CoachCalendarEvent.objects.filter(
                 owner_email__iexact=owner_email,
@@ -13031,18 +12984,7 @@ def coach_attendance(request):
         attendance_learners = []
         for learner in caseload_learners:
             profile_id = int(learner["id"])
-            if profile_id in aptem_by_profile:
-                # Aptem-linked coach rows are sourced exclusively from the
-                # KBC register. A missing KBC row stays unavailable instead of
-                # being replaced by a Teams or legacy attendance record.
-                metrics = kbc_attendance_by_profile.get(profile_id)
-            else:
-                metrics = (
-                    canonical_attendance_by_profile.get(profile_id)
-                    or metrics_by_id.get(profile_id)
-                    or metrics_by_email.get(normalize_email(learner.get("email")))
-                    or fallback_metrics_by_email.get(normalize_email(learner.get("email")))
-                )
+            metrics = canonical_by_profile.get(profile_id)
             attendance_learners.append(
                 serialize_attendance_learner(
                     learner,
@@ -13116,9 +13058,13 @@ def coach_attendance(request):
         if caseload_learners
         else coach_staff_display_name(owner_email) or "Coach"
     )
-    active_trends = active_attendance_data["trends"]
-    if not any(active_trends.values()):
-        active_trends = fetch_learner_absence_data(active_email_keys)["trends"]
+    active_ids = {str(learner['id']) for learner in active_learners}
+    trend_rows = [
+        {'learner_id': row['learnerId'], 'session_id': row['sessionId'],
+         'session_date': row['sessionDate'], 'attendance_status': row['status']}
+        for row in canonical_history if row['counted'] and row['learnerId'] in active_ids
+    ]
+    active_trends = build_attendance_detail_summary_payload(trend_rows)['trends']
     _coach_perf("attendance", "total", endpoint_started, learner_count=len(caseload_learners))
     return JsonResponse(
         {

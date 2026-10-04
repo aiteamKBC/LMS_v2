@@ -6,13 +6,20 @@ import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { roleNavMap } from '@/mocks/navigation';
 import { fetchEnrolmentBoard, updateEnrolmentUser } from '@/api/enrolmentUsers';
 import { fetchCommercialBoard, updateCommercialBoard } from '@/api/commercialUsers';
-import { WIZARD_STEPS, type EnrolmentBoard } from '../types';
+import type { EnrolmentBoard } from '../types';
 import { btnSecondary } from '../components/ui';
 import { WizardProvider, useWizard } from './WizardContext';
 import { WizardShell } from './WizardShell';
+import { DEFAULT_LAYOUT, visibleSteps } from './layout/resolve';
 
-function WizardInner({ currentIndex }: { currentIndex: number }) {
-  const { userId, isCommercial, board, draft, saveIlr } = useWizard();
+const DEFAULT_STEPS = visibleSteps(DEFAULT_LAYOUT);
+
+function WizardInner({ stepSlug }: { stepSlug: string }) {
+  const { userId, isCommercial, board, draft, saveIlr, steps = DEFAULT_STEPS } = useWizard();
+  // Resolved against the published layout's steps, so a step added in the
+  // wizard builder has an address and a removed one falls back to the first.
+  const idx = steps.findIndex((s) => s.slug === stepSlug);
+  const currentIndex = idx === -1 ? 0 : idx;
   const navigate = useNavigate();
   const { success, error } = useToast();
 
@@ -21,7 +28,7 @@ function WizardInner({ currentIndex }: { currentIndex: number }) {
   const suffix = isCommercial ? '?source=commercial' : '';
   const profileHref = `/users/${userId}${suffix}`;
 
-  const goTo = (i: number) => navigate(`/users/${userId}/wizard/${WIZARD_STEPS[i].slug}${suffix}`);
+  const goTo = (i: number) => navigate(`/users/${userId}/wizard/${steps[i].slug}${suffix}`);
 
   const finish = async () => {
     const pd = draft.personalDetails;
@@ -118,8 +125,6 @@ function WizardPageContent() {
   // generic next-step link reaches the ILR route, land on the next real step.
   // Neither ILR step applies to commercial delivery.
   const resolvedStepSlug = isCommercial && (stepSlug === 'ilr' || stepSlug === 'ilr-details') ? 'plr' : stepSlug;
-  const idx = WIZARD_STEPS.findIndex((s) => s.slug === resolvedStepSlug);
-  const currentIndex = idx === -1 ? 0 : idx;
 
   if (loading || loadError || !board) {
     return (
@@ -144,7 +149,7 @@ function WizardPageContent() {
     /* readOnlyLearnerSteps: the Skills Radar is the learner's own self-assessment,
        so staff review it here rather than edit it. */
     <WizardProvider userId={userId} isCommercial={isCommercial} board={board} readOnlyLearnerSteps>
-      <WizardInner currentIndex={currentIndex} />
+      <WizardInner stepSlug={resolvedStepSlug} />
     </WizardProvider>
   );
 }

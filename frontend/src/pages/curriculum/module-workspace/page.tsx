@@ -1,6 +1,5 @@
 import { LearnerPreview } from '../module-builder/LearnerPreview';
 import { ModuleSessions } from './ModuleSessions';
-import { TutorEmailButton } from './TutorEmailButton';
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -793,13 +792,7 @@ export default function ModuleWorkspacePage() {
                 ) : cleanText(context?.groupName, 'Unassigned')}
               />
               <DetailRow label="Coach" value={cleanText(module?.coach) || cleanText(context?.group?.coach, 'Unassigned')} />
-              <DetailRow
-                label="Tutor"
-                value={<span className="flex flex-col items-start">
-                  {cleanText(module?.tutor, 'Unassigned')}
-                  {catalogueId && cleanText(module?.tutor) && <TutorEmailButton moduleId={catalogueId} tutorName={cleanText(module?.tutor)} />}
-                </span>}
-              />
+              <DetailRow label="Tutor" value={cleanText(module?.tutor, 'Unassigned')} />
             </WorkspacePanel>
 
             <WorkspacePanel title="Content" description="Authored in the Module Builder; summarised here.">
