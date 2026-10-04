@@ -1,0 +1,22 @@
+{
+  "read_only": true,
+  "database": "neondb",
+  "fingerprint": "dcf3f246070d4f4539fb4886da2b6ac16f21f1add52d5e67e119b802bbca67f9",
+  "actor": "Ayman",
+  "plan": {
+    "evidence_id": 28320,
+    "aptem_id": 10173,
+    "old_parent_id": 701836,
+    "source_id": 859836,
+    "old_parent_status": {
+      "accepted": false,
+      "activity_status": "Referred"
+    },
+    "expected_seconds": 21600,
+    "existing_source_actual_seconds": 21600,
+    "existing_source_canonical_progress_id": 701836,
+    "file_blob": "Marketing Manager Level 6 - Feb 2026/David Barnett-10173/28320-OOH Meeting Evidence Submission.pdf",
+    "report_blob": "Marketing Manager Level 6 - Feb 2026/David Barnett-10173/28320-AssessmentReport.pdf"
+  },
+  "status": "DRY_RUN"
+}

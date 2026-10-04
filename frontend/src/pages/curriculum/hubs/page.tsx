@@ -235,6 +235,7 @@ function hubCards(kind: HubKind, counts: {
     return [
       { title: 'Free Courses', description: 'Manage curriculum content that sits outside apprenticeship delivery.', href: '/curriculum/free-courses', icon: 'ri-graduation-cap-line', tone: 'emerald' },
       { title: 'Week Templates', description: 'Prepare reusable week structures for faster authoring.', href: '/curriculum/week-builder', icon: 'ri-calendar-line', tone: 'emerald' },
+      { title: 'Review Templates', description: 'Create and manage reusable migrated review forms for MCM, PR and PR + Skills Radar.', href: '/curriculum/library/review-templates', icon: 'ri-file-list-3-line', tone: 'primary' },
       { title: 'KSB Standards', description: 'Browse the published Skills England standards and their KSBs.', href: '/curriculum/standards', icon: 'ri-node-tree', tone: 'sky' },
       { title: 'KSB Frameworks', description: 'Create and edit the reusable KSB profiles programmes are mapped to.', href: '/curriculum/ksb-frameworks', icon: 'ri-git-branch-line', meta: `${counts.frameworks} profiles`, tone: 'emerald' },
       { title: 'Quiz Workspace', description: 'Create and edit quizzes connected to curriculum components.', href: '/curriculum/quiz-xml', icon: 'ri-question-answer-line', tone: 'amber' },

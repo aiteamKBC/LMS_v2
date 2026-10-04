@@ -15,7 +15,7 @@ class Command(BaseCommand):
     def add_arguments(self, parser):
         parser.add_argument("--source-review-id", type=int, required=True)
         parser.add_argument("--programme-key", required=True, help="Exact id:<programme_id> or name:<display name> key")
-        parser.add_argument("--review-family", choices=["MCM", "PR"], required=True)
+        parser.add_argument("--review-family", choices=["MCM", "PR", "PR_SKILLS_RADAR"], required=True)
         parser.add_argument("--name", required=True)
         parser.add_argument("--create", action="store_true", help="Persist an inactive candidate; default is dry-run")
         parser.add_argument("--preview", action="store_true", help="Print the sanitized candidate definition")

@@ -234,6 +234,64 @@ def current_ssot(current: dict[str, Any], owner_id: int) -> int:
                if row["learner_id"] == owner_id and row["accepted"] and not row.get("deleted_at"))
 
 
+def aptem_unique_total(current: dict[str, Any], aptem_id: int) -> tuple[int, dict[str, Any]]:
+    """Count the accepted Aptem time represented by unique SSOT parents.
+
+    Aptem LMS-learning-log evidence can be an aggregate declaration for
+    several Journal/Old LMS/Aptem rows already present in SSOT.  Comparing
+    that aggregate duration directly with SSOT creates a false negative.  A
+    parent is counted once, using exact evidence lineage first, then exact
+    journal or dated attendance lineage.  Unrepresented evidence is reported
+    rather than invented.
+    """
+    owner_id = current["owners"][aptem_id]["id"]
+    progress = {
+        p["id"]: p for p in current["progress"]
+        if p["learner_id"] == owner_id and not p.get("deleted_at")
+    }
+    exact, _ = source_maps(current, owner_id)
+    counted: dict[int, int] = {}
+    evidence_to_parent: dict[int, int] = {}
+    missing: list[int] = []
+    valid = [
+        e for e in current["evidence"]
+        if int(e["learner_id"]) == aptem_id
+        and accepted_valid(e, current["aptem"][aptem_id])
+    ]
+    for evidence in valid:
+        eid = int(evidence["evidence_id"])
+        candidates: list[int] = []
+        for source in exact.get(eid, []):
+            parent_id = source.get("canonical_progress_id")
+            parent = progress.get(parent_id)
+            if parent and parent.get("accepted") and int(parent.get("actual_seconds") or 0) > 0:
+                candidates.append(parent_id)
+        if not candidates:
+            for journal in exact_journal(current, owner_id, evidence):
+                parent_id = journal.get("progress_id")
+                parent = progress.get(parent_id)
+                if parent and parent.get("accepted") and int(parent.get("actual_seconds") or 0) > 0:
+                    candidates.append(parent_id)
+        if not candidates and is_attendance(evidence):
+            for journal in attendance_journal_day(current, owner_id, evidence_date(evidence)):
+                parent_id = journal.get("progress_id")
+                parent = progress.get(parent_id)
+                if parent and parent.get("accepted") and int(parent.get("actual_seconds") or 0) > 0:
+                    candidates.append(parent_id)
+        if candidates:
+            parent_id = candidates[0]
+            evidence_to_parent[eid] = parent_id
+            counted.setdefault(parent_id, int(progress[parent_id].get("actual_seconds") or 0))
+        else:
+            missing.append(eid)
+    return sum(counted.values()), {
+        "canonical_parent_count": len(counted),
+        "represented_evidence_count": len(evidence_to_parent),
+        "unrepresented_evidence_ids": missing,
+        "evidence_to_parent": evidence_to_parent,
+    }
+
+
 def qualifying_null_parents(current: dict[str, Any], aptem_id: int, owner_id: int, valid_evidence: dict[int, dict[str, Any]]):
     progress_by_id = {p["id"]: p for p in current["progress"] if p["learner_id"] == owner_id and not p.get("deleted_at")}
     exact, _ = source_maps(current, owner_id)
@@ -344,7 +402,8 @@ def build_plan(current: dict[str, Any]) -> dict[str, Any]:
         owner = current["owners"][aid]
         owner_id = owner["id"]
         aptem_row = current["aptem"][aid]
-        aptem_seconds = aptem_total(current, aid)
+        aptem_raw_seconds = aptem_total(current, aid)
+        aptem_seconds, unique_meta = aptem_unique_total(current, aid)
         before = current_ssot(current, owner_id)
         valid = {int(e["evidence_id"]): e for e in current["evidence"]
                  if int(e["learner_id"]) == aid and accepted_valid(e, aptem_row)}
@@ -391,12 +450,18 @@ def build_plan(current: dict[str, Any]) -> dict[str, Any]:
                 plans.append({"kind": "new_parent", "evidence": e, "parent_id": None, "seconds": int(Decimal(str(e["spent_time"])) * 60), "segments": segs, "group_names": group_for[aid]})
         report["learners"].append({
             "aptem_id": aid, "name": owner["full_name"], "groups": group_for[aid],
-            "aptem_valid_seconds": aptem_seconds, "ssot_before_seconds": before,
+            "aptem_valid_seconds": aptem_raw_seconds,
+            "aptem_unique_seconds": aptem_seconds,
+            "aptem_duplicate_or_aggregate_seconds": aptem_raw_seconds - aptem_seconds,
+            "aptem_unique_meta": unique_meta,
+            "ssot_before_seconds": before,
             "difference_before_seconds": before - aptem_seconds, "below_target": below,
+            "difference_vs_raw_aptem_seconds": before - aptem_raw_seconds,
             "planned_seconds": sum(int(p["seconds"]) for p in plans),
             "planned_action_count": len(plans),
             "planned_after_seconds": before + sum(int(p["seconds"]) for p in plans),
             "difference_after_seconds": before + sum(int(p["seconds"]) for p in plans) - aptem_seconds,
+            "difference_after_vs_raw_aptem_seconds": before + sum(int(p["seconds"]) for p in plans) - aptem_raw_seconds,
         })
         report["actions"].extend([{"aptem_id": aid, **p} for p in plans])
     for name, group in GROUPS.items():
@@ -406,10 +471,13 @@ def build_plan(current: dict[str, Any]) -> dict[str, Any]:
             "tutor": group["tutor"], "assigned_aptem_learners": len(group["learner_ids"]),
             "no_aptem_ids_in_screenshot": ["Aya Aya Test", "Aya Khater"],
             "aptem_valid_seconds": sum(r["aptem_valid_seconds"] for r in members),
+            "aptem_unique_seconds": sum(r["aptem_unique_seconds"] for r in members),
+            "aptem_duplicate_or_aggregate_seconds": sum(r["aptem_duplicate_or_aggregate_seconds"] for r in members),
             "ssot_before_seconds": sum(r["ssot_before_seconds"] for r in members),
             "planned_seconds": sum(r["planned_seconds"] for r in members),
             "ssot_after_seconds": sum(r["planned_after_seconds"] for r in members),
             "difference_after_seconds": sum(r["difference_after_seconds"] for r in members),
+            "difference_after_vs_raw_aptem_seconds": sum(r["difference_after_vs_raw_aptem_seconds"] for r in members),
             "below_target_count": sum(1 for r in members if r["below_target"]),
         }
     report["database"] = current.get("database")

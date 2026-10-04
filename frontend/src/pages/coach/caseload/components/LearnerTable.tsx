@@ -1,6 +1,6 @@
 import { AppIcon } from '@/components/feature/AppIcon';
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
-import { EMPTY_VALUE, displayValue, getOtjhGapStatus, hasValue } from '../lib/format';
+import { EMPTY_VALUE, displayValue, getOtjhStatusOverride, hasValue, otjhProgressAsOfToday } from '../lib/format';
 import type { InsightMap } from '../lib/attention';
 import type { Learner, SortDirection, SortKey } from '../types';
 import { StatusPill } from './primitives';
@@ -35,7 +35,7 @@ function otjhRatio(completed: number | null | undefined, total: number | null | 
   const completedLabel = compactNumber(completed);
   if (completedLabel === null) return null;
   const totalLabel = compactNumber(total);
-  return `${completedLabel}h / ${totalLabel !== null && Number(total) > 0 ? `${totalLabel}h` : EMPTY_VALUE}`;
+  return `${completedLabel}h / ${totalLabel !== null ? `${totalLabel}h` : EMPTY_VALUE}`;
 }
 
 function attendanceRatio(learner: Learner) {
@@ -50,7 +50,7 @@ function Progress({ label, value, detail, metric, tone }: { label: string; value
     <div className={styles.miniLabel}><b>{value === null ? EMPTY_VALUE : `${value}%`}</b></div>
     <div className={styles.track}><div className={styles.fill} style={{ width: `${value ?? 0}%` }} /></div>
     {detail !== null && detail !== undefined
-      ? <div className={styles.miniRatio} title={label === 'OTJH' ? 'Actual hours / target hours' : undefined}>{detail}</div>
+      ? <div className={styles.miniRatio} title={label === 'OTJH' ? 'Actual hours / target hours as of today' : undefined}>{detail}</div>
       : null}
   </div>;
 }
@@ -64,7 +64,7 @@ function DateMetric({ value, emptyLabel, detail }: { value?: string | null; empt
 }
 
 function otjhTone(learner: Learner) {
-  const statusKey = getOtjhGapStatus(learner.otjhCompleted, learner.otjhTarget).status;
+  const statusKey = otjhProgressAsOfToday(learner).status;
   if (statusKey === 'at-risk') return 'critical';
   if (statusKey === 'need-attention') return 'warning';
   if (statusKey === 'on-track') return 'positive';
@@ -107,7 +107,7 @@ export function LearnerTable({ learners, insights, sortKey, sortDirection, onSor
           <th rowSpan={2} aria-sort={sortKey === 'name' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{sortHeader('Learner', 'name')}</th>
           {/* Programme status (Active, Withdrawn, On break...) from the learner record --
               not the risk tier, which the Progress tones already convey. */}
-          <th rowSpan={2}>Status</th><th colSpan={4}>Progress</th>
+          <th rowSpan={2}>Status</th><th colSpan={3}>Progress</th>
           <th rowSpan={2} aria-sort={sortKey === 'activity' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{sortHeader('Last Activity', 'activity')}</th>
           <th rowSpan={2} aria-sort={sortKey === 'progress-review' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{sortHeader('Last PR', 'progress-review')}</th>
           <th rowSpan={2} aria-sort={sortKey === 'monthly-coaching' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{sortHeader('Last MCM', 'monthly-coaching')}</th>
@@ -115,7 +115,6 @@ export function LearnerTable({ learners, insights, sortKey, sortDirection, onSor
         </tr>
         <tr className={styles.progressHead}>
           <th aria-sort={sortKey === 'otjh' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{sortHeader('OTJH', 'otjh')}</th>
-          <th aria-sort={sortKey === 'ksb' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{sortHeader('KSBs', 'ksb')}</th>
           <th aria-sort={sortKey === 'components' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{sortHeader('Activities', 'components')}</th>
           <th aria-sort={sortKey === 'attendance' ? (sortDirection === 'asc' ? 'ascending' : 'descending') : 'none'}>{sortHeader('Attendance', 'attendance')}</th>
         </tr>
@@ -123,12 +122,19 @@ export function LearnerTable({ learners, insights, sortKey, sortDirection, onSor
       <tbody>{learners.map(learner => {
         const insight = insights.get(learner.id);
         const activity = bestActivity(learner);
+        const otjhProgress = otjhProgressAsOfToday(learner);
+        const targetHours = otjhProgress.targetHours;
+        const otjhStatusOverride = getOtjhStatusOverride(learner.rawProgramStatus)
+          ?? getOtjhStatusOverride(learner.enrollmentStatus);
+        const targetProgress = otjhProgress.percent === null ? null : percent(otjhProgress.percent);
         return <tr key={learner.id}>
           {selectionMode ? <td><input type="checkbox" aria-label={`Select ${learner.name}`} checked={selectedLearnerIds.has(learner.id)} onChange={() => onToggleSelect(learner.id)} /></td> : null}
           <td><div className={styles.learner}><span className={styles.avatar}>{learner.initials}</span><span><strong>{learner.name}</strong><small>{displayValue(learner.programmeName || learner.cohortName)}</small></span></div></td>
           <td>{hasValue(learner.rawProgramStatus) ? <StatusPill value={learner.rawProgramStatus} /> : EMPTY_VALUE}</td>
-          <td className={styles.progressCell}><Progress label="OTJH" metric="otjh" tone={otjhTone(learner)} value={getOtjhGapStatus(learner.otjhCompleted, learner.otjhTarget).available ? percent(((learner.otjhCompleted / learner.otjhTarget) * 100)) : null} detail={otjhRatio(learner.otjhCompleted, learner.otjhTarget)} /></td>
-          <td className={styles.progressCell}><Progress label="KSBs" metric="ksbs" value={percent(learner.ksbProgress, learner.ksbProgressAvailable, true)} detail={ratio(learner.ksbCompleted, learner.ksbTarget)} /></td>
+          <td className={styles.progressCell}>{otjhStatusOverride
+            ? <StatusPill value={otjhStatusOverride} />
+            : <Progress label="OTJH" metric="otjh" tone={otjhTone(learner)} value={targetProgress} detail={otjhRatio(learner.otjhCompleted, targetHours)} />}
+          </td>
           <td className={styles.progressCell}><Progress label="Activities" metric="activities" value={componentPercent(learner)} detail={ratio(learner.componentsCompleted, learner.componentsPlanned)} /></td>
           <td className={styles.progressCell}><Progress label="Attendance" metric="attendance" value={percent(learner.liveAttendanceRate, learner.liveAttendanceRateAvailable, true)} detail={attendanceRatio(learner)} /></td>
           <td><DateMetric value={activity} emptyLabel="No activity yet" detail={insight?.lastActivityDaysAgo !== null && insight?.lastActivityDaysAgo !== undefined ? `${insight.lastActivityDaysAgo} days ago` : displayValue(learner.lastActivityLabel) !== EMPTY_VALUE ? displayValue(learner.lastActivityLabel) : 'Latest activity'} /></td>
