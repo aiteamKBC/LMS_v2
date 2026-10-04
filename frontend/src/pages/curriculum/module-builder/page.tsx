@@ -109,6 +109,13 @@ import {
   // Live sessions left behind on an old date when their week was re-planned.
   // States the fact; the correction is a button the author presses.
   moduleLiveSessionDateDrift,
+  // Adding more live sessions to a week than its group has delivery days for.
+  // The extras are allowed, they simply have no date to run on -- so the
+  // author is told before it happens rather than finding "No date yet" later.
+  liveSessionSlotOverflow,
+  liveSessionSlotOverflowNotice,
+  weekDeliverySlotCapacity,
+  type LiveSessionSlotOverflow,
   resequenceWeekSessionDates,
   makeAuthoringId,
   recalculateModule,
@@ -476,6 +483,13 @@ export default function ModuleBuilder() {
    */
   const workingModuleRef = useRef<ModuleCatalogueItem | null>(null);
   workingModuleRef.current = workingModule;
+  /**
+   * The fetched session plan, for the same reason: the add/reuse/import
+   * callbacks are declared above the state that holds it and run long after
+   * the render that filled it. Null while it is still loading, which the
+   * delivery-slot capacity reads as "fall back to the module's own pattern".
+   */
+  const sessionPlanRef = useRef<ModuleWeekSessionPlan | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [focusedComponentId, setFocusedComponentId] = useState('');
   const [expandedWeekIds, setExpandedWeekIds] = useState<Set<string>>(new Set());
@@ -1666,17 +1680,78 @@ export default function ModuleBuilder() {
     setWorkingModule(current => (current ? recalculateModule(updater(current)) : current));
   }, [workingModuleProgrammeArchived]);
 
+  // A week can plan as many live sessions as its group has delivery days. Past
+  // that there is no date to give one, so the author is asked before it
+  // happens instead of discovering a "No date yet" row afterwards. Nothing is
+  // refused -- an unplanned live session is a legitimate thing to author, it
+  // just has to be dated by hand -- so a yes goes ahead exactly as before.
+  //
+  // Read through a ref because the fetched plan is state declared further
+  // down; these callbacks run long after the render that filled it.
+  const confirmLiveSessionSlotOverflow = useCallback(async (overflow: LiveSessionSlotOverflow | null) => {
+    if (!overflow) return true;
+    const notice = liveSessionSlotOverflowNotice(overflow);
+    return showCurriculumConfirm({
+      title: notice.title,
+      text: notice.text,
+      icon: 'warning',
+      confirmButtonText: overflow.beyond === 1 ? 'Add it anyway' : 'Add them anyway',
+      cancelButtonText: 'Cancel',
+      onConfirm: async () => {},
+    });
+  }, []);
+
+  /** The overflow of adding live sessions to a week this module already has. */
+  const weekSlotOverflow = useCallback((weekId: string, adding: number) => {
+    const module = workingModuleRef.current;
+    if (!module) return null;
+    return liveSessionSlotOverflow(
+      module,
+      module.weekStructure.findIndex(week => week.id === weekId),
+      adding,
+      sessionPlanRef.current?.sessions,
+    );
+  }, []);
+
+  /**
+   * The overflow of a week that does not exist yet — a template copy or a
+   * clone. It lands at the end, past anything the fetched plan covers, so its
+   * capacity is the group's own delivery pattern.
+   */
+  const newWeekSlotOverflow = useCallback((liveSessions: number): LiveSessionSlotOverflow | null => {
+    const module = workingModuleRef.current;
+    if (!module || liveSessions <= 0) return null;
+    const capacity = weekDeliverySlotCapacity(module, module.weekStructure.length);
+    const beyond = Math.max(0, liveSessions - capacity);
+    if (!beyond) return null;
+    return {
+      weekNumber: module.weekStructure.length + 1,
+      capacity,
+      existing: 0,
+      adding: liveSessions,
+      beyond,
+    };
+  }, []);
+
   // One state update appends the requested number of independent template copies.
-  const importWeekTemplateAsNewWeek = useCallback((template: WeekTemplate, count: number) => {
+  const importWeekTemplateAsNewWeek = useCallback(async (template: WeekTemplate, count: number) => {
+    // Every copy is the same week, so they all raise the same question: ask it
+    // once, about the week the template describes.
+    const liveSessions = (template.components || []).filter(component => component.type === 'live-session').length;
+    if (!(await confirmLiveSessionSlotOverflow(newWeekSlotOverflow(liveSessions)))) return;
     updateWorkingModule(module => appendWeekTemplateCopies(module, template, count));
     setWeekTemplateImportOpen(false);
-  }, [updateWorkingModule]);
+  }, [updateWorkingModule, confirmLiveSessionSlotOverflow, newWeekSlotOverflow]);
 
   // Copy components chosen from the reuse library into an existing week. The
   // copies land in client state and are persisted by the normal module save -
   // a per-component write would be undone by it, because saving re-upserts the
   // module's whole week structure.
-  const addLibraryComponentsToWeek = useCallback((weekId: string, picked: LibraryComponent[]) => {
+  const addLibraryComponentsToWeek = useCallback(async (weekId: string, picked: LibraryComponent[]) => {
+    // `componentType` is the authoring type; `type` carries a human label that
+    // several activity types share (see LibraryComponent).
+    const liveSessions = picked.filter(source => source.componentType === 'live-session').length;
+    if (!(await confirmLiveSessionSlotOverflow(weekSlotOverflow(weekId, liveSessions)))) return;
     let lastComponentId = '';
     updateWorkingModule(module => ({
       ...module,
@@ -1689,13 +1764,19 @@ export default function ModuleBuilder() {
     }));
     if (lastComponentId) setSelection({ kind: 'component', weekId, componentId: lastComponentId });
     setReusePickerWeekId(null);
-  }, [updateWorkingModule]);
+  }, [updateWorkingModule, confirmLiveSessionSlotOverflow, weekSlotOverflow]);
 
   // Clone a week in place: the twin lands directly beneath its source, carrying
   // every component in full except the live session (`duplicateWeekInModule`
   // says why). Client state only -- the normal module save writes the whole week
   // structure, so a per-week write here would only be undone by it.
-  const duplicateWeek = useCallback((weekId: string) => {
+  const duplicateWeek = useCallback(async (weekId: string) => {
+    // The clone is a week of its own at the end of the run, so it faces the
+    // same question the source did -- and answers it differently only when the
+    // source was already carrying more live sessions than a week can date.
+    const source = workingModuleRef.current?.weekStructure.find(week => week.id === weekId);
+    const liveSessions = (source?.components || []).filter(component => component.type === 'live-session').length;
+    if (!(await confirmLiveSessionSlotOverflow(newWeekSlotOverflow(liveSessions)))) return;
     let copyId = '';
     updateWorkingModule(module => {
       const next = duplicateWeekInModule(module, weekId);
@@ -1707,7 +1788,7 @@ export default function ModuleBuilder() {
     // Open it straight away: the point of a clone is the edit you make to it.
     setExpandedWeekIds(prev => new Set(prev).add(copyId));
     setSelection({ kind: 'week', weekId: copyId });
-  }, [updateWorkingModule]);
+  }, [updateWorkingModule, confirmLiveSessionSlotOverflow, newWeekSlotOverflow]);
 
   // The clone button's "copy to another week" option: the twin lands at the
   // end of the target week, carrying the source in full except a live
@@ -2558,6 +2639,7 @@ export default function ModuleBuilder() {
   const workingModuleSessionPlan = weekSessionPlanState?.catalogueId === workingModuleCatalogueId
     ? weekSessionPlanState.plan
     : null;
+  sessionPlanRef.current = workingModuleSessionPlan;
   const [sessionPreviewOpen, setSessionPreviewOpen] = useState(false);
   useEffect(() => {
     if (!workingModuleCatalogueId || !workingModuleWeekCount) {
@@ -3016,11 +3098,13 @@ export default function ModuleBuilder() {
           <ComponentTypeModal
             description="Select one or more component types — use Select all for a blank set of everything. Each becomes an empty component to fill in; nothing is copied from a saved template."
             onClose={() => setLessonPickerWeekId(null)}
-            onAdd={types => {
+            onAdd={async types => {
               const week = workingModule.weekStructure.find(item => item.id === lessonPickerWeekId);
               if (!week) return;
               const components = createNamedComponents(week, types);
               if (!components.length) return;
+              const liveSessions = components.filter(component => component.type === 'live-session').length;
+              if (!(await confirmLiveSessionSlotOverflow(weekSlotOverflow(week.id, liveSessions)))) return;
               updateWorkingModule(module => ({
                 ...module,
                 weekStructure: module.weekStructure.map(item => item.id === week.id ? { ...item, components: [...item.components, ...components] } : item),
@@ -4408,7 +4492,7 @@ function ComponentTypeChecklist({ selectedTypes, onToggle }: {
 
 function ComponentTypeModal({ onClose, onAdd, title = 'What do you want to add?', description = 'Select one or more component types. You can edit the details after.', submitLabel = 'Add', initialSelectedTypes = [] }: {
   onClose: () => void;
-  onAdd: (types: ModuleComponentType[]) => void;
+  onAdd: (types: ModuleComponentType[]) => void | Promise<void>;
   title?: string;
   description?: string;
   submitLabel?: string;
