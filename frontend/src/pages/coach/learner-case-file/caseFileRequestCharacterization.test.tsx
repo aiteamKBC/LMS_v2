@@ -250,6 +250,15 @@ describe('Learner Case File request characterization', () => {
     expect(result.current.data?.overallProgress).toBe(75);
   });
 
+  it('uses the canonical detail start date ahead of the shell date', async () => {
+    mocks.fetchLearnerDetail.mockResolvedValue({ ...learnerDetail(false), programmeStartDate: '2025-10-15' });
+    const { result } = renderHook(() => useCoachLearnerCaseFileData({
+      learnerId: '316', kind: 'apprenticeship', enrolmentId: '5170',
+    }));
+    await waitFor(() => expect(result.current.data?.startDate).toBe('2025-10-15'));
+    expect(result.current.data?.gatewayReviewDate).toBe('04 May 2027');
+  });
+
   it('preserves shell profile fields and leaves missing values unavailable', async () => {
     mocks.fetchLearnerDetail.mockResolvedValue({
       ...learnerDetail(false), name: '', email: '', programme: '', cohort: '', group: '', employer: '', programmeStatus: '',

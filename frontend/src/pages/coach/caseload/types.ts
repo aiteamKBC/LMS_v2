@@ -147,6 +147,9 @@ export interface Learner {
   recentFlag: string | null;
   progressVariance: string;
   startDate: string;
+  /** Contract window used by existing OTJH/review pacing, separate from Profile date. */
+  otjhProgrammeStartDate?: string;
+  displayStartDate?: string;
   gatewayReviewDate: string;
   plannedEndDate: string;
   coachName?: string;

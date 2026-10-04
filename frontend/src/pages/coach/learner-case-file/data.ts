@@ -772,12 +772,13 @@ function buildActivityItems(
 ) {
   const items: CaseFileActivityItem[] = [];
 
-  if (snapshot?.startDate && snapshot.startDate !== '--') {
+  const activityStartDate = snapshot?.otjhProgrammeStartDate ?? snapshot?.startDate;
+  if (activityStartDate && activityStartDate !== '--') {
     items.push({
       id: 'programme-start',
-      date: snapshot.startDate,
+      date: activityStartDate,
       event: 'Programme start',
-      detail: `${snapshot.name} joined ${snapshot.cohortName}`,
+      detail: `${snapshot?.name} joined ${snapshot?.cohortName}`,
       tone: 'primary',
     });
   }

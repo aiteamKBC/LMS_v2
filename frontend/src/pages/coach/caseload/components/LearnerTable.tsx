@@ -152,8 +152,8 @@ export function LearnerTable({ learners, insights, sortKey, sortDirection, onSor
           ?? getOtjhStatusOverride(learner.enrollmentStatus);
         const targetProgress = otjhProgress.percent === null ? null : percent(otjhProgress.percent);
         const activityTone = overdueTone(insight?.lastActivityDaysAgo ?? null, 7, 14);
-        const progressReviewTone = overdueTone(dateAgeInDays(learner.lastProgressReview, learner.startDate, today), 70, 84);
-        const monthlyCoachingTone = overdueTone(dateAgeInDays(learner.lastReview, learner.startDate, today), 21, 28);
+        const progressReviewTone = overdueTone(dateAgeInDays(learner.lastProgressReview, learner.otjhProgrammeStartDate ?? learner.startDate, today), 70, 84);
+        const monthlyCoachingTone = overdueTone(dateAgeInDays(learner.lastReview, learner.otjhProgrammeStartDate ?? learner.startDate, today), 21, 28);
         return <tr key={learner.id}>
           {selectionMode ? <td><input type="checkbox" aria-label={`Select ${learner.name}`} checked={selectedLearnerIds.has(learner.id)} onChange={() => onToggleSelect(learner.id)} /></td> : null}
           <td><div className={styles.learner}><span className={styles.avatar}>{learner.initials}</span><span><strong>{learner.name}</strong><small>{displayValue(learner.programmeName)}</small></span></div></td>
@@ -164,7 +164,7 @@ export function LearnerTable({ learners, insights, sortKey, sortDirection, onSor
           </td>
           <td className={styles.progressCell}><Progress label="Activities" metric="activities" value={componentPercent(learner)} detail={ratio(learner.componentsCompleted, learner.componentsPlanned)} /></td>
           <td className={styles.progressCell}><Progress label="Attendance" metric="attendance" value={percent(learner.liveAttendanceRate, learner.liveAttendanceRateAvailable, true)} /></td>
-          <td><DateMetric value={learner.startDate} emptyLabel="No start date" /></td>
+          <td><DateMetric value={learner.startDate} emptyLabel="" /></td>
           <td><DateMetric value={activity} emptyLabel="No activity yet" detail={insight?.lastActivityDaysAgo !== null && insight?.lastActivityDaysAgo !== undefined ? `${insight.lastActivityDaysAgo} days ago` : displayValue(learner.lastActivityLabel) !== EMPTY_VALUE ? displayValue(learner.lastActivityLabel) : 'Latest activity'} metric="activity" tone={activityTone} /></td>
           <td><DateMetric value={learner.lastProgressReview} emptyLabel="No PR yet" detail="Latest completed" metric="progress-review" tone={progressReviewTone} /></td>
           <td><DateMetric value={learner.lastReview} emptyLabel="No MCM yet" detail="Latest completed" metric="monthly-coaching" tone={monthlyCoachingTone} /></td>

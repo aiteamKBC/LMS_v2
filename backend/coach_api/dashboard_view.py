@@ -1,5 +1,6 @@
 """HTTP boundary for the Coach Dashboard read model."""
 
+import logging
 from time import perf_counter
 
 from django.http import JsonResponse
@@ -35,6 +36,13 @@ def coach_dashboard(request):
     owner_email = authenticated_coach_email(request)
     cached_dashboard = dashboard_cache.get_cached_coach_dashboard(owner_email)
     if cached_dashboard is not None:
+        try:
+            cached_dashboard = CoachDashboardService(owner_email).normalize_start_dates(cached_dashboard)
+        except Exception:
+            logging.getLogger(__name__).exception("coach_dashboard_start_date_read_failed")
+            # Use the normal guarded loader/error response if source reads fail.
+            cached_dashboard = None
+    if cached_dashboard is not None:
         if snapshot_needs_refresh(cached_dashboard):
             schedule_coach_dashboard_refresh(owner_email, reason="stale-cache-hit")
         _dashboard_perf(
@@ -50,7 +58,6 @@ def coach_dashboard(request):
             owner_email, today=timezone.localdate(),
         ).build()
     except Exception:
-        import logging
         logging.getLogger(__name__).exception(
             "coach_dashboard_load_failed coach_account_id=%s", owner_email,
         )
