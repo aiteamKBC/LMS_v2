@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReviewInstanceModal } from './ReviewInstanceModal';
+import { calculateMigratedReviewProgress } from '@/api/reviewInstances';
 import { bookMigratedReview, calculateReviewInstanceProgress, completeMigratedReview, completeReviewInstance, downloadReviewInstancePdf, fetchPreviousReviewSession, fetchReviewInstanceForm, generateMigratedReviewPdf, generateReviewMeetingSummary, initializeMigratedReview, reopenReviewInstance, saveReviewInstanceAnswers, signMigratedReviewAsCoach, signReviewInstance, startMigratedReview, submitMigratedReview, type ReviewInstanceFormDefinition, type ReviewProgressSnapshot } from '@/api/reviewInstances';
 
 const account = vi.hoisted(() => ({ name: 'Sam Coach' }));
@@ -13,6 +14,7 @@ vi.mock('@/api/reviewInstances', async (importOriginal) => ({
   fetchReviewInstanceForm: vi.fn(), saveReviewInstanceAnswers: vi.fn(), completeReviewInstance: vi.fn(), reopenReviewInstance: vi.fn(), signReviewInstance: vi.fn(),
   downloadReviewInstancePdf: vi.fn(), calculateReviewInstanceProgress: vi.fn(), generateReviewMeetingSummary: vi.fn(), fetchPreviousReviewSession: vi.fn(),
   initializeMigratedReview: vi.fn(), startMigratedReview: vi.fn(), bookMigratedReview: vi.fn(),
+  calculateMigratedReviewProgress: vi.fn(),
   submitMigratedReview: vi.fn(), signMigratedReviewAsCoach: vi.fn(), completeMigratedReview: vi.fn(), generateMigratedReviewPdf: vi.fn(),
 }));
 vi.mock('@/pages/users/wizard/steps/SignaturePad', () => ({
@@ -1383,5 +1385,86 @@ describe('Progress Review learning progress snapshot', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Calculate' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('no individual programme start date');
     expect(screen.getByText('No progress snapshot calculated yet.')).toBeVisible();
+  });
+});
+
+describe('migrated progress snapshot', () => {
+  function migratedProgress(family: 'PR' | 'PR_SKILLS_RADAR', status = 'in-progress', snapshot: ReviewProgressSnapshot | null = null) {
+    return { ...migratedPrDefinition(status, family), progressSnapshot: snapshot, progressVersion: 'v1',
+      canCalculateProgress: ['not-scheduled', 'scheduled', 'in-progress'].includes(status) };
+  }
+
+  it.each(['PR', 'PR_SKILLS_RADAR'] as const)('calculates %s explicitly and preserves unsaved answers', async (family) => {
+    const initial = migratedProgress(family);
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(initial);
+    vi.mocked(calculateMigratedReviewProgress).mockResolvedValue({ ...initial, progressSnapshot: snapshotFixture(), progressVersion: 'v2' });
+    mount(initial.instance.id);
+    const button = await screen.findByRole('button', { name: 'Calculate' });
+    expect(calculateMigratedReviewProgress).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Unsaved local answer' } });
+    fireEvent.click(button);
+    expect(await screen.findByRole('button', { name: 'Recalculate' })).toBeEnabled();
+    expect(screen.getByDisplayValue('Unsaved local answer')).toBeVisible();
+    expect(screen.getByText('64%')).toBeVisible();
+    expect(calculateMigratedReviewProgress).toHaveBeenCalledWith(initial.instance.id, 'v1');
+    expect(calculateReviewInstanceProgress).not.toHaveBeenCalled();
+    expect(saveReviewInstanceAnswers).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Recalculate' }));
+    await waitFor(() => expect(calculateMigratedReviewProgress).toHaveBeenLastCalledWith(initial.instance.id, 'v2'));
+  });
+
+  it.each(['not-scheduled', 'scheduled'])('allows initialized %s progress without starting or booking', async (status) => {
+    const initial = migratedProgress('PR', status);
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(initial);
+    mount(initial.instance.id);
+    expect(await screen.findByRole('button', { name: 'Calculate' })).toBeEnabled();
+    expect(startMigratedReview).not.toHaveBeenCalled();
+    expect(bookMigratedReview).not.toHaveBeenCalled();
+  });
+
+  it.each(['awaiting-signature', 'completed'])('shows stored progress without actions when %s', async (status) => {
+    const initial = migratedProgress('PR_SKILLS_RADAR', status, snapshotFixture());
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(initial);
+    mount(initial.instance.id);
+    expect(await screen.findByText('64%')).toBeVisible();
+    expect(screen.queryByRole('button', { name: /^(Calculate|Recalculate)$/ })).not.toBeInTheDocument();
+  });
+
+  it('hides calculation for admin view-as', async () => {
+    coachMode.isViewingAsCoach = true;
+    const initial = migratedProgress('PR');
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(initial);
+    mount(initial.instance.id);
+    await screen.findByRole('region', { name: 'Learning progress' });
+    expect(screen.queryByRole('button', { name: 'Calculate' })).not.toBeInTheDocument();
+  });
+
+  it('hides calculation for uninitialized and source-only forms', async () => {
+    const initial = { ...migratedProgress('PR'), migratedForm: false, canCalculateProgress: false, readOnly: true };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(initial);
+    mount(initial.instance.id);
+    await screen.findByRole('region', { name: 'Learning progress' });
+    expect(screen.queryByRole('button', { name: 'Calculate' })).not.toBeInTheDocument();
+    expect(initializeMigratedReview).not.toHaveBeenCalled();
+  });
+
+  it('keeps the prior snapshot and unsaved text after a conflict and prevents duplicate clicks', async () => {
+    const initial = migratedProgress('PR', 'in-progress', snapshotFixture());
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(initial);
+    let rejectCalculation!: (error: Error) => void;
+    vi.mocked(calculateMigratedReviewProgress).mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectCalculation = reject; }));
+    mount(initial.instance.id);
+    const button = await screen.findByRole('button', { name: 'Recalculate' });
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Keep local text' } });
+    fireEvent.click(button);
+    const pending = screen.getByRole('button', { name: 'Calculating...' });
+    expect(pending).toBeDisabled();
+    fireEvent.click(pending);
+    expect(calculateMigratedReviewProgress).toHaveBeenCalledTimes(1);
+    await act(async () => rejectCalculation(new Error('This review changed. Reopen it.')));
+    expect(await screen.findByRole('alert')).toHaveTextContent('This review changed');
+    expect(screen.getByDisplayValue('Keep local text')).toBeVisible();
+    expect(screen.getByText('64%')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Recalculate' })).toBeEnabled();
   });
 });

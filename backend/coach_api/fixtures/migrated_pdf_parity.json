@@ -1,0 +1,439 @@
+{
+  "MCM": {
+    "snapshot": {
+      "name": "Monthly Coaching Meeting",
+      "templateSource": {
+        "id": 20,
+        "scope": "GLOBAL",
+        "family": "MCM"
+      },
+      "sections": [
+        {
+          "key": "reflection",
+          "title": "Learning & reflection",
+          "order": 0,
+          "fields": [
+            {
+              "key": "short",
+              "title": "Agreed action",
+              "aptemType": 1,
+              "mandatory": false,
+              "ifTrue": [],
+              "ifFalse": []
+            },
+            {
+              "key": "static",
+              "title": "Reflection guidance",
+              "aptemType": 11,
+              "mandatory": false,
+              "ifTrue": [],
+              "ifFalse": [],
+              "description": "Discuss progress and agree achievable next steps."
+            },
+            {
+              "key": "long",
+              "title": "Learning reflection",
+              "aptemType": 13,
+              "mandatory": false,
+              "ifTrue": [],
+              "ifFalse": []
+            },
+            {
+              "key": "summary",
+              "title": "Meeting Summary",
+              "aptemType": 13,
+              "mandatory": false,
+              "ifTrue": [],
+              "ifFalse": [],
+              "semanticKey": "meeting_summary"
+            },
+            {
+              "key": "date",
+              "title": "Action due date",
+              "aptemType": 4,
+              "mandatory": false,
+              "ifTrue": [],
+              "ifFalse": []
+            },
+            {
+              "key": "choice",
+              "title": "Support choice",
+              "aptemType": 5,
+              "mandatory": false,
+              "ifTrue": [],
+              "ifFalse": [],
+              "options": [
+                "Coaching",
+                "Workshop"
+              ]
+            },
+            {
+              "key": "boolean",
+              "title": "Support required?",
+              "aptemType": 2,
+              "mandatory": false,
+              "ifTrue": [],
+              "ifFalse": []
+            },
+            {
+              "key": "conditional",
+              "title": "Any concerns?",
+              "aptemType": 6,
+              "mandatory": false,
+              "ifTrue": [
+                {
+                  "key": "visible",
+                  "title": "Follow-up detail",
+                  "aptemType": 1,
+                  "mandatory": false,
+                  "ifTrue": [],
+                  "ifFalse": []
+                }
+              ],
+              "ifFalse": [
+                {
+                  "key": "hidden",
+                  "title": "Hidden branch",
+                  "aptemType": 1,
+                  "mandatory": false,
+                  "ifTrue": [],
+                  "ifFalse": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "answers": {
+      "short": "Agree next actions.",
+      "long": "First reflection line.\nSecond reflection line <escaped>.",
+      "summary": "Final saved meeting summary.",
+      "date": "2026-10-20",
+      "choice": "Coaching",
+      "boolean": "yes",
+      "conditional": "yes",
+      "visible": "Arrange another practice session."
+    },
+    "mark": "data:image/png;base64,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",
+    "progress": null
+  },
+  "PR": {
+    "snapshot": {
+      "name": "Progress Review",
+      "templateSource": {
+        "id": 20,
+        "scope": "GLOBAL",
+        "family": "PR"
+      },
+      "sections": [
+        {
+          "key": "reflection",
+          "title": "Learning & reflection",
+          "order": 0,
+          "fields": [
+            {
+              "key": "short",
+              "title": "Agreed action",
+              "aptemType": 1,
+              "mandatory": false,
+              "ifTrue": [],
+              "ifFalse": []
+            },
+            {
+              "key": "static",
+              "title": "Reflection guidance",
+              "aptemType": 11,
+              "mandatory": false,
+              "ifTrue": [],
+              "ifFalse": [],
+              "description": "Discuss progress and agree achievable next steps."
+            },
+            {
+              "key": "long",
+              "title": "Learning reflection",
+              "aptemType": 13,
+              "mandatory": false,
+              "ifTrue": [],
+              "ifFalse": []
+            },
+            {
+              "key": "summary",
+              "title": "Meeting Summary",
+              "aptemType": 13,
+              "mandatory": false,
+              "ifTrue": [],
+              "ifFalse": [],
+              "semanticKey": "meeting_summary"
+            },
+            {
+              "key": "date",
+              "title": "Action due date",
+              "aptemType": 4,
+              "mandatory": false,
+              "ifTrue": [],
+              "ifFalse": []
+            },
+            {
+              "key": "choice",
+              "title": "Support choice",
+              "aptemType": 5,
+              "mandatory": false,
+              "ifTrue": [],
+              "ifFalse": [],
+              "options": [
+                "Coaching",
+                "Workshop"
+              ]
+            },
+            {
+              "key": "boolean",
+              "title": "Support required?",
+              "aptemType": 2,
+              "mandatory": false,
+              "ifTrue": [],
+              "ifFalse": []
+            },
+            {
+              "key": "conditional",
+              "title": "Any concerns?",
+              "aptemType": 6,
+              "mandatory": false,
+              "ifTrue": [
+                {
+                  "key": "visible",
+                  "title": "Follow-up detail",
+                  "aptemType": 1,
+                  "mandatory": false,
+                  "ifTrue": [],
+                  "ifFalse": []
+                }
+              ],
+              "ifFalse": [
+                {
+                  "key": "hidden",
+                  "title": "Hidden branch",
+                  "aptemType": 1,
+                  "mandatory": false,
+                  "ifTrue": [],
+                  "ifFalse": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "answers": {
+      "short": "Agree next actions.",
+      "long": "First reflection line.\nSecond reflection line <escaped>.",
+      "summary": "Final saved meeting summary.",
+      "date": "2026-10-20",
+      "choice": "Coaching",
+      "boolean": "yes",
+      "conditional": "yes",
+      "visible": "Arrange another practice session."
+    },
+    "mark": "data:image/png;base64,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",
+    "progress": {
+      "calculationMethod": "planned_hours",
+      "calculatedFrom": "2024-10-18",
+      "calculatedAt": "2026-09-16T14:35:02",
+      "calculatedBy": "coach@example.test",
+      "weeksElapsed": 100,
+      "programmeProgress": {
+        "actual": 28,
+        "expected": 56,
+        "planned": 100,
+        "actualPercent": 28.0,
+        "expectedPercent": 56.0,
+        "variancePercent": -28.0,
+        "varianceDirection": "below"
+      },
+      "offTheJobHours": {
+        "actual": 64,
+        "expected": 41,
+        "planned": 100,
+        "actualPercent": 64.0,
+        "expectedPercent": 41.0,
+        "variancePercent": 23.0,
+        "varianceDirection": "above"
+      },
+      "ksbProgress": {
+        "available": true,
+        "title": "Synthetic KSB standard",
+        "actualPercent": 73,
+        "expectedPercent": 50,
+        "variancePercent": 23,
+        "varianceDirection": "above"
+      }
+    }
+  },
+  "PR_SKILLS_RADAR": {
+    "snapshot": {
+      "name": "Progress Review (+ Skills Radar)",
+      "templateSource": {
+        "id": 20,
+        "scope": "GLOBAL",
+        "family": "PR_SKILLS_RADAR"
+      },
+      "sections": [
+        {
+          "key": "reflection",
+          "title": "Learning & reflection",
+          "order": 0,
+          "fields": [
+            {
+              "key": "short",
+              "title": "Agreed action",
+              "aptemType": 1,
+              "mandatory": false,
+              "ifTrue": [],
+              "ifFalse": []
+            },
+            {
+              "key": "static",
+              "title": "Reflection guidance",
+              "aptemType": 11,
+              "mandatory": false,
+              "ifTrue": [],
+              "ifFalse": [],
+              "description": "Discuss progress and agree achievable next steps."
+            },
+            {
+              "key": "long",
+              "title": "Learning reflection",
+              "aptemType": 13,
+              "mandatory": false,
+              "ifTrue": [],
+              "ifFalse": []
+            },
+            {
+              "key": "summary",
+              "title": "Meeting Summary",
+              "aptemType": 13,
+              "mandatory": false,
+              "ifTrue": [],
+              "ifFalse": [],
+              "semanticKey": "meeting_summary"
+            },
+            {
+              "key": "date",
+              "title": "Action due date",
+              "aptemType": 4,
+              "mandatory": false,
+              "ifTrue": [],
+              "ifFalse": []
+            },
+            {
+              "key": "choice",
+              "title": "Support choice",
+              "aptemType": 5,
+              "mandatory": false,
+              "ifTrue": [],
+              "ifFalse": [],
+              "options": [
+                "Coaching",
+                "Workshop"
+              ]
+            },
+            {
+              "key": "boolean",
+              "title": "Support required?",
+              "aptemType": 2,
+              "mandatory": false,
+              "ifTrue": [],
+              "ifFalse": []
+            },
+            {
+              "key": "conditional",
+              "title": "Any concerns?",
+              "aptemType": 6,
+              "mandatory": false,
+              "ifTrue": [
+                {
+                  "key": "visible",
+                  "title": "Follow-up detail",
+                  "aptemType": 1,
+                  "mandatory": false,
+                  "ifTrue": [],
+                  "ifFalse": []
+                }
+              ],
+              "ifFalse": [
+                {
+                  "key": "hidden",
+                  "title": "Hidden branch",
+                  "aptemType": 1,
+                  "mandatory": false,
+                  "ifTrue": [],
+                  "ifFalse": []
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "key": "radar",
+          "title": "Skills Radar",
+          "order": 1,
+          "fields": [
+            {
+              "key": "radar-answer",
+              "title": "Communication and collaboration",
+              "aptemType": 1,
+              "mandatory": false,
+              "ifTrue": [],
+              "ifFalse": []
+            }
+          ]
+        }
+      ]
+    },
+    "answers": {
+      "short": "Agree next actions.",
+      "long": "First reflection line.\nSecond reflection line <escaped>.",
+      "summary": "Final saved meeting summary.",
+      "date": "2026-10-20",
+      "choice": "Coaching",
+      "boolean": "yes",
+      "conditional": "yes",
+      "visible": "Arrange another practice session.",
+      "radar-answer": "Confident in practical collaboration."
+    },
+    "mark": "data:image/png;base64,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",
+    "progress": {
+      "calculationMethod": "planned_hours",
+      "calculatedFrom": "2024-10-18",
+      "calculatedAt": "2026-09-16T14:35:02",
+      "calculatedBy": "coach@example.test",
+      "weeksElapsed": 100,
+      "programmeProgress": {
+        "actual": 28,
+        "expected": 56,
+        "planned": 100,
+        "actualPercent": 28.0,
+        "expectedPercent": 56.0,
+        "variancePercent": -28.0,
+        "varianceDirection": "below"
+      },
+      "offTheJobHours": {
+        "actual": 64,
+        "expected": 41,
+        "planned": 100,
+        "actualPercent": 64.0,
+        "expectedPercent": 41.0,
+        "variancePercent": 23.0,
+        "varianceDirection": "above"
+      },
+      "ksbProgress": {
+        "available": true,
+        "title": "Synthetic KSB standard",
+        "actualPercent": 73,
+        "expectedPercent": 50,
+        "variancePercent": 23,
+        "varianceDirection": "above"
+      }
+    }
+  }
+}

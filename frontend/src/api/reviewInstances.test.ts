@@ -19,6 +19,48 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe('migrated summary transcript upload', () => {
+  it('uses the migrated multipart route and CSRF without a Native endpoint or JSON content type', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ csrfToken: 'server-token' }))
+      .mockResolvedValueOnce(jsonResponse({ artifacts: [], answerVersion: 'v2', reviewAnswers: { recap: 'Generated' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { uploadMigratedSummaryTranscript } = await import('./reviewInstances');
+    const transcript = new File(['Coach: Transcript'], 'external.txt', { type: 'text/plain' });
+    await uploadMigratedSummaryTranscript('imported-review:42', transcript);
+    expect(fetchMock.mock.calls[1][0]).toBe('/coach_api/migrated-reviews/imported-review%3A42/summary/from-upload');
+    const request = fetchMock.mock.calls[1][1] as RequestInit;
+    expect(request.method).toBe('POST');
+    expect((request.body as FormData).get('transcript')).toBe(transcript);
+    expect(new Headers(request.headers).get('X-CSRFToken')).toBe('server-token');
+    expect(new Headers(request.headers).has('Content-Type')).toBe(false);
+  });
+});
+
+describe('migrated progress calculation', () => {
+  it('sends only the overlay version to the migrated route with CSRF', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ csrfToken: 'server-token' }))
+      .mockResolvedValueOnce(jsonResponse({ progressSnapshot: { schemaVersion: 4 } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const { calculateMigratedReviewProgress } = await import('./reviewInstances');
+    const result = await calculateMigratedReviewProgress('imported-review:42', 'v1');
+    expect(fetchMock.mock.calls[1][0]).toBe('/coach_api/migrated-reviews/imported-review%3A42/progress');
+    const request = fetchMock.mock.calls[1][1] as RequestInit;
+    expect(request.method).toBe('POST');
+    expect(JSON.parse(request.body as string)).toEqual({ progressVersion: 'v1' });
+    expect(new Headers(request.headers).get('X-CSRFToken')).toBe('server-token');
+    expect(result.progressSnapshot?.schemaVersion).toBe(4);
+  });
+
+  it('surfaces a stale-version refusal without retrying the write', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(jsonResponse({ csrfToken: 'server-token' }))
+      .mockResolvedValueOnce(jsonResponse({ detail: 'Review changed. Reopen it.', code: 'progress_conflict' }, 409));
+    vi.stubGlobal('fetch', fetchMock);
+    const { calculateMigratedReviewProgress } = await import('./reviewInstances');
+    await expect(calculateMigratedReviewProgress('imported-review:42', 'old')).rejects.toThrow('Review changed');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe('fetchLearnerAdditionReviewTemplates', () => {
   it('requests enabled Review templates for one learner only', async () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({

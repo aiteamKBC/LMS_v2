@@ -29,6 +29,7 @@ def preserve_original(state):
         state["aiSummaryOriginal"] = deepcopy(state["summary"])
         state["aiSummaryProvenance"] = {key: state.get(key) for key in (
             "generatedAt", "generatedFromTranscript", "transcriptArtifactId", "transcriptHash", "model",
+            "source", "eventKey", "graphEventId", "generatedBy", "transcriptTruncated",
         )}
 
 

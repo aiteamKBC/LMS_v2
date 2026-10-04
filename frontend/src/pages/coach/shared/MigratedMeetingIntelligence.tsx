@@ -78,7 +78,9 @@ export function MigratedMeetingIntelligence({
     <section aria-label="Meeting Intelligence" className="space-y-3 rounded-xl border border-primary-200 bg-white p-4">
       <div>
         <h2 className="text-sm font-bold text-foreground-900">Meeting Intelligence</h2>
-        <p className="text-xs text-foreground-500">Teams results are checked only when the coach selects Check Session.</p>
+        <p className="text-xs text-foreground-500">{mapped
+          ? 'Check Session refreshes Teams results. Generate from Teams at the Meeting Summary question uses the same check.'
+          : 'Check Session refreshes attendance, recordings, transcripts and the AI summary from Teams.'}</p>
       </div>
       <div className="flex flex-wrap gap-2 text-xs" aria-label="Meeting intelligence status">
         <span>Attendance: <strong>{statusLabel[intelligence?.attendanceStatus || 'not-checked']}</strong></span>
@@ -101,7 +103,7 @@ export function MigratedMeetingIntelligence({
                 ? 'The AI summary is saved in the review form. Review and edit it before submission. Further checks keep this answer.'
                 : 'Check Session can fill the Meeting Summary question once. You can also type the answer yourself.'}
       </div>}
-      {binding?.status === 'summary-too-long' && binding.suggestionText && <details className="text-xs">
+      {!bound && binding?.status === 'summary-too-long' && binding.suggestionText && <details className="text-xs">
         <summary className="cursor-pointer font-semibold">View full AI suggestion to shorten</summary>
         <textarea aria-label="Full AI suggestion" readOnly value={binding.suggestionText} className="mt-2 min-h-48 w-full rounded border p-2" />
       </details>}

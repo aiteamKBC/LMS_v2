@@ -20,6 +20,7 @@ from coach_api.migrated_completion_views import _coach_review
 from coach_api.models import CoachCalendarEvent, ImportedReviewInstance
 from coach_api.migrated_reviews import meeting_summary_field
 from coach_api.migrated_summary_binding import answer_version, binding_state, populate_answer, preserve_original
+from coach_api.migrated_summary_generation import apply_suggestion, summary_binding_response
 
 
 logger = logging.getLogger(__name__)
@@ -74,13 +75,11 @@ def _summary(state):
 
 
 def _response(overlay, record, snapshot=None, *, errors=None, status=200):
-    from coach_api.views import meeting_summary_plain_text, public_coach_meeting_artifact, stored_coach_meeting_snapshot
+    from coach_api.views import public_coach_meeting_artifact, stored_coach_meeting_snapshot
 
     snapshot = snapshot if snapshot is not None else stored_coach_meeting_snapshot(record)
     state = overlay.meeting_intelligence or {}
-    binding = binding_state(overlay)
-    if binding.get("status") == "summary-too-long":
-        binding["suggestionText"] = meeting_summary_plain_text(state.get("aiSummaryOriginal") or {})
+    binding = summary_binding_response(overlay)
     return JsonResponse({
         "event": {
             "eventKey": record.event_key,
@@ -94,6 +93,7 @@ def _response(overlay, record, snapshot=None, *, errors=None, status=200):
         "artifacts": [public_coach_meeting_artifact(item) for item in snapshot["artifacts"]],
         "meetingSummary": _summary(state),
         "summaryBinding": binding,
+        "progressVersion": answer_version(overlay),
         **({"answerVersion": answer_version(overlay), "reviewAnswers": overlay.answers}
            if binding.get("fieldKey") else {}),
         "intelligence": {
@@ -127,7 +127,7 @@ def migrated_review_intelligence(request, review_id):
 def migrated_review_check_session(request, review_id):
     from coach_api.views import (
         fetch_coach_meeting_graph_snapshot, openai_meeting_summary,
-        meeting_summary_plain_text,
+        meeting_summary_transcript_excerpt,
         persist_coach_meeting_snapshots, stored_coach_meeting_snapshot,
         stored_coach_meeting_transcript_for_summary,
     )
@@ -135,6 +135,8 @@ def migrated_review_check_session(request, review_id):
     overlay, record, _definition = _association(request, review_id)
     if not overlay:
         return JsonResponse({"detail": "Migrated review not found for this coach."}, status=404)
+    if binding_state(overlay).get("status") == "invalid-binding":
+        return JsonResponse({"detail": binding_state(overlay)["message"], "code": "INVALID_SUMMARY_BINDING"}, status=409)
     if not record:
         return JsonResponse({"detail": "Migrated Teams meeting association is missing or inconsistent.", "code": "MEETING_NOT_FOUND"}, status=409)
     if overlay.status not in {ImportedReviewInstance.STATUS_SCHEDULED, ImportedReviewInstance.STATUS_IN_PROGRESS}:
@@ -198,6 +200,9 @@ def migrated_review_check_session(request, review_id):
                 or any(getattr(record, key, None) != getattr(current_record, key, None)
                        for key in ("graph_event_id", "event_type", "scheduled_date", "scheduled_time", "duration_minutes"))):
             return JsonResponse({"detail": "Review ownership or meeting association changed during Check Session."}, status=409)
+        binding = binding_state(locked)
+        if binding.get("status") == "invalid-binding":
+            return JsonResponse({"detail": binding["message"], "code": "INVALID_SUMMARY_BINDING"}, status=409)
         state = dict(locked.meeting_intelligence or {})
         preserve_original(state)
         state.update({
@@ -221,6 +226,9 @@ def migrated_review_check_session(request, review_id):
                     "transcriptHash": transcript_hash,
                     "model": model,
                     "summaryError": "",
+                    "source": "teams", "eventKey": record.event_key,
+                    "graphEventId": record.graph_event_id, "generatedBy": locked.owner_email,
+                    "transcriptTruncated": meeting_summary_transcript_excerpt(transcript["text"])[1],
                 })
                 preserve_original(state)
             except Exception as exc:  # The Graph results remain useful if AI is unavailable.
@@ -228,12 +236,26 @@ def migrated_review_check_session(request, review_id):
                 state["summaryStatus"] = "failed"
                 state["summaryError"] = "AI summary generation failed. Check Session can retry."
                 codes.append("AI_SUMMARY_FAILED")
-        original = state.get("aiSummaryOriginal")
         # Reuse the existing generation policy; new transcript segments never
         # silently regenerate or replace a review answer.
-        suggestion = (meeting_summary_plain_text(original)
-                      if transcript and isinstance(original, dict) and state.get("summaryStatus") == "ready" else "")
-        result = populate_answer(locked, state, suggestion)
+        if transcript and isinstance(state.get("summary"), dict) and state.get("summaryStatus") == "ready":
+            if binding_state(locked, state).get("fieldKey"):
+                provenance = {key: state.get(key) for key in (
+                    "generatedAt", "generatedBy", "model", "transcriptArtifactId", "transcriptHash",
+                )}
+                # A reused summary keeps the meeting identity captured when it
+                # was generated, even if the current calendar link has changed.
+                provenance.update(source="teams", eventKey=state.get("eventKey") or record.event_key, graphEventId=state.get("graphEventId"),
+                                  transcriptTruncated=bool(state.get("transcriptTruncated")))
+                result = apply_suggestion(locked, state, state["summary"], provenance)
+            else:
+                result = populate_answer(locked, state, "")
+        else:
+            result = populate_answer(locked, state, "")
+            if result.get("fieldKey"):
+                state["summaryGeneration"] = {"status": "failed" if state.get("summaryStatus") == "failed" else "unavailable",
+                    "source": "teams", "attemptedAt": timezone.now().isoformat(), "attemptedBy": locked.owner_email,
+                    "bindingResult": result.get("status")}
         locked.meeting_intelligence = state
         locked.save(update_fields=["meeting_intelligence", "updated_at"] + (["answers"] if result.get("status") == "populated" else []))
     return _response(locked, record, errors=errors, status=207 if errors else 200)

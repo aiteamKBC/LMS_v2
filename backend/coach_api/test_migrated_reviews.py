@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from django.db import IntegrityError, transaction
 from django.test import RequestFactory, SimpleTestCase, TestCase
+from django.utils import timezone
 
 from coach_api import views
 from coach_api.admin import MigratedReviewTemplateForm
@@ -136,6 +137,7 @@ class MigratedDefinitionTests(SimpleTestCase):
             event_key="imported-review:A-7", owner_email="coach@example.invalid",
             learner_id=21, source_review_id=407, status="in-progress", completed_at=None,
             template_snapshot=self.definition,
+            progress_snapshot=None, updated_at=timezone.now(), migrated_template_id=None,
             migrated_signatures=SimpleNamespace(all=lambda: []),
             signature_requirements={"advisor": True, "participant": True, "employer": True},
             answers={"section-0:comment": "LMS answer"},
@@ -311,6 +313,7 @@ class MigratedPreviewTests(SimpleTestCase):
         saved = SimpleNamespace(learner_id=21, source_review_id=407,
             migrated_template=template, migrated_template_id=22,
             template_snapshot=snapshot_for(template), answers={}, status="not-scheduled", completed_at=None,
+            progress_snapshot=None, updated_at=timezone.now(),
             migrated_signatures=SimpleNamespace(all=lambda: []),
             signature_requirements=requirements_for_family("PR_SKILLS_RADAR"))
         self.overlays.return_value.first.return_value = saved
@@ -395,6 +398,7 @@ class MigratedPreviewTests(SimpleTestCase):
     def test_view_as_initialized_review_uses_stored_snapshot_and_answers(self):
         self.overlays.return_value.first.return_value = SimpleNamespace(
             learner_id=21, source_review_id=407, template_snapshot=self.definition_json,
+            progress_snapshot=None, updated_at=timezone.now(), migrated_template_id=None,
             answers={"section-0:comment": "Saved LMS answer"},
             status="in-progress", completed_at=None,
             migrated_signatures=SimpleNamespace(all=lambda: []),
