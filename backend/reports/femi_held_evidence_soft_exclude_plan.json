@@ -1,0 +1,1207 @@
+{
+  "read_only": true,
+  "database": "neondb",
+  "fingerprint": "2c6df399e210a4aef66a90a1166bd5d575891eddb324dcf214ca22f9d2edf380",
+  "plan": {
+    "database": "neondb",
+    "scope": {
+      "groups": [
+        "G1 - Femi Commercial Intelligence Wednesday",
+        "G2 - Femi Commercial Intelligence Thursday",
+        "G3 - Femi Commercial Intelligence Friday"
+      ],
+      "requested_names": 47,
+      "unique_names": 46,
+      "duplicate_requested_names": [
+        "Helena Davies"
+      ],
+      "target_months": "ALL"
+    },
+    "held_statuses": [
+      "AMBIGUOUS",
+      "BLOCKED",
+      "DURATION_CONFLICT"
+    ],
+    "held_evidence": [
+      {
+        "evidence_id": 46185,
+        "aptem_id": 8535,
+        "learner": "Aarthi Dhanasekaran",
+        "status": "AMBIGUOUS",
+        "reason": "component_already_counted_without_exact_evidence_identity",
+        "resolution": "MATCH_COMPONENT_DATE_DURATION_BEFORE_ADD",
+        "spent_minutes": 1440,
+        "evidence_date": "2026-06-26",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 54687,
+        "aptem_id": 18518,
+        "learner": "Abbie Ridgway",
+        "status": "BLOCKED",
+        "reason": "active_source_points_to_missing_parent",
+        "resolution": "RECOVER_PARENT_AFTER_EVIDENCE_REVIEW",
+        "spent_minutes": 480,
+        "evidence_date": "2026-08-27",
+        "source_ids": [
+          853844
+        ],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 56382,
+        "aptem_id": 18518,
+        "learner": "Abbie Ridgway",
+        "status": "BLOCKED",
+        "reason": "active_source_points_to_missing_parent",
+        "resolution": "RECOVER_PARENT_AFTER_EVIDENCE_REVIEW",
+        "spent_minutes": 900,
+        "evidence_date": "2026-09-11",
+        "source_ids": [
+          853847
+        ],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 29557,
+        "aptem_id": 6740,
+        "learner": "Abikaye Mehat",
+        "status": "BLOCKED",
+        "reason": "missing_start_end",
+        "resolution": "SUPPLY_AUTHORITATIVE_START_END_OR_BREAK_DATES",
+        "spent_minutes": 360,
+        "evidence_date": "2026-03-03",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 27869,
+        "aptem_id": 6324,
+        "learner": "Adam Collins",
+        "status": "DURATION_CONFLICT",
+        "reason": "active_aptem_lineage_duration_differs_from_evidence",
+        "resolution": "DO_NOT_ADD_UNTIL_DURATION_REVIEW",
+        "spent_minutes": 60,
+        "evidence_date": "2026-02-23",
+        "source_ids": [
+          854238
+        ],
+        "parent_ids": [
+          698908
+        ]
+      },
+      {
+        "evidence_id": 34652,
+        "aptem_id": 6324,
+        "learner": "Adam Collins",
+        "status": "DURATION_CONFLICT",
+        "reason": "active_aptem_lineage_duration_differs_from_evidence",
+        "resolution": "DO_NOT_ADD_UNTIL_DURATION_REVIEW",
+        "spent_minutes": 660,
+        "evidence_date": "2026-04-07",
+        "source_ids": [
+          1072947
+        ],
+        "parent_ids": [
+          442848
+        ]
+      },
+      {
+        "evidence_id": 37204,
+        "aptem_id": 6324,
+        "learner": "Adam Collins",
+        "status": "DURATION_CONFLICT",
+        "reason": "active_aptem_lineage_duration_differs_from_evidence",
+        "resolution": "DO_NOT_ADD_UNTIL_DURATION_REVIEW",
+        "spent_minutes": 120,
+        "evidence_date": "2026-04-22",
+        "source_ids": [
+          1072950
+        ],
+        "parent_ids": [
+          442849
+        ]
+      },
+      {
+        "evidence_id": 39405,
+        "aptem_id": 6324,
+        "learner": "Adam Collins",
+        "status": "DURATION_CONFLICT",
+        "reason": "active_aptem_lineage_duration_differs_from_evidence",
+        "resolution": "DO_NOT_ADD_UNTIL_DURATION_REVIEW",
+        "spent_minutes": 450,
+        "evidence_date": "2026-05-06",
+        "source_ids": [
+          1072951
+        ],
+        "parent_ids": [
+          442874
+        ]
+      },
+      {
+        "evidence_id": 47454,
+        "aptem_id": 6324,
+        "learner": "Adam Collins",
+        "status": "DURATION_CONFLICT",
+        "reason": "active_aptem_lineage_duration_differs_from_evidence",
+        "resolution": "DO_NOT_ADD_UNTIL_DURATION_REVIEW",
+        "spent_minutes": 660,
+        "evidence_date": "2026-07-07",
+        "source_ids": [
+          1072956
+        ],
+        "parent_ids": [
+          442958
+        ]
+      },
+      {
+        "evidence_id": 50174,
+        "aptem_id": 6324,
+        "learner": "Adam Collins",
+        "status": "AMBIGUOUS",
+        "reason": "component_already_counted_without_exact_evidence_identity",
+        "resolution": "MATCH_COMPONENT_DATE_DURATION_BEFORE_ADD",
+        "spent_minutes": 435,
+        "evidence_date": "2026-07-22",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 53223,
+        "aptem_id": 6324,
+        "learner": "Adam Collins",
+        "status": "DURATION_CONFLICT",
+        "reason": "active_aptem_lineage_duration_differs_from_evidence",
+        "resolution": "DO_NOT_ADD_UNTIL_DURATION_REVIEW",
+        "spent_minutes": 1620,
+        "evidence_date": "2026-08-13",
+        "source_ids": [
+          854265
+        ],
+        "parent_ids": [
+          698923
+        ]
+      },
+      {
+        "evidence_id": 33507,
+        "aptem_id": 7930,
+        "learner": "Andrew Moores",
+        "status": "AMBIGUOUS",
+        "reason": "component_already_counted_without_exact_evidence_identity",
+        "resolution": "MATCH_COMPONENT_DATE_DURATION_BEFORE_ADD",
+        "spent_minutes": 240,
+        "evidence_date": "2026-03-17",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 34237,
+        "aptem_id": 7930,
+        "learner": "Andrew Moores",
+        "status": "AMBIGUOUS",
+        "reason": "component_already_counted_without_exact_evidence_identity",
+        "resolution": "MATCH_COMPONENT_DATE_DURATION_BEFORE_ADD",
+        "spent_minutes": 90,
+        "evidence_date": "2026-03-30",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 35709,
+        "aptem_id": 6117,
+        "learner": "Connor Hewitson",
+        "status": "AMBIGUOUS",
+        "reason": "component_already_counted_without_exact_evidence_identity",
+        "resolution": "MATCH_COMPONENT_DATE_DURATION_BEFORE_ADD",
+        "spent_minutes": 720,
+        "evidence_date": "2026-03-12",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 35710,
+        "aptem_id": 6117,
+        "learner": "Connor Hewitson",
+        "status": "AMBIGUOUS",
+        "reason": "component_already_counted_without_exact_evidence_identity",
+        "resolution": "MATCH_COMPONENT_DATE_DURATION_BEFORE_ADD",
+        "spent_minutes": 480,
+        "evidence_date": "2026-03-17",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 35711,
+        "aptem_id": 6117,
+        "learner": "Connor Hewitson",
+        "status": "AMBIGUOUS",
+        "reason": "component_already_counted_without_exact_evidence_identity",
+        "resolution": "MATCH_COMPONENT_DATE_DURATION_BEFORE_ADD",
+        "spent_minutes": 120,
+        "evidence_date": "2026-03-31",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 35712,
+        "aptem_id": 6117,
+        "learner": "Connor Hewitson",
+        "status": "AMBIGUOUS",
+        "reason": "component_already_counted_without_exact_evidence_identity",
+        "resolution": "MATCH_COMPONENT_DATE_DURATION_BEFORE_ADD",
+        "spent_minutes": 300,
+        "evidence_date": "2026-03-27",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 35808,
+        "aptem_id": 6117,
+        "learner": "Connor Hewitson",
+        "status": "AMBIGUOUS",
+        "reason": "component_already_counted_without_exact_evidence_identity",
+        "resolution": "MATCH_COMPONENT_DATE_DURATION_BEFORE_ADD",
+        "spent_minutes": 240,
+        "evidence_date": "2026-03-13",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 47037,
+        "aptem_id": 6198,
+        "learner": "Daniel Welton",
+        "status": "AMBIGUOUS",
+        "reason": "component_already_counted_without_exact_evidence_identity",
+        "resolution": "MATCH_COMPONENT_DATE_DURATION_BEFORE_ADD",
+        "spent_minutes": 630,
+        "evidence_date": "2026-06-29",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 43251,
+        "aptem_id": 5260,
+        "learner": "Ellie Hewitt",
+        "status": "DURATION_CONFLICT",
+        "reason": "active_aptem_lineage_duration_differs_from_evidence",
+        "resolution": "DO_NOT_ADD_UNTIL_DURATION_REVIEW",
+        "spent_minutes": 2400,
+        "evidence_date": "2026-06-02",
+        "source_ids": [
+          1072655
+        ],
+        "parent_ids": [
+          879796
+        ]
+      },
+      {
+        "evidence_id": 44627,
+        "aptem_id": 5260,
+        "learner": "Ellie Hewitt",
+        "status": "DURATION_CONFLICT",
+        "reason": "active_aptem_lineage_duration_differs_from_evidence",
+        "resolution": "DO_NOT_ADD_UNTIL_DURATION_REVIEW",
+        "spent_minutes": 480,
+        "evidence_date": "2026-06-05",
+        "source_ids": [
+          1072654
+        ],
+        "parent_ids": [
+          463539
+        ]
+      },
+      {
+        "evidence_id": 32864,
+        "aptem_id": 4413,
+        "learner": "Elys Brooks",
+        "status": "DURATION_CONFLICT",
+        "reason": "active_aptem_lineage_duration_differs_from_evidence",
+        "resolution": "DO_NOT_ADD_UNTIL_DURATION_REVIEW",
+        "spent_minutes": 285,
+        "evidence_date": "2026-03-06",
+        "source_ids": [
+          1072963
+        ],
+        "parent_ids": [
+          459798
+        ]
+      },
+      {
+        "evidence_id": 47668,
+        "aptem_id": 4413,
+        "learner": "Elys Brooks",
+        "status": "DURATION_CONFLICT",
+        "reason": "active_aptem_lineage_duration_differs_from_evidence",
+        "resolution": "DO_NOT_ADD_UNTIL_DURATION_REVIEW",
+        "spent_minutes": 1440,
+        "evidence_date": "2026-06-30",
+        "source_ids": [
+          1072965
+        ],
+        "parent_ids": [
+          459850
+        ]
+      },
+      {
+        "evidence_id": 48368,
+        "aptem_id": 6212,
+        "learner": "Emily Palmer",
+        "status": "DURATION_CONFLICT",
+        "reason": "active_aptem_lineage_duration_differs_from_evidence",
+        "resolution": "DO_NOT_ADD_UNTIL_DURATION_REVIEW",
+        "spent_minutes": 720,
+        "evidence_date": "2026-07-15",
+        "source_ids": [
+          1072967
+        ],
+        "parent_ids": [
+          465675
+        ]
+      },
+      {
+        "evidence_id": 51639,
+        "aptem_id": 6212,
+        "learner": "Emily Palmer",
+        "status": "DURATION_CONFLICT",
+        "reason": "active_aptem_lineage_duration_differs_from_evidence",
+        "resolution": "DO_NOT_ADD_UNTIL_DURATION_REVIEW",
+        "spent_minutes": 600,
+        "evidence_date": "2026-08-04",
+        "source_ids": [
+          1072968
+        ],
+        "parent_ids": [
+          465679
+        ]
+      },
+      {
+        "evidence_id": 33694,
+        "aptem_id": 6203,
+        "learner": "Hayley Nicholson",
+        "status": "DURATION_CONFLICT",
+        "reason": "active_aptem_lineage_duration_differs_from_evidence",
+        "resolution": "DO_NOT_ADD_UNTIL_DURATION_REVIEW",
+        "spent_minutes": 1080,
+        "evidence_date": "2026-03-30",
+        "source_ids": [
+          1072971
+        ],
+        "parent_ids": [
+          465408
+        ]
+      },
+      {
+        "evidence_id": 41669,
+        "aptem_id": 6203,
+        "learner": "Hayley Nicholson",
+        "status": "DURATION_CONFLICT",
+        "reason": "active_aptem_lineage_duration_differs_from_evidence",
+        "resolution": "DO_NOT_ADD_UNTIL_DURATION_REVIEW",
+        "spent_minutes": 600,
+        "evidence_date": "2026-05-20",
+        "source_ids": [
+          1072972
+        ],
+        "parent_ids": [
+          465422
+        ]
+      },
+      {
+        "evidence_id": 48271,
+        "aptem_id": 6203,
+        "learner": "Hayley Nicholson",
+        "status": "DURATION_CONFLICT",
+        "reason": "active_aptem_lineage_duration_differs_from_evidence",
+        "resolution": "DO_NOT_ADD_UNTIL_DURATION_REVIEW",
+        "spent_minutes": 720,
+        "evidence_date": "2026-07-15",
+        "source_ids": [
+          1072973
+        ],
+        "parent_ids": [
+          465443
+        ]
+      },
+      {
+        "evidence_id": 36632,
+        "aptem_id": 8026,
+        "learner": "Jemima Crow",
+        "status": "AMBIGUOUS",
+        "reason": "component_already_counted_without_exact_evidence_identity",
+        "resolution": "MATCH_COMPONENT_DATE_DURATION_BEFORE_ADD",
+        "spent_minutes": 90,
+        "evidence_date": "2026-04-17",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 43715,
+        "aptem_id": 6234,
+        "learner": "Joanne Mason",
+        "status": "DURATION_CONFLICT",
+        "reason": "active_aptem_lineage_duration_differs_from_evidence",
+        "resolution": "DO_NOT_ADD_UNTIL_DURATION_REVIEW",
+        "spent_minutes": 720,
+        "evidence_date": "2026-04-10",
+        "source_ids": [
+          1074742
+        ],
+        "parent_ids": [
+          465754
+        ]
+      },
+      {
+        "evidence_id": 29226,
+        "aptem_id": 6456,
+        "learner": "Julia Bysshe",
+        "status": "AMBIGUOUS",
+        "reason": "component_already_counted_without_exact_evidence_identity",
+        "resolution": "MATCH_COMPONENT_DATE_DURATION_BEFORE_ADD",
+        "spent_minutes": 2400,
+        "evidence_date": "2026-03-02",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 44578,
+        "aptem_id": 6456,
+        "learner": "Julia Bysshe",
+        "status": "AMBIGUOUS",
+        "reason": "component_already_counted_without_exact_evidence_identity",
+        "resolution": "MATCH_COMPONENT_DATE_DURATION_BEFORE_ADD",
+        "spent_minutes": 270,
+        "evidence_date": "2026-06-10",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 45651,
+        "aptem_id": 6456,
+        "learner": "Julia Bysshe",
+        "status": "AMBIGUOUS",
+        "reason": "component_already_counted_without_exact_evidence_identity",
+        "resolution": "MATCH_COMPONENT_DATE_DURATION_BEFORE_ADD",
+        "spent_minutes": 270,
+        "evidence_date": "2026-06-23",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 46561,
+        "aptem_id": 6456,
+        "learner": "Julia Bysshe",
+        "status": "AMBIGUOUS",
+        "reason": "component_already_counted_without_exact_evidence_identity",
+        "resolution": "MATCH_COMPONENT_DATE_DURATION_BEFORE_ADD",
+        "spent_minutes": 120,
+        "evidence_date": "2026-06-30",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 56064,
+        "aptem_id": 6456,
+        "learner": "Julia Bysshe",
+        "status": "DURATION_CONFLICT",
+        "reason": "active_aptem_lineage_duration_differs_from_evidence",
+        "resolution": "DO_NOT_ADD_UNTIL_DURATION_REVIEW",
+        "spent_minutes": 70,
+        "evidence_date": "2026-09-09",
+        "source_ids": [
+          853651
+        ],
+        "parent_ids": [
+          698573
+        ]
+      },
+      {
+        "evidence_id": 46301,
+        "aptem_id": 7252,
+        "learner": "Kelly Chan",
+        "status": "AMBIGUOUS",
+        "reason": "component_already_counted_without_exact_evidence_identity",
+        "resolution": "MATCH_COMPONENT_DATE_DURATION_BEFORE_ADD",
+        "spent_minutes": 450,
+        "evidence_date": "2026-06-26",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 56968,
+        "aptem_id": 10122,
+        "learner": "Kerry Ireland",
+        "status": "DURATION_CONFLICT",
+        "reason": "active_aptem_lineage_duration_differs_from_evidence",
+        "resolution": "DO_NOT_ADD_UNTIL_DURATION_REVIEW",
+        "spent_minutes": 90,
+        "evidence_date": "2026-08-24",
+        "source_ids": [
+          854037
+        ],
+        "parent_ids": [
+          698823
+        ]
+      },
+      {
+        "evidence_id": 56969,
+        "aptem_id": 10122,
+        "learner": "Kerry Ireland",
+        "status": "DURATION_CONFLICT",
+        "reason": "active_aptem_lineage_duration_differs_from_evidence",
+        "resolution": "DO_NOT_ADD_UNTIL_DURATION_REVIEW",
+        "spent_minutes": 420,
+        "evidence_date": "2026-08-24",
+        "source_ids": [
+          854038
+        ],
+        "parent_ids": [
+          698823
+        ]
+      },
+      {
+        "evidence_id": 56970,
+        "aptem_id": 10122,
+        "learner": "Kerry Ireland",
+        "status": "DURATION_CONFLICT",
+        "reason": "active_aptem_lineage_duration_differs_from_evidence",
+        "resolution": "DO_NOT_ADD_UNTIL_DURATION_REVIEW",
+        "spent_minutes": 180,
+        "evidence_date": "2026-09-20",
+        "source_ids": [
+          854039
+        ],
+        "parent_ids": [
+          698823
+        ]
+      },
+      {
+        "evidence_id": 34967,
+        "aptem_id": 6429,
+        "learner": "Neve Leason",
+        "status": "AMBIGUOUS",
+        "reason": "component_already_counted_without_exact_evidence_identity",
+        "resolution": "MATCH_COMPONENT_DATE_DURATION_BEFORE_ADD",
+        "spent_minutes": 420,
+        "evidence_date": "2026-04-07",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 38076,
+        "aptem_id": 6429,
+        "learner": "Neve Leason",
+        "status": "AMBIGUOUS",
+        "reason": "component_already_counted_without_exact_evidence_identity",
+        "resolution": "MATCH_COMPONENT_DATE_DURATION_BEFORE_ADD",
+        "spent_minutes": 420,
+        "evidence_date": "2026-04-28",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 38103,
+        "aptem_id": 6429,
+        "learner": "Neve Leason",
+        "status": "AMBIGUOUS",
+        "reason": "component_already_counted_without_exact_evidence_identity",
+        "resolution": "MATCH_COMPONENT_DATE_DURATION_BEFORE_ADD",
+        "spent_minutes": 480,
+        "evidence_date": "2026-04-23",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 44863,
+        "aptem_id": 6429,
+        "learner": "Neve Leason",
+        "status": "AMBIGUOUS",
+        "reason": "component_already_counted_without_exact_evidence_identity",
+        "resolution": "MATCH_COMPONENT_DATE_DURATION_BEFORE_ADD",
+        "spent_minutes": 600,
+        "evidence_date": "2026-06-10",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 45246,
+        "aptem_id": 6429,
+        "learner": "Neve Leason",
+        "status": "AMBIGUOUS",
+        "reason": "component_already_counted_without_exact_evidence_identity",
+        "resolution": "MATCH_COMPONENT_DATE_DURATION_BEFORE_ADD",
+        "spent_minutes": 540,
+        "evidence_date": "2026-06-03",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 46755,
+        "aptem_id": 6429,
+        "learner": "Neve Leason",
+        "status": "AMBIGUOUS",
+        "reason": "component_already_counted_without_exact_evidence_identity",
+        "resolution": "MATCH_COMPONENT_DATE_DURATION_BEFORE_ADD",
+        "spent_minutes": 420,
+        "evidence_date": "2026-06-05",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 52037,
+        "aptem_id": 6429,
+        "learner": "Neve Leason",
+        "status": "AMBIGUOUS",
+        "reason": "component_already_counted_without_exact_evidence_identity",
+        "resolution": "MATCH_COMPONENT_DATE_DURATION_BEFORE_ADD",
+        "spent_minutes": 450,
+        "evidence_date": "2026-08-06",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 27059,
+        "aptem_id": 7290,
+        "learner": "Rebecca Stocks",
+        "status": "AMBIGUOUS",
+        "reason": "component_already_counted_without_exact_evidence_identity",
+        "resolution": "MATCH_COMPONENT_DATE_DURATION_BEFORE_ADD",
+        "spent_minutes": 120,
+        "evidence_date": "2026-02-19",
+        "source_ids": [],
+        "parent_ids": []
+      },
+      {
+        "evidence_id": 52930,
+        "aptem_id": 6477,
+        "learner": "Suzanne Parnham",
+        "status": "DURATION_CONFLICT",
+        "reason": "active_aptem_lineage_duration_differs_from_evidence",
+        "resolution": "DO_NOT_ADD_UNTIL_DURATION_REVIEW",
+        "spent_minutes": 300,
+        "evidence_date": "2026-08-10",
+        "source_ids": [
+          857183
+        ],
+        "parent_ids": [
+          700386
+        ]
+      }
+    ],
+    "source_plan": [
+      {
+        "source_id": 853844,
+        "evidence_id": 54687,
+        "aptem_id": 18518,
+        "learner": "Abbie Ridgway",
+        "status": "BLOCKED",
+        "before_actual_seconds": 0,
+        "before_accepted": true,
+        "before_activity_status": "Accepted",
+        "parent_id": 0
+      },
+      {
+        "source_id": 853847,
+        "evidence_id": 56382,
+        "aptem_id": 18518,
+        "learner": "Abbie Ridgway",
+        "status": "BLOCKED",
+        "before_actual_seconds": 0,
+        "before_accepted": true,
+        "before_activity_status": "Accepted",
+        "parent_id": 0
+      },
+      {
+        "source_id": 854238,
+        "evidence_id": 27869,
+        "aptem_id": 6324,
+        "learner": "Adam Collins",
+        "status": "DURATION_CONFLICT",
+        "before_actual_seconds": 2700,
+        "before_accepted": true,
+        "before_activity_status": "Accepted",
+        "parent_id": 698908
+      },
+      {
+        "source_id": 1072947,
+        "evidence_id": 34652,
+        "aptem_id": 6324,
+        "learner": "Adam Collins",
+        "status": "DURATION_CONFLICT",
+        "before_actual_seconds": 21600,
+        "before_accepted": true,
+        "before_activity_status": "Accepted",
+        "parent_id": 442848
+      },
+      {
+        "source_id": 1072950,
+        "evidence_id": 37204,
+        "aptem_id": 6324,
+        "learner": "Adam Collins",
+        "status": "DURATION_CONFLICT",
+        "before_actual_seconds": 5400,
+        "before_accepted": true,
+        "before_activity_status": "Accepted",
+        "parent_id": 442849
+      },
+      {
+        "source_id": 1072951,
+        "evidence_id": 39405,
+        "aptem_id": 6324,
+        "learner": "Adam Collins",
+        "status": "DURATION_CONFLICT",
+        "before_actual_seconds": 14400,
+        "before_accepted": true,
+        "before_activity_status": "Accepted",
+        "parent_id": 442874
+      },
+      {
+        "source_id": 1072956,
+        "evidence_id": 47454,
+        "aptem_id": 6324,
+        "learner": "Adam Collins",
+        "status": "DURATION_CONFLICT",
+        "before_actual_seconds": 39600,
+        "before_accepted": true,
+        "before_activity_status": "Accepted",
+        "parent_id": 442958
+      },
+      {
+        "source_id": 854265,
+        "evidence_id": 53223,
+        "aptem_id": 6324,
+        "learner": "Adam Collins",
+        "status": "DURATION_CONFLICT",
+        "before_actual_seconds": 21600,
+        "before_accepted": true,
+        "before_activity_status": "Accepted",
+        "parent_id": 698923
+      },
+      {
+        "source_id": 1072655,
+        "evidence_id": 43251,
+        "aptem_id": 5260,
+        "learner": "Ellie Hewitt",
+        "status": "DURATION_CONFLICT",
+        "before_actual_seconds": 27000,
+        "before_accepted": true,
+        "before_activity_status": "Accepted",
+        "parent_id": 879796
+      },
+      {
+        "source_id": 1072654,
+        "evidence_id": 44627,
+        "aptem_id": 5260,
+        "learner": "Ellie Hewitt",
+        "status": "DURATION_CONFLICT",
+        "before_actual_seconds": 7200,
+        "before_accepted": true,
+        "before_activity_status": "Accepted",
+        "parent_id": 463539
+      },
+      {
+        "source_id": 1072963,
+        "evidence_id": 32864,
+        "aptem_id": 4413,
+        "learner": "Elys Brooks",
+        "status": "DURATION_CONFLICT",
+        "before_actual_seconds": 17100,
+        "before_accepted": true,
+        "before_activity_status": "Accepted",
+        "parent_id": 459798
+      },
+      {
+        "source_id": 1072965,
+        "evidence_id": 47668,
+        "aptem_id": 4413,
+        "learner": "Elys Brooks",
+        "status": "DURATION_CONFLICT",
+        "before_actual_seconds": 86400,
+        "before_accepted": true,
+        "before_activity_status": "Accepted",
+        "parent_id": 459850
+      },
+      {
+        "source_id": 1072967,
+        "evidence_id": 48368,
+        "aptem_id": 6212,
+        "learner": "Emily Palmer",
+        "status": "DURATION_CONFLICT",
+        "before_actual_seconds": 43200,
+        "before_accepted": true,
+        "before_activity_status": "Accepted",
+        "parent_id": 465675
+      },
+      {
+        "source_id": 1072968,
+        "evidence_id": 51639,
+        "aptem_id": 6212,
+        "learner": "Emily Palmer",
+        "status": "DURATION_CONFLICT",
+        "before_actual_seconds": 36000,
+        "before_accepted": true,
+        "before_activity_status": "Accepted",
+        "parent_id": 465679
+      },
+      {
+        "source_id": 1072971,
+        "evidence_id": 33694,
+        "aptem_id": 6203,
+        "learner": "Hayley Nicholson",
+        "status": "DURATION_CONFLICT",
+        "before_actual_seconds": 64800,
+        "before_accepted": true,
+        "before_activity_status": "Accepted",
+        "parent_id": 465408
+      },
+      {
+        "source_id": 1072972,
+        "evidence_id": 41669,
+        "aptem_id": 6203,
+        "learner": "Hayley Nicholson",
+        "status": "DURATION_CONFLICT",
+        "before_actual_seconds": 36000,
+        "before_accepted": true,
+        "before_activity_status": "Accepted",
+        "parent_id": 465422
+      },
+      {
+        "source_id": 1072973,
+        "evidence_id": 48271,
+        "aptem_id": 6203,
+        "learner": "Hayley Nicholson",
+        "status": "DURATION_CONFLICT",
+        "before_actual_seconds": 43200,
+        "before_accepted": true,
+        "before_activity_status": "Accepted",
+        "parent_id": 465443
+      },
+      {
+        "source_id": 1074742,
+        "evidence_id": 43715,
+        "aptem_id": 6234,
+        "learner": "Joanne Mason",
+        "status": "DURATION_CONFLICT",
+        "before_actual_seconds": 0,
+        "before_accepted": true,
+        "before_activity_status": "Accepted",
+        "parent_id": 465754
+      },
+      {
+        "source_id": 853651,
+        "evidence_id": 56064,
+        "aptem_id": 6456,
+        "learner": "Julia Bysshe",
+        "status": "DURATION_CONFLICT",
+        "before_actual_seconds": 0,
+        "before_accepted": true,
+        "before_activity_status": "Accepted",
+        "parent_id": 698573
+      },
+      {
+        "source_id": 854037,
+        "evidence_id": 56968,
+        "aptem_id": 10122,
+        "learner": "Kerry Ireland",
+        "status": "DURATION_CONFLICT",
+        "before_actual_seconds": 5400,
+        "before_accepted": true,
+        "before_activity_status": "Accepted",
+        "parent_id": 698823
+      },
+      {
+        "source_id": 854038,
+        "evidence_id": 56969,
+        "aptem_id": 10122,
+        "learner": "Kerry Ireland",
+        "status": "DURATION_CONFLICT",
+        "before_actual_seconds": 25200,
+        "before_accepted": true,
+        "before_activity_status": "Accepted",
+        "parent_id": 698823
+      },
+      {
+        "source_id": 854039,
+        "evidence_id": 56970,
+        "aptem_id": 10122,
+        "learner": "Kerry Ireland",
+        "status": "DURATION_CONFLICT",
+        "before_actual_seconds": 0,
+        "before_accepted": true,
+        "before_activity_status": "Accepted",
+        "parent_id": 698823
+      },
+      {
+        "source_id": 857183,
+        "evidence_id": 52930,
+        "aptem_id": 6477,
+        "learner": "Suzanne Parnham",
+        "status": "DURATION_CONFLICT",
+        "before_actual_seconds": 18000,
+        "before_accepted": true,
+        "before_activity_status": "Accepted",
+        "parent_id": 700386
+      }
+    ],
+    "parent_changes": [
+      {
+        "parent_id": 442848,
+        "learner_id": 347,
+        "before_actual_seconds": 21600,
+        "after_actual_seconds": 21600,
+        "before_accepted": true,
+        "before_status": "Accepted",
+        "retained_non_aptem_seconds": 21600,
+        "retained_aptem_seconds": 0,
+        "target_source_ids": [
+          1072947
+        ]
+      },
+      {
+        "parent_id": 442849,
+        "learner_id": 347,
+        "before_actual_seconds": 5400,
+        "after_actual_seconds": 5400,
+        "before_accepted": true,
+        "before_status": "Accepted",
+        "retained_non_aptem_seconds": 5400,
+        "retained_aptem_seconds": 0,
+        "target_source_ids": [
+          1072950
+        ]
+      },
+      {
+        "parent_id": 442874,
+        "learner_id": 347,
+        "before_actual_seconds": 14400,
+        "after_actual_seconds": 14400,
+        "before_accepted": true,
+        "before_status": "Accepted",
+        "retained_non_aptem_seconds": 14400,
+        "retained_aptem_seconds": 0,
+        "target_source_ids": [
+          1072951
+        ]
+      },
+      {
+        "parent_id": 442958,
+        "learner_id": 347,
+        "before_actual_seconds": 19800,
+        "after_actual_seconds": 19800,
+        "before_accepted": true,
+        "before_status": "Accepted",
+        "retained_non_aptem_seconds": 19800,
+        "retained_aptem_seconds": 0,
+        "target_source_ids": [
+          1072956
+        ]
+      },
+      {
+        "parent_id": 459798,
+        "learner_id": 362,
+        "before_actual_seconds": 14400,
+        "after_actual_seconds": 14400,
+        "before_accepted": true,
+        "before_status": "referred",
+        "retained_non_aptem_seconds": 0,
+        "retained_aptem_seconds": 14400,
+        "target_source_ids": [
+          1072963
+        ]
+      },
+      {
+        "parent_id": 459850,
+        "learner_id": 362,
+        "before_actual_seconds": 25200,
+        "after_actual_seconds": 0,
+        "before_accepted": true,
+        "before_status": "referred",
+        "retained_non_aptem_seconds": 0,
+        "retained_aptem_seconds": 0,
+        "target_source_ids": [
+          1072965
+        ]
+      },
+      {
+        "parent_id": 463539,
+        "learner_id": 360,
+        "before_actual_seconds": 7200,
+        "after_actual_seconds": 0,
+        "before_accepted": true,
+        "before_status": "referred",
+        "retained_non_aptem_seconds": 0,
+        "retained_aptem_seconds": 0,
+        "target_source_ids": [
+          1072654
+        ]
+      },
+      {
+        "parent_id": 465408,
+        "learner_id": 365,
+        "before_actual_seconds": 28800,
+        "after_actual_seconds": 28800,
+        "before_accepted": true,
+        "before_status": "Accepted",
+        "retained_non_aptem_seconds": 28800,
+        "retained_aptem_seconds": 0,
+        "target_source_ids": [
+          1072971
+        ]
+      },
+      {
+        "parent_id": 465422,
+        "learner_id": 365,
+        "before_actual_seconds": 28800,
+        "after_actual_seconds": 28800,
+        "before_accepted": true,
+        "before_status": "Accepted",
+        "retained_non_aptem_seconds": 28800,
+        "retained_aptem_seconds": 0,
+        "target_source_ids": [
+          1072972
+        ]
+      },
+      {
+        "parent_id": 465443,
+        "learner_id": 365,
+        "before_actual_seconds": 28800,
+        "after_actual_seconds": 28800,
+        "before_accepted": true,
+        "before_status": "Accepted",
+        "retained_non_aptem_seconds": 28800,
+        "retained_aptem_seconds": 0,
+        "target_source_ids": [
+          1072973
+        ]
+      },
+      {
+        "parent_id": 465675,
+        "learner_id": 363,
+        "before_actual_seconds": 25200,
+        "after_actual_seconds": 0,
+        "before_accepted": true,
+        "before_status": "referred",
+        "retained_non_aptem_seconds": 0,
+        "retained_aptem_seconds": 0,
+        "target_source_ids": [
+          1072967
+        ]
+      },
+      {
+        "parent_id": 465679,
+        "learner_id": 363,
+        "before_actual_seconds": 25200,
+        "after_actual_seconds": 0,
+        "before_accepted": true,
+        "before_status": "referred",
+        "retained_non_aptem_seconds": 0,
+        "retained_aptem_seconds": 0,
+        "target_source_ids": [
+          1072968
+        ]
+      },
+      {
+        "parent_id": 465754,
+        "learner_id": 368,
+        "before_actual_seconds": 7200,
+        "after_actual_seconds": 7200,
+        "before_accepted": true,
+        "before_status": "Accepted",
+        "retained_non_aptem_seconds": 7200,
+        "retained_aptem_seconds": 7200,
+        "target_source_ids": [
+          1074742
+        ]
+      },
+      {
+        "parent_id": 698573,
+        "learner_id": 371,
+        "before_actual_seconds": 22800,
+        "after_actual_seconds": 22800,
+        "before_accepted": true,
+        "before_status": "Accepted",
+        "retained_non_aptem_seconds": 0,
+        "retained_aptem_seconds": 22800,
+        "target_source_ids": [
+          853651
+        ]
+      },
+      {
+        "parent_id": 698823,
+        "learner_id": 373,
+        "before_actual_seconds": 30600,
+        "after_actual_seconds": 0,
+        "before_accepted": true,
+        "before_status": "Accepted",
+        "retained_non_aptem_seconds": 0,
+        "retained_aptem_seconds": 0,
+        "target_source_ids": [
+          854037,
+          854038,
+          854039
+        ]
+      },
+      {
+        "parent_id": 698908,
+        "learner_id": 347,
+        "before_actual_seconds": 2700,
+        "after_actual_seconds": 0,
+        "before_accepted": true,
+        "before_status": "Accepted",
+        "retained_non_aptem_seconds": 0,
+        "retained_aptem_seconds": 0,
+        "target_source_ids": [
+          854238
+        ]
+      },
+      {
+        "parent_id": 698923,
+        "learner_id": 347,
+        "before_actual_seconds": 21600,
+        "after_actual_seconds": 0,
+        "before_accepted": true,
+        "before_status": "Accepted",
+        "retained_non_aptem_seconds": 0,
+        "retained_aptem_seconds": 0,
+        "target_source_ids": [
+          854265
+        ]
+      },
+      {
+        "parent_id": 700386,
+        "learner_id": 383,
+        "before_actual_seconds": 54000,
+        "after_actual_seconds": 36000,
+        "before_accepted": true,
+        "before_status": "Accepted",
+        "retained_non_aptem_seconds": 0,
+        "retained_aptem_seconds": 36000,
+        "target_source_ids": [
+          857183
+        ]
+      },
+      {
+        "parent_id": 879796,
+        "learner_id": 360,
+        "before_actual_seconds": 27000,
+        "after_actual_seconds": 0,
+        "before_accepted": true,
+        "before_status": "referred",
+        "retained_non_aptem_seconds": 0,
+        "retained_aptem_seconds": 0,
+        "target_source_ids": [
+          1072655
+        ]
+      }
+    ],
+    "missing_parent_ids": [],
+    "sources_to_zero": 23,
+    "parents_to_recalculate": 19,
+    "ambiguous_or_no_local_row": 25,
+    "source_seconds_to_exclude": 514800,
+    "run_kind": "femi-commercial-intelligence-held-evidence-soft-exclude-v1",
+    "fingerprint": "2c6df399e210a4aef66a90a1166bd5d575891eddb324dcf214ca22f9d2edf380"
+  },
+  "status": "DRY_RUN",
+  "actor": "Ayman"
+}

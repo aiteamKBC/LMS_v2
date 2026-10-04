@@ -15,7 +15,7 @@ import type { DirectoryCoach } from '@/api/coachDirectory';
 import { cn } from '@/lib/cn';
 import { ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
 import { toneStyle, type StatusTone } from '@/lib/statusTone';
-import { getOtjhGapStatus } from '@/pages/coach/caseload/lib/format';
+import { otjhProgressAsOfToday } from '@/pages/coach/caseload/lib/format';
 import styles from '@/pages/workspace/coach/dashboard.module.css';
 import { CoachCaseloadContent } from '@/pages/coach/caseload/page';
 import { CaseloadLoading } from '@/pages/coach/caseload/components/CaseloadStates';
@@ -80,6 +80,10 @@ interface CoachLearner {
   currentModule?: string | null;
   currentWeek?: string | null;
   componentsTargetToDate?: number | null;
+  /** Whole-programme training-plan total used to calculate today's target. */
+  otjhPlanned?: number | null;
+  startDate?: string | null;
+  plannedEndDate?: string | null;
   programme: string;
   cohortName?: string | null;
   group: string;
@@ -105,6 +109,12 @@ interface CoachLearner {
   otjhTarget: number;
   otjhVariance?: number | null;
   otjhStatus?: string | null;
+  otjhTargetAsOfToday?: number | null;
+  otjhProgressAsOfToday?: number | null;
+  otjhShortfallHours?: number | null;
+  otjhDeltaHours?: number | null;
+  otjhRagStatus?: 'at-risk' | 'need-attention' | 'on-track' | 'unavailable' | null;
+  otjhRagSource?: string | null;
   ksbCompleted?: number | null;
   ksbTarget?: number | null;
   ksbProgress: number | null;
@@ -274,7 +284,7 @@ function isVisibleRiskFlag(value?: string | null) {
 }
 
 function canonicalOtjhStatus(learner: CoachLearner): OtjhStatusKey {
-  const status = getOtjhGapStatus(learner.otjhCompleted, learner.otjhTarget).status;
+  const status = otjhProgressAsOfToday(learner).status;
   return status === 'unavailable' ? 'unknown' : status;
 }
 
@@ -361,6 +371,9 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     currentModule: learner.currentModule,
     currentWeek: learner.currentWeek,
     componentsTargetToDate: learner.componentsTargetToDate,
+    otjhPlanned: learner.otjhPlanned ?? null,
+    startDate: learner.startDate ?? null,
+    plannedEndDate: learner.plannedEndDate ?? null,
     programme,
     cohortName: cohortName === EMPTY_VALUE ? null : cohortName,
     group: displayValue(learner.group),
@@ -386,6 +399,12 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     attendanceLastSessionDate: learner.attendanceLastSessionDate ?? null,
     otjhCompleted: toNumber(learner.otjhCompleted),
     otjhTarget: Math.max(toNumber(learner.otjhTarget), 0),
+    otjhTargetAsOfToday: learner.otjhTargetAsOfToday ?? null,
+    otjhProgressAsOfToday: learner.otjhProgressAsOfToday ?? null,
+    otjhShortfallHours: learner.otjhShortfallHours ?? null,
+    otjhDeltaHours: learner.otjhDeltaHours ?? null,
+    otjhRagStatus: learner.otjhRagStatus ?? null,
+    otjhRagSource: learner.otjhRagSource ?? null,
     otjhVariance: learner.otjhVariance ?? null,
     otjhStatus: displayValue(learner.otjhStatus),
     ksbCompleted: learner.ksbCompleted ?? null,
@@ -823,17 +842,19 @@ interface OverdueSignal {
 }
 
 function otjhPercentFor(learner: CoachLearner): number | null {
-  return learner.otjhTarget > 0 ? clampPercent((learner.otjhCompleted / learner.otjhTarget) * 100) : null;
+  const progress = otjhProgressAsOfToday(learner);
+  return progress.percent === null ? null : clampPercent(progress.percent);
 }
 
 function otjhVarianceLabel(learner: CoachLearner): string {
-  if (learner.otjhTarget <= 0) return EMPTY_VALUE;
+  const progress = otjhProgressAsOfToday(learner);
+  if (progress.deltaHours === null) return EMPTY_VALUE;
   if (learner.otjhVariance !== undefined && learner.otjhVariance !== null) {
     const variance = Math.round(learner.otjhVariance * 10) / 10;
     return `${variance > 0 ? '+' : ''}${variance}h`;
   }
-  const variance = Math.round(((learner.otjhCompleted - learner.otjhTarget) / learner.otjhTarget) * 100);
-  return `${variance > 0 ? '+' : ''}${variance}%`;
+  const variance = Math.round(progress.deltaHours * 10) / 10;
+  return `${variance > 0 ? '+' : ''}${variance}h`;
 }
 
 /** Scheduled but already past, or still needing a date after its target passed. */
@@ -1865,7 +1886,10 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
               {modalLearners.map(learner => {
                 const status = OTJH_STATUS_META[canonicalOtjhStatus(learner)];
                 const attendance = learner.attendanceRateAvailable ? `${learner.attendanceRate}%` : EMPTY_VALUE;
-                const otjh = learner.otjhTarget > 0 ? `${learner.otjhCompleted}/${learner.otjhTarget}` : EMPTY_VALUE;
+                const otjhProgress = otjhProgressAsOfToday(learner);
+                const otjh = otjhProgress.targetHours !== null && otjhProgress.targetHours > 0
+                  ? `${otjhProgress.actualHours}/${otjhProgress.targetHours}`
+                  : EMPTY_VALUE;
                 return (
                   <button
                     key={learner.id}
