@@ -1,23 +1,25 @@
-import { useRef, useState } from 'react';
+import { useId, useRef, useState } from 'react';
 import { fetchMigratedReviewIntelligence, uploadMigratedSummaryTranscript } from '@/api/reviewInstances';
 import type { CoachMeetingArtifactsResponse, MigratedSummaryBinding } from './calendarEvents';
 
-export function MigratedSummaryActions({ instanceId, binding, editable, teamsAvailable, busy, unsaved,
+export function MigratedSummaryActions({ instanceId, binding, editable, showActions = editable, teamsAvailable, busy, unsaved,
   onResult, onBusyChange }: {
   instanceId: string;
   binding: MigratedSummaryBinding;
   editable: boolean;
+  showActions?: boolean;
   teamsAvailable: boolean;
   busy: boolean;
   unsaved: boolean;
   onResult: (result: CoachMeetingArtifactsResponse) => void;
   onBusyChange: (busy: boolean) => void;
 }) {
+  const actionHelpId = useId();
   const fileInput = useRef<HTMLInputElement>(null);
   const running = useRef(false);
   const [action, setAction] = useState<'teams' | 'upload' | null>(null);
   const [error, setError] = useState('');
-  const disabled = busy || unsaved || !!action;
+  const disabled = !editable || busy || unsaved || !!action;
   const generate = async (file?: File) => {
     if (!editable || disabled || running.current || (!file && !teamsAvailable)) return;
     setError('');
@@ -62,26 +64,29 @@ export function MigratedSummaryActions({ instanceId, binding, editable, teamsAva
   return <div className="mb-3 space-y-2 rounded-lg border border-primary-100 bg-primary-50 p-3">
     <span className="text-xs font-bold text-primary-900">AI Meeting Summary</span>
     <p className="text-xs text-foreground-600">Generate from the linked Teams transcript or upload a .vtt or .txt transcript. You can also type your answer. The saved form answer is used in the completed review and PDF.</p>
-    {editable && <>
+    {showActions && <>
       <div className="flex flex-wrap gap-2">
         <button type="button" disabled={disabled || !teamsAvailable} onClick={() => void generate()}
+          aria-describedby={!editable ? actionHelpId : undefined}
           className="rounded-lg bg-primary-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">
           {action === 'teams' ? 'Generating summary...' : 'Generate from Teams'}
         </button>
-        <button type="button" disabled={disabled} onClick={() => fileInput.current?.click()}
+        <button type="button" disabled={disabled} onClick={() => { if (!disabled) fileInput.current?.click(); }}
+          aria-describedby={!editable ? actionHelpId : undefined}
           className="rounded-lg border border-primary-300 bg-white px-3 py-2 text-xs font-bold text-primary-700 disabled:opacity-50">
           {action === 'upload' ? 'Uploading transcript and generating summary...' : 'Upload Transcript'}
         </button>
-        <input ref={fileInput} type="file" accept=".vtt,.txt,text/vtt,text/plain" className="sr-only"
+        {editable && <input ref={fileInput} type="file" accept=".vtt,.txt,text/vtt,text/plain" className="sr-only"
           aria-label="Select migrated review transcript" disabled={disabled}
           onChange={event => {
             const file = event.currentTarget.files?.[0];
             event.currentTarget.value = '';
             if (file) void generate(file);
-          }} />
+          }} />}
       </div>
-      {!teamsAvailable && <p className="text-xs text-foreground-600">No synced Teams meeting is associated. You can upload a transcript instead.</p>}
-      {unsaved && <p className="text-xs text-foreground-600">Save your draft before generating a summary so your edits are preserved.</p>}
+      {!editable && <p id={actionHelpId} className="text-xs text-foreground-600">Available to the assigned Coach only.</p>}
+      {editable && !teamsAvailable && <p className="text-xs text-foreground-600">No synced Teams meeting is associated. You can upload a transcript instead.</p>}
+      {editable && unsaved && <p className="text-xs text-foreground-600">Save your draft before generating a summary so your edits are preserved.</p>}
     </>}
     {binding.suggestionSource && <p className="text-xs text-primary-800">Latest AI summary generated from {binding.suggestionSource === 'teams' ? 'Teams transcript' : 'uploaded transcript'}.</p>}
     {binding.transcriptTruncated && <p role="status" className="text-xs text-amber-800">The transcript exceeded the AI input limit. The summary covers only its initial portion; review it against the full transcript.</p>}

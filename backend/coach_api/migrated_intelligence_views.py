@@ -21,6 +21,7 @@ from coach_api.models import CoachCalendarEvent, ImportedReviewInstance
 from coach_api.migrated_reviews import meeting_summary_field
 from coach_api.migrated_summary_binding import answer_version, binding_state, populate_answer, preserve_original
 from coach_api.migrated_summary_generation import apply_suggestion, summary_binding_response
+from coach_api.migrated_template_sync import active_answers, snapshot_fingerprint
 
 
 logger = logging.getLogger(__name__)
@@ -94,8 +95,8 @@ def _response(overlay, record, snapshot=None, *, errors=None, status=200):
         "meetingSummary": _summary(state),
         "summaryBinding": binding,
         "progressVersion": answer_version(overlay),
-        **({"answerVersion": answer_version(overlay), "reviewAnswers": overlay.answers}
-           if binding.get("fieldKey") else {}),
+        "answerVersion": answer_version(overlay),
+        "reviewAnswers": active_answers(overlay.template_snapshot, overlay.answers),
         "intelligence": {
             "lastCheckedAt": state.get("lastCheckedAt"),
             "attendanceStatus": state.get("attendanceStatus", "not-checked"),
@@ -203,6 +204,8 @@ def migrated_review_check_session(request, review_id):
         binding = binding_state(locked)
         if binding.get("status") == "invalid-binding":
             return JsonResponse({"detail": binding["message"], "code": "INVALID_SUMMARY_BINDING"}, status=409)
+        if snapshot_fingerprint(locked.template_snapshot) != snapshot_fingerprint(overlay.template_snapshot):
+            return JsonResponse({"detail": "The review template changed during Check Session. Reopen the review before checking again. Your saved answers are unchanged.", "code": "template_sync_changed"}, status=409)
         state = dict(locked.meeting_intelligence or {})
         preserve_original(state)
         state.update({
@@ -283,6 +286,8 @@ def migrated_review_summary(request, review_id):
         locked = ImportedReviewInstance.objects.select_for_update().get(pk=overlay.pk)
         if locked.status != ImportedReviewInstance.STATUS_IN_PROGRESS:
             return JsonResponse({"detail": "Only in-progress migrated summaries can be edited."}, status=409)
+        if snapshot_fingerprint(locked.template_snapshot) != snapshot_fingerprint(overlay.template_snapshot):
+            return JsonResponse({"detail": "The review template changed. Reopen the review before editing its summary.", "code": "template_sync_changed"}, status=409)
         try:
             if meeting_summary_field(getattr(locked, "template_snapshot", {}) or {}):
                 return JsonResponse({"detail": "Edit the Meeting Summary answer in the review form."}, status=409)
@@ -300,4 +305,6 @@ def migrated_review_summary(request, review_id):
         })
         locked.meeting_intelligence = state
         locked.save(update_fields=["meeting_intelligence", "updated_at"])
-    return JsonResponse({"meetingSummary": _summary(state)})
+    return JsonResponse({"meetingSummary": _summary(state), "answerVersion": answer_version(locked),
+                         "progressVersion": answer_version(locked), "summaryBinding": summary_binding_response(locked),
+                         "reviewAnswers": active_answers(locked.template_snapshot, locked.answers)})

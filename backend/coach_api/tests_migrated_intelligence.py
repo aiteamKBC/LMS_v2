@@ -21,7 +21,7 @@ ID = "imported-review:C5-TEST-MCM-20261002-001"
 
 def review(status="in-progress"):
     return SimpleNamespace(pk=1, event_key=ID, owner_email="coach@example.invalid", learner_id=42,
-                           status=status, meeting_intelligence={}, updated_at=timezone.now(), save=Mock())
+                           status=status, meeting_intelligence={}, answers={}, template_snapshot={"sections": []}, updated_at=timezone.now(), save=Mock())
 
 
 def meeting():

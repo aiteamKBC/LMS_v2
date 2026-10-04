@@ -37,7 +37,7 @@ import type { CoachMeetingArtifactsResponse } from './calendarEvents';
 
 const isAbortError = (err: unknown): boolean => err instanceof DOMException && err.name === 'AbortError';
 
-function canAutoInitializeMigratedReview(data: ReviewInstanceFormDefinition): boolean {
+function canInitializeMigratedReview(data: ReviewInstanceFormDefinition): boolean {
   return data.source === 'aptem'
     && data.instance.id.startsWith('imported-review:')
     && data.canInitialize === true
@@ -278,6 +278,7 @@ export function ReviewInstanceModal({
   const [loading, setLoading] = useState(true);
   const [initializationFailed, setInitializationFailed] = useState(false);
   const [initializationRetry, setInitializationRetry] = useState(0);
+  const initializationRequestedRef = useRef('');
   const initializationAttemptsRef = useRef(new Map<string, ReturnType<typeof initializeMigratedReview>>());
   const [saving, setSaving] = useState(false);
   const [bookingOpen, setBookingOpen] = useState(false);
@@ -324,7 +325,8 @@ export function ReviewInstanceModal({
       try {
         let data = await fetchReviewInstanceForm(instanceId, controller.signal);
         if (!active) return;
-        if (!isViewingAsCoach && canAutoInitializeMigratedReview(data)) {
+        if (!isViewingAsCoach && canInitializeMigratedReview(data)
+          && initializationRequestedRef.current === `${coachIdentity.email}:${instanceId}`) {
           const attemptKey = `${coachIdentity.email}:${instanceId}:${initializationRetry}`;
           let attempt = initializationAttemptsRef.current.get(attemptKey);
           if (!attempt) {
@@ -422,8 +424,9 @@ export function ReviewInstanceModal({
   );
   const answeredCount = requiredCount - missingFieldIds.size;
   const isImportedReadOnly = Boolean(definition?.readOnly);
+  const templateSyncConflict = definition?.templateSync?.status === 'conflict';
   const isSummaryOnly = Boolean(definition?.summaryOnly);
-  const canInitializeMigrated = definition ? canAutoInitializeMigratedReview(definition) : false;
+  const canInitializeMigrated = definition ? canInitializeMigratedReview(definition) : false;
   const isSignatureStage = definition ? ['awaiting-signature', 'completed'].includes(definition.instance.status) : false;
   const isHistoricalPdfAvailable = Boolean(definition?.source === 'aptem' && definition.pdf?.available);
   const advisorSignature = definition?.signatures.advisor;
@@ -442,7 +445,12 @@ export function ReviewInstanceModal({
     && !advisorSignaturePending
     && !allRequiredSignaturesSaved,
   );
-  const formReadOnly = isViewingAsCoach || isImportedReadOnly || isSignatureStage;
+  const formReadOnly = isViewingAsCoach || isImportedReadOnly || isSignatureStage || templateSyncConflict;
+  // Admin visibility does not grant the coach's execution capability. Keep
+  // previews, historical imports and frozen/conflicting forms unchanged.
+  const showMigratedCoachActions = Boolean(isViewingAsCoach && definition?.migratedForm
+    && !definition.previewOnly && !templateSyncConflict
+    && ['not-scheduled', 'scheduled', 'in-progress'].includes(definition.instance.status));
   const hasUnsavedMigratedAnswers = Boolean(definition?.migratedForm && (
     editedFieldsRef.current.size > 0 || JSON.stringify(answers) !== JSON.stringify(savedAnswersRef.current)
   ));
@@ -599,7 +607,7 @@ export function ReviewInstanceModal({
   };
 
   const bookMigrated = async () => {
-    if (!definition?.migratedForm || !(definition.booking?.canBook || definition.booking?.canAttach) || isViewingAsCoach || bookingInFlightRef.current) return;
+    if (!definition?.migratedForm || !(definition.booking?.canBook || definition.booking?.canAttach) || formReadOnly || bookingInFlightRef.current) return;
     bookingInFlightRef.current = true;
     setSaving(true);
     setError(null);
@@ -878,10 +886,13 @@ export function ReviewInstanceModal({
                   : 'Admin view-as mode is read-only. Open the learner as the assigned coach to change this review.'}
               </section>
             ) : null}
-            {initializationFailed && !isViewingAsCoach ? (
-              <button type="button" onClick={() => setInitializationRetry((current) => current + 1)} disabled={busy}
+            {(canInitializeMigrated || initializationFailed) && !isViewingAsCoach ? (
+              <button type="button" onClick={() => {
+                initializationRequestedRef.current = `${coachIdentity.email}:${instanceId}`;
+                setInitializationRetry((current) => current + 1);
+              }} disabled={busy}
                 className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
-                Retry form initialization
+                {initializationFailed ? 'Retry form initialization' : 'Initialize approved migrated form'}
               </button>
             ) : null}
             {definition.migratedForm && definition.booking?.booked ? (
@@ -898,21 +909,22 @@ export function ReviewInstanceModal({
                 family={definition.template.reviewTypeCode || ''}
                 status={definition.localStatus || ''}
                 viewAs={isViewingAsCoach}
+                readOnly={templateSyncConflict}
                 meetingLink={definition.booking.meetingLink}
                 bound={Boolean(meetingSummaryFieldId)}
                 savedBinding={definition.summaryBinding}
-                checkBlocked={hasUnsavedMigratedAnswers || busy}
+                checkBlocked={hasUnsavedMigratedAnswers || busy || templateSyncConflict}
                 onCheckComplete={onMigratedCheckComplete}
                 onCheckingChange={setCheckingSession}
               />
             ) : null}
-            {definition.migratedForm && definition.booking?.canAttach && !isViewingAsCoach ? (
+            {definition.migratedForm && definition.booking?.canAttach && !formReadOnly ? (
               <button type="button" onClick={() => { void bookMigrated(); }} disabled={busy} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">Use existing meeting</button>
             ) : null}
             {definition.migratedForm && definition.booking?.conflict ? (
               <p role="alert" className="text-sm text-red-700">This review has a conflicting calendar association. Ask an administrator to resolve it before booking.</p>
             ) : null}
-            {definition.migratedForm && definition.booking?.canBook && !isViewingAsCoach ? (
+            {definition.migratedForm && definition.booking?.canBook && !formReadOnly ? (
               <section aria-label="Book migrated review meeting" className="rounded-xl border border-primary-200 bg-white p-4">
                 {!bookingOpen ? <button type="button" onClick={() => { setBookingDate(definition.booking?.scheduledDate || definition.instance.targetDate); setBookingOpen(true); }} disabled={busy} className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">Book Meeting</button> : (
                   <div className="flex flex-wrap items-end gap-3">
@@ -925,7 +937,7 @@ export function ReviewInstanceModal({
                 )}
               </section>
             ) : null}
-            {definition.migratedForm && definition.localStatus === 'scheduled' && definition.booking?.booked && !isViewingAsCoach ? (
+            {definition.migratedForm && definition.localStatus === 'scheduled' && definition.booking?.booked && !formReadOnly ? (
               <button type="button" onClick={() => { void startMigrated(); }} disabled={busy}
                 className="rounded-lg bg-primary-700 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
                 Start migrated review
@@ -956,6 +968,11 @@ export function ReviewInstanceModal({
                 </div>
               </div>
             ) : null}
+            {templateSyncConflict ? (
+              <section role="alert" className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                {definition.templateSync?.message || 'This review template has changed and cannot be safely synchronized. Your saved answers are unchanged. Ask a template administrator to correct it, then reopen this review.'}
+              </section>
+            ) : null}
             <div className="flex items-start gap-3 rounded-xl border border-primary-100 bg-primary-50/80 px-4 py-3 text-[13px] leading-5 text-primary-800 shadow-sm">
               <AppIcon className="ri-information-line mt-0.5 shrink-0 text-primary-600"></AppIcon>
               <span>{isViewingAsCoach
@@ -963,9 +980,11 @@ export function ReviewInstanceModal({
                 : initializationFailed
                 ? 'Initialization did not finish. Retry to load the approved form; the original Aptem review is unchanged.'
                 : canInitializeMigrated
-                ? 'An approved migrated form is available. Initialize it to keep a fixed copy with this review.'
+                ? 'An approved migrated form is available. Initialize it to start this review. Its questions can update until you submit it for signatures.'
                 : isSummaryOnly
                 ? 'The imported summary remains available for reference, but there is no form to edit or complete.'
+                : templateSyncConflict
+                ? 'Saved answers remain available for reference while the template conflict is resolved.'
                 : isImportedReadOnly
                 ? definition.migratedForm ? 'Submitted answers are locked while the required parties sign this LMS review.' : 'These historical answers are displayed from the imported Aptem review and cannot be changed here.'
                 : definition.migratedForm ? 'Answers are saved in LMS continuation state; the original Aptem record is unchanged.'
@@ -1083,6 +1102,7 @@ export function ReviewInstanceModal({
               <ReviewProgressPanel
                 snapshot={definition.progressSnapshot}
                 ragHistory={definition.ragHistory}
+                showCalculateAction={showMigratedCoachActions ? true : undefined}
                 canCalculate={!isViewingAsCoach && !isSignatureStage && (definition.source !== 'aptem'
                   || Boolean(definition.migratedForm && definition.canCalculateProgress
                     && (definition.answerVersion || definition.progressVersion)))}
@@ -1093,9 +1113,8 @@ export function ReviewInstanceModal({
             ) : null}
 
             <ReviewFormRenderer
-              sections={definition.source === 'aptem' && definition.progressSnapshot
-                ? definition.sections.filter((section) => section.title.trim().toLocaleLowerCase() !== 'learning progress'
-                  || (definition.migratedForm && section.fields.some(field => field.configuration?.semanticKey === 'meeting_summary')))
+              sections={definition.source === 'aptem' && !definition.migratedForm && definition.progressSnapshot
+                ? definition.sections.filter((section) => section.title.trim().toLocaleLowerCase() !== 'learning progress')
                 : definition.sections}
               answers={answers}
               onAnswerChange={handleAnswerChange}
@@ -1107,6 +1126,7 @@ export function ReviewInstanceModal({
                 definition.migratedForm ? (definition.summaryBinding?.fieldKey === field.id ? <MigratedSummaryActions
                   instanceId={definition.instance.id} binding={definition.summaryBinding}
                   editable={!formReadOnly && ['scheduled', 'in-progress'].includes(definition.instance.status)}
+                  showActions={showMigratedCoachActions && ['scheduled', 'in-progress'].includes(definition.instance.status) ? true : undefined}
                   teamsAvailable={Boolean(definition.booking?.booked && definition.booking.syncState === 'synced'
                     && !definition.booking.conflict && definition.booking.eventKey === definition.instance.id)}
                   busy={busy} unsaved={hasUnsavedMigratedAnswers} onResult={onMigratedSummaryComplete} onBusyChange={setCheckingSession}
