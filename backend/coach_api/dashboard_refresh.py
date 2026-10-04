@@ -13,7 +13,17 @@ from .read_model import enqueue_coach_dashboard_refresh
 
 def snapshot_needs_refresh(payload: dict, *, now: datetime | None = None) -> bool:
     """Whether a served snapshot has crossed the stale-while-revalidate age."""
-    refreshed_at = (payload.get("readModel") or {}).get("refreshedAt")
+    read_model = payload.get("readModel") or {}
+    version = read_model.get("version")
+    if version is not None:
+        try:
+            from .services.dashboard.service import CoachDashboardService
+
+            if int(version) != int(CoachDashboardService.SCHEMA_VERSION):
+                return True
+        except (TypeError, ValueError, ImportError):
+            return True
+    refreshed_at = read_model.get("refreshedAt")
     if not refreshed_at:
         # Only the persistent read model owns this timestamp. Other compatible
         # payloads (including tests and a just-computed legacy response) should

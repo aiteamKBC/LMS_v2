@@ -13,6 +13,7 @@ from copy import deepcopy
 from datetime import date, timedelta
 
 from django.conf import settings
+from django.utils import timezone
 
 from coach_api.selectors.dashboard.marking import dashboard_marking_projection
 from .context import CoachDashboardContext
@@ -22,10 +23,15 @@ class CoachDashboardService:
     """Build the dashboard DTO without invoking any detailed endpoint loader."""
 
     def __init__(self, owner_email: str, *, today: date | None = None):
-        self.context = CoachDashboardContext(owner_email, today or date.today())
+        self.context = CoachDashboardContext(owner_email, today or timezone.localdate())
 
     # v13 uses the learner Overview metrics for the embedded caseload table.
-    SCHEMA_VERSION = 13
+    # v14 carries the Aptem-backed programme plan/window into the learner DTO.
+    # v15 adds the verified training-plan contract as the first schedule source.
+    # v16 emits the API-owned OTJH target-to-date/RAG contract.
+    # Older snapshots may legitimately contain ``--`` dates, so they must not
+    # be served as if they were current after the serializer is corrected.
+    SCHEMA_VERSION = 16
 
     def build(self) -> dict:
         """Read the persistent projection; build once only if it is absent."""
@@ -56,18 +62,27 @@ class CoachDashboardService:
             schema_version=self.SCHEMA_VERSION,
         ).only("payload", "refreshed_at").first()
         if snapshot is not None:
-            payload = dict(snapshot.payload)
-            payload["readModel"] = {
-                "version": self.SCHEMA_VERSION,
-                "refreshedAt": snapshot.refreshed_at.isoformat(),
-            }
-            return payload
+            return self._snapshot_payload(snapshot, version=self.SCHEMA_VERSION)
         previous = compatibility.CoachDashboardSnapshot.objects.filter(
             owner_email=self.context.owner_email,
-        ).only("payload", "refreshed_at", "schema_version").first()
+        ).order_by("-refreshed_at").only(
+            "payload", "refreshed_at", "schema_version",
+        ).first()
         if previous is not None:
-            return self.refresh_metric_projection(previous.payload)
+            # A schema mismatch should not make the first page load wait for a
+            # full caseload rebuild.  Serve the newest durable projection and
+            # let dashboard_view enqueue the schema refresh after responding.
+            return self._snapshot_payload(previous, version=previous.schema_version)
         return self.refresh()
+
+    @staticmethod
+    def _snapshot_payload(snapshot, *, version: int) -> dict:
+        payload = dict(snapshot.payload)
+        payload["readModel"] = {
+            "version": version,
+            "refreshedAt": snapshot.refreshed_at.isoformat(),
+        }
+        return payload
 
     def refresh_metric_projection(self, previous_payload: dict) -> dict:
         """Upgrade a prior Dashboard snapshot without rebuilding unrelated domains."""
@@ -91,9 +106,19 @@ class CoachDashboardService:
             profile_id = domain.to_int(learner.get("id"))
             if profile_id is None or profile_id not in rows_by_id:
                 continue
+            schedule_planned, schedule_start, schedule_end = domain.caseload_schedule_values(
+                rows_by_id[profile_id],
+            )
+            if schedule_planned not in (None, ""):
+                learner["otjhPlanned"] = domain.to_number(schedule_planned)
+            if schedule_start not in (None, ""):
+                learner["startDate"] = domain.format_date(schedule_start)
+            if schedule_end not in (None, ""):
+                learner["plannedEndDate"] = domain.format_date(schedule_end)
             domain.apply_canonical_learner_metrics(learner, canonical_metrics.get(profile_id), learner_workspace=True)
             domain.apply_aptem_variance_status(learner, aptem_by_profile.get(profile_id))
             domain.apply_attendance_summary(learner, attendance_by_id.get(profile_id))
+            domain.apply_otjh_to_date_metrics(learner, today=self.context.today)
             learner["attendanceAvailable"] = bool(learner.get("attendanceRateAvailable"))
         compatibility.CoachDashboardSnapshot.objects.update_or_create(
             owner_email=self.context.owner_email,
@@ -253,6 +278,7 @@ class CoachDashboardService:
             domain.apply_canonical_learner_metrics(learner, canonical_metrics.get(int(row.id)), learner_workspace=True)
             domain.apply_aptem_variance_status(learner, aptem_by_profile.get(int(row.id)))
             domain.apply_attendance_summary(learner, attendance_by_id.get(int(row.id)))
+            domain.apply_otjh_to_date_metrics(learner, today=context.today)
             learner["attendanceAvailable"] = bool(learner.get("attendanceRateAvailable"))
 
         marking = dashboard_marking_projection(context)

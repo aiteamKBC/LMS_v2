@@ -633,6 +633,67 @@ def percentage(numerator, denominator) -> int:
     return max(0, min(100, value))
 
 
+def apply_otjh_to_date_metrics(payload: dict, *, today: date | None = None) -> dict:
+    """Attach the canonical coach-facing OTJH target and RAG fields.
+
+    ``otjhPlanned`` is the whole-programme plan and ``otjhCompleted`` is the
+    active canonical actual.  The dashboard target is the portion of that plan
+    due by the business date, paced over the programme window.  These fields
+    are emitted by the API so cards, tables, filters and KPI legends do not
+    each re-implement the denominator in the browser.
+
+    If the plan window is unavailable, keep the existing API target as an
+    explicit fallback.  A missing/invalid target stays unavailable instead of
+    being presented as a green zero.
+    """
+    total = to_number(payload.get("otjhPlanned"))
+    if total <= 0:
+        total = to_number(payload.get("otjhTarget"))
+
+    start = parse_date_value(payload.get("startDate"))
+    end = parse_date_value(payload.get("plannedEndDate"))
+    start_day = start.date() if isinstance(start, datetime) else start
+    end_day = end.date() if isinstance(end, datetime) else end
+    current_day = today or timezone.localdate()
+
+    target: float | None = None
+    target_source = "unavailable"
+    if total > 0 and start_day and end_day and end_day > start_day:
+        if current_day < start_day:
+            target = 0.0
+        elif current_day >= end_day:
+            target = total
+        else:
+            elapsed_days = (current_day - start_day).days
+            programme_days = (end_day - start_day).days
+            target = max(0.0, min(total, total * elapsed_days / programme_days))
+        target_source = "ssot:programme-plan-window"
+    elif total > 0:
+        target = total
+        target_source = "ssot:api-target-fallback"
+
+    actual = to_number(payload.get("otjhCompleted"))
+    if target is None or target <= 0:
+        status = "unavailable"
+        percent = None
+        shortfall = None
+        delta = None
+    else:
+        shortfall = max(target - actual, 0.0)
+        delta = actual - target
+        # Keep the frontend boundary exact: >40 is red, >20 is amber.
+        status = "at-risk" if shortfall > 40 else "need-attention" if shortfall > 20 else "on-track"
+        percent = max(0.0, min(100.0, (actual / target) * 100))
+
+    payload["otjhTargetAsOfToday"] = round(target, 2) if target is not None else None
+    payload["otjhProgressAsOfToday"] = round(percent, 2) if percent is not None else None
+    payload["otjhShortfallHours"] = round(shortfall, 2) if shortfall is not None else None
+    payload["otjhDeltaHours"] = round(delta, 2) if delta is not None else None
+    payload["otjhRagStatus"] = status
+    payload["otjhRagSource"] = target_source
+    return payload
+
+
 def parse_variance(value: str | None) -> int:
     if not value:
         return 0
@@ -1767,16 +1828,47 @@ def attach_caseload_source_rows(rows) -> None:
     if not rows:
         return
     commercial_rows, enrolment_rows = fetch_source_schedule_rows(rows)
+    # The verified training-plan contract is the authoritative source for the
+    # programme total and its contractual start/end window.  Keep it attached
+    # to the same request-local row as the Created_users source so serializers
+    # can consume the API's existing contract projection without another query
+    # per learner.
+    def row_aptem_id(row, source=None):
+        raw = getattr(source, "aptem_id", None) if source is not None else None
+        raw = raw if raw not in (None, "") else getattr(row, "aptem_id", None)
+        try:
+            aptem_id = int(str(raw).strip()) if raw not in (None, "") else None
+        except (TypeError, ValueError):
+            return None
+        return aptem_id if aptem_id and aptem_id > 0 else None
+
+    contract_ids = []
     for row in rows:
-        setattr(
+        source = resolve_caseload_source_row(
             row,
-            "_caseload_source",
-            resolve_caseload_source_row(
-                row,
-                commercial_rows=commercial_rows,
-                enrolment_rows=enrolment_rows,
-            ),
+            commercial_rows=commercial_rows,
+            enrolment_rows=enrolment_rows,
         )
+        aptem_id = row_aptem_id(row, source)
+        if aptem_id and aptem_id > 0:
+            contract_ids.append(aptem_id)
+    try:
+        contracts = load_contracts_bulk(contract_ids)
+    except (DatabaseError, TypeError, ValueError) as exc:
+        # Contract data is an enrichment.  A temporary contract-table failure
+        # must not make the coach caseload unavailable; existing source/profile
+        # schedule fallbacks remain valid.
+        logger.warning("Could not load caseload training-plan contracts: %s", exc)
+        contracts = {}
+    for row in rows:
+        source = resolve_caseload_source_row(
+            row,
+            commercial_rows=commercial_rows,
+            enrolment_rows=enrolment_rows,
+        )
+        setattr(row, "_caseload_source", source)
+        aptem_id = row_aptem_id(row, source)
+        setattr(row, "_caseload_contract", contracts.get(aptem_id) if aptem_id else None)
 
 
 def fetch_caseload_learner_profiles(owner_email: str) -> list[LearnerProfile | SimpleNamespace]:
@@ -2271,13 +2363,23 @@ def resolve_schedule_window(
 ) -> tuple[date | None, date | None]:
     commercial_row = commercial_rows.get(learner_id)
     if commercial_row:
-        start_value = getattr(commercial_row, "start_date", None)
-        end_value = getattr(commercial_row, "end_date", None)
+        start_value = (
+            getattr(commercial_row, "start_date", None)
+            or getattr(commercial_row, "learner_start_date", None)
+        )
+        end_value = (
+            getattr(commercial_row, "end_date", None)
+            or getattr(commercial_row, "learner_end_date", None)
+        )
     else:
         enrolment_row = enrolment_rows.get(learner_id)
-        start_value = getattr(enrolment_row, "start_date", None) if enrolment_row else None
+        start_value = (
+            getattr(enrolment_row, "start_date", None)
+            or getattr(enrolment_row, "learner_start_date", None)
+        ) if enrolment_row else None
         end_value = (
             getattr(enrolment_row, "end_date", None)
+            or getattr(enrolment_row, "learner_end_date", None)
             or getattr(enrolment_row, "apprenticeship_end_date", None)
             or getattr(enrolment_row, "practical_period_end_date", None)
         ) if enrolment_row else None
@@ -2291,6 +2393,36 @@ def resolve_schedule_window(
     if isinstance(end_date, datetime):
         end_date = end_date.date()
     return start_date, end_date
+
+
+def caseload_schedule_values(row) -> tuple[object, object, object]:
+    """Return the SSOT plan total and learner window for coach payloads.
+
+    ``LearnerProfile`` is a projection.  The enrolment source row is the
+    authoritative bridge to Aptem and may contain the learner-specific text
+    dates while the profile's cohort-window mirror is blank.  Prefer the
+    source row, then fall back to the profile, without fabricating a date.
+    """
+    contract = getattr(row, "_caseload_contract", None)
+    source = getattr(row, "_caseload_source", None)
+
+    def first_value(*names):
+        for owner in (contract, source, row):
+            if owner is None:
+                continue
+            for name in names:
+                value = owner.get(name) if isinstance(owner, dict) else getattr(owner, name, None)
+                if value not in (None, "") and clean_text(value).casefold() not in {"none", "null", "--", "n/a"}:
+                    return value
+        return None
+
+    planned = first_value("training_plan_planned_hours", "planned_hours")
+    start = first_value("program_start_date", "start_date", "learner_start_date")
+    end = first_value(
+        "planned_end_date", "end_date", "learner_end_date",
+        "apprenticeship_end_date", "practical_period_end_date",
+    )
+    return planned, start, end
 
 
 # Why a learner could not be anchored for Review recurrence. One vocabulary
@@ -3063,7 +3195,7 @@ def apply_canonical_learner_metrics(payload: dict, metrics: dict | None, *, lear
     if metrics.get("migrated"):
         payload["ksbSource"] = "learner-dashboard"
         payload["otjhSource"] = "learner-dashboard"
-    return payload
+    return apply_otjh_to_date_metrics(payload)
 
 
 def apply_canonical_ksb_evidence(payload: dict, metrics: dict | None, aptem_id) -> dict:
@@ -3216,7 +3348,7 @@ def apply_audit_hour_totals(payload: dict, totals: dict | None) -> dict:
     payload["overallProgress"] = percentage(payload["otjhCompleted"], payload["otjhTarget"])
     payload["overallProgressAvailable"] = True
     payload["otjhSource"] = "audit"
-    return payload
+    return apply_otjh_to_date_metrics(payload)
 
 
 def apply_attendance_summary(payload: dict, metrics: dict | None) -> dict:
@@ -3283,10 +3415,11 @@ def serialize_caseload_learner(
     component_available = planned_components > 0
     component_progress = percentage(completed_components, planned_components) if component_available else 0
 
+    schedule_planned, schedule_start, schedule_end = caseload_schedule_values(row)
     target_hours_value = (
         clean_text(row.target_hours)
         or clean_text(row.minimum_hours)
-        or clean_text(row.planned_hours)
+        or clean_text(schedule_planned)
     )
     hours_available = bool(clean_text(row.completed_hours) or target_hours_value)
     hours_progress = percentage(row.completed_hours, target_hours_value) if target_hours_value else 0
@@ -3383,7 +3516,7 @@ def serialize_caseload_learner(
         "otjhCompleted": to_number(row.completed_hours),
         "otjhTarget": max(to_number(target_hours_value) if target_hours_value else 1, 1),
         "otjhMinimum": to_number(row.minimum_hours),
-        "otjhPlanned": to_number(row.planned_hours),
+        "otjhPlanned": to_number(schedule_planned),
         "otjhCompletedEntries": otjh_completed_entries,
         "otjhCompletedEntryCount": len(otjh_completed_entries),
         "otjhProgressHours": clean_text(row.progress_hours) or "--",
@@ -3422,9 +3555,9 @@ def serialize_caseload_learner(
         "employerEmail": None,
         "employerPhone": None,
         "progressVariance": progress_variance or "--",
-        "startDate": format_date(getattr(row, "start_date", None)),
+        "startDate": format_date(schedule_start),
         "gatewayReviewDate": format_date(getattr(row, "gateway_review_date", None)),
-        "plannedEndDate": format_date(getattr(row, "end_date", None)),
+        "plannedEndDate": format_date(schedule_end),
         "coachName": clean_text(row.coach_name) or None,
         "coachEmail": clean_text(row.coach_email) or None,
         "rawProgramStatus": program_status or "--",
@@ -3434,10 +3567,11 @@ def serialize_caseload_learner(
 
 def serialize_caseload_dashboard_learner(row: LearnerProfile | SimpleNamespace) -> dict:
     """Serialize only the fields the coach dashboard needs immediately."""
+    schedule_planned, schedule_start, schedule_end = caseload_schedule_values(row)
     target_hours_value = (
         clean_text(getattr(row, "target_hours", None))
         or clean_text(getattr(row, "minimum_hours", None))
-        or clean_text(getattr(row, "planned_hours", None))
+        or clean_text(schedule_planned)
     )
     hours_available = bool(clean_text(getattr(row, "completed_hours", None)) or target_hours_value)
     hours_progress = percentage(getattr(row, "completed_hours", None), target_hours_value) if target_hours_value else 0
@@ -3508,7 +3642,7 @@ def serialize_caseload_dashboard_learner(row: LearnerProfile | SimpleNamespace) 
         "otjhCompleted": to_number(getattr(row, "completed_hours", None)),
         "otjhTarget": max(to_number(target_hours_value) if target_hours_value else 1, 1),
         "otjhMinimum": to_number(getattr(row, "minimum_hours", None)),
-        "otjhPlanned": to_number(getattr(row, "planned_hours", None)),
+        "otjhPlanned": to_number(schedule_planned),
         "otjhProgressHours": clean_text(getattr(row, "progress_hours", None)) or "--",
         "otjhStatus": otjh_status,
         "ksbCompleted": None,
@@ -3527,9 +3661,9 @@ def serialize_caseload_dashboard_learner(row: LearnerProfile | SimpleNamespace) 
         "recentFlag": risk_flags[0] if risk_flags else None,
         "email": clean_text(getattr(row, "email", None)) or None,
         "progressVariance": progress_variance or "--",
-        "startDate": format_date(getattr(row, "start_date", None)),
+        "startDate": format_date(schedule_start),
         "gatewayReviewDate": format_date(getattr(row, "gateway_review_date", None)),
-        "plannedEndDate": format_date(getattr(row, "end_date", None)),
+        "plannedEndDate": format_date(schedule_end),
         "rawProgramStatus": program_status or "--",
     }
 
@@ -12668,7 +12802,10 @@ def coach_caseload(request):
             }
         elif summary_only:
             rows = fetch_caseload_dashboard_profiles(owner_email)
-            learners = [serialize_caseload_dashboard_learner(row) for row in rows]
+            learners = [
+                apply_otjh_to_date_metrics(serialize_caseload_dashboard_learner(row))
+                for row in rows
+            ]
         else:
             rows = fetch_caseload_learner_profiles(owner_email)
             learners = [
@@ -12735,6 +12872,8 @@ def coach_caseload(request):
                 if dates.get("lastMcm"):
                     learner["lastReview"] = dates["lastMcm"]
                 apply_attendance_summary(learner, attendance_by_id.get(int(row.id)))
+        for learner in learners:
+            apply_otjh_to_date_metrics(learner)
     except Exception:
         logger.exception("coach_caseload_load_failed coach_account_id=%s", owner_email)
         if paginated and not refresh_live_snapshots and owns_caseload_lock:

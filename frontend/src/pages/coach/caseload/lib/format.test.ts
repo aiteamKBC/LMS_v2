@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getOtjhGapStatus } from './format';
+import { getOtjhGapStatus, otjhProgressAsOfToday, targetHoursAsOfToday } from './format';
 
 describe('getOtjhGapStatus', () => {
   it.each([
@@ -27,5 +27,72 @@ describe('getOtjhGapStatus', () => {
       status: 'unavailable',
       available: false,
     });
+  });
+});
+
+describe('targetHoursAsOfToday', () => {
+  const today = new Date(2026, 5, 15);
+
+  it('returns zero before the programme starts', () => {
+    expect(targetHoursAsOfToday(120, '20 Jun 2026', '20 Jun 2027', today)).toBe(0);
+  });
+
+  it('returns the full training-plan total on or after the planned end date', () => {
+    expect(targetHoursAsOfToday(120, '20 Jun 2025', '14 Jun 2026', today)).toBe(120);
+    expect(targetHoursAsOfToday(120, '20 Jun 2025', '15 Jun 2026', today)).toBe(120);
+  });
+
+  it('prorates the total by elapsed programme days while in progress', () => {
+    expect(targetHoursAsOfToday(120, '01 Jun 2026', '01 Jul 2026', today)).toBe(56);
+  });
+
+  it('returns unavailable when the source dates or total are missing', () => {
+    expect(targetHoursAsOfToday(120, '--', '01 Jul 2026', today)).toBeNull();
+    expect(targetHoursAsOfToday(0, '01 Jun 2026', '01 Jul 2026', today)).toBeNull();
+  });
+});
+
+describe('otjhProgressAsOfToday', () => {
+  it('uses the API-owned target and RAG contract when it is present', () => {
+    const result = otjhProgressAsOfToday({
+      otjhCompleted: 40,
+      otjhTarget: 999,
+      otjhPlanned: 120,
+      otjhTargetAsOfToday: 56,
+      otjhProgressAsOfToday: 71.43,
+      otjhShortfallHours: 16,
+      otjhDeltaHours: -16,
+      otjhRagStatus: 'on-track',
+      startDate: '01 Jun 2026',
+      plannedEndDate: '01 Jul 2026',
+    }, new Date(2026, 5, 15));
+
+    expect(result).toEqual({
+      actualHours: 40,
+      targetHours: 56,
+      percent: 71.43,
+      gapHours: 16,
+      deltaHours: -16,
+      status: 'on-track',
+    });
+  });
+
+  it('uses the paced target for both the percentage and the RAG status', () => {
+    const result = otjhProgressAsOfToday({
+      otjhCompleted: 40,
+      otjhTarget: 999,
+      otjhPlanned: 120,
+      startDate: '01 Jun 2026',
+      plannedEndDate: '01 Jul 2026',
+    }, new Date(2026, 5, 15));
+
+    expect(result.targetHours).toBe(56);
+    expect(result.percent).toBeCloseTo((40 / 56) * 100);
+    expect(result.deltaHours).toBe(-16);
+    expect(result.status).toBe('on-track');
+  });
+
+  it('falls back to the API target when the programme window is unavailable', () => {
+    expect(otjhProgressAsOfToday({ otjhCompleted: 70, otjhTarget: 90 }).targetHours).toBe(90);
   });
 });

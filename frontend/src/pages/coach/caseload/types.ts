@@ -83,6 +83,13 @@ export interface Learner {
   /** Total planned hours for the whole programme. */
   otjhPlanned?: number;
   otjhMinimum?: number;
+  /** API-owned target/RAG contract, paced to the business date. */
+  otjhTargetAsOfToday?: number | null;
+  otjhProgressAsOfToday?: number | null;
+  otjhShortfallHours?: number | null;
+  otjhDeltaHours?: number | null;
+  otjhRagStatus?: 'at-risk' | 'need-attention' | 'on-track' | 'unavailable' | null;
+  otjhRagSource?: string | null;
   /** completed - target, as a string. Negative means behind the current target. */
   otjhProgressHours?: string;
   otjhStatus?: string;
