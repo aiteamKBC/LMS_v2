@@ -31,7 +31,7 @@ function pdfText(doc: ReturnType<typeof buildLearnersPdf>) {
 }
 
 describe('coach learners PDF', () => {
-  it('places OTJH before its calculated progress and omits component and group columns', () => {
+  it('labels accepted and target OTJH before its calculated progress and omits component and group columns', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-10-04T10:00:00Z'));
     const content = pdfText(buildLearnersPdf([learner], 'Coach Example', logo));
@@ -40,7 +40,7 @@ describe('coach learners PDF', () => {
     for (const value of [
       'Coach Learners', 'Learner caseload export', 'GENERATED', '04 Oct 2026',
       'LEARNERS INCLUDED', 'PREPARED BY', 'Coach Example', 'Synthetic Learner',
-      'OTJH', '70h / 80h', 'OTJH Progress', '88%',
+      'Accepted / Target OTJH', '70h / 80h', 'OTJH Progress', 'Attendence', '88%',
       'Start date', '01 Jan 2026', 'Planned end date', '01 Feb 2027', 'Page 1 of 1',
     ]) expect(content).toContain(value);
     expect(content).not.toMatch(/\bRisk\b/);
@@ -49,7 +49,7 @@ describe('coach learners PDF', () => {
     expect(content).not.toMatch(/\bGroup\b/);
     expect(content).not.toContain('Example Group');
     expect(content).not.toContain('01 Jan 2027');
-    expect(content.indexOf('OTJH')).toBeLessThan(content.indexOf('OTJH Progress'));
+    expect(content.indexOf('Accepted / Target OTJH')).toBeLessThan(content.indexOf('OTJH Progress'));
     expect(content.indexOf('70h / 80h')).toBeLessThan(content.indexOf('88%'));
     expect(content).not.toContain('12%');
   });

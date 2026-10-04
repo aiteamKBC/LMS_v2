@@ -83,9 +83,9 @@ interface PdfColumn {
 const COLUMNS: PdfColumn[] = [
   { label: 'Name', width: 43 },
   { label: 'Status', width: 27 },
-  { label: 'OTJH', width: 46 },
+  { label: 'Accepted / Target OTJH', width: 46 },
   { label: 'OTJH Progress', width: 24 },
-  { label: 'Attend.', width: 24 },
+  { label: 'Attendence', width: 24 },
   { label: 'Start date', width: 30 },
   { label: 'Planned end date', width: 33 },
   { label: 'Programme', width: 46 },
