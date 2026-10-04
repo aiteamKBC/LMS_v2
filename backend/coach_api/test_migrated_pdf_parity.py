@@ -286,6 +286,118 @@ class MigratedPdfStoredDocumentTests(TestCase):
         self.assertEqual(bytes(again.pdf_bytes), bytes(document.pdf_bytes))
         self.assertEqual(MigratedReviewDocument.objects.count(), 1)
 
+    def test_two_downloads_reuse_generated_bytes_for_coach_and_both_parties(self):
+        from .review_pdf import coach_mcm_pdf
+
+        saved = ensure_document(self.review, **CONTEXT)
+        original = bytes(saved.pdf_bytes)
+        definition = {"migratedForm": True, "pdf": {"available": True}}
+        with patch("coach_api.migrated_completion.build_pdf", side_effect=AssertionError("Regeneration")), \
+             patch.object(endpoints, "ensure_document", side_effect=AssertionError("Download generated")), \
+             patch("coach_api.views._imported_review_definition", return_value=definition), \
+             patch("coach_api.auth.authenticated_coach_email", return_value=self.review.owner_email), \
+             patch.object(endpoints, "authenticated_coach_email", return_value=self.review.owner_email), \
+             patch("learner_api.aptem_review_pdf.original_review_pdf", side_effect=AssertionError("Historical route")):
+            for attempt in range(2):
+                coach = unwrap(coach_mcm_pdf)(RequestFactory().get("/"), self.review.event_key)
+                self.assertEqual(coach.status_code, 200)
+                self.assertEqual(coach.content, original)
+                for role in ("learner", "employer"):
+                    with self.subTest(role=role, attempt=attempt), \
+                         patch.object(endpoints, "authenticate_request", return_value=SimpleNamespace(role=role)), \
+                         patch.object(endpoints, "_party_overlay", return_value=self.review):
+                        response = endpoints.migrated_review_party_pdf(RequestFactory().get("/"), self.review.event_key)
+                        self.assertEqual(response.status_code, 200)
+                        self.assertEqual(response.content, original)
+                        self.assertEqual(hashlib.sha256(response.content).hexdigest(), saved.sha256)
+        self.assertEqual(list(MigratedReviewDocument.objects.values_list("pk", flat=True)), [saved.pk])
+        saved.refresh_from_db()
+        self.assertEqual(bytes(saved.pdf_bytes), original)
+        self.assertEqual(saved.sha256, hashlib.sha256(original).hexdigest())
+
+    def test_pre_completion_cannot_download_even_if_a_document_and_all_signatures_exist(self):
+        from .review_pdf import coach_mcm_pdf
+
+        saved = ensure_document(self.review, **CONTEXT)
+        with patch("coach_api.views._imported_review_definition", return_value={"migratedForm": True, "pdf": {"available": True}}), \
+             patch("coach_api.auth.authenticated_coach_email", return_value=self.review.owner_email), \
+             patch.object(endpoints, "authenticated_coach_email", return_value=self.review.owner_email), \
+             patch.object(endpoints, "_coach_review", return_value=(self.review.owner_email, {
+                 "instance": {"id": self.review.event_key, "learnerId": self.review.learner_id},
+                 "historicalReview": {"id": str(self.review.source_review_id)},
+             })), \
+             patch.object(endpoints, "ensure_document", side_effect=AssertionError("Download generated")):
+            for status in ("not-scheduled", "scheduled", "in-progress", "awaiting-signature"):
+                self.review.status = status
+                self.review.save(update_fields=["status"])
+                with self.subTest(status=status):
+                    response = unwrap(coach_mcm_pdf)(RequestFactory().get("/"), self.review.event_key)
+                    self.assertEqual(response.status_code, 409)
+                    response = unwrap(endpoints.migrated_review_generate_pdf)(RequestFactory().post("/"), self.review.event_key)
+                    self.assertEqual(response.status_code, 409)
+                    for role in ("learner", "employer"):
+                        with patch.object(endpoints, "authenticate_request", return_value=SimpleNamespace(role=role)), \
+                             patch.object(endpoints, "_party_overlay", return_value=self.review):
+                            response = endpoints.migrated_review_party_pdf(RequestFactory().get("/"), self.review.event_key)
+                            self.assertEqual(response.status_code, 404)
+        saved.refresh_from_db()
+        self.assertEqual(saved.sha256, hashlib.sha256(bytes(saved.pdf_bytes)).hexdigest())
+
+    def test_generation_failure_keeps_completion_and_explicit_retry_is_idempotent(self):
+        definition = {"migratedForm": True, "instance": {"id": self.review.event_key, "learnerId": self.review.learner_id},
+                      "historicalReview": {"id": str(self.review.source_review_id)}}
+        with patch.object(endpoints, "_coach_review", return_value=(self.review.owner_email, definition)), \
+             patch.object(endpoints, "_pdf_context", return_value=CONTEXT), \
+             patch("coach_api.migrated_completion.build_pdf", side_effect=[RuntimeError("Synthetic render failure"), b"%PDF-retry"]) as render:
+            def post():
+                return unwrap(endpoints.migrated_review_generate_pdf)(RequestFactory().post("/"), self.review.event_key)
+
+            self.assertEqual(post().status_code, 503)
+            self.review.refresh_from_db()
+            self.assertEqual(self.review.status, "completed")
+            self.assertEqual(self.review.completed_at, AT)
+            self.assertFalse(MigratedReviewDocument.objects.exists())
+            first, second = post(), post()
+            self.assertEqual((first.status_code, second.status_code), (200, 200))
+            self.assertEqual(json.loads(first.content)["documentId"], json.loads(second.content)["documentId"])
+            self.assertEqual(render.call_count, 2)  # One failed render, one successful render.
+        self.assertEqual(MigratedReviewDocument.objects.count(), 1)
+        saved = MigratedReviewDocument.objects.get(overlay=self.review)
+        self.assertEqual(bytes(saved.pdf_bytes), b"%PDF-retry")
+        self.assertEqual(saved.sha256, hashlib.sha256(b"%PDF-retry").hexdigest())
+
+    def test_completed_party_download_without_document_returns_clear_conflict(self):
+        for role in ("learner", "employer"):
+            with self.subTest(role=role), \
+                 patch.object(endpoints, "authenticate_request", return_value=SimpleNamespace(role=role)), \
+                 patch.object(endpoints, "_party_overlay", return_value=self.review), \
+                 patch.object(endpoints, "ensure_document", side_effect=AssertionError("Download generated")):
+                response = endpoints.migrated_review_party_pdf(RequestFactory().get("/"), self.review.event_key)
+                self.assertEqual(response.status_code, 409)
+                self.assertEqual(json.loads(response.content)["detail"], "The LMS PDF has not been generated yet.")
+        self.assertFalse(MigratedReviewDocument.objects.exists())
+
+    def test_admin_view_as_can_read_the_selected_coachs_stored_document(self):
+        from .review_pdf import coach_mcm_pdf
+
+        saved = ensure_document(self.review, **CONTEXT)
+        account = SimpleNamespace(role="admin", subject_type="staff", subject_id=1)
+        admin = SimpleNamespace(id=1, access="super-admin", email="admin@example.invalid", username="Admin")
+        coach = SimpleNamespace(id=2, email=self.review.owner_email)
+        with patch("login.permissions.authenticate_request", return_value=account), \
+             patch("login.permissions._accesses_of", return_value=frozenset({"super-admin"})), \
+             patch("coach_api.auth.StaffUser.objects.filter") as staff_rows, \
+             patch("coach_api.auth._staff_access", return_value="super-admin"), \
+             patch("coach_api.auth._find_coach_staff", return_value=coach), \
+             patch("coach_api.views._imported_review_definition", return_value={"migratedForm": True, "pdf": {"available": True}}), \
+             patch.object(endpoints, "ensure_document", side_effect=AssertionError("Read-only download generated")):
+            staff_rows.return_value.only.return_value.first.return_value = admin
+            request = RequestFactory().get("/?viewAsCoach=" + self.review.owner_email)
+            request.login_account = account
+            response = coach_mcm_pdf(request, self.review.event_key)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.content, bytes(saved.pdf_bytes))
+
     def test_old_pdf_is_unchanged_for_coach_learner_and_employer_downloads(self):
         original = b"%PDF-original-portrait-migrated-document"
         saved = MigratedReviewDocument.objects.create(overlay=self.review, pdf_bytes=original,

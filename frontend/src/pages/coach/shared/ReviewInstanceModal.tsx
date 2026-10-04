@@ -1324,11 +1324,12 @@ export function ReviewInstanceModal({
                 {definition.migratedForm && definition.localStatus === 'completed' && !definition.pdf?.available && !isViewingAsCoach ? (
                   <button type="button" onClick={() => { void generateMigratedPdf(); }} disabled={busy} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-60">Generate LMS review PDF</button>
                 ) : null}
-                <ReviewPdfDownload
-                  availability={definition.pdf}
+                {(definition.source !== 'aptem' || definition.instance.status === 'completed') && <ReviewPdfDownload
+                  availability={definition.migratedForm && !definition.pdf?.available
+                    ? { available: false, reason: 'The signed PDF is not available yet.' }
+                    : definition.pdf}
                   onDownload={() => downloadReviewInstancePdf(definition.instance.id)}
-                  label={definition.migratedForm ? 'Download LMS-generated review PDF' : undefined}
-                />
+                />}
               </>
             ) : null}
           </>

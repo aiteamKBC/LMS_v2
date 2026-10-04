@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LearnerReviewDefinition } from '@/api/learnerCalendar';
 import { LearnerReviewInstanceForm } from '../LearnerReviewInstanceForm';
@@ -48,5 +48,51 @@ describe('migrated progress for review participants', () => {
   it('keeps an uncalculated continuation visibly uncalculated', () => {
     render(<LearnerReviewInstanceForm definition={{ ...definition, progressSnapshot: null }} />);
     expect(screen.getByText('No progress snapshot calculated yet.')).toBeVisible();
+  });
+});
+
+describe.each(['participant', 'employer'] as const)('migrated signed PDF for %s', viewerRole => {
+  it.each(['not-scheduled', 'scheduled', 'in-progress', 'awaiting-signature'])('hides signed downloads while %s even with stale availability', status => {
+    const download = vi.fn();
+    render(<LearnerReviewInstanceForm definition={{ ...definition,
+      instance: { ...definition.instance!, status }, pdf: { available: true, reason: '' },
+    }} viewerRole={viewerRole} onDownload={download} />);
+    expect(screen.queryByRole('button', { name: /^Download.*PDF$/ })).not.toBeInTheDocument();
+    expect(download).not.toHaveBeenCalled();
+  });
+
+  it('hides signed downloads for an uninitialized preview with historical availability', () => {
+    render(<LearnerReviewInstanceForm definition={{ ...definition, migratedForm: false, previewOnly: true,
+      instance: null, pdf: { available: true, reason: '', source: 'aptem' },
+    }} viewerRole={viewerRole} onDownload={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: /^Download.*PDF$/ })).not.toBeInTheDocument();
+  });
+
+  it.each(['aptem_mcm', 'aptem_progress_review'])('downloads the stored completed %s document', async reviewTypeCode => {
+    const download = vi.fn().mockResolvedValue(undefined);
+    render(<LearnerReviewInstanceForm definition={{ ...definition,
+      template: { ...definition.template, reviewTypeCode }, pdf: { available: true, reason: '' },
+    }} viewerRole={viewerRole} onDownload={download} />);
+    const button = screen.getByRole('button', { name: 'Download signed PDF' });
+    expect(button).toBeEnabled();
+    fireEvent.click(button);
+    await waitFor(() => expect(download).toHaveBeenCalledOnce());
+  });
+
+  it.each([undefined, { available: false, reason: 'Generate the LMS review PDF after completion.' }])('keeps missing completed PDFs unavailable: %s', pdf => {
+    const download = vi.fn();
+    render(<LearnerReviewInstanceForm definition={{ ...definition, pdf }} viewerRole={viewerRole} onDownload={download} />);
+    const button = screen.getByRole('button', { name: 'Download signed PDF' });
+    expect(button).toBeDisabled();
+    expect(screen.getByText('The signed PDF is not available yet.')).toBeVisible();
+    fireEvent.click(button);
+    expect(download).not.toHaveBeenCalled();
+  });
+
+  it('preserves a clear server refusal if stored availability changes before download', async () => {
+    render(<LearnerReviewInstanceForm definition={{ ...definition, pdf: { available: true, reason: '' } }}
+      viewerRole={viewerRole} onDownload={vi.fn().mockRejectedValue(new Error('The LMS PDF has not been generated yet.'))} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Download signed PDF' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('The LMS PDF has not been generated yet.');
   });
 });

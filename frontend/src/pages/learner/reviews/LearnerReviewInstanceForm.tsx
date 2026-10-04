@@ -389,7 +389,12 @@ export function LearnerReviewInstanceForm({
 
       <div ref={signatureSection} tabIndex={-1} aria-label="Signature step" className="scroll-mt-6 space-y-3 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500">
         <ReviewSignatures signatures={definition.signatures} />
-        <ReviewPdfDownload availability={definition.pdf} onDownload={onDownload} label={definition.migratedForm ? 'Download LMS-generated review PDF' : undefined} />
+        {(definition.source !== 'aptem' || definition.instance?.status === 'completed') && <ReviewPdfDownload
+          availability={definition.migratedForm && !definition.pdf?.available
+            ? { available: false, reason: 'The signed PDF is not available yet.' }
+            : definition.pdf}
+          onDownload={onDownload}
+        />}
       {canSign && signatureOpen ? mcmMonthlyLog ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-3 sm:p-6" role="presentation">
           <div className="flex max-h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-violet-200 bg-background-50 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="mcm-sign-dialog-title">
