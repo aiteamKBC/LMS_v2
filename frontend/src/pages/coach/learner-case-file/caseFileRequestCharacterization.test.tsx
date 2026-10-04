@@ -166,6 +166,18 @@ describe('Learner Case File request characterization', () => {
     expect(trace.some(item => item.startsWith('/coach_api/coach/marking-queue'))).toBe(false);
   });
 
+  it('retains the canonical table activity counts separately from KSB progress', async () => {
+    mocks.fetchLearnerMetrics.mockResolvedValue({ ...metrics,
+      programme: { completed: 137, total: 157, percent: 87.26, status: 'ready' },
+      ksb: { ...metrics.ksb, percent: 85.27 },
+    });
+    const { result } = renderHook(() => useCoachLearnerCaseFileData({ learnerId: '316' }));
+    await waitFor(() => expect(result.current.data?.reviewsLoading).toBe(false));
+    expect(result.current.data).toMatchObject({
+      activitiesCompleted: 137, activitiesTotal: 157, overallProgress: 87.26, ksbProgress: 85.27,
+    });
+  });
+
   it('publishes the profile metrics without waiting for slow Aptem activity', async () => {
     mocks.fetchLearnerDetail.mockResolvedValue(learnerDetail(true));
     let finishActivity!: (value: { activities: never[]; subjects: never[]; activity_sources: object; activity_source_issues: object }) => void;
@@ -236,6 +248,15 @@ describe('Learner Case File request characterization', () => {
     expect(result.current.data?.displayName).toBe('Stable Learner');
     expect(result.current.data?.reviewGroups).toEqual([]);
     expect(result.current.data?.overallProgress).toBe(75);
+  });
+
+  it('uses the canonical detail start date ahead of the shell date', async () => {
+    mocks.fetchLearnerDetail.mockResolvedValue({ ...learnerDetail(false), programmeStartDate: '2025-10-15' });
+    const { result } = renderHook(() => useCoachLearnerCaseFileData({
+      learnerId: '316', kind: 'apprenticeship', enrolmentId: '5170',
+    }));
+    await waitFor(() => expect(result.current.data?.startDate).toBe('2025-10-15'));
+    expect(result.current.data?.gatewayReviewDate).toBe('04 May 2027');
   });
 
   it('preserves shell profile fields and leaves missing values unavailable', async () => {

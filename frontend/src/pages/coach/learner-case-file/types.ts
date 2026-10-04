@@ -65,6 +65,7 @@ export interface CoachCaseloadLearner {
   recentFlag: string | null;
   progressVariance: string;
   startDate: string;
+  otjhProgrammeStartDate?: string;
   gatewayReviewDate: string;
   plannedEndDate: string;
   coachName?: string;
@@ -223,6 +224,8 @@ export interface CoachLearnerCaseFileData {
   employerEmail: string;
   employerPhone: string;
   overallProgress: number | null;
+  activitiesCompleted?: number | null;
+  activitiesTotal?: number | null;
   attendanceRate: number | null;
   attendancePresentCount: number | null;
   attendanceSessionCount: number | null;

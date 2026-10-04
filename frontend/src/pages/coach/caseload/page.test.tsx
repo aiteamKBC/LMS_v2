@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { CaseloadApiLearner } from './types';
@@ -38,6 +38,23 @@ const learner = {
 } satisfies CaseloadApiLearner;
 
 describe('Coach caseload loading', () => {
+  it('opens the learner profile with the exact activity counts shown in the selected table row', async () => {
+    function Destination() {
+      const location = useLocation();
+      return <output data-testid="destination">{JSON.stringify({ pathname: location.pathname, state: location.state })}</output>;
+    }
+    render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={[{
+      ...learner, componentsCompleted: 137, componentsPlanned: 157,
+      activityProgress: 87.26, activityProgressAvailable: true,
+    }]} /><Destination /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: 'View Profile' }));
+    const destination = JSON.parse(screen.getByTestId('destination').textContent || '{}');
+    expect(destination.pathname).toBe('/coach/learner-case-file');
+    expect(destination.state).toMatchObject({ learnerId: '42',
+      activitySnapshot: { learnerId: '42', completed: 137, total: 157, percent: 87.26 },
+    });
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     fetchCoachCalendarEvents.mockResolvedValue({ events: [] });
@@ -96,8 +113,8 @@ describe('Coach caseload loading', () => {
 
   it('sorts dashboard learners by start date in both directions and keeps missing dates last', async () => {
     const learners = [
-      { ...learner, id: 'newer', name: 'Newer Learner', startDate: '15 Jun 2026' },
-      { ...learner, id: 'older', name: 'Older Learner', startDate: '02 May 2025' },
+      { ...learner, id: 'newer', name: 'Newer Learner', startDate: '15 Jun 2026', displayStartDate: '15 Jun 2026' },
+      { ...learner, id: 'older', name: 'Older Learner', startDate: '02 May 2025', displayStartDate: '02 May 2025' },
       { ...learner, id: 'missing-start', name: 'Missing Start Learner', startDate: '--' },
     ] satisfies CaseloadApiLearner[];
     render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={learners} /></MemoryRouter>);
@@ -115,6 +132,30 @@ describe('Coach caseload loading', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Sort by Start Date' }));
     expect(learnerOrder()).toEqual(['Newer Learner', 'Older Learner', 'Missing Start Learner']);
     expect(startDateHeader).toHaveAttribute('aria-sort', 'descending');
+  });
+
+  it('shows and sorts the Case File date while retaining the contractual date for calculations', async () => {
+    const learners = [
+      { ...learner, id: 'later', name: 'Later Display Learner', startDate: '2025-10-20', displayStartDate: '01 Jan 2020', otjhProgrammeStartDate: '01 Jan 2020' },
+      { ...learner, id: 'earlier', name: 'Earlier Display Learner', startDate: '2025-10-15', displayStartDate: '--', otjhProgrammeStartDate: '--' },
+      { ...learner, id: 'missing', name: 'Missing Display Learner', startDate: '--', displayStartDate: '01 Jan 2020' },
+      { ...learner, id: 'omitted', name: 'Omitted Display Learner', startDate: '--' },
+    ] satisfies CaseloadApiLearner[];
+    render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={learners} /></MemoryRouter>);
+
+    await screen.findByText('Later Display Learner');
+    expect(screen.getByText('15 Oct 2025')).toBeVisible();
+    expect(screen.getByText('20 Oct 2025')).toBeVisible();
+    expect(screen.queryByText('01 Jan 2020')).not.toBeInTheDocument();
+    for (const name of ['Missing Display Learner', 'Omitted Display Learner']) {
+      const row = screen.getByText(name).closest('tr')!;
+      expect(row.querySelector('td > div[class*="date"]')).toHaveTextContent(/^--$/);
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Sort by Start Date' }));
+    const rows = Array.from(screen.getByRole('table').querySelectorAll('tbody tr'));
+    expect(rows[0]).toHaveTextContent('Earlier Display Learner');
+    expect(rows[1]).toHaveTextContent('Later Display Learner');
+    expect(rows[2]).toHaveTextContent('Missing Display Learner');
   });
 
   it('filters dashboard-owned learners locally and paginates after fifteen rows', async () => {

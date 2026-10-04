@@ -166,6 +166,7 @@ export type OtjhProgressInput = Partial<Pick<
   | 'otjhDeltaHours'
   | 'otjhRagStatus'
   | 'startDate'
+  | 'otjhProgrammeStartDate'
   | 'plannedEndDate'
 >>;
 
@@ -216,7 +217,7 @@ export function otjhProgressAsOfToday(
     ? learner.otjhPlanned
     : null;
   const pacedTarget = wholePlan !== null
-    ? targetHoursAsOfToday(wholePlan, learner.startDate, learner.plannedEndDate, today)
+    ? targetHoursAsOfToday(wholePlan, learner.otjhProgrammeStartDate ?? learner.startDate, learner.plannedEndDate, today)
     : null;
   const apiTarget = typeof learner.otjhTarget === 'number' && Number.isFinite(learner.otjhTarget) && learner.otjhTarget > 0
     ? learner.otjhTarget
@@ -273,7 +274,10 @@ export function normalizeLearner(
   learner: CaseloadApiLearner,
   attendance?: AttendanceApiLearner | null,
 ): Learner {
-  const startDate = displayValue(learner.startDate || learner.lastAttendanceDate);
+  const parsedStart = parseDisplayDate(learner.startDate);
+  const startDate = parsedStart
+    ? parsedStart.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+    : displayValue(learner.startDate);
   const gatewayReviewDate = displayValue(
     learner.gatewayReviewDate || learner.lastProgressReview || learner.lastReview || learner.nextReview,
   );
@@ -302,7 +306,7 @@ export function normalizeLearner(
     nextCoaching: displayValue(learner.nextCoaching),
     nextReview: displayValue(learner.nextReview),
     lastContact: displayValue(learner.lastContact),
-    lastAttendanceDate: startDate,
+    lastAttendanceDate: displayValue(learner.otjhProgrammeStartDate ?? (learner.startDate || learner.lastAttendanceDate)),
     liveAttendanceRate: hasAttendance ? clampPercent(attendance?.attendance) : null,
     liveAttendanceRateAvailable: hasAttendance,
     attendanceSessions: hasAttendance ? toOptionalNumber(attendance?.sessions) : null,
