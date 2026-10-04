@@ -982,6 +982,8 @@ export interface CurriculumScopeStructureCounts {
 
 export interface CurriculumProgrammeAssignedLearner {
   id: number | string;
+  /** EnrolmentUser primary key used by learner-assignment writes. */
+  enrolmentId?: number | string;
   name: string;
   email: string;
   programme: string;
@@ -1013,6 +1015,13 @@ export interface CurriculumProgrammeAssignedLearner {
   reflectionActualOtjh?: number | null;
   reflectionExpectedOtjh?: number | null;
   reflectionCount?: number;
+}
+
+/** The identifier accepted by curriculum learner-assignment writes. */
+export function curriculumLearnerAssignmentId(
+  learner: Pick<CurriculumProgrammeAssignedLearner, 'id' | 'enrolmentId'>,
+) {
+  return String(learner.enrolmentId ?? learner.id);
 }
 
 export interface CurriculumLearnerKsbConsumptionItem {

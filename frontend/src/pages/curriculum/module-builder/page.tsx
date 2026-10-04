@@ -24,6 +24,7 @@ import {
   fetchCurriculumStandards,
   fetchCurriculumTeamsMeetingSummaries,
   fetchCurriculumTutors,
+  curriculumLearnerAssignmentId,
   type CurriculumCohort,
   type CurriculumGroup,
   type CurriculumHoliday,
@@ -2399,7 +2400,13 @@ export default function ModuleBuilder() {
         throw new Error('The original dates end after the selected Cohort. Choose an independent Teams meeting or a Cohort that contains the original dates.');
       }
       const roster = await fetchCurriculumScopeLearnerRoster('group', dialog.group.id, { learnerStatus: 'active' });
-      const learnerIds = roster.assignedLearners.map(learner => String(learner.id)).filter(Boolean);
+      // The scope roster is sourced from LearnerProfile rows.  Assignment
+      // endpoints write the enrolment record, so always prefer the explicit
+      // bridge id; falling back to the profile id keeps old environments
+      // readable while they are being backfilled.
+      const learnerIds = roster.assignedLearners
+        .map(curriculumLearnerAssignmentId)
+        .filter(Boolean);
       let ksbSource: DuplicateKsbSource | undefined;
       if (!sameProgramme) {
         const [allKsbSets, allStandards] = await Promise.all([
@@ -2445,12 +2452,30 @@ export default function ModuleBuilder() {
         : '';
       if (assignment.failed.length) {
         const failed = [...assignment.failed];
+        const retryAssignments = async (failedIds: string[]) => {
+          // Re-read the Group before retrying.  This also upgrades failures
+          // from an older bundle that sent profile ids to the enrolment ids
+          // now accepted by the assignment endpoint.
+          const latestRoster = await fetchCurriculumScopeLearnerRoster(
+            'group', dialog.group.id, { learnerStatus: 'active' },
+          );
+          const wanted = new Set(failedIds.map(String));
+          const retryIds = latestRoster.assignedLearners
+            .filter(learner => wanted.has(String(learner.id)) || wanted.has(String(learner.enrolmentId)))
+            .map(curriculumLearnerAssignmentId);
+          if (!retryIds.length) {
+            throw new Error('No active learners from the selected Group are available to retry.');
+          }
+          return applyAssignments([...new Set(retryIds)]);
+        };
         setActionMessage(`Module created, but ${failed.length} learner assignment${failed.length === 1 ? '' : 's'} failed.${assignment.failureMessage ? ` ${assignment.failureMessage}` : ''}`);
         setActionMessageRetry(() => () => {
-          void applyAssignments(failed).then(retry => {
+          void retryAssignments(failed).then(retry => {
             if (retry.failed.length) {
               setActionMessage(`Retry completed with ${retry.failed.length} learner assignment failure${retry.failed.length === 1 ? '' : 's'}.`);
-              setActionMessageRetry(() => () => { void applyAssignments(retry.failed); });
+              setActionMessageRetry(() => () => {
+                void retryAssignments(retry.failed).catch(error => setActionMessage(error instanceof Error ? error.message : 'Unable to retry learner assignments.'));
+              });
             } else {
               setActionMessage(null);
               setActionMessageRetry(null);

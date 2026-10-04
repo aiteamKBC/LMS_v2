@@ -15842,6 +15842,26 @@ LIVE_SESSION_TRACKING_SETTING_KEYS = {
     'teamsDurationMinutes', 'sessionDay', 'sessionRescheduled',
 }
 
+# A shared duplicate reads these values from its canonical source module.  They
+# are deliberately not persisted on the alias: saving an alias must not create
+# a second owner for the same live_sessions row or leave stale occurrence IDs
+# behind after the source meeting changes.
+SHARED_TEAMS_DELIVERY_SETTING_KEYS = {
+    'teamsLiveSessionId', 'teamsSessionNumber', 'teamsEventId',
+    'teamsOnlineMeetingId', 'teamsCalendarSeries', 'teamsMeetingUrl',
+    'liveSessionUrl', 'teamsMeetingOptionsUrl', 'teamsProvider',
+    'teamsOccurrenceId', 'teamsWebLink', 'teamsStartDateTimeUtc',
+    'teamsDurationMinutes', 'sessionDateTimeUtc', 'sessionRescheduled',
+}
+
+
+def strip_shared_teams_delivery_settings(settings):
+    """Remove source-owned Teams identity from a shared-module payload."""
+    return {
+        key: value for key, value in (settings or {}).items()
+        if key not in SHARED_TEAMS_DELIVERY_SETTING_KEYS
+    }
+
 
 class ModuleAuthoringValidationError(ValueError):
     def __init__(self, errors):
@@ -17238,6 +17258,77 @@ def teams_module_owner_id(module_catalogue_id):
             break
         current = source
     return current
+
+
+def shared_teams_component_settings(module_catalogue_id):
+    """Return booked live-session settings in authored component order."""
+    module_catalogue_id = clean_str(module_catalogue_id)
+    if not module_catalogue_id:
+        return []
+    week_rows = active_week_rows(authoring_fetch_all(
+        AUTHORING_WEEKS_TABLE,
+        'module_catalogue_id = %s',
+        [module_catalogue_id],
+        'display_order, week_number, id',
+    ))
+    week_order = {
+        clean_str(row.get('id')): index
+        for index, row in enumerate(week_rows)
+    }
+    rows = authoring_fetch_all(
+        AUTHORING_COMPONENTS_TABLE,
+        f'module_catalogue_id = %s and {LIVE_SESSION_TYPE_SQL}',
+        [module_catalogue_id],
+        'display_order, id',
+    )
+    rows = sorted(
+        active_component_rows(rows),
+        key=lambda row: (
+            week_order.get(clean_str(row.get('week_id')), 999999),
+            parse_int(row.get('display_order'), 999999),
+            clean_str(row.get('id')),
+        ),
+    )
+    return [
+        component_builder_settings(row)
+        for row in rows
+        if normalise_component_type(row.get('type')) == 'live_session'
+    ]
+
+
+def apply_shared_teams_settings_to_weeks(module, weeks):
+    """Project the source meeting onto an alias for read-only display.
+
+    The alias keeps its own component rows and stores no provider IDs.  The
+    source settings are overlaid only in the response so the builder, calendar
+    and Teams dialogs show the same meeting.  The save path strips these keys
+    again before persisting an alias.
+    """
+    source_id = clean_str((module or {}).get('teams_shared_source_module_id'))
+    if not source_id:
+        return weeks
+    source_id = teams_module_owner_id(source_id)
+    source_settings = shared_teams_component_settings(source_id)
+    if not source_settings:
+        return weeks
+    index = 0
+    for week in weeks or []:
+        for component in week.get('components') or []:
+            if normalise_component_type(component.get('type')) != 'live_session':
+                continue
+            if index >= len(source_settings):
+                return weeks
+            current = component.get('settings') if isinstance(component.get('settings'), dict) else {}
+            source = source_settings[index]
+            component['settings'] = {
+                **current,
+                **{
+                    key: value for key, value in source.items()
+                    if key in SHARED_TEAMS_DELIVERY_SETTING_KEYS and value not in (None, '')
+                },
+            }
+            index += 1
+    return weeks
 
 
 def teams_delivery_metadata_from_live_session(module_catalogue_id):
@@ -19380,6 +19471,7 @@ def get_authoring_structure_payload(module_catalogue_id, include_archived=False)
     # therefore consume several dates; its header uses the first one. Content-only
     # weeks retain the legacy one-week/one-session behavior.
     apply_module_session_plan_to_weeks(module, group_row, weeks)
+    apply_shared_teams_settings_to_weeks(module, weeks)
 
     advanced = advanced_response(advanced_rows[0] if advanced_rows else None)
     payload = {
@@ -19647,6 +19739,10 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
                 weeks,
                 holidays=holidays_by_cohort.get(clean_str(module.get('cohort_id'))) or [],
             )
+            # A shared duplicate has no live_sessions row of its own. Project
+            # the canonical source's links into this response so every Live
+            # Session still shows the shared meeting without copying ownership.
+            apply_shared_teams_settings_to_weeks(module, weeks)
         payload = {
             'id': f'module-{catalogue_id}',
             'moduleId': catalogue_id,
@@ -21073,6 +21169,8 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
                 component_settings = preserve_additional_meeting_settings(
                     component_settings, stored_components_by_id.get(component_id),
                 )
+                if teams_shared_source_module_id:
+                    component_settings = strip_shared_teams_delivery_settings(component_settings)
                 component_ksb_items, component_mapping_payloads = normalise_component_ksb_mappings(
                     module_catalogue_id,
                     component.get('ksbMappings') or [],
@@ -25490,12 +25588,18 @@ def assigned_learners_for_programme(programme_id, lifecycle_status=''):
                     if {'cohort_id', 'group_id'} <= learner_columns
                     else ''
                 )
+                # The curriculum roster is read from Learner.learners, whose
+                # primary key is a LearnerProfile id.  Assignment writes go
+                # through EnrolmentUser and therefore need the bridge id when
+                # one is available; profile ids and enrolment ids are separate
+                # sequences and can also collide with an unrelated learner.
+                enrolment_sql = ', enrolment_id' if 'enrolment_id' in learner_columns else ''
                 cursor.execute(
                     f'''
                     select id, full_name, email, programme, programme_status, cohort,
                            group_name, lifecycle_status, coach_name, coach_email,
                            completed_hours, planned_hours, target_hours, progress_hours,
-                           progress_variance, otjh_status{placement_sql}
+                           progress_variance, otjh_status{placement_sql}{enrolment_sql}
                     from "Learner"."learners"
                     where {scope_sql}
                       {status_sql}
@@ -25518,6 +25622,9 @@ def assigned_learners_for_programme(programme_id, lifecycle_status=''):
             'id': row.get('id'),
             'sourceId': row.get('id'),
             'sourceKind': 'learner',
+            # Use this value for module assignment writes.  ``id`` remains the
+            # profile identity used by progress/roster consumers.
+            'enrolmentId': row.get('enrolment_id'),
             'name': row.get('full_name') or '',
             'email': row.get('email') or '',
             'programme': row.get('programme') or '',
