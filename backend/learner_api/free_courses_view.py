@@ -40,6 +40,7 @@ from curriculum_api.views import (
 
 from .learner_detail import (
     SOURCE_MODELS,
+    _component_files,
     _component_resource_url,
     _video_url_from_settings,
     component_audio_url,
@@ -81,6 +82,9 @@ def _activity(component):
     # toggle in the free-courses builder: true = always open (no gating), false
     # = automatic (locked until the section's materials are complete).
     is_quiz = "quiz" in ctype.lower()
+    # Resolved once: `files` below reports the same document as its first entry,
+    # so the two must be read from one resolution rather than two.
+    resource_url = _component_resource_url(settings)
     return {
         "componentId": _s(component.get("id")),
         "title": _s(component.get("title")),
@@ -88,9 +92,13 @@ def _activity(component):
         "description": _s(component.get("description")) or None,
         "videoUrl": _video_url_from_settings(settings),
         "audioUrl": component_audio_url(settings, ctype),
-        "resourceUrl": _component_resource_url(settings),
+        "resourceUrl": resource_url,
         "contentHtml": _s(settings.get("readingContent")) or None,
         "fileName": file_name,
+        # Everything the author attached, in their order. Entry 0 is the same
+        # file `resourceUrl` points at; the rest are the extra attachments a
+        # free-course reading, deck or podcast can carry.
+        "files": _component_files(settings, resource_url, file_name),
         "downloadAllowed": bool(settings.get("downloadAllowed")),
         "quizId": (_s(settings.get("linkedQuizId")) or None) if is_quiz else None,
         "manualUnlock": bool(settings.get("manualUnlock")) if is_quiz else False,

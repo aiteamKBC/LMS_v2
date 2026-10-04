@@ -5,7 +5,7 @@ import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
-import { auditEventHref, auditFieldValueLabel, auditValueLabel, auditValueTitle, clockLabel, durationLabel, spanLabel, stampLabel, timeMetaLabel } from './activityTime';
+import { auditEventHref, auditFieldLabel, auditFieldValueLabel, auditValueLabel, auditValueTitle, clockLabel, durationLabel, spanLabel, stampLabel, timeMetaLabel } from './activityTime';
 import { useAuditRecordNames } from './auditNames';
 import { actionMeaning, changeStory } from './changeStory';
 import { DEFAULT_WINDOW_DAYS, personHref, windowLimitFor, windowOptionsFor, type AuditTrailScope } from './scope';
@@ -154,6 +154,84 @@ const ACTION_STYLE: Record<string, { label: string; icon: string; dot: string; c
   imported: { label: 'Imported', icon: 'ri-download-cloud-line', dot: 'bg-fuchsia-500', chip: 'border-fuchsia-200 bg-fuchsia-50 text-fuchsia-700' },
 };
 
+/**
+ * The log's columns, in the order the header bar and every row lay them out.
+ *
+ * One grid template shared by both, so a column can never drift out of line
+ * with its own heading. `Change` is the only flexible one: the rest are fixed
+ * widths, because columns that resize to their contents make the whole log
+ * shift sideways as you page through it.
+ */
+type AuditSortKey = 'action' | 'entity' | 'change' | 'user' | 'time';
+
+const AUDIT_COLUMNS: Array<{ key: AuditSortKey; label: string; align?: string }> = [
+  { key: 'action', label: 'Action' },
+  { key: 'entity', label: 'Entity' },
+  { key: 'change', label: 'Change' },
+  { key: 'user', label: 'User' },
+  { key: 'time', label: 'Time' },
+];
+
+const AUDIT_GRID = 'lg:grid lg:grid-cols-[7.5rem_7.5rem_minmax(0,1fr)_9.5rem_5rem_1.75rem] lg:items-start lg:gap-x-4';
+
+/**
+ * What a column sorts on, as text so every column sorts the same way.
+ *
+ * Time is the stored instant rather than the time on screen, which is a local
+ * rendering of it: sorting the rendered string would put 12:05 AM after 11:00 PM.
+ */
+function auditSortValue(event: CurriculumAuditEvent, key: AuditSortKey): string {
+  switch (key) {
+    case 'action': return (event.actionLabel || event.action || '').toLowerCase();
+    case 'entity': return (event.entityLabel || event.entity || '').toLowerCase();
+    case 'change': return (event.title || event.context || '').toLowerCase();
+    case 'user': return (event.actorName || event.actorEmail || event.actorTypeLabel || '').toLowerCase();
+    default: return event.at || '';
+  }
+}
+
+/**
+ * What moved, as one line, above the field-by-field detail.
+ *
+ * Built from the fields themselves rather than from a count, because "2 fields
+ * changed" tells a reader nothing they could not see from the badge beside it.
+ * The field names are deliberately not marked up individually -- this is a
+ * sentence, and the cards below are where each field is addressed on its own.
+ */
+function changeSummarySentence(event: CurriculumAuditEvent, snapshotCount: number): string {
+  const subject = (event.entityLabel || 'record').toLowerCase();
+  if (event.changes.length) {
+    const labels = event.changes.map(change => auditFieldLabel(change.label));
+    const named = labels.length === 1
+      ? labels[0]
+      : labels.length <= 3
+        ? `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`
+        : `${labels.slice(0, 3).join(', ')} and ${labels.length - 3} more`;
+    return `${named} changed on this ${subject}.`;
+  }
+  if (!snapshotCount) return '';
+  if (event.action === 'deleted') {
+    return `This ${subject} was removed. The ${snapshotCount} recorded ${snapshotCount === 1 ? 'value' : 'values'} below are the last copy of what it held.`;
+  }
+  return `Recorded with ${snapshotCount} ${snapshotCount === 1 ? 'value' : 'values'}.`;
+}
+
+/**
+ * Metadata the panel does not show, because the row above already says it
+ * better or because it describes the HTTP request rather than the change.
+ *
+ * `page_label` and `page_path` are the page, which the row names in words.
+ * The four request keys are transport: `request_path` in particular rendered
+ * as a chip reading `/curriculum_api/curriculum/modules/MOD-2026092113431576…
+ * /structure/`, which hands a reader a database id and a route where the row
+ * beside it had already told them a cohort was edited on the Cohort builder.
+ * They are still recorded against the revision for anyone querying the log.
+ */
+const HIDDEN_METADATA = new Set([
+  'page_label', 'page_path', 'page_source', 'page_workspace',
+  'request_path', 'request_method',
+]);
+
 /** A metadata key as words: `file_name` -> `File name`. */
 function metadataLabel(key: string): string {
   const spaced = key.replace(/_/g, ' ').trim();
@@ -190,6 +268,15 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
   const [search, setSearch] = useState('');
   const [serverSearch, setServerSearch] = useState('');
   const [changesPage, setChangesPage] = useState(1);
+  // How the log is ordered, and which days are folded shut.
+  //
+  // Both are about the logs already on screen. The endpoint answers newest-first
+  // and offers no ordering of its own, so a column sort reorders this page and
+  // the header says so rather than letting it read as though it had reordered
+  // every change in the window.
+  const [sortKey, setSortKey] = useState<AuditSortKey>('time');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [collapsedDays, setCollapsedDays] = useState<ReadonlySet<string>>(() => new Set<string>());
 
   const [trail, setTrail] = useState<CurriculumAuditTrail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -338,11 +425,14 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
 
   // Searched and paged by the server. Filtering again here would hide rows the
   // count beside them still counts.
-  const events = trail?.events ?? [];
+  // Held steady across renders, because the sort below and the name lookup
+  // beside it both key off this array: a fresh `[]` on every render would
+  // re-sort the log and re-request the names on every keystroke in the search.
+  const events = useMemo(() => trail?.events ?? [], [trail?.events]);
 
   // Names for the ids a save refers to, so a link field reads as the records it
   // points at rather than as a count of them.
-  const names = useAuditRecordNames(useMemo(() => trail?.events ?? [], [trail?.events]));
+  const names = useAuditRecordNames(events);
 
   // Offered only when the trail can actually name people. On the timestamp
   // fallback there is nobody to filter by, and an empty select would imply the
@@ -380,7 +470,33 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
     return `${labels.slice(0, 3).join(', ')} and ${labels.length - 3} other kinds of record`;
   }, [entityOptions]);
 
-  const days = useMemo(() => groupByDay(events), [events]);
+  // Sorted here because there is no ordering to ask the server for: this is the
+  // page it answered with, newest-first. Ties keep the order they arrived in,
+  // so two saves in the same second do not swap places on every render.
+  const sortedEvents = useMemo(() => {
+    if (sortKey === 'time' && sortDir === 'desc') return events;
+    const ordered = events.map((event, index) => ({ event, index }));
+    ordered.sort((left, right) => {
+      const a = auditSortValue(left.event, sortKey);
+      const b = auditSortValue(right.event, sortKey);
+      if (a !== b) return sortDir === 'asc' ? a.localeCompare(b) : b.localeCompare(a);
+      return left.index - right.index;
+    });
+    return ordered.map(entry => entry.event);
+  }, [events, sortKey, sortDir]);
+
+  // Day headings only while the log is in time order. Sorted by person or by
+  // record they would cut the very grouping the sort was asked for in half, so
+  // that reading is one list and each row carries its own date instead.
+  const days = useMemo(() => {
+    if (sortKey === 'time') return groupByDay(sortedEvents);
+    const column = AUDIT_COLUMNS.find(entry => entry.key === sortKey);
+    return [{
+      key: `sorted:${sortKey}:${sortDir}`,
+      label: `Sorted by ${(column?.label ?? sortKey).toLowerCase()}`,
+      events: sortedEvents,
+    }];
+  }, [sortedEvents, sortKey, sortDir]);
   const counts = trail?.actionCounts;
 
   // Which workspaces the Changes half can speak for, named from the People
@@ -441,41 +557,35 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
       pageSubtitle={`Who used ${scope.subjectLabel}, and what they changed`}
     >
       <div className="min-h-full space-y-4 bg-background-100 p-4 sm:p-5 lg:p-6">
-        <EntityHero
-          eyebrow="Record activity"
-          title="Audit Trail"
-          description={
-            tab === 'people'
-              ? people && !people.visitsRecorded
+        {/* The reading half keeps the hero and its four counts. The Changes
+            half has its own compact header below, immediately above the log it
+            describes — stat tiles pushed the first row of a 1,694-row log
+            below the fold on every laptop. */}
+        {tab === 'people' && (
+          <EntityHero
+            eyebrow="Record activity"
+            title="Audit Trail"
+            description={
+              people && !people.visitsRecorded
                 ? `Who used ${scope.subjectLabel}. Page opens are not being recorded yet, so this is read from recorded changes and account sign-ins alone — it can say who saved something and when they signed in, never which pages they looked at.`
                 : `Who used ${scope.subjectLabel}: when they were here, which pages they opened, what they did on each, and what they changed. Open a person to see their visits in full.`
-            : trail?.source === 'timestamps'
-              ? 'Read from the timestamps on the records themselves — every create, edit and archive inside the window, newest first. This reading cannot name who made a change.'
-              // The record types are named from what this workspace actually
-              // records, not listed here: the sentence used to name the
-              // curriculum's six and read as a lie on every other door.
-              : `Every recorded change to ${recordTypeSentence} — who made it, when, and exactly which fields moved. Newest first.`
-          }
-          stats={tab === 'people' ? [
-            { icon: 'ri-group-line', label: 'People', value: people?.totals.people ?? 0, detail: `Used ${scope.subjectLabel} in this period` },
-            { icon: 'ri-file-list-3-line', label: 'Pages opened', value: people?.totals.pageViews ?? 0, detail: 'Across everyone' },
-            { icon: 'ri-cursor-line', label: 'Actions', value: (people?.totals.readActions ?? 0) + (people?.totals.changes ?? 0), detail: 'Searches, exports and saves' },
-            { icon: 'ri-time-line', label: 'Window', value: `${people?.windowDays ?? windowDays}d`, detail: 'Period being read' },
-          ] : [
-            { icon: 'ri-add-circle-line', label: 'Created', value: counts?.created ?? 0, detail: 'New records' },
-            { icon: 'ri-edit-2-line', label: 'Edited', value: counts?.updated ?? 0, detail: 'Saved again after creation' },
-            { icon: 'ri-archive-line', label: 'Archived', value: counts?.archived ?? 0, detail: 'Soft-deleted, still restorable' },
-            { icon: 'ri-time-line', label: 'Window', value: `${trail?.windowDays ?? windowDays}d`, detail: 'Period being read' },
-          ]}
-          loading={tab === 'people' ? peopleLoading && !people : loading && !trail}
-          secondaryActions={(
-            <HeroSecondaryButton
-              icon="ri-refresh-line"
-              label="Refresh"
-              onClick={() => setReloadToken(token => token + 1)}
-            />
-          )}
-        />
+            }
+            stats={[
+              { icon: 'ri-group-line', label: 'People', value: people?.totals.people ?? 0, detail: `Used ${scope.subjectLabel} in this period` },
+              { icon: 'ri-file-list-3-line', label: 'Pages opened', value: people?.totals.pageViews ?? 0, detail: 'Across everyone' },
+              { icon: 'ri-cursor-line', label: 'Actions', value: (people?.totals.readActions ?? 0) + (people?.totals.changes ?? 0), detail: 'Searches, exports and saves' },
+              { icon: 'ri-time-line', label: 'Window', value: `${people?.windowDays ?? windowDays}d`, detail: 'Period being read' },
+            ]}
+            loading={peopleLoading && !people}
+            secondaryActions={(
+              <HeroSecondaryButton
+                icon="ri-refresh-line"
+                label="Refresh"
+                onClick={() => setReloadToken(token => token + 1)}
+              />
+            )}
+          />
+        )}
 
         <WorkspaceTabs
           tabs={[
@@ -510,6 +620,23 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
         )}
 
         {tab === 'changes' && (<>
+        <AuditLogsHeader
+          shown={events.length}
+          total={trail?.total ?? events.length}
+          counts={counts}
+          windowDays={trail?.windowDays ?? Number(windowDays)}
+          description={
+            trail?.source === 'timestamps'
+              ? 'Read from the timestamps on the records themselves — every create, edit and archive inside the window. This reading cannot name who made a change.'
+              // The record types are named from what this workspace actually
+              // records, not listed here: the sentence used to name the
+              // curriculum's six and read as a lie on every other door.
+              : `Clear change history across ${recordTypeSentence}: who changed what, when, and what was added or removed.`
+          }
+          loading={loading && !trail}
+          onRefresh={() => setReloadToken(token => token + 1)}
+        />
+
         {error && <InlineError message={error} onRetry={() => setReloadToken(token => token + 1)} />}
 
         {/* The reading half covers every workspace; the writing half does not
@@ -611,30 +738,65 @@ export default function AuditTrailView({ scope }: { scope: AuditTrailScope }) {
             />
           </div>
         ) : (
-          <div className="space-y-4">
-            {days.map(day => (
-              <section key={day.key} className="overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50">
-                <div className="flex items-center justify-between gap-3 border-b border-background-200 px-4 py-2.5">
-                  <h2 className="font-heading text-[13px] font-bold text-foreground-900">{day.label}</h2>
-                  <span className="text-[11px] font-semibold text-foreground-400">
-                    {day.events.length} {day.events.length === 1 ? 'change' : 'changes'}
-                  </span>
-                </div>
-                <ol>
-                  {day.events.map(event => <AuditRow key={event.id} event={event} names={names} />)}
-                </ol>
-              </section>
-            ))}
-
-            <EntityPagination
-              page={changesPage}
-              pages={trail?.pages ?? 1}
-              total={trail?.total ?? 0}
-              pageSize={trail?.pageSize ?? events.length}
-              noun="changes"
-              onPage={setChangesPage}
+          <div className="overflow-hidden rounded-2xl border border-foreground-200/60 bg-background-50">
+            <AuditColumnHeader
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onSort={key => {
+                if (key === sortKey) {
+                  setSortDir(current => (current === 'asc' ? 'desc' : 'asc'));
+                  return;
+                }
+                setSortKey(key);
+                // Time opens newest-first, which is what a log is for. Every
+                // other column opens A-Z, which is what a name sorts to.
+                setSortDir(key === 'time' ? 'desc' : 'asc');
+              }}
             />
+            {days.map(day => {
+              const folded = collapsedDays.has(day.key);
+              return (
+                <section key={day.key} className="border-b border-background-200 last:border-0">
+                  <h2>
+                    <button
+                      type="button"
+                      onClick={() => setCollapsedDays(current => {
+                        const next = new Set(current);
+                        if (!next.delete(day.key)) next.add(day.key);
+                        return next;
+                      })}
+                      aria-expanded={!folded}
+                      className="flex w-full items-center justify-between gap-3 bg-background-100/70 px-4 py-2.5 text-left transition-smooth hover:bg-background-200/60"
+                    >
+                      <span className="font-heading text-[12px] font-bold uppercase tracking-wide text-foreground-900">{day.label}</span>
+                      <span className="flex items-center gap-2 text-[11px] font-semibold text-foreground-400">
+                        {day.events.length} {day.events.length === 1 ? 'log' : 'logs'}
+                        <AppIcon className={`${folded ? 'ri-arrow-down-s-line' : 'ri-arrow-up-s-line'} text-[14px]`}></AppIcon>
+                      </span>
+                    </button>
+                  </h2>
+                  {!folded && (
+                    <ol>
+                      {day.events.map(event => (
+                        <AuditRow key={event.id} event={event} names={names} withDate={sortKey !== 'time'} />
+                      ))}
+                    </ol>
+                  )}
+                </section>
+              );
+            })}
           </div>
+        )}
+
+        {events.length > 0 && (
+          <EntityPagination
+            page={changesPage}
+            pages={trail?.pages ?? 1}
+            total={trail?.total ?? 0}
+            pageSize={trail?.pageSize ?? events.length}
+            noun="logs"
+            onPage={setChangesPage}
+          />
         )}
         </>)}
       </div>
@@ -1211,7 +1373,112 @@ function SignInLines({ signIns }: { signIns: CurriculumActivitySignIn[] }) {
   );
 }
 
-function AuditRow({ event, names }: { event: CurriculumAuditEvent; names: ReadonlyMap<string, string> }) {
+/**
+ * The log's own header: what this page is, and how much of the window is on it.
+ *
+ * The count is deliberately two numbers. One page of a 1,694-change window read
+ * as the whole answer for as long as the page showed only its own rows, and a
+ * reader who sorted a column then had no way to tell that the sort had reached
+ * fifty of them.
+ */
+function AuditLogsHeader({ shown, total, counts, windowDays, description, loading, onRefresh }: {
+  shown: number;
+  total: number;
+  counts: Record<string, number> | undefined;
+  windowDays: number;
+  description: string;
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  const pills = [
+    { icon: 'ri-add-circle-line', label: 'Created', value: counts?.created ?? 0, tone: 'text-emerald-700' },
+    { icon: 'ri-edit-2-line', label: 'Edited', value: counts?.updated ?? 0, tone: 'text-sky-700' },
+    { icon: 'ri-archive-line', label: 'Archived', value: counts?.archived ?? 0, tone: 'text-amber-700' },
+  ];
+  return (
+    // Stacked below `sm`, side by side above it. Sharing one wrapping row with
+    // the count and Refresh squeezed the description into a six-word-tall
+    // column on a phone.
+    <div className="flex flex-col gap-3 rounded-2xl border border-foreground-200/60 bg-background-50 px-4 py-3.5 shadow-sm sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+      <div className="min-w-0">
+        <h2 className="font-heading text-[17px] font-bold text-foreground-900">Audit Logs</h2>
+        <p className="mt-0.5 max-w-3xl text-[12px] leading-5 text-foreground-500">{description}</p>
+        {/* The counts the hero used to carry, kept as a line rather than four
+            tiles: they are context for the log, not the point of the page. */}
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] font-semibold text-foreground-500">
+          {pills.map(pill => (
+            <span key={pill.label} className="inline-flex items-center gap-1">
+              <AppIcon className={`${pill.icon} text-[12px] ${pill.tone}`}></AppIcon>
+              {pill.label} <span className="tabular-nums text-foreground-700">{pill.value}</span>
+            </span>
+          ))}
+          <span className="inline-flex items-center gap-1">
+            <AppIcon className="ri-time-line text-[12px] text-foreground-400"></AppIcon>
+            Last {windowDays} {windowDays === 1 ? 'day' : 'days'}
+          </span>
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        <span className="inline-flex h-11 items-center rounded-xl border border-foreground-200/70 bg-background-100 px-3 text-[12px] font-bold tabular-nums text-foreground-700">
+          {loading ? 'Reading logs...' : `${shown} of ${total} ${total === 1 ? 'log' : 'logs'}`}
+        </span>
+        <HeroSecondaryButton icon="ri-refresh-line" label="Refresh" onClick={onRefresh} />
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The column headings, which are also the sort controls.
+ *
+ * Each says which way it is pointing, and the one in force says so in words as
+ * well as with an arrow -- an arrow alone is not something a screen reader can
+ * announce, and on a log that is grouped by day it is not obvious which column
+ * the grouping follows.
+ */
+function AuditColumnHeader({ sortKey, sortDir, onSort }: {
+  sortKey: AuditSortKey;
+  sortDir: 'asc' | 'desc';
+  onSort: (key: AuditSortKey) => void;
+}) {
+  return (
+    // Hidden below `lg`, where the rows stop being columns and wrap instead —
+    // headings over a stack of wrapped rows label nothing.
+    <div className={`hidden border-b border-background-200 bg-background-50 px-4 py-2 ${AUDIT_GRID}`}>
+      {AUDIT_COLUMNS.map(column => {
+        const active = column.key === sortKey;
+        return (
+          <button
+            key={column.key}
+            type="button"
+            onClick={() => onSort(column.key)}
+            aria-label={`${column.label}, sorted ${active ? (sortDir === 'asc' ? 'A to Z' : 'Z to A') : 'by time'}`}
+            // Deliberately not a flex container. The browser's own stylesheet
+            // centres a button's contents, and as a grid item that floated
+            // every heading into the middle of its column, away from the cells
+            // it labels. A plain button with `text-left` has no such opinion.
+            className={`block w-full text-left text-[10px] font-bold uppercase tracking-[0.1em] transition-smooth hover:text-primary-700 ${active ? 'text-foreground-900' : 'text-foreground-400'}`}
+          >
+            <span className="inline-flex items-center gap-1">
+              {column.label}
+              <AppIcon
+                className={`${active ? (sortDir === 'asc' ? 'ri-arrow-up-line' : 'ri-arrow-down-line') : 'ri-arrow-up-down-line'} text-[12px] ${active ? 'text-primary-700' : 'text-foreground-300'}`}
+              ></AppIcon>
+            </span>
+          </button>
+        );
+      })}
+      <span aria-hidden="true" />
+    </div>
+  );
+}
+
+function AuditRow({ event, names, withDate }: {
+  event: CurriculumAuditEvent;
+  names: ReadonlyMap<string, string>;
+  /** True when the log is not grouped by day, so each row has to carry its own. */
+  withDate?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const style = ACTION_STYLE[event.action] || ACTION_STYLE.updated;
   const story = changeStory(event);
@@ -1222,69 +1489,53 @@ function AuditRow({ event, names }: { event: CurriculumAuditEvent; names: Readon
     ? Object.entries(event.snapshot).filter(([, value]) => value !== null && value !== '')
     : [];
   const metadataEntries = Object.entries(event.metadata || {})
-    .filter(([, value]) => value !== null && value !== '');
+    .filter(([key, value]) => value !== null && value !== '' && !HIDDEN_METADATA.has(key));
   const expandable = event.changes.length > 0 || snapshotEntries.length > 0 || metadataEntries.length > 0;
+  // The chevron's accessible name. A bare "expand" would make every row in the
+  // log announce identically, and the one thing worth knowing before opening a
+  // row is how much is inside it.
+  const expandLabel = event.changes.length
+    ? `${event.changes.length} changed ${event.changes.length === 1 ? 'field' : 'fields'}`
+    : event.action === 'deleted' ? 'What was deleted'
+    : snapshotEntries.length ? 'What was created'
+    : 'Details';
 
   return (
     <li className="border-b border-background-200/60 last:border-0">
-      <div className="flex items-start gap-3 px-4 py-3 hover:bg-background-100/40">
-        <span className="mt-1 flex w-14 shrink-0 justify-end text-[11px] font-semibold tabular-nums text-foreground-400">
-          <span title={timeMetaLabel(event.at)} aria-label={timeMetaLabel(event.at)}>{timeLabel(event.at)}</span>
+      <div className={`flex flex-wrap items-start gap-x-3 gap-y-1.5 px-4 py-3 transition-smooth ${open ? 'bg-background-100/50' : 'hover:bg-background-100/40'} ${AUDIT_GRID}`}>
+        {/* ACTION. The badge wraps rather than truncating: "First activity
+            recorded" is the action whose meaning is most often misread, and
+            "First activ…" would not help anybody read it right. */}
+        <span className={`inline-flex max-w-full shrink-0 items-start gap-1 self-start rounded-md border px-2 py-0.5 text-left text-[10px] font-bold uppercase leading-4 tracking-wide lg:justify-self-start ${style.chip}`}>
+          <AppIcon className={`${style.icon} mt-px shrink-0 text-[11px]`}></AppIcon>
+          {event.actionLabel || style.label}
         </span>
-        <span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${style.dot}`} aria-hidden="true" />
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${style.chip}`}>
-              <AppIcon className={`${style.icon} text-[11px]`}></AppIcon>
-              {event.actionLabel || style.label}
-            </span>
+
+        {/* ENTITY — what kind of record this was, not which one. */}
+        <span className="min-w-0 truncate text-[12px] font-semibold text-foreground-700" title={event.entityLabel || event.entity}>
+          {event.entityLabel || event.entity || 'Record'}
+        </span>
+
+        {/* CHANGE */}
+        <div className="min-w-0 basis-full lg:basis-auto">
+          <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-[12px] text-foreground-600">
             {/* The sentence, with only the record's own name as the link: a
                 link named after a whole sentence is one a reader cannot scan
                 for and a screen reader cannot announce usefully. */}
-            <span className="text-[12px] text-foreground-600" title={actionMeaning(event)}>{story.verb} {story.subject}</span>
+            <span title={actionMeaning(event)}>{story.verb} {story.subject}</span>
             {story.named && (
               <Link
                 to={auditEventHref(event)}
-                className="min-w-0 truncate text-[12px] font-bold text-foreground-900 hover:text-primary-700 hover:underline"
+                className="min-w-0 truncate font-bold text-foreground-900 hover:text-primary-700 hover:underline"
               >
                 {event.title}
               </Link>
             )}
             {/* Why a record nobody touched went away. Shown only when the
                 handler code has a known meaning, never as a paraphrase. */}
-            {story.cause && (
-              <span className="text-[11px] text-foreground-500">{story.cause}</span>
-            )}
-            {/* Who, said plainly. A write no person directly made is marked as
-                the system rather than credited to anybody -- and where a person
-                caused it, they are named as the cause, not as the author. */}
-            {event.actorType && event.actorType !== 'user' ? (
-              <span className="inline-flex items-center gap-1 rounded-full border border-background-200 bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500">
-                <AppIcon className="ri-settings-3-line text-[11px]"></AppIcon>
-                {event.actorName || event.actorTypeLabel || 'System'}
-              </span>
-            ) : event.actorName ? (
-              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-foreground-600">
-                <AppIcon className="ri-user-line text-[11px] text-foreground-400"></AppIcon>
-                {event.actorName}
-              </span>
-            ) : null}
-            {event.triggeredByName && (
-              <span className="inline-flex items-center gap-1 text-[11px] text-foreground-500">
-                <AppIcon className="ri-arrow-right-up-line text-[11px] text-foreground-400"></AppIcon>
-                Triggered by <span className="font-semibold">{event.triggeredByName}</span>
-              </span>
-            )}
-          </div>
-          {/* A change no person made says so, rather than sitting under
-              somebody's name and reading as their edit. */}
-          {story.systemNote && (
-            <p className="mt-1 flex items-start gap-1.5 text-[11px] text-amber-700">
-              <AppIcon className="ri-robot-2-line mt-0.5 shrink-0 text-[11px]"></AppIcon>
-              <span>{story.systemNote}</span>
-            </p>
-          )}
-          <p className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-foreground-400">
+            {story.cause && <span className="text-[11px] text-foreground-500">{story.cause}</span>}
+          </p>
+          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-foreground-400">
             {/* The record's own ancestry, or — where it has none recorded —
                 what kind of record it is. It used to fall back to the words
                 "Curriculum record", which was wrong on every learner, staff,
@@ -1311,93 +1562,255 @@ function AuditRow({ event, names }: { event: CurriculumAuditEvent; names: Readon
                 <span>archived with its parent {event.viaParent}</span>
               </>
             )}
-            {expandable && (
-              <>
-                <span aria-hidden="true">·</span>
-                <button
-                  type="button"
-                  onClick={() => setOpen(current => !current)}
-                  aria-expanded={open}
-                  className="inline-flex items-center gap-1 rounded text-[11px] font-bold text-primary-700 hover:underline"
-                >
-                  <AppIcon className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-[12px]`}></AppIcon>
-                  {event.changes.length
-                    ? `${event.changes.length} changed ${event.changes.length === 1 ? 'field' : 'fields'}`
-                    : event.action === 'deleted' ? 'What was deleted'
-                    : snapshotEntries.length ? 'What was created'
-                    : 'Details'}
-                </button>
-              </>
-            )}
           </p>
+          {/* A change no person made says so, rather than sitting under
+              somebody's name and reading as their edit. */}
+          {story.systemNote && (
+            <p className="mt-1 flex items-start gap-1.5 text-[11px] text-amber-700">
+              <AppIcon className="ri-robot-2-line mt-0.5 shrink-0 text-[11px]"></AppIcon>
+              <span>{story.systemNote}</span>
+            </p>
+          )}
         </div>
+
+        {/* USER — said plainly. A write no person directly made is marked as
+            the system rather than credited to anybody, and where a person
+            caused it, they are named as the cause, not as the author. */}
+        <div className="flex min-w-0 flex-col gap-0.5">
+          {event.actorType && event.actorType !== 'user' ? (
+            <span className="inline-flex w-fit items-center gap-1 rounded-full border border-background-200 bg-background-100 px-2 py-0.5 text-[10px] font-bold text-foreground-500">
+              <AppIcon className="ri-settings-3-line text-[11px]"></AppIcon>
+              {event.actorName || event.actorTypeLabel || 'System'}
+            </span>
+          ) : event.actorName ? (
+            <span className="inline-flex min-w-0 items-center gap-1 truncate text-[12px] font-semibold text-foreground-700">
+              <AppIcon className="ri-user-line shrink-0 text-[11px] text-foreground-400"></AppIcon>
+              {event.actorName}
+            </span>
+          ) : (
+            <span className="text-[11px] italic text-foreground-400">No author recorded</span>
+          )}
+          {/* Ordinary inline text, and no icon. In a column this narrow the
+              icon took a line of its own and pushed "Triggered by" away from
+              the name it belongs to; the words say it without help. */}
+          {event.triggeredByName && (
+            <span className="text-[11px] leading-4 text-foreground-500">
+              Triggered by <span className="font-semibold">{event.triggeredByName}</span>
+            </span>
+          )}
+        </div>
+
+        {/* TIME */}
+        <span className="shrink-0 text-[11px] font-semibold tabular-nums text-foreground-500">
+          <span title={timeMetaLabel(event.at)} aria-label={timeMetaLabel(event.at)}>
+            {withDate ? `${dateLabel(event.at)} ` : ''}{timeLabel(event.at)}
+          </span>
+        </span>
+
+        {expandable ? (
+          <button
+            type="button"
+            onClick={() => setOpen(current => !current)}
+            aria-expanded={open}
+            aria-label={expandLabel}
+            className="ml-auto flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-transparent text-foreground-400 transition-smooth hover:border-background-200 hover:bg-background-50 hover:text-primary-700 lg:ml-0"
+          >
+            <AppIcon className={`${open ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-[16px]`}></AppIcon>
+          </button>
+        ) : (
+          <span className="ml-auto h-7 w-7 shrink-0 lg:ml-0" aria-hidden="true" />
+        )}
       </div>
       {open && (
-        <div className="border-t border-background-200/60 bg-background-100/40 px-4 py-3 pl-[4.75rem]">
-          {event.changes.length > 0 && (
-            <dl className="space-y-2">
-              {event.changes.map(change => (
-                <div key={change.field} className="rounded-lg border border-background-200 bg-background-50 px-3 py-2">
-                  <dt className="text-[10px] font-bold uppercase tracking-wide text-foreground-500">
-                    {change.label}
-                  </dt>
-                  <dd className="mt-1 grid gap-1 sm:grid-cols-2">
-                    <span className="min-w-0 break-words rounded bg-rose-50 px-2 py-1 text-[11px] text-rose-800">
-                      <span className="font-bold">Before:</span> <span title={auditValueTitle(change.before)}>{auditFieldValueLabel(change.label, change.before, event.changes, 'before', names)}</span>
-                    </span>
-                    <span className="min-w-0 break-words rounded bg-emerald-50 px-2 py-1 text-[11px] text-emerald-800">
-                      <span className="font-bold">After:</span> <span title={auditValueTitle(change.after)}>{auditFieldValueLabel(change.label, change.after, event.changes, 'after', names)}</span>
-                    </span>
-                  </dd>
-                  {change.truncated && (
-                    <p className="mt-1 text-[10px] text-foreground-400">
-                      Shortened for display. The full value is kept in the record's own history.
-                    </p>
-                  )}
-                </div>
-              ))}
-            </dl>
-          )}
-          {/* The stored record. For a delete this is the only copy that still
-              exists anywhere, which is the whole reason it is captured before
-              the row goes rather than looked up afterwards. */}
-          {!event.changes.length && snapshotEntries.length > 0 && (
-            <dl className="grid gap-1 sm:grid-cols-2">
-              {snapshotEntries.map(([key, value]) => (
-                <div key={key} className="flex min-w-0 gap-2 rounded bg-background-50 px-2 py-1">
-                  <dt className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-foreground-500">{key}</dt>
-                  <dd className="min-w-0 break-words text-[11px] text-foreground-700"><span title={auditValueTitle(value)}>{displayValue(value)}</span></dd>
-                </div>
-              ))}
-            </dl>
-          )}
-          {/* What the write itself carried: the file an upload attached, the
-              batch an import belonged to. Allowlisted server-side, so it is
-              never content and never a credential. */}
-          {metadataEntries.length > 0 && (
-            <dl className="mt-2 flex flex-wrap gap-2">
-              {metadataEntries.map(([key, value]) => (
-                <div key={key} className="flex min-w-0 items-baseline gap-1.5 rounded-lg border border-background-200 bg-background-50 px-2 py-1">
-                  <dt className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-foreground-500">
-                    {metadataLabel(key)}
-                  </dt>
-                  <dd className="min-w-0 break-words text-[11px] text-foreground-700"><span title={auditValueTitle(value)}>{displayValue(value)}</span></dd>
-                </div>
-              ))}
-            </dl>
-          )}
-          <p className="mt-2 text-[10px] text-foreground-400">
-            Event type: <span className="font-mono">{event.action}</span>
-            {event.revisionNo > 0 && <> · revision {event.revisionNo}</>}
-            {event.actorTypeLabel && <> · {event.actorTypeLabel}</>}
-            {event.sourceLabel && <> · via {event.sourceLabel}</>}
-            {event.reason && <> · handler <span className="font-mono">{event.reason}</span></>}
-            {event.actorEmail && <> · {event.actorEmail}</>}
-            {event.triggeredByEmail && <> · triggered by {event.triggeredByEmail}</>}
-          </p>
-        </div>
+        <AuditRowDetails
+          event={event}
+          names={names}
+          story={story}
+          metadataEntries={metadataEntries}
+          snapshotEntries={snapshotEntries}
+        />
       )}
     </li>
+  );
+}
+
+/**
+ * One log entry, opened out: what it means, what it carried, and what moved.
+ *
+ * The order is the order the question is usually asked in -- what happened,
+ * under what, how much, then field by field. The provenance line stays at the
+ * bottom, because the event name and the handler code are what you read when
+ * the sentence above them is not enough, not before it.
+ */
+function AuditRowDetails({ event, names, story, metadataEntries, snapshotEntries }: {
+  event: CurriculumAuditEvent;
+  names: ReadonlyMap<string, string>;
+  story: ReturnType<typeof changeStory>;
+  metadataEntries: Array<[string, unknown]>;
+  snapshotEntries: Array<[string, unknown]>;
+}) {
+  // Amber is reserved for a caveat. Every action can explain itself, but "a
+  // saved change was made to this record" is not a warning and must not be
+  // painted as one, or the colour stops meaning anything on the rows that are.
+  //
+  // A plain edit gets no note at all: the row above already says who edited
+  // what, and the summary below says which fields moved, so a note there was
+  // a box that restated both and told the reader nothing.
+  const note = story.systemNote || (event.action === 'updated' ? '' : actionMeaning(event));
+  const caution = Boolean(story.systemNote)
+    || ['deleted', 'archived', 'recorded', 'recalculated'].includes(event.action);
+  const summary = changeSummarySentence(event, snapshotEntries.length);
+
+  return (
+    <div className="border-t border-background-200/60 bg-background-100/50 px-3 py-3 sm:px-4 lg:pl-8">
+      <div className="rounded-xl border border-foreground-200/60 bg-background-50 p-3 shadow-sm sm:p-4">
+        <h3 className="font-heading text-[13px] font-bold text-foreground-900">
+          {story.verb} {story.named ? event.title : story.subject}
+        </h3>
+        <p className="mt-0.5 text-[11px] text-foreground-400">{event.context || event.entityLabel || 'Record'}</p>
+
+        {note && (
+          <p className={`mt-3 rounded-lg border px-3 py-2 text-[11px] leading-5 ${caution ? 'border-amber-200 bg-amber-50 text-amber-900' : 'border-background-200 bg-background-100/70 text-foreground-600'}`}>
+            <span className="font-bold">Note:</span> {note}
+          </p>
+        )}
+
+        {/* What the write itself carried: the file an upload attached, the
+            batch an import belonged to. Allowlisted server-side, so it is
+            never content and never a credential. */}
+        {metadataEntries.length > 0 && (
+          <dl className="mt-3 flex flex-wrap gap-2">
+            {metadataEntries.map(([key, value]) => (
+              <div key={key} className="flex min-w-0 items-baseline gap-1.5 rounded-lg border border-background-200 bg-background-100/60 px-2 py-1">
+                <dt className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-foreground-500">
+                  {metadataLabel(key)}
+                </dt>
+                <dd className="min-w-0 break-words text-[11px] font-semibold text-foreground-700">
+                  <span title={auditValueTitle(value)}>{displayValue(value)}</span>
+                </dd>
+              </div>
+            ))}
+          </dl>
+        )}
+
+        {summary && (
+          <p className="mt-3 rounded-lg border border-sky-100 bg-sky-50 px-3 py-2 text-[11px] font-bold leading-5 text-sky-800">
+            {summary}
+          </p>
+        )}
+
+        {event.changes.length > 0 && (
+          <>
+            <h4 className="mt-4 text-[10px] font-bold uppercase tracking-[0.12em] text-primary-700">Changed fields</h4>
+            <ChangedFieldsCard event={event} names={names} />
+          </>
+        )}
+
+        {/* The stored record. For a delete this is the only copy that still
+            exists anywhere, which is the whole reason it is captured before
+            the row goes rather than looked up afterwards. */}
+        {!event.changes.length && snapshotEntries.length > 0 && (
+          <>
+            <h4 className="mt-4 text-[10px] font-bold uppercase tracking-[0.12em] text-primary-700">
+              {event.action === 'deleted' ? 'What was deleted' : 'What was recorded'}
+            </h4>
+            <dl className="mt-2 grid gap-1 sm:grid-cols-2">
+              {snapshotEntries.map(([key, value]) => (
+                <div key={key} className="flex min-w-0 gap-2 rounded-lg border border-background-200 bg-background-100/60 px-2 py-1">
+                  <dt className="shrink-0 text-[10px] font-bold uppercase tracking-wide text-foreground-500">{metadataLabel(key)}</dt>
+                  <dd className="min-w-0 break-words text-[11px] text-foreground-700">
+                    <span title={auditValueTitle(value)}>{displayValue(value)}</span>
+                  </dd>
+                </div>
+              ))}
+            </dl>
+          </>
+        )}
+
+        <p className="mt-3 border-t border-background-200 pt-2 text-[10px] text-foreground-400">
+          Event type: <span className="font-mono">{event.action}</span>
+          {event.revisionNo > 0 && <> · revision {event.revisionNo}</>}
+          {event.actorTypeLabel && <> · {event.actorTypeLabel}</>}
+          {event.sourceLabel && <> · via {event.sourceLabel}</>}
+          {event.reason && <> · handler <span className="font-mono">{event.reason}</span></>}
+          {event.actorEmail && <> · {event.actorEmail}</>}
+          {event.triggeredByEmail && <> · triggered by {event.triggeredByEmail}</>}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The record that moved, and the fields that moved on it.
+ *
+ * Open by default: a reader who has already opened the row has asked what
+ * changed, and making them click twice to find out answers nothing. The field
+ * names stay visible once it is folded shut, so a closed card still says what
+ * is inside it rather than becoming a button with no subject.
+ */
+function ChangedFieldsCard({ event, names }: {
+  event: CurriculumAuditEvent;
+  names: ReadonlyMap<string, string>;
+}) {
+  const [showDetails, setShowDetails] = useState(true);
+  return (
+    <div className="mt-2 rounded-xl border border-sky-100 bg-sky-50/70 p-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="font-heading text-[12px] font-bold text-foreground-900">
+            {event.title || event.entityLabel || 'Record'}
+          </p>
+          <p className="mt-0.5 text-[11px] text-foreground-500">{event.context || event.entityLabel || 'Record'}</p>
+        </div>
+        <span className="shrink-0 rounded-md border border-sky-200 bg-background-50 px-2 py-0.5 text-[10px] font-bold tabular-nums text-sky-800">
+          {event.changes.length} {event.changes.length === 1 ? 'field' : 'fields'}
+        </span>
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-2">
+        {event.changes.map(change => (
+          <span
+            key={change.field}
+            className="rounded-md border border-sky-200 bg-background-50 px-2 py-0.5 text-[11px] font-bold text-foreground-700"
+          >
+            {auditFieldLabel(change.label)}
+          </span>
+        ))}
+        <button
+          type="button"
+          onClick={() => setShowDetails(current => !current)}
+          aria-expanded={showDetails}
+          className="ml-auto inline-flex items-center gap-1 rounded-lg bg-foreground-900 px-2.5 py-1.5 text-[11px] font-bold text-background-50 transition-smooth hover:bg-foreground-800"
+        >
+          {showDetails ? 'Hide details' : 'Show details'}
+          <AppIcon className={`${showDetails ? 'ri-arrow-up-s-line' : 'ri-arrow-down-s-line'} text-[13px]`}></AppIcon>
+        </button>
+      </div>
+      {showDetails && (
+        <dl className="mt-3 grid gap-2 sm:grid-cols-2">
+          {event.changes.map(change => (
+            <div key={change.field} className="rounded-lg border border-background-200 bg-background-50 px-3 py-2">
+              <dt className="text-[10px] font-bold uppercase tracking-wide text-foreground-500">{auditFieldLabel(change.label)}</dt>
+              <dd className="mt-1 space-y-1">
+                <p className="min-w-0 break-words rounded bg-rose-50 px-2 py-1 text-[11px] text-rose-800">
+                  <span className="font-bold">Before:</span>{' '}
+                  <span title={auditValueTitle(change.before)}>{auditFieldValueLabel(change.label, change.before, event.changes, 'before', names)}</span>
+                </p>
+                <p className="min-w-0 break-words rounded bg-emerald-50 px-2 py-1 text-[11px] text-emerald-800">
+                  <span className="font-bold">After:</span>{' '}
+                  <span title={auditValueTitle(change.after)}>{auditFieldValueLabel(change.label, change.after, event.changes, 'after', names)}</span>
+                </p>
+              </dd>
+              {change.truncated && (
+                <p className="mt-1 text-[10px] text-foreground-400">
+                  Shortened for display. The full value is kept in the record's own history.
+                </p>
+              )}
+            </div>
+          ))}
+        </dl>
+      )}
+    </div>
   );
 }
 
@@ -1444,14 +1857,29 @@ function groupByDay(events: CurriculumAuditEvent[]): AuditDay[] {
   return [...days.values()];
 }
 
+/**
+ * The day a group of logs belongs to.
+ *
+ * The full date is always written out, with Today and Yesterday in front of it
+ * rather than instead of it. A heading that said only "Today" left a reader who
+ * had the page open across midnight, or who was reading an exported screenshot
+ * of it, with no way to tell which day they were looking at.
+ */
 function dayLabel(parsed: Date): string {
   const today = new Date();
   const startOfToday = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   const startOfDay = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
   const diffDays = Math.round((startOfToday.getTime() - startOfDay.getTime()) / 86_400_000);
-  if (diffDays === 0) return 'Today';
-  if (diffDays === 1) return 'Yesterday';
-  return parsed.toLocaleDateString('en-GB', { weekday: 'long', day: '2-digit', month: 'short', year: 'numeric' });
+  const full = parsed.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' });
+  if (diffDays === 0) return `Today · ${full}`;
+  if (diffDays === 1) return `Yesterday · ${full}`;
+  return full;
+}
+
+/** The date beside a time, for the readings that are not grouped by day. */
+function dateLabel(value: string): string {
+  const parsed = parseStamp(value);
+  return parsed ? parsed.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : '';
 }
 
 function timeLabel(value: string): string {

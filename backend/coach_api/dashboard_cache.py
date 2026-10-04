@@ -12,7 +12,9 @@ from .auth import normalize_email
 
 
 logger = logging.getLogger(__name__)
-CACHE_NAMESPACE = "coach-dashboard-summary:v3"
+# v4 carries the API-owned OTJH target-to-date/RAG fields.  A namespace bump
+# prevents an older browser/API payload from being served without them.
+CACHE_NAMESPACE = "coach-dashboard-summary:v4"
 
 
 def coach_dashboard_cache_key(coach_identity: str) -> str:

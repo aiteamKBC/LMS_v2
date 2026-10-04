@@ -4,7 +4,16 @@ import { normalizeReadingHtml } from '@/lib/readingHtml';
 const FILE_EXTENSION = /\.(pdf|docx?|pptx?|xlsx?|txt|csv|rtf|epub|zip|png|jpe?g|webp)$/i;
 
 /** Expose attachments, not ordinary navigation links in the reading. */
-export function readingFiles(resourceUrl: string | null | undefined, fileName: string | null | undefined, html: string) {
+export function readingFiles(
+  resourceUrl: string | null | undefined,
+  fileName: string | null | undefined,
+  html: string,
+  // Every file the author attached, in their order. The first is normally the
+  // same file as `resourceUrl`; `add` dedupes by resolved href, so passing the
+  // whole list rather than its tail keeps the order the author set without
+  // offering the first document twice.
+  attachments: readonly { url: string; fileName?: string | null }[] = [],
+) {
   const files: { url: string; fileName?: string; label: string }[] = [];
   const seen = new Set<string>();
   const add = (url: string, name?: string, label?: string) => {
@@ -16,6 +25,7 @@ export function readingFiles(resourceUrl: string | null | undefined, fileName: s
     } catch { /* Malformed links are not downloadable attachments. */ }
   };
   if (resourceUrl) add(resourceUrl, fileName || undefined);
+  for (const attachment of attachments) add(attachment.url, attachment.fileName || undefined);
   const document = new DOMParser().parseFromString(DOMPurify.sanitize(normalizeReadingHtml(html)), 'text/html');
   for (const anchor of document.querySelectorAll('a[href]')) {
     const url = anchor.getAttribute('href') || '';
