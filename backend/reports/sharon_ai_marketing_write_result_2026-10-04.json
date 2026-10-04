@@ -1,0 +1,38 @@
+{
+  "read_only": false,
+  "write_performed": true,
+  "database": "neondb",
+  "fingerprint": "0635366acc76cd6db3a3f07c810d9551511da6ea83dae8a27ba810ec30e90e7f",
+  "checks": {
+    "database": "neondb",
+    "fingerprint": "0635366acc76cd6db3a3f07c810d9551511da6ea83dae8a27ba810ec30e90e7f",
+    "blocked_count": 88,
+    "azure_missing": 0,
+    "exact_lms_duplicates": 0,
+    "timestamp_violations": 0,
+    "actions": 134,
+    "valid_additional": 325
+  },
+  "threshold_review_seconds": {
+    "4660": 619200,
+    "4737": 594300,
+    "5053": 376200
+  },
+  "blocked_preserved": 88,
+  "applied": {
+    "run_id": 1705,
+    "estimated": true,
+    "approval_required": true,
+    "label": "تقديري — يحتاج اعتماد",
+    "updated_parents": 134,
+    "updated_sources": 302,
+    "segments_inserted": 480,
+    "documents_added": 500,
+    "lms_excluded": 0,
+    "valid_additional_seconds": 7452900
+  },
+  "verification": {
+    "passed": true,
+    "errors": []
+  }
+}

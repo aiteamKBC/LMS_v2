@@ -34,9 +34,9 @@ import {
   EMPTY_VALUE,
   displayValue,
   getProgramStatusKey,
-  getOtjhGapStatus,
   hasValue,
   normalizeLearner,
+  otjhProgressAsOfToday,
   startOfToday,
 } from './lib/format';
 import type {
@@ -270,7 +270,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
       // Dashboard-owned learners never make that request, so apply the same
       // contract locally instead of only reflecting the values in the URL.
       if (usesDashboardLearners) {
-        if (otjhStatus !== 'all' && getOtjhGapStatus(learner.otjhCompleted, learner.otjhTarget).status !== otjhStatus) return false;
+        if (otjhStatus !== 'all' && otjhProgressAsOfToday(learner, today).status !== otjhStatus) return false;
         const search = filters.search.trim().toLocaleLowerCase();
         if (search && ![learner.name, learner.email, learner.programmeName]
           .some((value) => displayValue(value).toLocaleLowerCase().includes(search))) return false;
@@ -287,7 +287,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
 
       return true;
     });
-  }, [learners, insights, statusFilter, filters, usesDashboardLearners, otjhStatus]);
+  }, [learners, insights, statusFilter, filters, usesDashboardLearners, otjhStatus, today]);
 
   const sorted = useMemo(() => {
     const numeric = (value: number | null | undefined, available = true) => available && Number.isFinite(value) ? Number(value) : null;

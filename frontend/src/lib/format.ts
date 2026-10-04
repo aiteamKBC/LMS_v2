@@ -163,6 +163,39 @@ export function daysUntil(value?: string | null): number | null {
   return parsed ? daysBetween(startOfToday(), parsed) : null;
 }
 
+/**
+ * Planned programme hours that should have been reached by `today`.
+ *
+ * The caseload API supplies the whole-programme training-plan total and the
+ * programme's start/end dates. Keep this calculation separate from the
+ * persisted OTJH target: that value is also used by risk/status projections,
+ * while this value is specifically the coach-facing target as of today.
+ */
+export function targetHoursAsOfToday(
+  totalPlannedHours?: number | string | null,
+  startDate?: string | null,
+  plannedEndDate?: string | null,
+  today: Date = startOfToday(),
+): number | null {
+  const total = typeof totalPlannedHours === 'number'
+    ? totalPlannedHours
+    : Number(totalPlannedHours);
+  if (!Number.isFinite(total) || total <= 0) return null;
+
+  const start = parseDisplayDate(startDate);
+  const end = parseDisplayDate(plannedEndDate);
+  if (!start || !end) return null;
+
+  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  if (todayStart < start) return 0;
+  if (todayStart >= end) return total;
+
+  const programmeDays = daysBetween(start, end);
+  if (programmeDays <= 0) return null;
+  const elapsedDays = daysBetween(start, todayStart);
+  return Math.max(0, Math.min(total, (total / programmeDays) * elapsedDays));
+}
+
 // --- numbers ----------------------------------------------------------------
 
 const WHOLE_FORMAT = new Intl.NumberFormat('en-GB', { maximumFractionDigits: 0 });

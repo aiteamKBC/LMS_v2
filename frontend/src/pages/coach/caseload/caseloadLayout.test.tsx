@@ -19,7 +19,8 @@ const learner = {
   evidenceCount: 2, liveAttendanceRate: 90, liveAttendanceRateAvailable: true, nextCoaching: '20 Sep 2026', nextReview: '--',
   lastContact: '--', lastAttendanceDate: '--', lastProgressReview: '--', lastReview: '--', lastCoachingSession: '--',
   lastActivity: '19 Sep 2026', lastActivityDate: '2026-09-19T12:30:00Z', lastActivityLabel: 'Latest quiz',
-  lastSubmittedEvidence: '--', recentFlag: null, progressVariance: '--', startDate: '--', gatewayReviewDate: '--', plannedEndDate: '--',
+  lastSubmittedEvidence: '--', recentFlag: null, progressVariance: '--', startDate: '01 Jan 2020', gatewayReviewDate: '--', plannedEndDate: '01 Jan 2021',
+  otjhPlanned: 90,
   currentModule: 'Customer Service Excellence', currentWeek: 'Week 4',
 } satisfies Learner;
 
@@ -45,11 +46,11 @@ describe('My Learners table design', () => {
       attendanceSessions: 28,
       otjhCompleted: 308.11,
       otjhTarget: 0,
+      otjhPlanned: 0,
     }]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
       sortKey="name" sortDirection="asc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} />);
 
     expect(screen.getByLabelText('Activities: 88.8%')).toHaveTextContent('443 / 499');
-    expect(screen.getByLabelText('KSBs: 66.8%')).toHaveTextContent('475 / 711');
     expect(screen.getByLabelText('Attendance: 82%')).toHaveTextContent('23 / 28');
     expect(screen.getByLabelText('OTJH: not available')).toHaveTextContent('308.11h / --');
   });
@@ -103,6 +104,26 @@ describe('My Learners table design', () => {
     expect(within(active).queryByText('On Track')).not.toBeInTheDocument();
   });
 
+  it.each([
+    ['Onboarding', 'onboarding'],
+    ['Withdrawn', 'withdrawn'],
+  ] as const)('shows %s in OTJH instead of calculating a target', (label, rawProgramStatus) => {
+    render(<LearnerTable learners={[{
+      ...learner,
+      rawProgramStatus,
+      enrollmentStatus: rawProgramStatus === 'withdrawn' ? 'withdrawn' : 'unknown',
+      otjhCompleted: 15,
+      otjhPlanned: 355,
+      startDate: '15 Jun 2026',
+      plannedEndDate: '01 Apr 2027',
+    }]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
+      sortKey="name" sortDirection="asc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} />);
+    const row = screen.getByText('Emma Carter').closest('tr')!;
+    const cells = within(row).getAllByRole('cell');
+    expect(cells[2]).toHaveTextContent(label);
+    expect(within(cells[2]).queryByLabelText(/OTJH:/)).not.toBeInTheDocument();
+  });
+
   it('shows real learner progress and profile actions without a risk status label', () => {
     const onOpenProfile = vi.fn();
     const onSort = vi.fn();
@@ -111,17 +132,18 @@ describe('My Learners table design', () => {
     const row = screen.getByText('Emma Carter').closest('tr')!;
     expect(within(row).getByText('EC')).toBeInTheDocument();
     expect(within(row).queryByText('Customer Service Excellence')).not.toBeInTheDocument();
-    for (const metric of ['OTJH: 78%', 'KSBs: 65%', 'Activities: 80%', 'Attendance: 90%']) {
+    for (const metric of ['OTJH: 78%', 'Activities: 80%', 'Attendance: 90%']) {
       expect(within(row).getByLabelText(metric)).toBeInTheDocument();
     }
-    for (const source of ['70h / 90h', '13 / 20', '8 / 10', '9 / 10']) expect(within(row).getByText(source)).toBeInTheDocument();
+    for (const source of ['70h / 90h', '8 / 10', '9 / 10']) expect(within(row).getByText(source)).toBeInTheDocument();
     expect(within(row).queryByText('On Track')).not.toBeInTheDocument();
     expect(within(row).getByLabelText('OTJH: 78%')).toHaveAttribute('data-tone', 'positive');
     expect(within(row).getByText('19 Sep 2026')).toBeInTheDocument();
     expect(within(row).getByText('2 days ago')).toBeInTheDocument();
-    for (const label of ['Learner', 'OTJH', 'KSBs', 'Activities', 'Attendance', 'Last Activity', 'Last PR', 'Last MCM']) {
+    for (const label of ['Learner', 'OTJH', 'Activities', 'Attendance', 'Last Activity', 'Last PR', 'Last MCM']) {
       expect(screen.getByRole('button', { name: `Sort by ${label}` })).toBeInTheDocument();
     }
+    expect(screen.queryByRole('columnheader', { name: 'KSBs' })).not.toBeInTheDocument();
     expect(screen.getAllByRole('button', { name: /Sort by/ })[0].querySelector('.lucide-arrow-up-down')).toBeInTheDocument();
     expect(screen.getByRole('table').querySelector('.lucide-circle')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Sort by Actions' })).not.toBeInTheDocument();
@@ -132,16 +154,16 @@ describe('My Learners table design', () => {
   });
 
   it.each([
-    [120, 'OTJH: 58%', 'critical'],
-    [100, 'OTJH: 70%', 'warning'],
-    [90, 'OTJH: 78%', 'positive'],
-  ] as const)('uses the canonical gap for target %s to colour OTJH', (otjhTarget, label, tone) => {
-    render(<LearnerTable learners={[{ ...learner, otjhTarget }]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
+    [120, 'critical'],
+    [100, 'warning'],
+    [90, 'positive'],
+  ] as const)('uses the canonical gap for target %s to colour OTJH', (otjhTarget, tone) => {
+    render(<LearnerTable learners={[{ ...learner, otjhTarget, otjhPlanned: otjhTarget }]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
       sortKey="risk" sortDirection="desc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} />);
-    expect(screen.getByLabelText(label)).toHaveAttribute('data-tone', tone);
+    expect(document.querySelector('[data-metric="otjh"]')).toHaveAttribute('data-tone', tone);
   });
 
-  it('omits unavailable KSB and attendance detail lines instead of displaying placeholder ratios', () => {
+  it('omits unavailable attendance detail lines instead of displaying placeholder ratios', () => {
     render(<LearnerTable learners={[{
       ...learner,
       ksbProgress: null,
@@ -155,7 +177,6 @@ describe('My Learners table design', () => {
     }]} insights={insights} selectionMode={false} selectedLearnerIds={new Set()}
       sortKey="risk" sortDirection="desc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} />);
 
-    expect(screen.getByLabelText('KSBs: not available').querySelector('[class*="miniRatio"]')).toBeNull();
     expect(screen.getByLabelText('Attendance: not available').querySelector('[class*="miniRatio"]')).toBeNull();
     expect(screen.getByLabelText('Activities: 80%')).toHaveTextContent('8 / 10');
   });

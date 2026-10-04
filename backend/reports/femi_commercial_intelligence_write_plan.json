@@ -1,0 +1,10 @@
+{
+  "read_only": true,
+  "database": "neondb",
+  "fingerprint": "261b1c3c7c166f4692d7c25fc706d3f24266e3a968b096c9b6c18cfd5bb6a9df",
+  "actor": "Ayman",
+  "new_candidates": 78,
+  "repair_candidates": 33,
+  "lms_excluded": 0,
+  "status": "DRY_RUN"
+}
