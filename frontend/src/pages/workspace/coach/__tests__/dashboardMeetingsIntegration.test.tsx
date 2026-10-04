@@ -51,7 +51,7 @@ beforeEach(() => {
   HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   HTMLDialogElement.prototype.close = function () { this.open = false; };
   mocks.load.mockResolvedValue({ owner: { name: 'Example Coach' }, learners: [{ id: '1', name: 'Example Learner', learnerType: 'commercial',
-    rawProgramStatus: 'active', otjhStatus: 'at-risk', otjhCompleted: 20, otjhTarget: 40 }, { id: '2', name: 'Attention Only Learner', learnerType: 'commercial',
+    programme: 'Project Manager Level 4', cohortName: 'Jun 2026', rawProgramStatus: 'active', otjhStatus: 'at-risk', otjhCompleted: 20, otjhTarget: 40 }, { id: '2', name: 'Attention Only Learner', learnerType: 'commercial',
     rawProgramStatus: 'active', otjhStatus: 'need-attention', otjhCompleted: 30, otjhTarget: 40 }], monthlyRisk: [
       { month: '2026-04', label: 'Apr', count: 3 }, { month: '2026-05', label: 'May', count: 2 },
       { month: '2026-06', label: 'Jun', count: 4 }, { month: '2026-07', label: 'Jul', count: 1 },
@@ -69,7 +69,7 @@ function expectStructuredSkeleton() {
     expect(within(skeleton).getByRole('heading', { name: heading, hidden: true })).toBeInTheDocument();
   }
   const learnerTable = within(skeleton).getByRole('table', { name: 'Learners are loading', hidden: true });
-  for (const column of ['Learner', 'OTJH', 'KSBs', 'Activities', 'Attendance', 'Last Activity', 'Last PR', 'Last MCM', 'Actions']) {
+  for (const column of ['Learner', 'Status', 'Progress', 'OTJH', 'Activities', 'Attendance', 'Start Date', 'Last Activity', 'Last PR', 'Last MCM', 'Actions']) {
     expect(within(learnerTable).getByRole('columnheader', { name: column, hidden: true })).toBeInTheDocument();
   }
   // Two header rows plus seven learner rows.
@@ -101,6 +101,8 @@ it('shows the learner table only after a successful response', async () => {
   expect(screen.getByRole('status', { name: 'Loading coach dashboard' })).toBeVisible();
   const riskTable = await screen.findByRole('region', { name: 'Coach learner caseload' });
   expect(await within(riskTable).findByText('Example Learner')).toBeVisible();
+  expect(within(riskTable).getByText('Project Manager Level 4')).toBeVisible();
+  expect(within(riskTable).queryByText('Jun 2026')).not.toBeInTheDocument();
   expect(screen.queryByRole('status', { name: 'Loading coach dashboard' })).not.toBeInTheDocument();
   expect(document.querySelectorAll('[data-skeleton]')).toHaveLength(0);
   expect(screen.getByRole('region', { name: 'Coach dashboard metrics' })).toBeVisible();
@@ -578,7 +580,7 @@ it('shows review cards as unavailable when generation failed without usable revi
   expect(within(metrics).getByRole('button', { name: 'Open MCM this week details' })).toHaveTextContent('--');
 });
 
-it('counts delivery learners with active learners on the coach dashboard', async () => {
+it('counts active and delivery learners while excluding hidden caseload stages', async () => {
   useDashboardDate();
   mocks.load.mockImplementation((url: string) => Promise.resolve(
     url.includes('/marking-queue')
@@ -588,6 +590,9 @@ it('counts delivery learners with active learners on the coach dashboard', async
           learners: [
             { id: '1', name: 'Active Learner', rawProgramStatus: 'active', otjhStatus: 'on-track' },
             { id: '2', name: 'Delivery Learner', rawProgramStatus: 'delivery', otjhStatus: 'on-track' },
+            { id: '3', name: 'Onboarding Learner', rawProgramStatus: 'Onboarding Stage', otjhStatus: 'at-risk' },
+            { id: '4', name: 'EPA Learner', rawProgramStatus: 'Entered EPA', otjhStatus: 'at-risk' },
+            { id: '5', name: 'Withdrawn Learner', rawProgramStatus: 'withdrawn', otjhStatus: 'at-risk' },
           ],
           meetings: { events: [] },
         },
@@ -598,6 +603,9 @@ it('counts delivery learners with active learners on the coach dashboard', async
   const totalLearners = within(metrics).getByRole('button', { name: 'Open Total learners details' });
   expect(totalLearners.querySelector('[class*="metricValue"]')).toHaveTextContent('2');
   expect(screen.getByText('2 active learners grouped by their current OTJH status.')).toBeVisible();
+  for (const name of ['Onboarding Learner', 'EPA Learner', 'Withdrawn Learner']) {
+    expect(screen.queryByText(name)).not.toBeInTheDocument();
+  }
 });
 
 it('opens a detail popup and full-page link from every workload card', async () => {

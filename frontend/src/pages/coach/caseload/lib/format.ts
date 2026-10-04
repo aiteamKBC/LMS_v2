@@ -63,6 +63,25 @@ export {
 
 export type ProgramStatusKey = 'active' | 'withdrawn' | 'break' | 'ready-to-enrol' | 'other';
 
+export function normalizeCaseloadProgrammeStatus(value?: string | null): string {
+  return displayValue(value).toLocaleLowerCase().replace(/[^a-z0-9]+/g, '');
+}
+
+export function isHiddenCaseloadProgrammeStatus(value?: string | null): boolean {
+  const normalized = normalizeCaseloadProgrammeStatus(value);
+  return normalized.startsWith('onboarding')
+    || normalized === 'enteredepa'
+    || normalized === 'withdrawn';
+}
+
+export function isVisibleCaseloadLearner(
+  learner: { rawProgramStatus?: string | null; enrollmentStatus?: string | null },
+): boolean {
+  const rawStatus = displayValue(learner.rawProgramStatus);
+  const status = rawStatus === EMPTY_VALUE ? learner.enrollmentStatus : rawStatus;
+  return !isHiddenCaseloadProgrammeStatus(status);
+}
+
 export function getProgramStatusKey(value?: string | null): ProgramStatusKey {
   const normalized = displayValue(value).toLowerCase().replace(/\s+/g, '');
   if (normalized === 'active' || normalized === 'delivery') return 'active';
@@ -267,7 +286,9 @@ export function normalizeLearner(
     && attendance.attendance !== undefined
     && attendance.hasAttendance !== false,
   );
-  const programme = displayValue(attendance?.programme);
+  const programme = hasValue(learner.programmeName)
+    ? displayValue(learner.programmeName)
+    : displayValue(attendance?.programme);
   const learningActivityDate = learner.lastActivityDate || null;
   const attendanceActivityDate = attendance?.lastSessionDate || null;
   const attendanceIsLatest = Boolean(
