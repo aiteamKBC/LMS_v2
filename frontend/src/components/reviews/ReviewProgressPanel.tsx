@@ -151,6 +151,7 @@ export function ReviewProgressPanel({
   ragHistory = [],
   canCalculate,
   calculating,
+  disabled = false,
   onCalculate,
 }: {
   snapshot: ReviewProgressSnapshot | null | undefined;
@@ -159,6 +160,7 @@ export function ReviewProgressPanel({
    *  is signing must not move underneath them. */
   canCalculate: boolean;
   calculating: boolean;
+  disabled?: boolean;
   onCalculate: () => void;
 }) {
   return (
@@ -178,7 +180,7 @@ export function ReviewProgressPanel({
           <button
             type="button"
             onClick={onCalculate}
-            disabled={calculating}
+            disabled={calculating || disabled}
             className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-background-300 bg-white px-4 text-xs font-bold text-foreground-700 shadow-sm transition hover:bg-background-100 disabled:opacity-60"
           >
             {calculating

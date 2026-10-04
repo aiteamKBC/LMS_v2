@@ -128,7 +128,7 @@ class MigratedReviewCompletionTests(SimpleTestCase):
                              programme="Synthetic Programme", scheduled_date="2026-11-18 14:00",
                              coach_name="Test coach")
         content = "\n".join(page.extract_text() for page in PdfReader(BytesIO(document)).pages)
-        for expected in ("LMS Generated Migrated Review", "Controlled answer", "Test learner", "Synthetic Programme", "MCM", "Test coach", "LMS signatures"):
+        for expected in ("Review", "Controlled answer", "Test learner", "Synthetic Programme", "MCM", "Test coach", "Advisor", "Participant", "LMS continuation of imported Aptem review"):
             self.assertIn(expected, content)
         self.assertNotIn("Hidden detail", content)
         self.assertNotIn("Original Aptem PDF", content)

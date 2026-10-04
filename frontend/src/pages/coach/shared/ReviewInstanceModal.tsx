@@ -7,6 +7,7 @@ import { ReviewProgressPanel } from '@/components/reviews/ReviewProgressPanel';
 import {
   bookMigratedReview,
   calculateReviewInstanceProgress,
+  calculateMigratedReviewProgress,
   completeReviewInstance,
   completeMigratedReview,
   downloadReviewInstancePdf,
@@ -31,6 +32,7 @@ import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
 import { useAuth } from '@/hooks/useAuth';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { MigratedMeetingIntelligence } from './MigratedMeetingIntelligence';
+import { MigratedSummaryActions } from './MigratedSummaryActions';
 import type { CoachMeetingArtifactsResponse } from './calendarEvents';
 
 const isAbortError = (err: unknown): boolean => err instanceof DOMException && err.name === 'AbortError';
@@ -242,8 +244,13 @@ export function ReviewInstanceModal({
   const answersRef = useRef<Record<string, unknown>>({});
   const savedAnswersRef = useRef<Record<string, unknown>>({});
   const editedFieldsRef = useRef(new Set<string>());
+  const progressRequestRef = useRef(false);
   const [checkingSession, setCheckingSession] = useState(false);
+  const [migratedIntelligenceRevision, setMigratedIntelligenceRevision] = useState(0);
   const onMigratedCheckComplete = useCallback((result: CoachMeetingArtifactsResponse) => {
+    if (result.progressVersion) {
+      setDefinition((current) => current ? { ...current, progressVersion: result.progressVersion } : current);
+    }
     if (!result.answerVersion || !result.reviewAnswers) return;
     const stored = result.reviewAnswers;
     const local = answersRef.current;
@@ -262,6 +269,12 @@ export function ReviewInstanceModal({
     setAnswers(merged);
     setDefinition(current => current ? { ...current, answerVersion: result.answerVersion, summaryBinding: result.summaryBinding } : current);
   }, []);
+  const onMigratedSummaryComplete = useCallback((result: CoachMeetingArtifactsResponse) => {
+    onMigratedCheckComplete(result);
+    // A field-level Teams check also refreshes attendance/artifacts. Reload the
+    // panel's local snapshot without another Graph or AI request.
+    if (result.intelligence) setMigratedIntelligenceRevision(value => value + 1);
+  }, [onMigratedCheckComplete]);
   const [loading, setLoading] = useState(true);
   const [initializationFailed, setInitializationFailed] = useState(false);
   const [initializationRetry, setInitializationRetry] = useState(0);
@@ -671,14 +684,29 @@ export function ReviewInstanceModal({
    *  reopen -- the snapshot below is whatever the backend already stored. */
   const calculateProgress = async () => {
     if (!definition || calculating || isViewingAsCoach) return;
+    const migratedVersion = definition.answerVersion || definition.progressVersion;
+    if (definition.source === 'aptem' && (progressRequestRef.current || !definition.migratedForm
+      || !definition.canCalculateProgress || !migratedVersion
+      || saving || checkingSession || generatingSummary || uploadingTranscript || reopening)) return;
+    progressRequestRef.current = true;
     setCalculating(true);
     setError(null);
     try {
-      setDefinition(await calculateReviewInstanceProgress(definition.instance.id));
+      const updated = definition.source === 'aptem'
+        ? await calculateMigratedReviewProgress(definition.instance.id, migratedVersion!)
+        : await calculateReviewInstanceProgress(definition.instance.id);
+      // Progress writes never save answers. Keep local text and edited-field
+      // tracking, while accepting the new overlay/answer version.
+      if (definition.source === 'aptem') {
+        setDefinition(current => current?.instance.id === updated.instance.id ? updated : current);
+      } else {
+        setDefinition(updated);
+      }
     } catch (err) {
       if (isAbortError(err)) return;
       setError(err instanceof Error ? err.message : 'Progress could not be calculated.');
     } finally {
+      progressRequestRef.current = false;
       setCalculating(false);
     }
   };
@@ -865,7 +893,7 @@ export function ReviewInstanceModal({
             ) : null}
             {definition.migratedForm && definition.booking?.eventKey && definition.booking.syncState === 'synced' ? (
               <MigratedMeetingIntelligence
-                key={definition.instance.id}
+                key={`${definition.instance.id}:${migratedIntelligenceRevision}`}
                 instanceId={definition.instance.id}
                 family={definition.template.reviewTypeCode || ''}
                 status={definition.localStatus || ''}
@@ -1055,8 +1083,11 @@ export function ReviewInstanceModal({
               <ReviewProgressPanel
                 snapshot={definition.progressSnapshot}
                 ragHistory={definition.ragHistory}
-                canCalculate={!isViewingAsCoach && definition.source !== 'aptem' && !isSignatureStage}
+                canCalculate={!isViewingAsCoach && !isSignatureStage && (definition.source !== 'aptem'
+                  || Boolean(definition.migratedForm && definition.canCalculateProgress
+                    && (definition.answerVersion || definition.progressVersion)))}
                 calculating={calculating}
+                disabled={Boolean(definition.migratedForm && busy)}
                 onCalculate={() => { void calculateProgress(); }}
               />
             ) : null}
@@ -1073,7 +1104,13 @@ export function ReviewInstanceModal({
               openSectionId={openSectionId}
               onOpenSectionChange={setOpenSectionId}
               renderFieldAddon={(field) => field.configuration?.semanticKey === 'meeting_summary' ? (
-                definition.migratedForm ? <p className="mb-3 text-sm text-foreground-500">Check Session can fill this answer once. Review and edit it here, then save your draft. The saved answer is used in the completed review and PDF.</p> :
+                definition.migratedForm ? (definition.summaryBinding?.fieldKey === field.id ? <MigratedSummaryActions
+                  instanceId={definition.instance.id} binding={definition.summaryBinding}
+                  editable={!formReadOnly && ['scheduled', 'in-progress'].includes(definition.instance.status)}
+                  teamsAvailable={Boolean(definition.booking?.booked && definition.booking.syncState === 'synced'
+                    && !definition.booking.conflict && definition.booking.eventKey === definition.instance.id)}
+                  busy={busy} unsaved={hasUnsavedMigratedAnswers} onResult={onMigratedSummaryComplete} onBusyChange={setCheckingSession}
+                /> : null) :
                 <div className="mb-3 space-y-3">
                   <p className="text-[13px] leading-5 text-foreground-500">
                     Review and finalise the meeting summary before sending the Review for signatures.

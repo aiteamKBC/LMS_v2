@@ -14151,43 +14151,11 @@ def _imported_progress_snapshot_from_review(review: dict) -> dict | None:
 
 
 def _imported_review_progress_snapshot(learner, review: dict, *, calculated_by: str):
-    """Build a display-only progress snapshot for a legacy Aptem learner.
-
-    Imported reviews do not own a Curriculum review-instance row where a
-    frozen snapshot can be stored.  The coach workspace can still reuse the
-    canonical Learning Progress renderer for the learner currently linked to
-    the Aptem record.  Failure to resolve a complete plan must not make the
-    historical review itself unavailable; in that case the imported text is
-    left in place as the honest fallback.
-    """
-    imported_snapshot = _imported_progress_snapshot_from_review(review)
-    if imported_snapshot is not None:
-        return imported_snapshot
-    try:
-        commercial_rows, enrolment_rows = fetch_source_schedule_rows([learner])
-        learner_start_date, _reason = resolve_review_anchor_date(
-            int(learner.id), commercial_rows, enrolment_rows,
-        )
-        if learner_start_date is None:
-            return None
-        source = commercial_rows.get(int(learner.id)) or enrolment_rows.get(int(learner.id))
-        return build_progress_snapshot(
-            source or learner,
-            learner,
-            learner_start_date=learner_start_date,
-            calculated_at=timezone.now(),
-            calculated_by=calculated_by,
-        )
-    except (DatabaseError, UnresolvedTrainingPlanTarget, ValueError):
-        logger.info(
-            "Legacy Aptem Learning Progress is unavailable for learner %s",
-            getattr(learner, "id", None),
-            exc_info=True,
-        )
-        return None
+    """Historical Aptem text only; opening any review must never calculate live."""
+    return _imported_progress_snapshot_from_review(review)
 
 
-def _imported_review_definition(owner_email: str, event_key: str, *, preview_only=False) -> dict | None:
+def _imported_review_definition(owner_email: str, event_key: str, *, preview_only=False, pdf_only=False) -> dict | None:
     """Adapt one owned Aptem review to the native form-definition contract.
 
     Summary-only imports remain read-only. An admin view-as may preview an
@@ -14263,6 +14231,17 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
     migrated_form = not historical_completed and isinstance(snapshot, dict) and bool(snapshot.get("sections"))
     if migrated_form and not getattr(saved_instance, "source_review_id", None):
         return None
+    if pdf_only:
+        # PDF generation needs the same caseload, source identity/completion
+        # and overlay association gates above, without the form's mutable
+        # template/booking controls, live historical progress or RAG lookups.
+        return {
+            **_review_learner_identity(learner),
+            "migratedForm": migrated_form,
+            "instance": {"id": canonical_event_key, "learnerId": profile_id,
+                         "targetDate": review.get("plannedDate") or ""},
+            "historicalReview": review,
+        }
     family = migrated_review_family(review.get("type"))
     local_programme_key = migrated_programme_key(
         getattr(learner, "programme_id", None), getattr(learner, "programme", None),
@@ -14383,11 +14362,12 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
             section["displayOrder"] = display_order
 
     target_date = review.get("plannedDate") or review.get("completedDate") or ""
-    progress_snapshot = (
-        _imported_review_progress_snapshot(learner, review, calculated_by=owner_email)
-        if review_type_code == "aptem_progress_review"
-        else None
-    )
+    progress_snapshot = None
+    if review_type_code == "aptem_progress_review":
+        progress_snapshot = (
+            saved_instance.progress_snapshot if migrated_form
+            else _imported_review_progress_snapshot(learner, review, calculated_by=owner_email)
+        )
     signatures = {
         role: {"required": False, "signed": False, "signedBy": None, "signedName": None, "signedAt": None, "signature": None}
         for role in curriculum_review_instances.SIGNATURE_ROLES
@@ -14464,8 +14444,14 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
     }
     if migrated_form:
         from coach_api.models import MigratedReviewDocument
-        from coach_api.migrated_summary_binding import answer_version, binding_state
-        definition["summaryBinding"] = binding_state(saved_instance)
+        from coach_api.migrated_summary_binding import answer_version
+        from coach_api.migrated_summary_generation import summary_binding_response
+        from coach_api.migrated_progress import calculation_available
+        definition["progressVersion"] = answer_version(saved_instance)
+        definition["canCalculateProgress"] = bool(
+            not preview_only and calculation_available(saved_instance, family, local_programme_key)
+        )
+        definition["summaryBinding"] = summary_binding_response(saved_instance)
         if definition["summaryBinding"].get("fieldKey"):
             definition["answerVersion"] = answer_version(saved_instance)
         pdf_ready = bool(saved_instance and saved_instance.status == ImportedReviewInstance.STATUS_COMPLETED

@@ -252,9 +252,16 @@ export interface MigratedSummaryBinding {
   suggestionText?: string;
   answerPresent?: boolean;
   answer?: unknown;
+  suggestionSource?: 'teams' | 'uploaded_transcript';
+  generatedAt?: string;
+  generationStatus?: 'ready' | 'failed' | 'unavailable';
+  replacementAvailable?: boolean;
+  transcriptTruncated?: boolean;
+  summaryTooLong?: boolean;
 }
 
 export interface CoachMeetingArtifactsResponse {
+  progressVersion?: string;
   summaryBinding?: MigratedSummaryBinding;
   answerVersion?: string;
   reviewAnswers?: Record<string, unknown>;

@@ -19,6 +19,8 @@ from .migrated_completion_views import (
 from .migrated_intelligence_views import (
     migrated_review_intelligence, migrated_review_check_session, migrated_review_summary,
 )
+from .migrated_summary_upload import migrated_review_summary_upload
+from .migrated_progress_views import migrated_review_progress
 from .dashboard_view import coach_dashboard
 from .views import (
     coach_attendance,
@@ -63,9 +65,11 @@ from .views import (
 
 
 urlpatterns = [
+    path('migrated-reviews/<str:review_id>/progress', migrated_review_progress, name='migrated-review-progress'),
     path('migrated-reviews/<str:review_id>/intelligence', migrated_review_intelligence, name='migrated-review-intelligence'),
     path('migrated-reviews/<str:review_id>/check-session', migrated_review_check_session, name='migrated-review-check-session'),
     path('migrated-reviews/<str:review_id>/summary', migrated_review_summary, name='migrated-review-summary'),
+    path('migrated-reviews/<str:review_id>/summary/from-upload', migrated_review_summary_upload, name='migrated-review-summary-upload'),
     path('migrated-reviews/<str:review_id>/submit', migrated_review_submit, name='migrated-review-submit'),
     path('migrated-reviews/<str:review_id>/coach-sign', migrated_review_coach_sign, name='migrated-review-coach-sign'),
     path('migrated-reviews/<str:review_id>/complete', migrated_review_complete, name='migrated-review-complete'),

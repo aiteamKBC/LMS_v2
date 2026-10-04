@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from django.test import RequestFactory, SimpleTestCase
+from django.utils import timezone
 
 from coach_api.migrated_intelligence_views import (
     _association, _response, migrated_review_check_session,
@@ -20,7 +21,7 @@ ID = "imported-review:C5-TEST-MCM-20261002-001"
 
 def review(status="in-progress"):
     return SimpleNamespace(pk=1, event_key=ID, owner_email="coach@example.invalid", learner_id=42,
-                           status=status, meeting_intelligence={}, save=Mock())
+                           status=status, meeting_intelligence={}, updated_at=timezone.now(), save=Mock())
 
 
 def meeting():
