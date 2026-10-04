@@ -1,5 +1,6 @@
 export interface AbsenceReport {
   id: string;
+  learnerId?: string;
   learner: string;
   initials: string;
   programme: string;

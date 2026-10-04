@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
@@ -19,6 +19,7 @@ import { LearnerAvatar } from '../shared/LearnerIdentity';
 import ProgressReviewPptxModal from '../progress-reviews/components/ProgressReviewPptxModal';
 import { slidesTargetFromEvent } from '../progress-reviews/components/slidesTarget';
 import { reviewInstancePath, reviewInstanceRouteState } from '../shared/reviewInstanceNavigation';
+import { ReviewAge } from '../shared/ReviewAge';
 import {
   type CoachCalendarEvent,
   eventDisplayDate,
@@ -33,6 +34,7 @@ import {
   isEventThisMonth,
   isInProgressEvent,
   isScheduledEvent,
+  latestCompletedReviewDate,
   meetingUrl,
   needsScheduling,
   parseLocalDate,
@@ -83,6 +85,75 @@ function matchesMeetingSearch(event: CoachCalendarEvent, searchTerm: string) {
     .join(' ')
     .toLowerCase();
   return searchTerm.trim().toLowerCase().split(/\s+/).filter(Boolean).every(token => haystack.includes(token));
+}
+
+function scheduleLearnerKey(event: CoachCalendarEvent) {
+  return event.learnerId || event.email?.trim().toLowerCase() || event.learner?.trim().toLowerCase() || eventIdentity(event);
+}
+
+type ScheduleLearnerOption = { value: string; label: string };
+
+function ScheduleLearnerSearch({
+  options,
+  value,
+  onSearch,
+  onSelect,
+}: {
+  options: ScheduleLearnerOption[];
+  value: string;
+  onSearch: (value: string) => void;
+  onSelect: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const filteredOptions = useMemo(() => {
+    const query = value.trim().toLowerCase();
+    if (!query) return options;
+    return options.filter(option => option.label.toLowerCase().includes(query));
+  }, [options, value]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('pointerdown', closeOnOutsideClick);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOnOutsideClick);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative">
+      <SearchInput
+        className="mt-1"
+        value={value}
+        onChange={(next) => {
+          onSearch(next);
+          setOpen(true);
+        }}
+        suggestions={options.map(option => option.label)}
+        placeholder="Search learner..."
+        ariaLabel="Search learner to schedule"
+        showClearButton={false}
+      />
+      {open ? (
+        <div role="listbox" aria-label="Matching learners" className="absolute left-0 right-0 top-[calc(100%+4px)] z-30 max-h-56 overflow-y-auto rounded-lg border border-foreground-200 bg-white p-1.5 shadow-panel">
+          {filteredOptions.map(option => (
+            <button key={option.value} type="button" role="option" aria-selected={false} onClick={() => { onSelect(option.value); setOpen(false); }} className="block w-full rounded-md px-2.5 py-2 text-left text-[13px] font-medium text-foreground-700 hover:bg-primary-50 hover:text-primary-800">
+              {option.label}
+            </button>
+          ))}
+          {!filteredOptions.length ? <p className="px-2.5 py-3 text-center text-[12px] text-foreground-400">No learners match this search.</p> : null}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function meetingTone(event: CoachCalendarEvent): StatusTone {
@@ -141,6 +212,8 @@ export default function CoachMonthlyCoaching() {
   const [currentPage, setCurrentPage] = useState(() => pageFromQuery(searchParams.get('page')));
   const [sortOrder, setSortOrder] = useState<'date-asc' | 'date-desc' | 'learner-asc'>('date-desc');
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const [scheduleLearnerKeyValue, setScheduleLearnerKeyValue] = useState('');
+  const [scheduleLearnerSearch, setScheduleLearnerSearch] = useState('');
   const [scheduleEventKey, setScheduleEventKey] = useState('');
   const [scheduleDate, setScheduleDate] = useState('');
   const [scheduleTime, setScheduleTime] = useState('09:00');
@@ -225,39 +298,40 @@ export default function CoachMonthlyCoaching() {
     () => events.filter(event => event.source === 'mcr' && event.reviewSource !== 'aptem' && !event.aptemReviewId && !isCompletedEvent(event) && event.status !== 'cancelled'),
     [events],
   );
-  const selectedScheduleEvent = schedulableEvents.find(event => eventIdentity(event) === scheduleEventKey) || null;
-  // Each learner can have many future MCR occurrences still needing a slot; without
-  // this, the "+Schedule meeting" dropdown lists every one of them and the same
-  // learner name repeats many times, looking like duplicate entries. Collapse to
-  // the one occurrence per learner a coach would pick next (the soonest one still
-  // needing scheduling), while keeping a row's own "Schedule" action -- which can
-  // target a later occurrence directly -- selectable even if it isn't that pick.
-  const scheduleDropdownOptions = useMemo(() => {
+  const lastMcmByLearner = useMemo(
+    () => new Map(Array.from(new Set(events.map(event => event.learnerId).filter(Boolean))).map(learnerId => [
+      learnerId!,
+      latestCompletedReviewDate(events, learnerId!, 'mcr'),
+    ])),
+    [events],
+  );
+  const scheduleLearnerOptions = useMemo(() => {
     const byLearner = new Map<string, CoachCalendarEvent>();
     for (const event of schedulableEvents) {
-      const key = event.learnerId || event.learner || eventIdentity(event);
-      const current = byLearner.get(key);
-      if (!current) {
-        byLearner.set(key, event);
-        continue;
-      }
-      const currentNeeds = needsScheduling(current);
-      const eventNeeds = needsScheduling(event);
-      if (eventNeeds !== currentNeeds) {
-        if (eventNeeds) byLearner.set(key, event);
-        continue;
-      }
-      const currentDate = parseLocalDate(eventDisplayDate(current));
-      const eventDate = parseLocalDate(eventDisplayDate(event));
-      if (eventDate && (!currentDate || eventDate < currentDate)) byLearner.set(key, event);
+      const key = scheduleLearnerKey(event);
+      if (!byLearner.has(key)) byLearner.set(key, event);
     }
-    const options = Array.from(byLearner.values());
-    if (scheduleEventKey && !options.some(event => eventIdentity(event) === scheduleEventKey)) {
-      const selected = schedulableEvents.find(event => eventIdentity(event) === scheduleEventKey);
-      if (selected) options.push(selected);
+    const names = new Map<string, number>();
+    for (const event of byLearner.values()) {
+      const name = event.learner?.trim() || 'Unknown learner';
+      names.set(name, (names.get(name) || 0) + 1);
     }
-    return options.sort((a, b) => (a.learner || '').localeCompare(b.learner || ''));
-  }, [schedulableEvents, scheduleEventKey]);
+    return Array.from(byLearner, ([value, event]) => {
+      const name = event.learner?.trim() || 'Unknown learner';
+      const identifier = event.email || event.learnerId;
+      return {
+        value,
+        label: names.get(name)! > 1 && identifier ? `${name} · ${identifier}` : name,
+      };
+    }).sort((a, b) => a.label.localeCompare(b.label));
+  }, [schedulableEvents]);
+  const scheduleMeetingOptions = useMemo(
+    () => scheduleLearnerKeyValue
+      ? sortEvents(schedulableEvents.filter(event => scheduleLearnerKey(event) === scheduleLearnerKeyValue))
+      : [],
+    [schedulableEvents, scheduleLearnerKeyValue],
+  );
+  const selectedScheduleEvent = scheduleMeetingOptions.find(event => eventIdentity(event) === scheduleEventKey) || null;
 
   const groupFilterOptions = useMemo(() => {
     const seen = new Set<string>();
@@ -394,12 +468,36 @@ export default function CoachMonthlyCoaching() {
     setSlidesEvent(event);
   };
 
+  const applyScheduleEvent = (event: CoachCalendarEvent | null) => {
+    setScheduleEventKey(event ? eventIdentity(event) : '');
+    setScheduleDate(event?.scheduledDate || event?.targetDate || isoDate(new Date()));
+    setScheduleTime(event?.scheduledTime?.slice(0, 5) || '09:00');
+    setScheduleDuration(event?.durationMinutes || 60);
+  };
+
+  const searchScheduleLearner = (value: string) => {
+    setScheduleLearnerSearch(value);
+    setScheduleLearnerKeyValue('');
+    applyScheduleEvent(null);
+  };
+
+  const selectScheduleLearner = (learnerKey: string) => {
+    const learner = scheduleLearnerOptions.find(option => option.value === learnerKey) || null;
+    setScheduleLearnerSearch(learner?.label || '');
+    setScheduleLearnerKeyValue(learner?.value || '');
+    const learnerEvents = learner
+      ? sortEvents(schedulableEvents.filter(event => scheduleLearnerKey(event) === learner.value))
+      : [];
+    applyScheduleEvent(learnerEvents.find(needsScheduling) || learnerEvents[0] || null);
+  };
+
   const scheduleMeeting = (selectedEvent?: CoachCalendarEvent) => {
     const preferred = selectedEvent || schedulableEvents.find(event => needsScheduling(event)) || schedulableEvents[0];
-    setScheduleEventKey(preferred ? eventIdentity(preferred) : '');
-    setScheduleDate(preferred?.scheduledDate || preferred?.targetDate || isoDate(new Date()));
-    setScheduleTime(preferred?.scheduledTime?.slice(0, 5) || '09:00');
-    setScheduleDuration(preferred?.durationMinutes || 60);
+    const learnerKey = preferred ? scheduleLearnerKey(preferred) : '';
+    const learner = scheduleLearnerOptions.find(option => option.value === learnerKey);
+    setScheduleLearnerKeyValue(learnerKey);
+    setScheduleLearnerSearch(learner?.label || '');
+    applyScheduleEvent(preferred || null);
     setScheduleError(null);
     setScheduleModalOpen(true);
   };
@@ -471,10 +569,10 @@ export default function CoachMonthlyCoaching() {
           {!loading && !error && sortedFiltered.length === 0 ? <EmptyState variant={tabFiltered.length === 0 ? 'empty' : 'no-matches'} icon={tabFiltered.length === 0 ? 'ri-calendar-check-line' : 'ri-user-search-line'} title={tabFiltered.length === 0 ? 'No coaching meetings found.' : 'No learner matches this search.'} /> : null}
           {!loading && sortedFiltered.length > 0 ? (
             <div className={styles.tableScroll} role="region" aria-label="Coaching meetings table; scroll horizontally on smaller screens" tabIndex={0}>
-              <table className={styles.table}>
+              <table className={`${styles.table} ${styles.mcmTable}`}>
                 <caption className="sr-only">Coaching meetings for {selectedMonthLabel}</caption>
-                <colgroup><col /><col /><col /><col /><col /><col /></colgroup>
-                <thead><tr><th scope="col">Learner</th><th scope="col">Programme</th><th scope="col">Cohort</th><th scope="col">Date &amp; time</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+                <colgroup><col /><col /><col /><col /><col /><col /><col /></colgroup>
+                <thead><tr><th scope="col">Learner</th><th scope="col">Programme</th><th scope="col">Cohort</th><th scope="col">Last MCM</th><th scope="col">Date &amp; time</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
                 <tbody>{paginatedEvents.map(event => {
                   const actions = reviewActionMatrix(event);
                   const statusIcon = event.status === 'completed' ? 'ri-checkbox-circle-line' : event.status === 'scheduled' ? 'ri-calendar-line' : event.status === 'awaiting-signature' ? 'ri-edit-line' : 'ri-time-line';
@@ -483,6 +581,7 @@ export default function CoachMonthlyCoaching() {
                       <td><div className={styles.identity}><LearnerAvatar name={event.learner} tone={meetingTone(event)} size="lg" /><div><strong className={styles.learnerName}>{event.learner || 'Unknown learner'}</strong><span className={styles.learnerEmail}>{event.email || '--'}</span></div></div></td>
                       <td>{event.programme || '--'}</td>
                       <td>{event.cohort || event.group || '--'}</td>
+                      <td><ReviewAge value={event.learnerId ? lastMcmByLearner.get(event.learnerId) : undefined} label="MCM" /></td>
                       <td><span className={styles.date}><span>{formatDateLabel(event.scheduledDate || event.targetDate)}</span><span>{formatTimeRangeLabel(event)}</span></span></td>
                       <td>
                         <span className={styles.status} data-status={event.status}><AppIcon className={statusIcon} />{statusLabel(event.status)}</span>
@@ -520,7 +619,8 @@ export default function CoachMonthlyCoaching() {
               <button type="button" aria-label="Close schedule meeting" disabled={scheduleBusy} onClick={() => setScheduleModalOpen(false)} className="flex h-8 w-8 items-center justify-center rounded-lg text-foreground-400 hover:bg-foreground-50"><AppIcon className="ri-close-line text-lg" /></button>
             </div>
             <div className="space-y-4 px-5 py-5">
-              <label className="block text-[12px] font-semibold text-foreground-700">Learner<select value={scheduleEventKey} onChange={(event) => { const next = schedulableEvents.find(item => eventIdentity(item) === event.target.value); setScheduleEventKey(event.target.value); setScheduleDate(next?.scheduledDate || next?.targetDate || isoDate(new Date())); setScheduleTime(next?.scheduledTime?.slice(0, 5) || '09:00'); setScheduleDuration(next?.durationMinutes || 60); }} className="mt-1 h-10 w-full rounded-lg border border-foreground-200 bg-white px-3 text-[13px] font-medium text-foreground-800 outline-none focus:border-primary-400"><option value="" disabled>Select learner</option>{scheduleDropdownOptions.map(event => <option key={eventIdentity(event)} value={eventIdentity(event)}>{event.learner || 'Unknown learner'}{event.group ? ` · ${event.group}` : ''}</option>)}</select></label>
+              <label className="block text-[12px] font-semibold text-foreground-700">Search learner<ScheduleLearnerSearch options={scheduleLearnerOptions} value={scheduleLearnerSearch} onSearch={searchScheduleLearner} onSelect={selectScheduleLearner} /></label>
+              <label className="block text-[12px] font-semibold text-foreground-700">MCM meeting<select value={scheduleEventKey} disabled={!scheduleLearnerKeyValue} onChange={(event) => applyScheduleEvent(scheduleMeetingOptions.find(item => eventIdentity(item) === event.target.value) || null)} className="mt-1 h-10 w-full rounded-lg border border-foreground-200 bg-white px-3 text-[13px] font-medium text-foreground-800 outline-none focus:border-primary-400 disabled:cursor-not-allowed disabled:bg-foreground-50"><option value="" disabled>{scheduleLearnerKeyValue ? 'Select MCM meeting' : 'Select a learner first'}</option>{scheduleMeetingOptions.map(event => <option key={eventIdentity(event)} value={eventIdentity(event)}>{formatDateLabel(eventDisplayDate(event))} · {statusLabel(event.status)}</option>)}</select></label>
               {selectedScheduleEvent ? <div className="rounded-lg border border-primary-100 bg-primary-50/60 px-3 py-2 text-[12px] text-primary-900"><span className="font-semibold">Meeting:</span> {selectedScheduleEvent.title || 'Monthly coaching meeting'}<span className="mx-2 text-primary-300">•</span><span>{selectedScheduleEvent.programme || 'Monthly coaching'}</span></div> : null}
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-3"><label className="text-[12px] font-semibold text-foreground-700">Date<input type="date" value={scheduleDate} onChange={(event) => setScheduleDate(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-foreground-200 px-3 text-[13px] font-medium outline-none focus:border-primary-400" /></label><label className="text-[12px] font-semibold text-foreground-700">Start time<input type="time" value={scheduleTime} onChange={(event) => setScheduleTime(event.target.value)} className="mt-1 h-10 w-full rounded-lg border border-foreground-200 px-3 text-[13px] font-medium outline-none focus:border-primary-400" /></label><label className="text-[12px] font-semibold text-foreground-700">Duration<select value={scheduleDuration} onChange={(event) => setScheduleDuration(Number(event.target.value))} className="mt-1 h-10 w-full rounded-lg border border-foreground-200 bg-white px-3 text-[13px] font-medium outline-none focus:border-primary-400"><option value={30}>30 minutes</option><option value={45}>45 minutes</option><option value={60}>60 minutes</option><option value={90}>90 minutes</option><option value={120}>120 minutes</option></select></label></div>
               {scheduleError ? <p role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-[12px] font-semibold text-red-700">{scheduleError}</p> : null}

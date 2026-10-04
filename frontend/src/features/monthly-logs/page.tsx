@@ -35,12 +35,16 @@ export default function MonthlyLogsPage() {
   const base = perspective === 'learner' ? student ? '/learner/monthly-logs' : `/learner/monthly-logs/${selected.kind}/${id}` : `/coach/monthly-logs/${id}`;
   const overview = student ? '/workspace/learner/dashboard' : `/workspace/learner/${selected.kind}/${id}/dashboard`;
   const nav = roleNavMap[perspective];
+  const coachOverview = perspective === 'coach' && !month;
   return <WorkspaceShell role={perspective} roleLabel={nav.label} navItems={nav.items}
     workspaceLabel={nav.workspaceLabel} pageTitle="Monthly Logs" pageSubtitle="Your monthly learning record, activities and signatures"
-    showBackButton backFallbackHref={month ? base : perspective === 'learner' ? overview : '/coach/monthly-logs'}>
-    <PageContainer className={`${design.scope} ${design.page} ${styles.theme} ${month ? journal.canvas : ''}`}>
-      {id ? <LearnerLogs key={`${perspective}-${id}`} id={id} month={month} base={base} perspective={perspective} /> : perspective === 'learner'
-        ? <EmptyState title="Your learner account is unavailable" /> : <CoachMonthlyLogLearners />}
+    showBackButton backFallbackHref={month ? base : perspective === 'learner' ? overview : '/coach/monthly-logs'} hidePageChrome={coachOverview}>
+    <PageContainer className={`${design.scope} ${design.page} ${styles.theme} ${month ? journal.canvas : ''} ${coachOverview ? styles.coachCanvas : ''}`}>
+      {coachOverview ? <CoachMonthlyLogLearners selectedLearnerId={id} renderSelected={learner => {
+        const learnerId = String(learner.id);
+        return <LearnerLogs key={`coach-${learnerId}`} id={learnerId} base={`/coach/monthly-logs/${learnerId}`} perspective="coach" />;
+      }} /> : id ? <LearnerLogs key={`${perspective}-${id}`} id={id} month={month} base={base} perspective={perspective} /> : perspective === 'learner'
+        ? <EmptyState title="Your learner account is unavailable" /> : <EmptyState title="Choose a learner to view monthly logs" />}
     </PageContainer>
   </WorkspaceShell>;
 }

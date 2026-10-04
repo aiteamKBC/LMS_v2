@@ -2,12 +2,16 @@ import type { AbsenceReport } from '@/mocks/absence-reports';
 import { coachFetch } from '@/lib/coachFetch';
 import { fetchCoachCalendarEvents } from '../../shared/api/meetingApi';
 import type { CoachCalendarEvent } from '../../shared/types/meeting.types';
-import type { CatchUpRequestRow } from '../types/catchUp.types';
+import type { CatchUpRequestRow, CatchUpSchedulingCandidate } from '../types/catchUp.types';
 
 const ABSENCE_REPORTS_ENDPOINT = '/coach_api/coach/absence-reports';
 const BOOKED_STATUSES = new Set<CoachCalendarEvent['status']>(['scheduled', 'in-progress', 'completed']);
 
-export async function fetchCoachCatchUpQueue(signal: AbortSignal): Promise<{ rows: CatchUpRequestRow[]; warning: string }> {
+export async function fetchCoachCatchUpQueue(signal: AbortSignal): Promise<{
+  rows: CatchUpRequestRow[];
+  candidates: CatchUpSchedulingCandidate[];
+  warning: string;
+}> {
   const [calendarData, absenceResult] = await Promise.all([
     fetchCoachCalendarEvents(signal),
     coachFetch(ABSENCE_REPORTS_ENDPOINT, { signal }).then(async response => {
@@ -30,6 +34,23 @@ export async function fetchCoachCatchUpQueue(signal: AbortSignal): Promise<{ row
       const id = booking.eventKey || booking.id;
       return { id, learner: booking.learner || booking.email || 'Unknown learner', lecture: lectureByEventKey.get(id), booking };
     });
-  return { rows, warning: absenceResult.warning };
+  const candidates = (absenceResult.data.items || [])
+    .filter(report => (
+      Boolean(report.learnerId)
+      && Boolean(report.sessionTitle)
+      && Boolean(report.sessionDate)
+      && report.status !== 'declined'
+      && !report.catchupEventKey
+      && (!report.recoveryMethod || report.recoveryMethod === 'catch-up')
+    ))
+    .map((report): CatchUpSchedulingCandidate => ({
+      id: report.id,
+      learnerId: String(report.learnerId),
+      learner: report.learner,
+      lecture: report.sessionTitle,
+      lectureDate: report.sessionDate,
+      programme: report.programme,
+    }));
+  return { rows, candidates, warning: absenceResult.warning };
 }
 
