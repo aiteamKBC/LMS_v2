@@ -681,7 +681,8 @@ it('uses the same compact grouped layout for weekly progress reviews', () => {
   expect(screen.getByRole('region', { name: '24 Sept 2026' })).toHaveTextContent('THU24 SEP');
   expect(screen.getByText('Hollie Hylton')).toBeVisible();
   expect(screen.getByText('Business Admin · Group A')).toBeVisible();
-  expect(screen.getByText('Time TBC')).toBeVisible();
+  expect(screen.getByText('-')).toBeVisible();
+  expect(screen.queryByText('Time TBC')).not.toBeInTheDocument();
   expect(screen.queryByText('Review 1')).not.toBeInTheDocument();
   expect(screen.queryByText('Progress Review')).not.toBeInTheDocument();
 });

@@ -14,9 +14,11 @@ type Props = {
   ksb: string;
   attendance: string;
   nextSession: string;
+  nextPr: string;
+  nextMcm: string;
 };
 
-export function LearnerCaseFileHeader({ data, pageTitle, pageSubtitle, overall, otjh, ksb, attendance, nextSession }: Props) {
+export function LearnerCaseFileHeader({ data, pageTitle, pageSubtitle, overall, otjh, ksb, attendance }: Props) {
   return <section className={styles.hero} aria-label="Learner profile summary">
     <div className={styles.heroTop}>
       <div className={styles.identity}>
@@ -51,7 +53,6 @@ export function LearnerCaseFileHeader({ data, pageTitle, pageSubtitle, overall, 
       <Metric icon="ri-stack-line" label="KSB" value={ksb} progress={percentProgress(ksb)} tone="blue" />
       <Metric icon="ri-group-line" label="Attendance" value={attendance} progress={fractionProgress(attendance)} tone="emerald" />
       <Metric icon="ri-calendar-line" label="Gateway" value={data?.gatewayReviewDate || '--'} />
-      <Metric icon="ri-calendar-event-line" label="Next session" value={nextSession} />
     </div>
   </section>;
 }
@@ -66,8 +67,8 @@ function fractionProgress(value: string) {
   return Number(match[1]) / Number(match[2]) * 100;
 }
 
-function Metric({ icon, label, value, progress, tone }: { icon: string; label: string; value: string; progress?: number; tone?: string }) {
-  return <div className={styles.metric}>
+function Metric({ icon, label, value, progress, tone, meetingName }: { icon: string; label: string; value: string; progress?: number; tone?: string; meetingName?: string }) {
+  return <div className={`${styles.metric} ${meetingName ? styles.meetingMetric : ''}`} aria-label={meetingName ? `Next ${meetingName}` : undefined}>
     <span className={styles.metricIcon}><AppIcon className={icon} /></span>
     <div className="min-w-0"><span className={styles.metricLabel}>{label}</span><strong className={styles.metricValue} title={value}>{value}</strong></div>
     {progress !== undefined && Number.isFinite(progress) && <div className={styles.metricTrack} aria-hidden="true"><div data-tone={tone} style={{ width: `${Math.max(0, Math.min(100, progress))}%` }} /></div>}

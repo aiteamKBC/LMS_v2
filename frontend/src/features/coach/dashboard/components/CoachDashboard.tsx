@@ -34,7 +34,7 @@ import {
   eventTargetDate,
   eventPeriodLabel,
   formatDateLabel,
-  formatTimeLabel,
+  formatTimeLabel as calendarTimeLabel,
   formatTimeRangeLabel,
   isAtRiskEvent,
   getCurrentWorkWeekRange,
@@ -709,6 +709,11 @@ function isWithinNextWorkWeek(event: CoachCalendarEvent) {
   return date.getTime() >= start.getTime() && date.getTime() <= end.getTime();
 }
 
+function formatTimeLabel(event: CoachCalendarEvent) {
+  const label = calendarTimeLabel(event);
+  return label === 'Time TBC' ? '-' : label;
+}
+
 function upcomingLiveSessionTimeLabel(event: CoachCalendarEvent) {
   if (event.timeLabel && event.timeLabel !== 'Time TBC') {
     return event.timeLabel;
@@ -716,7 +721,7 @@ function upcomingLiveSessionTimeLabel(event: CoachCalendarEvent) {
   if (event.scheduledTime) {
     return event.scheduledTime.slice(0, 5);
   }
-  return 'Time TBC';
+  return '-';
 }
 
 function upcomingLiveSessionMetaLabel(event: CoachCalendarEvent) {
@@ -973,7 +978,7 @@ function scheduleEventTime(event: CoachCalendarEvent) {
   if (event.source === 'live-session') return upcomingLiveSessionTimeLabel(event);
   if (event.scheduledTime) return formatTimeRangeLabel(event);
   if (event.timeLabel && event.timeLabel !== 'Time TBC') return event.timeLabel;
-  return 'TBC';
+  return '-';
 }
 
 /** Just the start, for the fixed-size "Next" badge -- a live session's

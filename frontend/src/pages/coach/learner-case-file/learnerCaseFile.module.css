@@ -126,6 +126,7 @@
 .metricIcon { width: 46px; height: 46px; border-radius: 12px; background: #f2ecff; color: #6b2cff; font-size: 25px; }
 .metricLabel { font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; }
 .metricValue { margin-top: 7px; font-size: 19px; }
+.meetingMetric .metricValue { white-space: normal; font-size: 15px; }
 .metricTrack { grid-column: 1 / -1; height: 10px; overflow: hidden; border-radius: 999px; background: #eceaf4; }
 .metricTrack > div { height: 100%; border-radius: inherit; background: #6b2cff; }
 .metricTrack > div[data-tone="emerald"] { background: #00bf87; }

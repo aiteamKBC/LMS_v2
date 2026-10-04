@@ -225,6 +225,8 @@ export default function LearnerCaseFile() {
           ksb={headerKsb?.percent == null ? '--' : formatPercent(headerKsb.percent)}
           attendance={formatAttendanceFraction(caseFileAttendance.data?.present ?? null, caseFileAttendance.data?.sessions ?? null)}
           nextSession={nextLiveSession?.summary || '--'}
+          nextPr={caseFileReviews.error ? 'Unavailable' : caseFileReviews.loading ? 'Loading…' : caseFileReviews.nextMeetings?.pr || '--'}
+          nextMcm={caseFileReviews.error ? 'Unavailable' : caseFileReviews.loading ? 'Loading…' : caseFileReviews.nextMeetings?.mcm || '--'}
         />
 
         <CaseFileTabs activeTab={activeTab} onChange={setActiveTab} />

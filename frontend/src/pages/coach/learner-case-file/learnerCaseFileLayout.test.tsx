@@ -166,6 +166,7 @@ beforeEach(() => {
   mocks.reviewsRetry.mockReset();
   mocks.useCaseFileReviews.mockReset().mockImplementation(() => ({
     data: { groups: mocks.data?.reviewGroups || [], issues: mocks.data?.reviewGenerationIssues || [] },
+    nextMeetings: { pr: '10 Oct 2026 · 10:00', mcm: '12 Oct 2026 · 09:30' },
     loading: Boolean(mocks.data?.reviewsLoading), error: null, retry: mocks.reviewsRetry, invalidate: mocks.reviewsRetry,
   }));
   mocks.useCaseFileNextSession.mockReset().mockReturnValue({ data: null, loading: false, error: null, retry: vi.fn(), invalidate: vi.fn() });
@@ -179,10 +180,16 @@ describe('Learner Case File design', () => {
 
     expect(screen.getByRole('heading', { name: 'Aya Khater', level: 1 })).toBeInTheDocument();
     const summary = screen.getByRole('region', { name: 'Learner profile summary' });
-    for (const metric of ['Overall', 'OTJH (Actual / Target)', 'KSB', 'Attendance', 'Gateway', 'Next session']) {
+    for (const metric of ['Overall', 'OTJH (Actual / Target)', 'KSB', 'Attendance', 'Gateway']) {
       expect(within(summary).getByText(metric, { selector: 'span' })).toBeInTheDocument();
     }
     expect(within(summary).getByText('7 / 10', { selector: 'strong' })).toBeInTheDocument();
+    for (const metric of ['PR', 'MCM', 'Next session']) {
+      expect(within(summary).queryByText(metric, { exact: true })).not.toBeInTheDocument();
+    }
+    expect(within(summary).queryByLabelText('Next Progress Review')).not.toBeInTheDocument();
+    expect(within(summary).queryByLabelText('Next Monthly Coaching Meeting')).not.toBeInTheDocument();
+    expect(mocks.useCaseFileReviews).toHaveBeenCalledWith('42', true);
     expect(within(summary).queryByText('Absences')).not.toBeInTheDocument();
     expect(within(summary).queryByText('Profile Snapshot')).not.toBeInTheDocument();
     expect(within(summary).queryByText('Profile details')).not.toBeInTheDocument();
