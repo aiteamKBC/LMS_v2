@@ -1,50 +1,44 @@
-from datetime import date
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.test import SimpleTestCase
 
-from coach_api.views import caseload_display_start_date, caseload_schedule_values
+from coach_api.views import (
+    caseload_display_start_date, caseload_profile_start_date,
+    caseload_schedule_values, fetch_source_schedule_rows, resolve_caseload_source_row,
+)
 
 
 class CaseloadDisplayStartDateTests(SimpleTestCase):
-    def row(self, kind="apprenticeship", **source_dates):
-        return SimpleNamespace(
-            start_date=None,
-            _caseload_source=SimpleNamespace(
-                learner_type=kind, programme="Programme A", cohort="Cohort A",
-                **source_dates,
-            ),
-            _caseload_contract={"program_start_date": "2025-10-01"},
-        )
+    def test_bulk_stable_enrolment_lookup_for_all_types_and_coaches(self):
+        for coach in ("coach-a@example.invalid", "coach-b@example.invalid"):
+            with self.subTest(coach=coach):
+                profiles = [SimpleNamespace(id=i, enrolment_id=100 + i, coach_email=coach,
+                                            full_name="Same display name", start_date="2020-01-01")
+                            for i in (1, 2, 3)]
+                sources = [SimpleNamespace(id=100 + i, learner_type=kind,
+                                           learner_start_date=value, start_date="2020-01-01")
+                           for i, kind, value in ((1, "apprenticeship", "2026-05-28"),
+                                                  (2, "commercial", "2025-05-01"),
+                                                  (3, "apprenticeship", None))]
+                with patch("coach_api.views.EnrolmentUser.all_learners.filter", return_value=sources) as fetch:
+                    commercial, enrolment = fetch_source_schedule_rows(profiles)
+                fetch.assert_called_once_with(pk__in={101: 1, 102: 2, 103: 3})
+                for profile in profiles:
+                    profile._caseload_source = resolve_caseload_source_row(
+                        profile, commercial_rows=commercial, enrolment_rows=enrolment)
+                    profile._caseload_contract = {"program_start_date": "2025-10-01"}
+                self.assertEqual([caseload_profile_start_date(r) for r in profiles],
+                                 ["2026-05-28", "2025-05-01", None])
+                self.assertEqual([caseload_display_start_date(r) for r in profiles],
+                                 ["28 May 2026", "01 May 2025", "--"])
+                self.assertEqual([caseload_schedule_values(r)[1] for r in profiles],
+                                 ["2025-10-01"] * 3)
 
-    @patch("learner_api.active_users.cohort_dates", return_value=(date(2025, 10, 15), date(2027, 2, 14)))
-    def test_cohort_fallback_matches_case_file_for_both_learner_types(self, cohort_dates):
-        for kind in ("apprenticeship", "commercial"):
-            with self.subTest(kind=kind):
-                row = self.row(kind)
-                self.assertEqual(caseload_display_start_date(row), "15 Oct 2025")
-                self.assertEqual(caseload_schedule_values(row)[1], "2025-10-01")
-
-    @patch("learner_api.active_users.cohort_dates")
-    def test_recorded_source_date_wins_over_cohort_contract_and_profile(self, cohort_dates):
-        row = self.row(start_date="2025-10-20", end_date="2027-02-14")
-        row.start_date = date(2025, 10, 2)
-        self.assertEqual(caseload_display_start_date(row), "20 Oct 2025")
-        cohort_dates.assert_not_called()
-
-    @patch("learner_api.active_users.cohort_dates", return_value=(None, None))
-    def test_no_date_is_not_fabricated_from_contract(self, cohort_dates):
-        self.assertEqual(caseload_display_start_date(self.row()), "--")
-
-    @patch("learner_api.active_users.cohort_dates", return_value=(None, None))
-    def test_profile_shell_is_used_when_detail_has_no_date(self, cohort_dates):
-        row = self.row()
-        row.start_date = date(2025, 10, 25)
-        self.assertEqual(caseload_display_start_date(row), "25 Oct 2025")
-
-    def test_missing_source_uses_only_profile_date(self):
-        row = SimpleNamespace(start_date=None)
+    def test_no_source_or_relation_does_not_fall_back_to_profile(self):
+        row = SimpleNamespace(id=1, enrolment_id=None, start_date="2026-05-28")
+        with patch("coach_api.views.EnrolmentUser.all_learners.filter") as fetch:
+            self.assertEqual(fetch_source_schedule_rows([row]), ({}, {}))
+        fetch.assert_not_called()
+        self.assertIsNone(caseload_profile_start_date(row))
         self.assertEqual(caseload_display_start_date(row), "--")
-        row.start_date = date(2025, 10, 28)
-        self.assertEqual(caseload_display_start_date(row), "28 Oct 2025")

@@ -1,4 +1,4 @@
-import { act, renderHook, waitFor } from '@testing-library/react';
+import { act, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const trace: string[] = [];
@@ -43,6 +43,12 @@ vi.mock('@/pages/coach/shared/calendarEvents', () => ({
 }));
 
 import { useCoachLearnerCaseFileData } from './data';
+import { LearnerCaseFileHeader } from './components/LearnerCaseFileHeader';
+
+const headerProps = {
+  pageTitle: 'Learner', pageSubtitle: 'Programme', overall: '--', otjh: '--', ksb: '--',
+  attendance: '--', nextSession: '--', nextPr: '--', nextMcm: '--',
+};
 
 const metrics = {
   migrated: false,
@@ -84,7 +90,7 @@ function shell(overrides: Record<string, unknown> = {}) {
     profile: {
       name: 'Stable Learner', email: 'stable@example.test', programme: 'Test Programme', cohort: 'Cohort A',
       group: 'Group A', employer: 'Employer A', coachName: 'Coach A', coachEmail: 'coach@example.test',
-      status: 'Active', startDate: '03 Aug 2026', plannedEndDate: '02 Aug 2027', gatewayReviewDate: '04 May 2027', coachRag: null,
+      status: 'Active', startDate: '2026-06-01', plannedEndDate: '02 Aug 2027', gatewayReviewDate: '04 May 2027', coachRag: null,
       ...overrides,
     },
   };
@@ -250,18 +256,23 @@ describe('Learner Case File request characterization', () => {
     expect(result.current.data?.overallProgress).toBe(75);
   });
 
-  it('uses the canonical detail start date ahead of the shell date', async () => {
+  it('uses only the shared canonical shell start date despite a different detail programme date', async () => {
     mocks.fetchLearnerDetail.mockResolvedValue({ ...learnerDetail(false), programmeStartDate: '2025-10-15' });
     const { result } = renderHook(() => useCoachLearnerCaseFileData({
       learnerId: '316', kind: 'apprenticeship', enrolmentId: '5170',
     }));
-    await waitFor(() => expect(result.current.data?.startDate).toBe('2025-10-15'));
+    await waitFor(() => expect(result.current.data?.startDate).toBe('2026-06-01'));
+    await waitFor(() => expect(result.current.data?.detail?.programmeStartDate).toBe('2025-10-15'));
+    expect(result.current.data?.startDate).toBe('2026-06-01');
     expect(result.current.data?.gatewayReviewDate).toBe('04 May 2027');
+    render(<LearnerCaseFileHeader {...headerProps} data={result.current.data} />);
+    expect(screen.getByText('Start Date').nextElementSibling).toHaveTextContent(/^2026-06-01$/);
   });
 
   it('preserves shell profile fields and leaves missing values unavailable', async () => {
     mocks.fetchLearnerDetail.mockResolvedValue({
       ...learnerDetail(false), name: '', email: '', programme: '', cohort: '', group: '', employer: '', programmeStatus: '',
+      programmeStartDate: '2025-10-15',
     });
     mocks.coachFetch.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -281,6 +292,8 @@ describe('Learner Case File request characterization', () => {
       employer: '', startDate: '--', plannedEndDate: '--', gatewayReviewDate: '--',
     });
     expect(result.current.data?.evidenceCount).toBeNull();
+    render(<LearnerCaseFileHeader {...headerProps} data={result.current.data} />);
+    expect(screen.getByText('Start Date').nextElementSibling).toHaveTextContent(/^--$/);
   });
 
   it.skip('future boundary: opening the shell should not fetch coach-wide attendance, marking or timetable data', () => {});

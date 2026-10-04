@@ -134,12 +134,12 @@ describe('Coach caseload loading', () => {
     expect(startDateHeader).toHaveAttribute('aria-sort', 'descending');
   });
 
-  it('shows and sorts the Case File date while retaining the contractual date for calculations', async () => {
+  it('shows and sorts only the canonical start date while retaining the contractual date for calculations', async () => {
     const learners = [
       { ...learner, id: 'later', name: 'Later Display Learner', startDate: '2025-10-20', displayStartDate: '01 Jan 2020', otjhProgrammeStartDate: '01 Jan 2020' },
       { ...learner, id: 'earlier', name: 'Earlier Display Learner', startDate: '2025-10-15', displayStartDate: '--', otjhProgrammeStartDate: '--' },
-      { ...learner, id: 'missing', name: 'Missing Display Learner', startDate: '--', displayStartDate: '01 Jan 2020' },
-      { ...learner, id: 'omitted', name: 'Omitted Display Learner', startDate: '--' },
+      { ...learner, id: 'missing', name: 'Missing Display Learner', startDate: null, displayStartDate: '01 Jan 2020', otjhProgrammeStartDate: '01 Jan 2020' },
+      { ...learner, id: 'omitted', name: 'Omitted Display Learner' },
     ] satisfies CaseloadApiLearner[];
     render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={learners} /></MemoryRouter>);
 

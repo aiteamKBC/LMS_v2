@@ -748,7 +748,7 @@ function buildCaseFileData(args: {
     ksbCodeProgress: args.learnerMetrics?.ksbCodeProgress ?? [],
     ksbActivityPoints: args.learnerMetrics?.ksbActivityPoints ?? [],
     evidenceCount: args.snapshot?.evidenceCount ?? args.evidence?.totalEvidence ?? null,
-    startDate: args.detail?.programmeStartDate || args.shell.profile.startDate || '--',
+    startDate: args.shell.profile.startDate || '--',
     gatewayReviewDate: args.shell.profile.gatewayReviewDate || '--',
     plannedEndDate: args.detail?.programmeEndDate || args.shell.profile.plannedEndDate || '--',
     totalExpectedOtjh: metricsAvailable ? canonicalPlanned ?? 0 : 0,

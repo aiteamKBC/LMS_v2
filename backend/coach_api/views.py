@@ -2138,7 +2138,7 @@ def fetch_case_file_shell(owner_email: str, learner_id: int):
             .only(
                 "id", "aptem_id", "learner_type", "username", "email", "programme",
                 "programme_status", "cohort", "group", "employer", "coach_name",
-                "coach_email", "start_date", "end_date",
+                "coach_email", "start_date", "learner_start_date", "end_date",
             )
             .first()
         )
@@ -2150,6 +2150,7 @@ def serialize_case_file_shell(profile, source) -> dict:
     return serialize_learner_profile_shell(
         profile,
         source,
+        canonical_start_date=caseload_profile_start_date(SimpleNamespace(_caseload_source=source)),
         clean_text=clean_text,
         format_date=format_date,
         student_activity_available=student_activity_available,
@@ -2431,21 +2432,26 @@ def caseload_schedule_values(row) -> tuple[object, object, object]:
 
 
 def caseload_profile_start_date(row):
-    """Profile programmeStartDate, from its existing recorded-date resolver."""
-    from learner_api.apprenticeship_agreement import _group_dates
-
+    """Only Created_users.Learner_start_date, from the bulk enrolment lookup."""
     source = getattr(row, "_caseload_source", None)
-    if source is not None:
-        start, _, _ = _group_dates(source)
-        if start is not None:
-            return start.isoformat()
-    # Identical to the Case File's shell fallback; never use a contract date.
-    start = parse_date_value(getattr(row, "start_date", None) or getattr(source, "start_date", None))
-    return start.isoformat()[:10] if start else "--"
+    value = getattr(source, "learner_start_date", None)
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if not isinstance(value, str) or not value.strip():
+        return None
+    # Parse the complete value: a valid date prefix must not hide invalid text.
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d %b %Y", "%d %B %Y"):
+        try:
+            return datetime.strptime(value.strip(), fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
 
 
 def caseload_display_start_date(row):
-    """Compatibility display alias of the one Profile start date."""
+    """Compatibility display alias of the canonical enrolment start date."""
     return format_date(caseload_profile_start_date(row))
 
 

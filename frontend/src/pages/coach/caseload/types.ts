@@ -166,7 +166,7 @@ export interface CaseloadApiLearner extends Omit<Learner, 'enrollmentStatus' | '
   employerEmail?: string | null;
   employerPhone?: string | null;
   progressVariance?: string;
-  startDate?: string;
+  startDate?: string | null;
   gatewayReviewDate?: string;
   plannedEndDate?: string;
   lastPr?: string | null;
