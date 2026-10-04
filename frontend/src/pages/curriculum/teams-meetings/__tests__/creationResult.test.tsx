@@ -19,7 +19,7 @@ it('keeps the saved result open until Done, which makes no further request', asy
   await waitFor(() => expect(screen.getByRole('button', { name: 'Done' })).toBeVisible());
   expect(screen.getByText('1 session saved')).toBeVisible();
   expect(screen.getByText('2 of 2 submitted to Microsoft')).toBeVisible();
-  expect(screen.getByText(/the organiser, co-organisers and presenters receive a copy that also lists the meeting settings and the invited learners/)).toBeVisible();
+  expect(screen.getByText(/The organiser, co-organisers and presenters are not emailed by the LMS/)).toBeVisible();
   expect(Swal.getTimerLeft()).toBeUndefined();
   expect(closed).toBe(false);
   await userEvent.click(screen.getByRole('button', { name: 'Done' }));

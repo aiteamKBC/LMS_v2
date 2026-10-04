@@ -150,12 +150,18 @@ class MigratedReviewTemplate(models.Model):
 
     FAMILY_MCM = "MCM"
     FAMILY_PR = "PR"
-    FAMILY_CHOICES = [(FAMILY_MCM, "Monthly Coaching Meeting"), (FAMILY_PR, "Progress Review")]
+    FAMILY_PR_SKILLS_RADAR = "PR_SKILLS_RADAR"
+    FAMILY_CHOICES = [(FAMILY_MCM, "Monthly Coaching Meeting"), (FAMILY_PR, "Progress Review"),
+                      (FAMILY_PR_SKILLS_RADAR, "Progress Review + Skills Radar")]
+    SCOPE_GLOBAL = "GLOBAL"
+    SCOPE_PROGRAMME = "PROGRAMME"
 
-    programme_key = models.CharField(max_length=255)
-    review_family = models.CharField(max_length=3, choices=FAMILY_CHOICES)
+    scope = models.CharField(max_length=9, choices=[("GLOBAL", "Global"), ("PROGRAMME", "Programme")], default="PROGRAMME")
+    programme_key = models.CharField(max_length=255, blank=True, default="")
+    review_family = models.CharField(max_length=15, choices=FAMILY_CHOICES)
     name = models.CharField(max_length=255)
     definition_json = models.JSONField(default=dict)
+    source_metadata = models.JSONField(default=dict, blank=True)
     is_active = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -164,17 +170,27 @@ class MigratedReviewTemplate(models.Model):
         db_table = _table_name('coach_test_migrated_review_templates', 'Coach"."coach_migrated_review_template')
         constraints = [
             models.UniqueConstraint(
-                fields=["programme_key", "review_family"], condition=models.Q(is_active=True),
-                name="coach_migrated_template_one_active",
+                fields=["scope", "programme_key", "review_family"],
+                condition=models.Q(is_active=True, scope="PROGRAMME"),
+                name="coach_migrated_programme_active",
+            ),
+            models.UniqueConstraint(
+                fields=["scope", "review_family"], condition=models.Q(is_active=True, scope="GLOBAL"),
+                name="coach_migrated_global_active",
             ),
             models.CheckConstraint(
-                condition=models.Q(review_family__in=["MCM", "PR"]),
+                condition=models.Q(review_family__in=["MCM", "PR", "PR_SKILLS_RADAR"]),
                 name="coach_migrated_template_family_valid",
+            ),
+            models.CheckConstraint(
+                condition=(models.Q(scope="GLOBAL", programme_key="")
+                           | (models.Q(scope="PROGRAMME") & ~models.Q(programme_key=""))),
+                name="coach_migrated_template_scope_valid",
             ),
         ]
 
     def __str__(self):
-        return f"{self.programme_key} / {self.review_family}: {self.name}"
+        return f"{self.programme_key or self.scope} / {self.review_family}: {self.name}"
 
 
 class ImportedReviewInstance(models.Model):

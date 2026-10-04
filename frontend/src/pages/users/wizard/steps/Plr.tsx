@@ -14,6 +14,7 @@ import type { PlrRecord } from '../../types';
 import { Modal } from '../../components/Modal';
 import { Table, Pagination, inputClass, btnPrimary, btnSecondary, iconBtn } from '../../components/ui';
 import { StepHeading } from './fields';
+import { useText } from '../layout/textsContext';
 import { FieldError, invalidClass } from '../stepErrors';
 import { OTHER, QUALIFICATION_TYPE_OPTIONS, SUBJECT_OPTIONS, joinChoice, splitChoice } from './plrText';
 
@@ -295,6 +296,7 @@ function PlrForm({
 
 export default function Plr() {
   const { draft, setSection, userId, isCommercial } = useWizard();
+  const t = useText();
   const plr = draft.plr;
   const kind: LearnerKind = isCommercial ? 'commercial' : 'apprenticeship';
   const evidence = usePlrEvidence(kind, userId);
@@ -324,7 +326,7 @@ export default function Plr() {
 
   return (
     <div>
-      <StepHeading title="Personal Learning Record" />
+      <StepHeading title={t('block.plr.title')} />
       <button type="button" className={`${btnSecondary} mb-3`} onClick={add}>
         <AppIcon className="ri-add-line" />Add
       </button>
@@ -333,7 +335,7 @@ export default function Plr() {
         <Table headers={['Place of Study', 'Qualification Type', 'Subject', 'Level', 'Award Date', 'Credits', 'Grade', 'Record Type', 'Certificate / Evidence', 'Actions']}>
           {rows.length === 0 ? (
             <tr>
-              <td colSpan={10} className="py-4 px-3 text-center text-[12px] text-foreground-400">There are no personal learning records.</td>
+              <td colSpan={10} className="py-4 px-3 text-center text-[12px] text-foreground-400">{t('block.plr.empty')}</td>
             </tr>
           ) : (
             rows.map((r) => (

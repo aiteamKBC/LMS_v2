@@ -1,5 +1,5 @@
 """Synthetic reconciliation regressions; no database/network/application startup."""
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
 import unittest
 
 from reconcile_aptem_evidence import make_plan, plan_evidence, summary
@@ -22,6 +22,7 @@ class ReconciliationTests(unittest.TestCase):
     def test_bst_midnight_matches_correct_calendar_date_and_does_not_add_hours(self):
         result = plan_evidence(evidence(), [journal()], set(), {10})
         self.assertEqual((result['progress_id'], result['added_seconds']), (3, 0))
+        self.assertEqual((result['end_at'] - result['at']).total_seconds(), 9000)
 
     def test_zero_audit_hours_remain_authoritative(self):
         result = plan_evidence(evidence(), [journal(actual_hours=0)], set(), {10})
@@ -49,6 +50,13 @@ class ReconciliationTests(unittest.TestCase):
         result = plan_evidence(evidence(), [journal(activity_date=date(2026, 6, 5))], set(), {10})
         self.assertEqual(result['resolution'], 'new_attendance')
         self.assertEqual(result['added_seconds'], 9000)
+        self.assertEqual((result['end_at'] - result['at']).total_seconds(), 9000)
+
+    def test_attendance_can_be_anchored_to_the_london_session_start(self):
+        result = plan_evidence(evidence(), [journal(activity_date=date(2026, 6, 5))], set(), {10}, time(12, 0))
+        self.assertEqual(result['at'].hour, 12)
+        self.assertEqual(result['at'].minute, 0)
+        self.assertEqual((result['end_at'] - result['at']).total_seconds(), 9000)
 
     def test_deleted_journal_is_not_revived(self):
         with self.assertRaisesRegex(ValueError, 'deleted'):
@@ -97,6 +105,15 @@ class ReconciliationTests(unittest.TestCase):
              'reporting_started_at': evidence()['completed_date']}]}
         with self.assertRaisesRegex(ValueError, 'already covers'):
             make_plan(state, set(), {10})
+
+    def test_attendance_window_rejects_an_overlapping_activity(self):
+        state = {'evidence': [evidence()], 'journals': [], 'progress': [], 'sources': [
+            {'source_system': 'old_lms', 'source_activity_id': 'material:99',
+             'source_payload': {'ComponentId': 99}, 'deleted_at': None,
+             'reporting_started_at': datetime(2026, 6, 12, 12, 30, tzinfo=timezone.utc),
+             'reporting_ended_at': datetime(2026, 6, 12, 13, 0, tzinfo=timezone.utc)}]}
+        with self.assertRaisesRegex(ValueError, 'overlaps this attendance window'):
+            make_plan(state, set(), {10}, time(12, 0))
 
     def test_segments_replace_parent_hours_in_before_after_summary(self):
         state = {'evidence': [], 'journals': [], 'progress': [

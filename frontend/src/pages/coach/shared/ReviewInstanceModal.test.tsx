@@ -59,6 +59,21 @@ function migratedDefinition(status = 'in-progress'): ReviewInstanceFormDefinitio
   };
 }
 
+function migratedPrDefinition(status: string, family: 'PR' | 'PR_SKILLS_RADAR'): ReviewInstanceFormDefinition {
+  const base = migratedDefinition(status);
+  const type = family === 'PR_SKILLS_RADAR' ? 'Progress Review (+ Skills Radar)' : 'Progress Review';
+  const result = {
+    ...base,
+    template: { ...base.template, name: type, reviewTypeCode: 'aptem_progress_review',
+      signatures: { ...base.template.signatures, employer: true } },
+    signatures: { ...base.signatures, employer: { required: true, signed: false } },
+    historicalReview: { type },
+    migratedTemplateResolution: { review_family: family, resolved_scope: 'GLOBAL',
+      resolved_template_id: family === 'PR_SKILLS_RADAR' ? 22 : 21, uses_snapshot: true },
+  };
+  return result;
+}
+
 function mount(instanceId = 'instance-1') {
   const onStatusChange = vi.fn();
   const onClose = vi.fn();
@@ -422,9 +437,9 @@ describe('review reopen flow', () => {
     expect(completeReviewInstance).not.toHaveBeenCalled();
   });
 
-  it('starts a scheduled migrated form without touching native review flow', async () => {
+  it.each(['PR', 'PR_SKILLS_RADAR'] as const)('starts scheduled migrated %s without touching native review flow', async (family) => {
     const scheduled: ReviewInstanceFormDefinition = {
-      ...definition('scheduled'), source: 'aptem', migratedForm: true,
+      ...migratedPrDefinition('scheduled', family),
       localStatus: 'scheduled', readOnly: false,
       booking: { booked: true, conflict: false, canBook: false, eventKey: 'imported-review:scheduled', scheduledDate: '2026-10-30', scheduledTime: '10:00', durationMinutes: 60, meetingLink: 'https://example.invalid/teams', syncState: 'synced' },
       instance: { ...definition('scheduled').instance, id: 'imported-review:scheduled', occurrenceNumber: null, reviewTemplateId: '' },
@@ -437,9 +452,9 @@ describe('review reopen flow', () => {
     expect(await screen.findByRole('button', { name: 'Submit Review' })).toBeVisible();
   });
 
-  it('books a migrated review explicitly and then shows meeting actions', async () => {
+  it.each(['PR', 'PR_SKILLS_RADAR'] as const)('books migrated %s explicitly and then shows meeting actions', async (family) => {
     const pending: ReviewInstanceFormDefinition = {
-      ...definition('not-scheduled'), source: 'aptem', migratedForm: true, formAvailable: true,
+      ...migratedPrDefinition('not-scheduled', family),
       localStatus: 'not-scheduled', readOnly: false,
       booking: { booked: false, conflict: false, canBook: true, eventKey: null, scheduledDate: null, scheduledTime: null, durationMinutes: null, meetingLink: null, syncState: null },
       instance: { ...definition().instance, id: 'imported-review:pending', targetDate: '2026-10-30', occurrenceNumber: null, reviewTemplateId: '' },
@@ -456,6 +471,7 @@ describe('review reopen flow', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Confirm booking' }));
     await waitFor(() => expect(bookMigratedReview).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole('link', { name: 'Join Teams' })).toHaveAttribute('href', 'https://example.invalid/teams');
+    expect(screen.getByRole('region', { name: 'Migrated review meeting' })).toHaveTextContent('10:00');
     expect(screen.getByRole('button', { name: 'Start migrated review' })).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Book Meeting' })).not.toBeInTheDocument();
   });
@@ -492,9 +508,9 @@ describe('review reopen flow', () => {
     expect(bookMigratedReview).not.toHaveBeenCalled();
   });
 
-  it('reuses a verified existing meeting without opening the date picker', async () => {
+  it.each(['PR', 'PR_SKILLS_RADAR'] as const)('reuses a verified existing %s meeting without opening the date picker', async (family) => {
     const existing: ReviewInstanceFormDefinition = {
-      ...definition('not-scheduled'), source: 'aptem', migratedForm: true, formAvailable: true,
+      ...migratedPrDefinition('not-scheduled', family),
       localStatus: 'not-scheduled', readOnly: false,
       booking: { booked: true, conflict: false, canBook: false, canAttach: true,
         eventKey: 'imported-review:existing-meeting', scheduledDate: '2026-10-30', scheduledTime: '10:00',

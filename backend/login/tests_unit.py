@@ -415,6 +415,12 @@ _BLANKED_ALTERNATES = {
     "AZURE_EMAIL": "",
 }
 
+#: Azure genuinely absent. Blanking AZURE_MAIL_SENDER alone is NOT enough:
+#: _SETTING_SOURCES also accepts AZURE_EMAIL, this project's real .env defines
+#: it, and os.environ is never cleared — so is_configured() stayed True and the
+#: "unconfigured" tests below made live Graph sendMail calls.
+_MAIL_ABSENT = dict(_BLANKED_ALTERNATES, AZURE_MAIL_SENDER="")
+
 
 class MailConfigurationTests(SimpleTestCase):
     def test_fully_configured_is_reported_ready(self):
@@ -524,24 +530,37 @@ class MailFallbackTests(SimpleTestCase):
             html_body="<b>x</b>", text_body=self._LINK,
         )
 
+    def _send_without_azure(self):
+        """Send with Azure absent — and prove nothing reached the network.
+
+        The refusing httpx.post is the point of this helper. These tests used
+        to blank AZURE_MAIL_SENDER only, AZURE_EMAIL kept the config valid, and
+        the sends went to Graph for real. A transport that fails when touched
+        turns that from a silent side effect into a red test.
+        """
+        with mock.patch.dict("os.environ", _MAIL_ABSENT, clear=False):
+            with mock.patch("httpx.post", side_effect=AssertionError(
+                "send_mail reached the network while Azure was meant to be absent"
+            )) as posted:
+                result = self._send()
+        self.assertFalse(posted.called, "a live Graph call was attempted")
+        return result
+
     def test_unconfigured_send_reports_failure_with_a_reason(self):
-        with mock.patch.dict("os.environ", {"AZURE_MAIL_SENDER": ""}, clear=False):
-            sent, detail = self._send()
+        sent, detail = self._send_without_azure()
         self.assertFalse(sent)
         self.assertIn("not-configured", detail)
 
     @override_settings(DEBUG=True)
     def test_link_is_logged_in_development(self):
-        with mock.patch.dict("os.environ", {"AZURE_MAIL_SENDER": ""}, clear=False):
-            with self.assertLogs("login.email", level="WARNING") as captured:
-                self._send()
+        with self.assertLogs("login.email", level="WARNING") as captured:
+            self._send_without_azure()
         self.assertIn("LIVE-TOKEN-VALUE", "\n".join(captured.output))
 
     @override_settings(DEBUG=False)
     def test_link_is_never_logged_in_production(self):
-        with mock.patch.dict("os.environ", {"AZURE_MAIL_SENDER": ""}, clear=False):
-            with self.assertLogs("login.email", level="ERROR") as captured:
-                self._send()
+        with self.assertLogs("login.email", level="ERROR") as captured:
+            self._send_without_azure()
         output = "\n".join(captured.output)
         self.assertNotIn("LIVE-TOKEN-VALUE", output)
         # Still says something actionable, so the misconfiguration is visible.
@@ -638,6 +657,78 @@ class MessageTemplateTests(SimpleTestCase):
         )
         self.assertNotIn("<style", html.lower())
         self.assertNotIn("<script", html.lower())
+
+
+class BrandedTutorMailTests(SimpleTestCase):
+    """The tutor assignment mail carries the crest and keeps its facts."""
+
+    module = {
+        "name": "Martech Foundations", "code": "MOD-123", "programme": "Data Analyst",
+        "cohort": "Sept 2026", "group": "Group A", "schedule": "Wednesday 09:00-11:00",
+        "dates": "2026-09-02 to 2026-10-07", "sessions": "6", "otjh": "12 hours",
+        "coach": "Sam Coach",
+    }
+
+    def build(self, modules=None, tutor_name="Osama Kord"):
+        return email_azure.tutor_assignment_message(
+            tutor_name=tutor_name, modules=modules or [self.module],
+            workspace_url="https://lms.example/workspace/tutor",
+        )
+
+    def test_the_logo_is_referenced_by_cid_not_by_a_url(self):
+        """A linked image depends on a host the reader's client may not reach."""
+        _subject, html, _text = self.build()
+        self.assertIn(f'src="cid:{email_azure.BRAND_LOGO_CID}"', html)
+        # No remote asset anywhere: mail clients block those until asked.
+        self.assertNotIn('src="http', html)
+        # Images off still names the college.
+        self.assertIn('alt="Kent Business College"', html)
+
+    def test_the_logo_travels_with_the_message_as_an_inline_part(self):
+        attachment = email_azure.brand_logo_attachment()
+        self.assertIsNotNone(attachment)
+        self.assertEqual(attachment["content_id"], email_azure.BRAND_LOGO_CID)
+        self.assertEqual(attachment["content_type"], "image/png")
+        # PNG magic, without spelling the non-ASCII first byte.
+        self.assertEqual(attachment["content"][1:4], b"PNG")
+
+        part = email_azure._file_attachment(attachment)
+        # Inline, so it renders in the body rather than hanging off the mail as
+        # a download.
+        self.assertTrue(part["isInline"])
+        self.assertEqual(part["contentId"], email_azure.BRAND_LOGO_CID)
+
+    def test_an_ordinary_attachment_is_not_made_inline(self):
+        part = email_azure._file_attachment({
+            "name": "invite.ics", "content_type": "text/calendar", "content": b"BEGIN:VCALENDAR",
+        })
+        self.assertNotIn("isInline", part)
+        self.assertNotIn("contentId", part)
+
+    def test_the_facts_survive_the_redesign(self):
+        """Styling may change; what the tutor needs to know may not."""
+        _subject, html, text = self.build()
+        for fact in ("Martech Foundations", "Group A", "Wednesday 09:00-11:00",
+                     "2026-09-02 to 2026-10-07", "Sam Coach"):
+            self.assertIn(fact, html)
+            self.assertIn(fact, text)
+        self.assertIn("https://lms.example/workspace/tutor", html)
+        self.assertIn("https://lms.example/workspace/tutor", text)
+
+    def test_the_inbox_preview_line_says_something_the_subject_does_not(self):
+        _subject, html, _text = self.build()
+        # Gmail would otherwise preview the greeting.
+        self.assertIn("Wednesday 09:00-11:00", html.split("</div>")[0])
+
+    def test_it_stays_self_contained_html(self):
+        _subject, html, _text = self.build()
+        self.assertNotIn("<style", html.lower())
+        self.assertNotIn("<script", html.lower())
+
+    def test_several_modules_are_one_message_with_one_card_each(self):
+        _subject, html, _text = self.build(modules=[self.module, dict(self.module, name="Second")])
+        self.assertIn("You are now teaching 2 modules", html)
+        self.assertIn("Second", html)
 
 
 class LinkBuildingTests(SimpleTestCase):

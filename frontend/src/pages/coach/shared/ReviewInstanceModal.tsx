@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { ReviewFormRenderer, computeMissingRequiredFields, computeVisibleRequiredFields } from '@/components/reviews/ReviewFormRenderer';
 import { ReviewSignatures } from '@/components/reviews/ReviewSignatures';
@@ -31,6 +31,7 @@ import { SignaturePad } from '@/pages/users/wizard/steps/SignaturePad';
 import { useAuth } from '@/hooks/useAuth';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { MigratedMeetingIntelligence } from './MigratedMeetingIntelligence';
+import type { CoachMeetingArtifactsResponse } from './calendarEvents';
 
 const isAbortError = (err: unknown): boolean => err instanceof DOMException && err.name === 'AbortError';
 
@@ -239,6 +240,28 @@ export function ReviewInstanceModal({
   const [definition, setDefinition] = useState<ReviewInstanceFormDefinition | null>(null);
   const [answers, setAnswers] = useState<Record<string, unknown>>({});
   const answersRef = useRef<Record<string, unknown>>({});
+  const savedAnswersRef = useRef<Record<string, unknown>>({});
+  const editedFieldsRef = useRef(new Set<string>());
+  const [checkingSession, setCheckingSession] = useState(false);
+  const onMigratedCheckComplete = useCallback((result: CoachMeetingArtifactsResponse) => {
+    if (!result.answerVersion || !result.reviewAnswers) return;
+    const stored = result.reviewAnswers;
+    const local = answersRef.current;
+    const previous = savedAnswersRef.current;
+    const merged = { ...stored };
+    // Preserve any local input made while the request was starting. Only
+    // server values replace fields that the coach has not changed locally.
+    for (const key of new Set([...Object.keys(previous), ...Object.keys(local)])) {
+      if (local[key] !== previous[key] || (key in local) !== (key in previous)) {
+        if (key in local) merged[key] = local[key];
+        else delete merged[key];
+      }
+    }
+    savedAnswersRef.current = stored;
+    answersRef.current = merged;
+    setAnswers(merged);
+    setDefinition(current => current ? { ...current, answerVersion: result.answerVersion, summaryBinding: result.summaryBinding } : current);
+  }, []);
   const [loading, setLoading] = useState(true);
   const [initializationFailed, setInitializationFailed] = useState(false);
   const [initializationRetry, setInitializationRetry] = useState(0);
@@ -344,6 +367,8 @@ export function ReviewInstanceModal({
         setPreviousSessionOpen(false);
         setPreviousSessionError(null);
         answersRef.current = initialAnswers;
+        savedAnswersRef.current = { ...initialAnswers };
+        editedFieldsRef.current.clear();
         setAnswers(initialAnswers);
         setOpenSectionId(data.sections.find((s) => s.enabled)?.id || '');
       } catch (err) {
@@ -405,6 +430,9 @@ export function ReviewInstanceModal({
     && !allRequiredSignaturesSaved,
   );
   const formReadOnly = isViewingAsCoach || isImportedReadOnly || isSignatureStage;
+  const hasUnsavedMigratedAnswers = Boolean(definition?.migratedForm && (
+    editedFieldsRef.current.size > 0 || JSON.stringify(answers) !== JSON.stringify(savedAnswersRef.current)
+  ));
 
   useEffect(() => {
     if (expandedSummaryFieldId || !restoreExpandFocusRef.current) return;
@@ -418,7 +446,8 @@ export function ReviewInstanceModal({
   };
 
   const handleAnswerChange = (fieldId: string, value: unknown) => {
-    if (formReadOnly) return;
+    if (formReadOnly || checkingSession) return;
+    if (definition?.migratedForm) editedFieldsRef.current.add(fieldId);
     setAnswers((current) => {
       const next = { ...current, [fieldId]: value };
       if (definition?.migratedForm && current[fieldId] !== value) {
@@ -459,7 +488,13 @@ export function ReviewInstanceModal({
     setSaving(true);
     setError(null);
     try {
-      const updated = await saveReviewInstanceAnswers(definition.instance.id, answers);
+      const updated = definition.migratedForm && definition.answerVersion
+        ? await saveReviewInstanceAnswers(definition.instance.id, answers, { answerVersion: definition.answerVersion, editedFields: [...editedFieldsRef.current] })
+        : await saveReviewInstanceAnswers(definition.instance.id, answers);
+      savedAnswersRef.current = { ...answers };
+      for (const key of editedFieldsRef.current) {
+        if (answersRef.current[key] === answers[key]) editedFieldsRef.current.delete(key);
+      }
       setDefinition(updated);
       if (meetingSummaryFieldId) {
         const savedCurrentSummary = answersRef.current[meetingSummaryFieldId] === summaryValueAtSave;
@@ -494,7 +529,7 @@ export function ReviewInstanceModal({
     setError(null);
     try {
       const completed = definition.migratedForm
-        ? await submitMigratedReview(definition.instance.id, answers)
+        ? await submitMigratedReview(definition.instance.id, answers, ...(definition.answerVersion ? [{ answerVersion: definition.answerVersion, editedFields: [...editedFieldsRef.current] }] : []))
         : await completeReviewInstance(definition.instance.id, answers);
       setDefinition(completed);
       onStatusChanged?.(completed.instance.status);
@@ -664,7 +699,7 @@ export function ReviewInstanceModal({
     }
   };
 
-  const busy = saving || calculating || generatingSummary || uploadingTranscript || reopening;
+  const busy = saving || calculating || generatingSummary || uploadingTranscript || reopening || checkingSession;
   const pageMode = presentation === 'page';
   const headingLabel = definition ? reviewTypeLabel(definition) : '';
   const reviewName = definition
@@ -836,6 +871,11 @@ export function ReviewInstanceModal({
                 status={definition.localStatus || ''}
                 viewAs={isViewingAsCoach}
                 meetingLink={definition.booking.meetingLink}
+                bound={Boolean(meetingSummaryFieldId)}
+                savedBinding={definition.summaryBinding}
+                checkBlocked={hasUnsavedMigratedAnswers || busy}
+                onCheckComplete={onMigratedCheckComplete}
+                onCheckingChange={setCheckingSession}
               />
             ) : null}
             {definition.migratedForm && definition.booking?.canAttach && !isViewingAsCoach ? (
@@ -1023,15 +1063,17 @@ export function ReviewInstanceModal({
 
             <ReviewFormRenderer
               sections={definition.source === 'aptem' && definition.progressSnapshot
-                ? definition.sections.filter((section) => section.title.trim().toLocaleLowerCase() !== 'learning progress')
+                ? definition.sections.filter((section) => section.title.trim().toLocaleLowerCase() !== 'learning progress'
+                  || (definition.migratedForm && section.fields.some(field => field.configuration?.semanticKey === 'meeting_summary')))
                 : definition.sections}
               answers={answers}
               onAnswerChange={handleAnswerChange}
               errors={showErrors ? { missingFieldIds } : undefined}
-              readOnly={formReadOnly}
+              readOnly={formReadOnly || checkingSession}
               openSectionId={openSectionId}
               onOpenSectionChange={setOpenSectionId}
               renderFieldAddon={(field) => field.configuration?.semanticKey === 'meeting_summary' ? (
+                definition.migratedForm ? <p className="mb-3 text-sm text-foreground-500">Check Session can fill this answer once. Review and edit it here, then save your draft. The saved answer is used in the completed review and PDF.</p> :
                 <div className="mb-3 space-y-3">
                   <p className="text-[13px] leading-5 text-foreground-500">
                     Review and finalise the meeting summary before sending the Review for signatures.
@@ -1124,7 +1166,7 @@ export function ReviewInstanceModal({
                   </div>
                 </div>
               ) : null}
-              renderFieldInput={(field, context) => field.configuration?.semanticKey === 'meeting_summary' ? (
+              renderFieldInput={(field, context) => !definition.migratedForm && field.configuration?.semanticKey === 'meeting_summary' ? (
                 <MeetingSummaryInlineEditor
                   fieldId={field.id}
                   value={context.value}

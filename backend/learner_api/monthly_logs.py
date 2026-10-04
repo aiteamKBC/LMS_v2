@@ -299,8 +299,11 @@ def month_state(month, rows, signs, training_plan_target=None, *, learner_id=Non
             'row_count': len({r.get('progress_id') or r.get('source_ref') for r in rows}),
             'planned_hours': sum(float(r['planned_hours'] or 0) for r in rows),
             'actual_hours': sum(float(r['actual_hours'] or 0) for r in actual_rows),
+            'estimated_hours': sum(float(r['actual_hours'] or 0) for r in rows
+                                   if r.get('actual_estimated') is True),
             'not_accepted_hours': sum(float(r['actual_hours'] or 0) for r in counted_rows if not r['accepted']),
-            'total_actual_hours': sum(float(r['actual_hours'] or 0) for r in counted_rows),
+            'total_actual_hours': sum(float(r['actual_hours'] or 0) for r in counted_rows
+                                      if r.get('actual_estimated') is not True),
             'training_plan_target': training_plan_target, 'pending_revisions': 0, 'can_complete': False,
             'source_finalization': None, 'snapshot_digest': digest,
             'locked': lock['locked'], 'locked_at': lock['locked_at'],

@@ -9,7 +9,7 @@ FAMILY_BY_SOURCE_TYPE = {
     "monthly coaching": "MCM",
     "mcm": "MCM",
     "progress review": "PR",
-    "progress review (+ skills radar)": "PR",
+    "progress review (+ skills radar)": "PR_SKILLS_RADAR",
 }
 INITIAL_STATUSES = {"not-scheduled", "scheduled"}
 EDITABLE_STATUSES = {"not-scheduled", "scheduled", "in-progress"}
@@ -19,10 +19,43 @@ FIELD_TYPES = {
     1: "text", 2: "boolean", 4: "date", 5: "list_item", 6: "boolean_case_block",
     11: "title_description", 13: "text_multiline",
 }
+TEXT_ANSWER_LIMIT = 4000
+
+
+def meeting_summary_field(definition):
+    """Resolve explicit metadata from a frozen migrated definition, never labels."""
+    matches = []
+
+    def visit(field, depth=0):
+        if "semanticKey" in field:
+            if field["semanticKey"] != "meeting_summary":
+                raise ValueError("Unknown migrated field purpose.")
+            if type(field.get("aptemType")) is not int or field["aptemType"] not in (1, 13):
+                raise ValueError("AI Meeting Summary requires a text or long text field.")
+            if depth:
+                raise ValueError("AI Meeting Summary cannot be inside a conditional question.")
+            matches.append(field)
+        for branch in ("ifTrue", "ifFalse"):
+            for child in field.get(branch, []):
+                visit(child, depth + 1)
+
+    for section in definition.get("sections", []):
+        for field in section.get("fields", []):
+            visit(field)
+    if len(matches) > 1:
+        raise ValueError("A migrated template can have only one AI Meeting Summary field.")
+    if matches:
+        validate_definition(definition)
+    return matches[0] if matches else None
 
 
 def review_family(source_type):
     return FAMILY_BY_SOURCE_TYPE.get(str(source_type or "").strip().casefold())
+
+
+def booking_event_type(family):
+    """Keep template families distinct while sharing existing calendar types."""
+    return {"MCM": "mcr", "PR": "progress-review", "PR_SKILLS_RADAR": "progress-review"}.get(family)
 
 
 def programme_key(programme_id, programme_name):
@@ -150,6 +183,8 @@ def _render_field(field, answers, warnings):
     }
     if aptem_type not in FIELD_TYPES:
         configuration["typeWarning"] = "Unverified Aptem field type; using text entry."
+    if "semanticKey" in field:
+        configuration["semanticKey"] = field["semanticKey"]
     return {
         "id": field["key"], "title": field["title"], "fieldType": field_type,
         "required": bool(field.get("mandatory")) and field_type != "title_description",
@@ -209,8 +244,8 @@ def validate_answers(definition, answers, *, completing=False):
                 date.fromisoformat(value)
             except (TypeError, ValueError):
                 raise ValueError(f"{key} must be an ISO date.") from None
-        if kind in ("text", "text_multiline") and (not isinstance(value, str) or len(value) > 4000):
-            raise ValueError(f"{key} must be text of at most 4000 characters.")
+        if kind in ("text", "text_multiline") and (not isinstance(value, str) or len(value) > TEXT_ANSWER_LIMIT):
+            raise ValueError(f"{key} must be text of at most {TEXT_ANSWER_LIMIT} characters.")
     if completing:
         missing = [key for key, field in visible.items()
                    if field.get("mandatory") and FIELD_TYPES.get(field["aptemType"]) != "title_description"

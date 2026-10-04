@@ -244,7 +244,20 @@ export interface CoachMeetingSummary {
   error?: string;
 }
 
+export interface MigratedSummaryBinding {
+  fieldKey?: string;
+  state?: 'NEVER_POPULATED' | 'AI_POPULATED_UNEDITED' | 'COACH_EDITED' | 'COACH_CLEARED';
+  status?: string;
+  message?: string;
+  suggestionText?: string;
+  answerPresent?: boolean;
+  answer?: unknown;
+}
+
 export interface CoachMeetingArtifactsResponse {
+  summaryBinding?: MigratedSummaryBinding;
+  answerVersion?: string;
+  reviewAnswers?: Record<string, unknown>;
   intelligence?: {
     lastCheckedAt?: string | null;
     attendanceStatus: string;

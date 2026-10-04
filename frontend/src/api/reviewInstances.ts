@@ -170,6 +170,8 @@ export interface ReviewInstanceFormDefinition {
   formAvailable?: boolean;
   summaryOnly?: boolean;
   migratedForm?: boolean;
+  answerVersion?: string;
+  summaryBinding?: CoachMeetingArtifactsResponse['summaryBinding'];
   /** Approved template rendered for admin view-as without an LMS overlay. */
   previewOnly?: boolean;
   noApprovedMigratedTemplate?: boolean;
@@ -276,9 +278,14 @@ export async function saveMigratedMeetingSummary(instanceId: string, summary: Co
   );
 }
 
-export async function submitMigratedReview(instanceId: string, answers: Record<string, unknown>) {
+export interface MigratedAnswerWrite {
+  answerVersion?: string;
+  editedFields?: string[];
+}
+
+export async function submitMigratedReview(instanceId: string, answers: Record<string, unknown>, version?: MigratedAnswerWrite) {
   return readJsonResponse<ReviewInstanceFormDefinition>(await coachFetch(`${migratedUrl(instanceId)}/submit`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answers }),
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ answers, ...version }),
   }));
 }
 
@@ -367,11 +374,11 @@ export async function fetchPreviousReviewSession(instanceId: string, signal?: Ab
   return readJsonResponse<PreviousReviewSession>(response);
 }
 
-export async function saveReviewInstanceAnswers(instanceId: string, answers: Record<string, unknown>) {
+export async function saveReviewInstanceAnswers(instanceId: string, answers: Record<string, unknown>, version?: MigratedAnswerWrite) {
   const response = await coachFetch(`${instanceUrl(instanceId)}/answers`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ answers }),
+    body: JSON.stringify({ answers, ...version }),
   });
   return readJsonResponse<ReviewInstanceFormDefinition>(response);
 }

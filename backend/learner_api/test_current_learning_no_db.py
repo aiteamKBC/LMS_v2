@@ -4,6 +4,7 @@ import json
 import re
 import unittest
 from datetime import datetime
+from math import isfinite
 from pathlib import Path
 from unittest.mock import Mock
 from zoneinfo import ZoneInfo
@@ -18,7 +19,7 @@ def load(filename, scope, names=None):
 
 
 def adapter():
-    scope = dict(datetime=datetime, ZoneInfo=ZoneInfo, json=json, re=re,
+    scope = dict(datetime=datetime, ZoneInfo=ZoneInfo, json=json, re=re, isfinite=isfinite,
                  GRADED_PROGRESS_KINDS={'quiz'})
     load('progress_rules.py', scope)
     load('active_users.py', scope, {'_s', '_number', '_reported_minutes', '_progress_text',
@@ -68,12 +69,25 @@ class CurrentLearningTests(unittest.TestCase):
         self.assertTrue(accepted['accepted'])
         self.assertEqual(accepted['actual_seconds'], 1800)
 
-    def test_legacy_component_clock_is_read_as_minutes_and_seconds(self):
-        p = {**self.native, 'kind': 'component', 'passed': None, 'component_type': 'assignment'}
-        projected = self.project([p], {'C1': {
-            'status': 'submitted_for_tutor_review', 'actual_time_hours': '11:00'}})[0]
-        self.assertEqual(projected['actual_seconds'], 660)
+    def test_saved_actual_time_accepts_decimal_legacy_and_extended_clocks(self):
+        seconds = self.scope['actual_time_seconds']
+        self.assertEqual(seconds('2.5'), 9000)
+        self.assertEqual(seconds('11:00'), 660)
+        self.assertEqual(seconds('02:30'), 150)
+        self.assertEqual(seconds('02:30:15'), 9015)
+        self.assertEqual(seconds('60:00'), 3600)
 
+    def test_invalid_saved_actual_time_remains_unavailable(self):
+        seconds = self.scope['actual_time_seconds']
+        for value in (None, '', ' ', '1:60', '1:02:60', '-1', 'nan', 'not-a-duration', '1:2:3:4'):
+            self.assertIsNone(seconds(value), value)
+
+    def test_assignment_clock_duration_replaces_progress_time(self):
+        p = {**self.native, 'kind': 'component', 'passed': None, 'component_type': 'assignment'}
+        accepted = self.project([p], {'C1': {'status': 'accepted', 'actual_time_hours': '11:00'}})[0]
+        self.assertEqual(accepted['actual_seconds'], 11 * 60)
+
+    def test_extra_activity_accepts_legacy_clock_duration(self):
         submission = dict(id='legacy', submitted_at=self.native['submitted_at'],
             activity_type='extra_activity', status='accepted', actual_time_hours='02:30', ksb_codes=[])
         merged = self.scope['merge_submissions']([], [submission])
@@ -140,6 +154,13 @@ class CurrentLearningTests(unittest.TestCase):
         self.assertEqual(merge(rows, [s]), rows)
         self.assertEqual(merge([], [{**s, 'status': 'draft'}]), [])
 
+    def test_extra_activity_accepts_clock_duration(self):
+        submission = dict(id='extra-clock', submitted_at=self.native['submitted_at'],
+                          activity_type='extra_activity', status='accepted',
+                          actual_time_hours='02:00:00', ksb_codes=[])
+        rows = self.scope['merge_submissions']([], [submission])
+        self.assertEqual(rows[0]['actual_seconds'], 7200)
+
     def test_reads_are_scoped_to_both_account_and_aptem(self):
         query = Mock(side_effect=[[], [{'name': 'exists'}], [self.attempt()]])
         self.scope['query'] = query
@@ -171,7 +192,8 @@ class CurrentLearningTests(unittest.TestCase):
 
     def test_dashboard_refresh_reads_new_saved_completion_and_time(self):
         scope = self.scope
-        load('canonical_learning.py', scope, {'metrics', 'metrics_from_records', 'recorded_seconds', 'allocations'})
+        load('canonical_learning.py', scope, {'metrics', 'metrics_from_records',
+            'recorded_seconds', 'allocations', 'counts_as_completed'})
         scope['number'] = lambda value: float(value or 0)
         owner = {'id': 1}
         scope['require_profile'] = lambda _: owner
@@ -188,7 +210,8 @@ class CurrentLearningTests(unittest.TestCase):
 
     def test_quiz_only_completion_does_not_credit_unapproved_hours(self):
         scope = self.scope
-        load('canonical_learning.py', scope, {'metrics', 'metrics_from_records', 'recorded_seconds', 'allocations'})
+        load('canonical_learning.py', scope, {'metrics', 'metrics_from_records',
+            'recorded_seconds', 'allocations', 'counts_as_completed'})
         scope['number'] = lambda value: float(value or 0)
         owner = {'id': 1}
         scope['require_profile'] = lambda _: owner

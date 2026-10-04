@@ -55,7 +55,9 @@ import logging
 import os
 import threading
 import time
+from functools import lru_cache
 from html import escape
+from pathlib import Path
 
 import httpx
 
@@ -198,9 +200,44 @@ def _file_attachment(item):
     }
     content_id = str(item.get("content_id") or "").strip()
     if content_id:
+        # The HTML names inline parts as ``cid:<content_id>``. Keep the
+        # explicit flag supported by RSVP/event mail while defaulting CID
+        # attachments, including the brand logo, to inline rendering.
         attachment["contentId"] = content_id
         attachment["isInline"] = bool(item.get("is_inline", True))
     return attachment
+
+
+#: The crest, carried by any message whose HTML names it. See
+#: ``brand_logo_attachment`` for why it is embedded rather than linked.
+BRAND_LOGO_CID = "kbc-brand-logo"
+_BRAND_LOGO_PATH = Path(__file__).resolve().parent / "assets" / "report_logo_kent.png"
+
+
+@lru_cache(maxsize=1)
+def _brand_logo_bytes():
+    """Read the logo once per process and let mail fall back to its alt text."""
+    try:
+        return _BRAND_LOGO_PATH.read_bytes()
+    except OSError:
+        logger.warning(
+            "Brand logo missing at %s -- mail will fall back to its alt text.",
+            _BRAND_LOGO_PATH,
+        )
+        return b""
+
+
+def brand_logo_attachment():
+    """Return the embedded KBC logo, or None when the asset is unavailable."""
+    raw = _brand_logo_bytes()
+    if not raw:
+        return None
+    return {
+        "name": "kent-business-college.png",
+        "content_type": "image/png",
+        "content": raw,
+        "content_id": BRAND_LOGO_CID,
+    }
 
 
 def send_mail(*, to, subject, html_body, text_body=None, sender_name=None, save_to_sent=False, attachments=None):
@@ -212,8 +249,8 @@ def send_mail(*, to, subject, html_body, text_body=None, sender_name=None, save_
 
     ``attachments`` is an optional list of ``{"name", "content_type", "content"}``
     (content as bytes), sent as Graph file attachments -- e.g. a calendar invite.
-    An item with ``content_id`` is emitted as an inline CID attachment for mail
-    clients that proxy or block external images.
+    An item may also carry ``content_id`` and an optional ``is_inline`` flag.
+    The brand logo is appended automatically when the HTML references its CID.
 
     ``sent`` is True only when Graph accepted it. When Azure is not configured
     this returns ``(False, "not-configured: …")`` after logging the message —
@@ -244,6 +281,13 @@ def send_mail(*, to, subject, html_body, text_body=None, sender_name=None, save_
                 missing, to, subject,
             )
         return False, f"not-configured: {missing}"
+
+    # A template shows the logo by naming its cid; carrying it is this
+    # function's job, so no call site has to know the picture exists.
+    if html_body and f"cid:{BRAND_LOGO_CID}" in html_body:
+        logo = brand_logo_attachment()
+        if logo:
+            attachments = [*(attachments or []), logo]
 
     cfg = mail_config()
     try:
@@ -655,12 +699,16 @@ def access_request_message(*, requester_name, requester_email, console_url):
 # opening the platform.
 
 
-def _detail_table(pairs):
+def _detail_table(pairs, label_color="#616e7c", value_color="#1f2933", row_padding="4px"):
     """Two-column label/value rows. Pairs with an empty value are dropped.
 
     Dropping blanks rather than printing "—" matters here: a module authored
     before its group has a schedule would otherwise mail a table half full of
     placeholders, which reads as broken data instead of detail-not-set-yet.
+
+    The colours are arguments because two different mails use this: the defaults
+    are the neutral pair the access-request mail has always had, and the module
+    card passes the brand's own.
     """
     rows = []
     for label, value in pairs:
@@ -669,9 +717,9 @@ def _detail_table(pairs):
             continue
         rows.append(
             '<tr>'
-            '<td style="padding:4px 12px 4px 0;font-size:13px;color:#616e7c;'
+            f'<td style="padding:{row_padding} 14px {row_padding} 0;font-size:13px;color:{label_color};'
             'white-space:nowrap;vertical-align:top;">' + escape(str(label)) + '</td>'
-            '<td style="padding:4px 0;font-size:13px;color:#1f2933;'
+            f'<td style="padding:{row_padding} 0;font-size:13px;color:{value_color};'
             'font-weight:600;vertical-align:top;">' + escape(text) + '</td>'
             '</tr>'
         )
@@ -688,9 +736,9 @@ def _module_card(module):
     heading = escape(str(module.get("name") or "Untitled module"))
     code = str(module.get("code") or "").strip()
     code_html = (
-        f'<div style="margin:2px 0 10px;font-size:12px;color:#9aa5b1;'
-        f'letter-spacing:0.4px;">{escape(code)}</div>'
-        if code else '<div style="height:8px;"></div>'
+        f'<div style="margin:3px 0 12px;font-size:11px;color:{_LEARNER_MUTED};'
+        f'letter-spacing:0.5px;font-family:Consolas,Menlo,monospace;">{escape(code)}</div>'
+        if code else '<div style="height:12px;font-size:0;line-height:0;">&nbsp;</div>'
     )
     details = _detail_table([
         ("Programme", module.get("programme")),
@@ -701,14 +749,21 @@ def _module_card(module):
         ("Sessions", module.get("sessions")),
         ("Off-the-job hours", module.get("otjh")),
         ("Group coach", module.get("coach")),
-    ])
+    ], label_color=_LEARNER_MUTED, value_color=_LEARNER_TEXT, row_padding="5px")
     return (
         '<table role="presentation" cellpadding="0" cellspacing="0" width="100%" '
-        'style="margin:0 0 16px;border:1px solid #e4e7eb;border-radius:8px;'
-        'border-collapse:separate;">'
-        '<tr><td style="padding:16px 18px;">'
-        f'<div style="font-size:16px;font-weight:600;color:#0b3d6b;">{heading}</div>'
+        f'style="margin:0 0 14px;border:1px solid {_LEARNER_BORDER};border-radius:10px;'
+        f'border-collapse:separate;background:{_LEARNER_WASH};">'
+        # A hairline of the brand accent along the top, so a run of several
+        # modules reads as a stack of cards rather than one long table.
+        f'<tr><td style="height:3px;background:{_LEARNER_ACCENT};font-size:0;'
+        'line-height:0;">&nbsp;</td></tr>'
+        '<tr><td style="padding:16px 18px 18px;">'
+        f'<div style="font-size:17px;font-weight:700;color:{_LEARNER_DEEP};'
+        'line-height:1.3;">' + heading + '</div>'
         f'{code_html}'
+        f'<div style="height:1px;background:{_LEARNER_BORDER};font-size:0;line-height:0;'
+        'margin:0 0 12px;">&nbsp;</div>'
         f'{details}'
         '</td></tr></table>'
     )
@@ -758,31 +813,78 @@ def tutor_assignment_message(*, tutor_name, modules, workspace_url):
     subject = f"{subject} — {_BRAND}"
 
     cards = "".join(_module_card(module) for module in modules)
+    # The line the inbox shows beside the subject. Without one, Gmail pulls the
+    # greeting ("Hello Osama Kord,"), which tells the reader nothing the subject
+    # has not already told them.
+    first = modules[0] if modules else {}
+    preheader = escape(" · ".join(part for part in [
+        str(first.get("name") or "").strip(),
+        str(first.get("schedule") or "").strip(),
+        str(first.get("dates") or "").strip(),
+    ] if part) or lead)
+    heading_line = (
+        "You are now teaching this module" if count == 1
+        else f"You are now teaching {count} modules"
+    )
     html = f"""\
 <!doctype html>
 <html>
-  <body style="margin:0;padding:24px;background:#f4f5f7;font-family:Segoe UI,Arial,sans-serif;color:#1f2933;">
-    <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:10px;overflow:hidden;border:1px solid #e4e7eb;">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>{escape(subject)}</title>
+  </head>
+  <body style="margin:0;padding:0;background:{_LEARNER_SOFT};font-family:Segoe UI,Helvetica,Arial,sans-serif;color:{_LEARNER_TEXT};-webkit-font-smoothing:antialiased;">
+    <div style="display:none;max-height:0;overflow:hidden;font-size:0;line-height:0;color:{_LEARNER_SOFT};opacity:0;">{preheader}</div>
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:{_LEARNER_SOFT};">
       <tr>
-        <td style="background:#0b3d6b;padding:20px 28px;color:#ffffff;font-size:18px;font-weight:600;">{_BRAND}</td>
-      </tr>
-      <tr>
-        <td style="padding:28px;">
-          <h1 style="margin:0 0 12px;font-size:20px;color:#0b3d6b;">New teaching assignment</h1>
-          <p style="margin:0 0 20px;font-size:15px;line-height:1.55;">{escape(greeting)}<br><br>{escape(lead)}</p>
-          {cards}
-          <p style="margin:24px 0 8px;">
-            <a href="{escape(workspace_url)}" style="display:inline-block;background:#0b3d6b;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:6px;font-size:15px;font-weight:600;">Open your tutor workspace</a>
-          </p>
-          <p style="margin:16px 0 0;font-size:13px;color:#616e7c;line-height:1.5;">
-            Session content, learners and KSB mappings for each module are in the workspace.
-            If any of these details look wrong, reply to your curriculum lead rather than to this address.
-          </p>
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:16px 28px;background:#f9fafb;font-size:12px;color:#9aa5b1;border-top:1px solid #e4e7eb;">
-          This is an automated message from the {_BRAND} learning platform. Please do not reply.
+        <td align="center" style="padding:28px 12px;">
+          <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width:620px;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid {_LEARNER_BORDER};">
+            <tr>
+              <td align="center" style="padding:30px 28px 22px;background:#ffffff;">
+                <img src="cid:{BRAND_LOGO_CID}" width="136" alt="{_BRAND}"
+                     style="display:block;width:136px;max-width:136px;height:auto;border:0;outline:none;text-decoration:none;">
+              </td>
+            </tr>
+            <tr>
+              <td style="height:4px;background:{_LEARNER_PRIMARY};font-size:0;line-height:0;">&nbsp;</td>
+            </tr>
+            <tr>
+              <td style="padding:30px 28px 8px;">
+                <p style="margin:0 0 6px;font-size:11px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:{_LEARNER_ACCENT};">Teaching assignment</p>
+                <h1 style="margin:0 0 18px;font-size:23px;line-height:1.25;color:{_LEARNER_DEEP};font-weight:700;">{escape(heading_line)}</h1>
+                <p style="margin:0 0 6px;font-size:15px;line-height:1.6;color:{_LEARNER_TEXT};">{escape(greeting)}</p>
+                <p style="margin:0 0 22px;font-size:15px;line-height:1.6;color:{_LEARNER_TEXT};">{escape(lead)}</p>
+                {cards}
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:26px 0 4px;">
+                  <tr>
+                    <td align="center" bgcolor="{_LEARNER_PRIMARY}" style="border-radius:9px;">
+                      <a href="{escape(workspace_url)}" style="display:inline-block;padding:14px 28px;font-size:15px;font-weight:700;color:#ffffff;text-decoration:none;border-radius:9px;">Open your tutor workspace &rarr;</a>
+                    </td>
+                  </tr>
+                </table>
+                <p style="margin:10px 0 0;font-size:12px;color:{_LEARNER_MUTED};word-break:break-all;">{escape(workspace_url)}</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:22px 28px 26px;">
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:{_LEARNER_SOFT};border-radius:10px;">
+                  <tr>
+                    <td style="padding:14px 16px;font-size:13px;line-height:1.6;color:{_LEARNER_MUTED};">
+                      Session content, learners and KSB mappings for each module are in the workspace.
+                      If any of these details look wrong, reply to your curriculum lead rather than to this address.
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:16px 28px;background:#ffffff;font-size:12px;color:{_LEARNER_MUTED};border-top:1px solid {_LEARNER_BORDER};">
+                This is an automated message from the {_BRAND} learning platform. Please do not reply.
+              </td>
+            </tr>
+          </table>
         </td>
       </tr>
     </table>
