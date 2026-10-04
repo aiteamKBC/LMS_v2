@@ -289,6 +289,33 @@ class MigratedPreviewTests(SimpleTestCase):
         self.assertTrue(result["migratedTemplateResolution"]["inherited_from_global"])
         self.overlays.return_value.get_or_create.assert_not_called()
 
+    def test_mcm_preview_title_sections_and_binding_follow_resolved_template(self):
+        row = list(self.cursor.fetchall.return_value[0])
+        row[3] = row[4] = "Monthly Coaching Meeting"
+        self.cursor.fetchall.return_value = [tuple(row)]
+        for scope, with_summary in [("GLOBAL", True), ("PROGRAMME", False)]:
+            with self.subTest(scope=scope):
+                template = self.templates.return_value
+                template.scope = scope
+                template.name = f"Synthetic {scope} MCM"
+                template.definition_json = {"sections": [{"key": "discussion", "title": "Discussion", "fields": [
+                    {"key": "note", "title": "Note", "aptemType": 13},
+                ]}]}
+                if with_summary:
+                    template.definition_json["sections"].append({"key": "summary", "title": "Meeting Summary", "fields": [
+                        {"key": "recap", "title": "Meeting Summary", "aptemType": 13, "semanticKey": "meeting_summary"},
+                    ]})
+                result = self._get()
+                self.assertTrue(result["previewOnly"])
+                self.assertFalse(result["migratedForm"])
+                self.assertEqual(result["template"]["name"], template.name)
+                self.assertEqual(result["migratedTemplateResolution"]["resolved_scope"], scope)
+                self.assertEqual(len(result["sections"]), 2 if with_summary else 1)
+                bound = [field for section in result["sections"] for field in section["fields"]
+                         if field["configuration"].get("semanticKey") == "meeting_summary"]
+                self.assertEqual([field["id"] for field in bound], ["recap"] if with_summary else [])
+        self.overlays.return_value.get_or_create.assert_not_called()
+
     def test_skills_radar_preview_requests_its_own_family(self):
         row = list(self.cursor.fetchall.return_value[0])
         row[3] = row[4] = "Progress Review (+ Skills Radar)"

@@ -416,6 +416,18 @@ export function ReviewInstanceModal({
     [definition],
   );
   const meetingSummaryFieldId = meetingSummaryField?.id;
+  const isMigratedTemplatePreview = definition?.source === 'aptem' && Boolean(definition.previewOnly);
+  const migratedSummaryBinding = useMemo(() => {
+    if (definition?.migratedForm) return definition.summaryBinding;
+    if (!isMigratedTemplatePreview || !definition) return undefined;
+    // Previews have no overlay/provenance yet. Derive display-only binding
+    // metadata from the actual rendered definition, never from a field label.
+    const fields = flattenReviewFields(definition.sections).filter(field => field.configuration?.semanticKey === 'meeting_summary');
+    const field = fields.length === 1 ? fields[0] : undefined;
+    return field && ['text', 'text_multiline'].includes(field.fieldType)
+      && definition.sections.some(section => section.enabled && section.fields.some(item => item.id === field.id))
+      ? { fieldKey: field.id } : undefined;
+  }, [definition, isMigratedTemplatePreview]);
   // Counted from the fields actually on screen, so a conditional question
   // hidden behind an unanswered case block is not silently counted as done.
   const requiredCount = useMemo(
@@ -446,11 +458,14 @@ export function ReviewInstanceModal({
     && !allRequiredSignaturesSaved,
   );
   const formReadOnly = isViewingAsCoach || isImportedReadOnly || isSignatureStage || templateSyncConflict;
-  // Admin visibility does not grant the coach's execution capability. Keep
-  // previews, historical imports and frozen/conflicting forms unchanged.
-  const showMigratedCoachActions = Boolean(isViewingAsCoach && definition?.migratedForm
-    && !definition.previewOnly && !templateSyncConflict
+  // Admin previews can show the action without an initialized overlay. The
+  // separate execution gate still requires the assigned coach and eligibility.
+  const showMigratedCoachActions = Boolean(isViewingAsCoach && definition && !templateSyncConflict
+    && (definition.migratedForm || isMigratedTemplatePreview)
     && ['not-scheduled', 'scheduled', 'in-progress'].includes(definition.instance.status));
+  const showMigratedSummaryActions = Boolean(isViewingAsCoach && !templateSyncConflict && !isSignatureStage
+    && (isMigratedTemplatePreview || (definition?.migratedForm
+      && ['scheduled', 'in-progress'].includes(definition.instance.status))));
   const hasUnsavedMigratedAnswers = Boolean(definition?.migratedForm && (
     editedFieldsRef.current.size > 0 || JSON.stringify(answers) !== JSON.stringify(savedAnswersRef.current)
   ));
@@ -1123,10 +1138,10 @@ export function ReviewInstanceModal({
               openSectionId={openSectionId}
               onOpenSectionChange={setOpenSectionId}
               renderFieldAddon={(field) => field.configuration?.semanticKey === 'meeting_summary' ? (
-                definition.migratedForm ? (definition.summaryBinding?.fieldKey === field.id ? <MigratedSummaryActions
-                  instanceId={definition.instance.id} binding={definition.summaryBinding}
-                  editable={!formReadOnly && ['scheduled', 'in-progress'].includes(definition.instance.status)}
-                  showActions={showMigratedCoachActions && ['scheduled', 'in-progress'].includes(definition.instance.status) ? true : undefined}
+                definition.migratedForm || isMigratedTemplatePreview ? (migratedSummaryBinding?.fieldKey === field.id ? <MigratedSummaryActions
+                  instanceId={definition.instance.id} binding={migratedSummaryBinding}
+                  editable={!isMigratedTemplatePreview && !formReadOnly && ['scheduled', 'in-progress'].includes(definition.instance.status)}
+                  showActions={showMigratedSummaryActions ? true : undefined}
                   teamsAvailable={Boolean(definition.booking?.booked && definition.booking.syncState === 'synced'
                     && !definition.booking.conflict && definition.booking.eventKey === definition.instance.id)}
                   busy={busy} unsaved={hasUnsavedMigratedAnswers} onResult={onMigratedSummaryComplete} onBusyChange={setCheckingSession}
@@ -1223,7 +1238,7 @@ export function ReviewInstanceModal({
                   </div>
                 </div>
               ) : null}
-              renderFieldInput={(field, context) => !definition.migratedForm && field.configuration?.semanticKey === 'meeting_summary' ? (
+              renderFieldInput={(field, context) => !definition.migratedForm && !isMigratedTemplatePreview && field.configuration?.semanticKey === 'meeting_summary' ? (
                 <MeetingSummaryInlineEditor
                   fieldId={field.id}
                   value={context.value}
