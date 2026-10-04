@@ -3344,6 +3344,9 @@ def serialize_caseload_learner(
 
     cohort_name = clean_text(row.cohort) or "--"
     group_name = clean_text(row.group) or "--"
+    programme_name = clean_text(
+        getattr(source_row, "programme", None) or getattr(row, "programme", None),
+    ) or "--"
     cohort_id = re.sub(r"[^a-z0-9]+", "-", cohort_name.lower()).strip("-") or "unassigned"
     # Same 'commercial'/'apprenticeship' discriminator learner_detail.py keys its
     # lookup on (see learner_calendar_source_identity above) — surfaced here so
@@ -3368,6 +3371,7 @@ def serialize_caseload_learner(
         "currentWeek": current_week["week"] if current_week else None,
         "componentsTargetToDate": components_target,
         "employer": "--",
+        "programme": programme_name,
         "cohortId": cohort_id,
         "cohortName": cohort_name,
         "group": group_name,
@@ -11014,6 +11018,9 @@ def coach_timetable_book_event(request):
             "timezoneOffsetMinutes", default=0, minimum=-840, maximum=840
         )
         notes = validator.text("notes", max_length=500)
+        absence_report_id = validator.integer("absenceReportId", minimum=1) if payload.get("absenceReportId") not in (None, "") else None
+        if absence_report_id and session_type != "catch-up":
+            validator.error("absenceReportId", "Only catch-up sessions can be linked to a missed lecture.")
         if scheduled_date and scheduled_date < date.today():
             validator.error("scheduledDate", "Choose today or a future date for this session.")
         validator.check()
@@ -11023,6 +11030,31 @@ def coach_timetable_book_event(request):
     learner = next((row for row in caseload_rows if int(getattr(row, "id", 0) or 0) == learner_id), None)
     if not learner:
         return JsonResponse({"detail": "Learner not found in this coach caseload."}, status=404)
+
+    def linked_report(expected_event_key=""):
+        if not absence_report_id:
+            return None
+        report = CoachAbsenceReport.objects.filter(
+            pk=absence_report_id,
+            owner_email__iexact=owner_email,
+            learner_id=learner_id,
+        ).first()
+        if not report:
+            raise LearnerCalendarConflict("Missed lecture not found in this coach caseload.")
+        if report.status == CoachAbsenceReport.STATUS_DECLINED:
+            raise LearnerCalendarConflict("A declined absence report cannot have a catch-up meeting.")
+        if report.recovery_method and report.recovery_method != "catch-up":
+            raise LearnerCalendarConflict("This missed lecture already has a different recovery plan.")
+        if report.catchup_event_key and report.catchup_event_key != expected_event_key:
+            raise LearnerCalendarConflict("This missed lecture already has a catch-up meeting.")
+        if scheduled_date < report.session_date:
+            raise LearnerCalendarConflict("Choose a catch-up on or after the missed lecture date.")
+        return report
+
+    try:
+        linked_report()
+    except LearnerCalendarConflict as exc:
+        return JsonResponse({"detail": str(exc)}, status=409)
 
     owner_name = fetch_owner_name(owner_email, fallback=clean_text(getattr(learner, "coach_name", None)) or "Med Maher")
     learner_name = clean_text(getattr(learner, "username", None)) or "Unknown learner"
@@ -11065,6 +11097,23 @@ def coach_timetable_book_event(request):
                 message="The calendar operation could not be completed.",
                 status=500,
             )
+        if absence_report_id:
+            try:
+                report = linked_report(replay.event_key)
+                if report:
+                    from learner_api.session_recovery import _record_linked_catchup
+                    with transaction.atomic():
+                        report = CoachAbsenceReport.objects.select_for_update().get(pk=report.pk)
+                        if report.catchup_event_key and report.catchup_event_key != replay.event_key:
+                            raise LearnerCalendarConflict("This missed lecture already has a catch-up meeting.")
+                        if not report.catchup_event_key:
+                            report.catchup_event_key = replay.event_key
+                            report.recovery_method = "catch-up"
+                            report.status = CoachAbsenceReport.STATUS_APPROVED
+                            report.save(update_fields=["catchup_event_key", "recovery_method", "status", "updated_at"])
+                            _record_linked_catchup(learner_id, report.attendance_id, replay.event_key)
+            except LearnerCalendarConflict as exc:
+                return JsonResponse({"detail": str(exc)}, status=409)
         event = build_catchup_calendar_event(replay, owner_name=owner_name, learner=learner)
         return JsonResponse(
             {
@@ -11132,6 +11181,43 @@ def coach_timetable_book_event(request):
             message="The calendar operation could not be completed.",
             status=500,
         )
+
+    if absence_report_id:
+        try:
+            from learner_api.session_recovery import _record_linked_catchup
+            with transaction.atomic():
+                report = CoachAbsenceReport.objects.select_for_update().filter(
+                    pk=absence_report_id,
+                    owner_email__iexact=owner_email,
+                    learner_id=learner_id,
+                ).first()
+                if not report:
+                    raise LearnerCalendarConflict("Missed lecture not found in this coach caseload.")
+                if report.status == CoachAbsenceReport.STATUS_DECLINED or report.catchup_event_key:
+                    raise LearnerCalendarConflict("This missed lecture is no longer available for a catch-up meeting.")
+                if report.recovery_method and report.recovery_method != "catch-up":
+                    raise LearnerCalendarConflict("This missed lecture already has a different recovery plan.")
+                if scheduled_date < report.session_date:
+                    raise LearnerCalendarConflict("Choose a catch-up on or after the missed lecture date.")
+                report.catchup_event_key = record.event_key
+                report.recovery_method = "catch-up"
+                report.status = CoachAbsenceReport.STATUS_APPROVED
+                report.save(update_fields=["catchup_event_key", "recovery_method", "status", "updated_at"])
+                _record_linked_catchup(learner_id, report.attendance_id, record.event_key)
+        except LearnerCalendarConflict as exc:
+            try:
+                cancel_reserved_calendar_event(record)
+            except Exception:
+                logger.exception("coach_catchup_link_rollback_failed event_key=%s", record.event_key)
+                return JsonResponse({"detail": f"{exc} The booking was kept; please link or cancel it from the calendar."}, status=409)
+            return JsonResponse({"detail": f"{exc} The booking was cancelled."}, status=409)
+        except Exception:
+            logger.exception("coach_catchup_link_failed event_key=%s report_id=%s", record.event_key, absence_report_id)
+            try:
+                cancel_reserved_calendar_event(record)
+            except Exception:
+                logger.exception("coach_catchup_link_rollback_failed event_key=%s", record.event_key)
+            return JsonResponse({"detail": "The catch-up could not be linked to the missed lecture. The booking was cancelled."}, status=409)
 
     event = build_catchup_calendar_event(record, owner_name=owner_name, learner=learner)
     return JsonResponse(
@@ -11491,6 +11577,7 @@ def dashboard_attendance_rows(
             "sessions": metrics["sessions"],
             "present": metrics["present"],
             "absent": metrics["absent"],
+            "consecutiveMissed": metrics.get("consecutiveMissed", 0),
             "lastSession": format_date_value(last_session_date),
             "lastSessionDate": last_session_date.isoformat() if hasattr(last_session_date, "isoformat") else last_session_date,
         })

@@ -61,17 +61,14 @@ describe('Coach caseload loading', () => {
     expect(fetchCoachCalendarEvents).not.toHaveBeenCalled();
     expect(screen.getByRole('heading', { name: 'All Learners' })).toBeVisible();
     expect(screen.queryByRole('region', { name: 'OTJH caseload summary' })).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'All OTJH statuses' }));
-    expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual([
-      'All OTJH statuses', 'On track', 'Need attention', 'At risk',
-    ]);
+    expect(screen.queryByRole('button', { name: 'All OTJH statuses' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'More filters' })).not.toBeInTheDocument();
     expect(screen.queryByText(/\d+ shown/)).not.toBeInTheDocument();
     expect(screen.queryByText('Most urgent first')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Sort direction:/ })).not.toBeInTheDocument();
   });
 
-  it('filters dashboard-owned learners locally and paginates after fifteen rows', async () => {
+  it('filters dashboard-owned learners locally and shows every row without pagination', async () => {
     const learners = Array.from({ length: 16 }, (_, index) => ({
       ...learner,
       id: String(index + 1),
@@ -81,17 +78,14 @@ describe('Coach caseload loading', () => {
     render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={learners} /></MemoryRouter>);
 
     expect(await screen.findByText('Aaa Learner 01')).toBeInTheDocument();
-    expect(screen.queryByText('Abigail Reece')).not.toBeInTheDocument();
-    expect(screen.getByText(/1.15/)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
-    expect((await screen.findAllByText('Abigail Reece')).length).toBeGreaterThanOrEqual(1);
-    expect(screen.queryByText('Aaa Learner 01')).not.toBeInTheDocument();
+    expect(screen.getByText('Abigail Reece')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Previous page' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Next page' })).not.toBeInTheDocument();
 
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Abigail Reece' } });
     expect((await screen.findAllByText('Abigail Reece')).length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText('Aaa Learner 02')).not.toBeInTheDocument();
-    expect(screen.getByText(/1.1/)).toBeInTheDocument();
+    expect(screen.getByText('Showing 1 matching learner.')).toBeInTheDocument();
     expect(coachFetch).not.toHaveBeenCalled();
   });
 
@@ -116,14 +110,14 @@ describe('Coach caseload loading', () => {
     ];
     render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={learners} /></MemoryRouter>);
     await screen.findByText('October Learner');
-    fireEvent.click(screen.getByRole('button', { name: 'All cohorts / groups' }));
-    expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual(['All cohorts / groups', 'Cohort: Feb 2026', 'Cohort: Oct 2025', 'Group: G1']);
-    fireEvent.click(screen.getByRole('option', { name: 'Cohort: Feb 2026' }));
+    fireEvent.click(screen.getByRole('button', { name: 'All cohorts' }));
+    expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual(['All cohorts', 'Feb 2026', 'Oct 2025']);
+    fireEvent.click(screen.getByRole('option', { name: 'Feb 2026' }));
     expect(screen.getByText('February Learner')).toBeVisible();
     expect(screen.queryByText('October Learner')).not.toBeInTheDocument();
     expect(screen.queryByText('No Cohort Learner')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Cohort: Feb 2026' }));
-    fireEvent.click(screen.getByRole('option', { name: 'Cohort: Oct 2025' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Feb 2026' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Oct 2025' }));
     expect(screen.getByText('October Learner')).toBeVisible();
     expect(screen.getByText('Second October Learner')).toBeVisible();
     expect(screen.queryByText('February Learner')).not.toBeInTheDocument();
@@ -132,7 +126,7 @@ describe('Coach caseload loading', () => {
     expect(coachFetch).not.toHaveBeenCalled();
   });
 
-  it('keeps cohort and group choices distinct even with identical names', async () => {
+  it('shows only cohort choices in the dashboard cohort filter', async () => {
     const learners = [
       { ...learner, id: 'a', name: 'Cohort Member', cohortName: 'Shared', cohortId: undefined, group: 'Other' },
       { ...learner, id: 'b', name: 'Group Member', cohortName: 'Other', cohortId: undefined, group: 'Shared' },
@@ -141,64 +135,49 @@ describe('Coach caseload loading', () => {
     ];
     render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={learners} /></MemoryRouter>);
     await screen.findByText('Cohort Member');
-    fireEvent.click(screen.getByRole('button', { name: 'All cohorts / groups' }));
+    fireEvent.click(screen.getByRole('button', { name: 'All cohorts' }));
     expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual([
-      'All cohorts / groups', 'Cohort: Other', 'Cohort: Shared', 'Group: Other', 'Group: Shared',
+      'All cohorts', 'Other', 'Shared',
     ]);
-    fireEvent.click(screen.getByRole('option', { name: 'Cohort: Shared' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Shared' }));
     expect(screen.getByText('Cohort Member')).toBeVisible();
     expect(screen.getByText('Both Member')).toBeVisible();
     expect(screen.queryByText('Group Member')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Cohort: Shared' }));
-    fireEvent.click(screen.getByRole('option', { name: 'Group: Shared' }));
-    expect(screen.getByText('Group Member')).toBeVisible();
-    expect(screen.getByText('Both Member')).toBeVisible();
-    expect(screen.getByText('Group Only Member')).toBeVisible();
-    expect(screen.queryByText('Cohort Member')).not.toBeInTheDocument();
-    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Group Only' } });
-    expect(screen.getByText('Group Only Member')).toBeVisible();
     expect(screen.queryByText('Group Member')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Clear all' }));
-    expect(screen.getByText('Cohort Member')).toBeVisible();
+    expect(screen.queryByText('Group Only Member')).not.toBeInTheDocument();
     expect(coachFetch).not.toHaveBeenCalled();
   });
 
-  it('combines dashboard cohort, OTJH status and programme status across pages, and clears them', async () => {
+  it('combines dashboard programme and cohort across the full list, and clears them', async () => {
     const learners = Array.from({ length: 16 }, (_, index) => ({
-      ...learner, id: String(index), name: `Delivery Learner ${index}`, rawProgramStatus: 'Delivery', otjhCompleted: 59, otjhTarget: 100,
+      ...learner, id: String(index), name: `Delivery Learner ${index}`, programmeName: 'Business Administration', rawProgramStatus: 'Delivery', otjhCompleted: 59, otjhTarget: 100,
     }));
-    learners.push({ ...learner, id: 'boundary', name: 'Boundary Learner', rawProgramStatus: 'Delivery', otjhCompleted: 60, otjhTarget: 100 });
-    learners.push({ ...learner, id: 'active', name: 'Active Learner', rawProgramStatus: 'Active', otjhCompleted: 60, otjhTarget: 100 });
-    learners.push({ ...learner, id: 'missing', name: 'Missing Learner', rawProgramStatus: 'Delivery', otjhCompleted: 60, otjhTarget: 0 });
-    learners.push({ ...learner, id: 'other-cohort', name: 'Other Cohort Learner', cohortId: 'c2', cohortName: 'Other cohort', rawProgramStatus: 'Delivery', otjhCompleted: 60, otjhTarget: 100 });
-    learners.push({ ...learner, id: 'on-track', name: 'On Track Learner', rawProgramStatus: 'Delivery', otjhCompleted: 80, otjhTarget: 100 });
+    learners.push({ ...learner, id: 'boundary', name: 'Boundary Learner', programmeName: 'Business Administration', rawProgramStatus: 'Delivery', otjhCompleted: 60, otjhTarget: 100 });
+    learners.push({ ...learner, id: 'active', name: 'Active Learner', programmeName: 'Business Administration', rawProgramStatus: 'Active', otjhCompleted: 80, otjhTarget: 100 });
+    learners.push({ ...learner, id: 'missing', name: 'Missing Learner', programmeName: 'Business Administration', rawProgramStatus: 'Delivery', otjhCompleted: 60, otjhTarget: 0 });
+    learners.push({ ...learner, id: 'other-programme', name: 'Other Programme Learner', programmeName: 'Other Programme', rawProgramStatus: 'Delivery', otjhCompleted: 60, otjhTarget: 100 });
+    learners.push({ ...learner, id: 'other-cohort', name: 'Other Cohort Learner', programmeName: 'Business Administration', cohortId: 'c2', cohortName: 'Other cohort', rawProgramStatus: 'Delivery', otjhCompleted: 60, otjhTarget: 100 });
+    learners.push({ ...learner, id: 'on-track', name: 'On Track Learner', programmeName: 'Business Administration', rawProgramStatus: 'Delivery', otjhCompleted: 80, otjhTarget: 100 });
     render(<MemoryRouter initialEntries={['/?view=at-risk&group=obsolete&otjhMin=99']}><CoachCaseloadContent embedded embeddedLearners={learners} /></MemoryRouter>);
     await screen.findByText('Delivery Learner 0');
     expect(screen.queryByRole('button', { name: 'Status' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'All groups' })).not.toBeInTheDocument();
     expect(screen.queryByRole('spinbutton')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
-    fireEvent.click(screen.getByRole('button', { name: 'All cohorts / groups' }));
-    fireEvent.click(screen.getByRole('option', { name: 'Cohort: Business Admin L3' }));
-    fireEvent.click(screen.getByRole('button', { name: 'All programme statuses' }));
-    fireEvent.click(screen.getByRole('option', { name: 'Delivery' }));
-    fireEvent.click(screen.getByRole('button', { name: 'All OTJH statuses' }));
-    fireEvent.click(screen.getByRole('option', { name: 'Need attention' }));
+    expect(screen.queryByRole('button', { name: 'Next page' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'All programmes' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Business Administration' }));
+    fireEvent.click(screen.getByRole('button', { name: 'All cohorts' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Business Admin L3' }));
     expect(screen.getByText('Boundary Learner')).toBeVisible();
-    for (const name of ['Active Learner', 'Missing Learner', 'Other Cohort Learner', 'Delivery Learner 0', 'On Track Learner']) {
+    for (const name of ['Active Learner', 'Missing Learner', 'Delivery Learner 0', 'On Track Learner']) {
+      expect(screen.getByText(name)).toBeVisible();
+    }
+    for (const name of ['Other Programme Learner', 'Other Cohort Learner']) {
       expect(screen.queryByText(name)).not.toBeInTheDocument();
     }
-    fireEvent.click(screen.getByRole('button', { name: 'Need attention' }));
-    fireEvent.click(screen.getByRole('option', { name: 'On track' }));
-    expect(screen.getByText('On Track Learner')).toBeVisible();
-    expect(screen.queryByText('Boundary Learner')).not.toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'On track' }));
-    fireEvent.click(screen.getByRole('option', { name: 'At risk' }));
-    expect(screen.getByText('Delivery Learner 0')).toBeVisible();
-    expect(screen.queryByText('On Track Learner')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'All OTJH statuses' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Clear all' }));
-    expect(screen.getByRole('button', { name: 'All OTJH statuses' })).toBeVisible();
-    expect(screen.getByRole('button', { name: 'All programme statuses' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'All programmes' })).toBeVisible();
     fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'Missing Learner' } });
     expect(screen.getByRole('row', { name: /Missing Learner/ })).toBeVisible();
     expect(coachFetch).not.toHaveBeenCalled();

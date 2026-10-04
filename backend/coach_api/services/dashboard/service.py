@@ -24,8 +24,8 @@ class CoachDashboardService:
     def __init__(self, owner_email: str, *, today: date | None = None):
         self.context = CoachDashboardContext(owner_email, today or date.today())
 
-    # v13 uses the learner Overview metrics for the embedded caseload table.
-    SCHEMA_VERSION = 13
+    # v17 adds consecutive absence counts from the canonical attendance source.
+    SCHEMA_VERSION = 17
 
     def build(self) -> dict:
         """Read the persistent projection; build once only if it is absent."""
@@ -91,10 +91,25 @@ class CoachDashboardService:
             profile_id = domain.to_int(learner.get("id"))
             if profile_id is None or profile_id not in rows_by_id:
                 continue
+            row = rows_by_id[profile_id]
+            source_row = getattr(row, "_caseload_source", None)
+            learner["programme"] = domain.clean_text(
+                getattr(source_row, "programme", None) or getattr(row, "programme", None),
+            ) or "--"
             domain.apply_canonical_learner_metrics(learner, canonical_metrics.get(profile_id), learner_workspace=True)
             domain.apply_aptem_variance_status(learner, aptem_by_profile.get(profile_id))
-            domain.apply_attendance_summary(learner, attendance_by_id.get(profile_id))
+            attendance_metrics = attendance_by_id.get(profile_id)
+            domain.apply_attendance_summary(learner, attendance_metrics)
+            learner["attendanceConsecutiveMissed"] = (
+                domain.to_int(attendance_metrics.get("consecutiveMissed"))
+                if attendance_metrics else None
+            )
             learner["attendanceAvailable"] = bool(learner.get("attendanceRateAvailable"))
+        # Marking changed independently of the learner metric fields. Refresh
+        # it here so snapshots from the previous schema cannot retain the old
+        # all-submission count.
+        self.context.rows = rows
+        payload["marking"] = dashboard_marking_projection(self.context)
         compatibility.CoachDashboardSnapshot.objects.update_or_create(
             owner_email=self.context.owner_email,
             defaults={"payload": payload, "schema_version": self.SCHEMA_VERSION},
@@ -252,7 +267,12 @@ class CoachDashboardService:
             domain.apply_evidenced_ksb_count(learner, ksb_counts.get(int(row.id)))
             domain.apply_canonical_learner_metrics(learner, canonical_metrics.get(int(row.id)), learner_workspace=True)
             domain.apply_aptem_variance_status(learner, aptem_by_profile.get(int(row.id)))
-            domain.apply_attendance_summary(learner, attendance_by_id.get(int(row.id)))
+            attendance_metrics = attendance_by_id.get(int(row.id))
+            domain.apply_attendance_summary(learner, attendance_metrics)
+            learner["attendanceConsecutiveMissed"] = (
+                domain.to_int(attendance_metrics.get("consecutiveMissed"))
+                if attendance_metrics else None
+            )
             learner["attendanceAvailable"] = bool(learner.get("attendanceRateAvailable"))
 
         marking = dashboard_marking_projection(context)

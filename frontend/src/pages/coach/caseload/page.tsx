@@ -53,15 +53,15 @@ import styles from './caseload.module.css';
 const CASELOAD_ENDPOINT = '/coach_api/coach/caseload';
 
 const PAGE_SIZE = 10;
-const EMBEDDED_PAGE_SIZE = 15;
 const QUERY_DEFAULTS = {
-  search: '', cohort: 'all', group: 'all', programmeStatus: 'all', employer: 'all',
+  search: '', programme: 'all', cohort: 'all', group: 'all', programmeStatus: 'all', employer: 'all',
   view: 'all', sort: 'risk', direction: 'desc', page: 1,
-  otjhStatus: 'all', otjhMin: '', otjhMax: '',
+  otjhMin: '', otjhMax: '',
 };
 
 const INITIAL_FILTERS: CaseloadFilterState = {
   search: '',
+  programme: 'all',
   cohort: 'all',
   group: 'all',
   programStatus: 'all',
@@ -104,15 +104,14 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
 
   const { state: query, setValues: setQueryValues, reset: resetQuery } = useListQueryState(QUERY_DEFAULTS);
   const filters: CaseloadFilterState = useMemo(() => ({
-    search: String(query.search), cohort: String(query.cohort), group: String(query.group),
+    search: String(query.search), programme: String(query.programme), cohort: String(query.cohort), group: String(query.group),
     programStatus: String(query.programmeStatus), employer: String(query.employer),
-  }), [query.cohort, query.employer, query.group, query.programmeStatus, query.search]);
+  }), [query.cohort, query.employer, query.group, query.programme, query.programmeStatus, query.search]);
   const statusFilter = String(query.view) as StatusFilter;
   const sortKey = String(query.sort) as SortKey;
   const sortDirection = String(query.direction) as SortDirection;
   const currentPage = Number(query.page);
   const usesDashboardLearners = embedded && Array.isArray(embeddedLearners);
-  const otjhStatus = String(query.otjhStatus);
 
   const [quickView, setQuickView] = useState<{ learnerId: string; tab: QuickViewTab } | null>(null);
 
@@ -217,7 +216,9 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
   // The one expensive computation on the page, and the only place risk is
   // decided. Keyed on the learner list, so filtering and sorting never redo it.
   const insights = useMemo(() => buildInsightMap(learners, today), [learners, today]);
-  const filterOptions = useMemo(() => serverFilterOptions || ({
+  const filterOptions = useMemo(() => {
+    const derivedOptions = {
+      programme: uniqueOptions(learners.map((learner) => displayValue(learner.programmeName))),
     cohort: [...new Map(learners.map((learner) => [hasValue(learner.cohortId) ? learner.cohortId : displayValue(learner.cohortName), displayValue(learner.cohortName)])).entries()]
       .filter(([, label]) => label !== EMPTY_VALUE)
       .map(([value, label]) => ({ value, label }))
@@ -225,15 +226,10 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
     group: uniqueOptions(learners.map((learner) => displayValue(learner.group))),
     programStatus: uniqueOptions(learners.map((learner) => displayValue(learner.rawProgramStatus))),
     employer: uniqueOptions(learners.map((learner) => displayValue(learner.employer))),
-  }), [learners, serverFilterOptions]);
+    };
 
-  const toolbarOptions = useMemo(() => usesDashboardLearners ? {
-    ...filterOptions,
-    cohort: [
-      ...filterOptions.cohort.map(option => ({ value: `cohort:${option.value}`, label: `Cohort: ${option.label}` })),
-      ...filterOptions.group.map(option => ({ value: `group:${option.value}`, label: `Group: ${option.label}` })),
-    ],
-  } : filterOptions, [filterOptions, usesDashboardLearners]);
+    return serverFilterOptions ? { ...derivedOptions, ...serverFilterOptions } : derivedOptions;
+  }, [learners, serverFilterOptions]);
 
   const matched = useMemo(() => {
     return learners.filter((learner) => {
@@ -270,24 +266,17 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
       // Dashboard-owned learners never make that request, so apply the same
       // contract locally instead of only reflecting the values in the URL.
       if (usesDashboardLearners) {
-        if (otjhStatus !== 'all' && getOtjhGapStatus(learner.otjhCompleted, learner.otjhTarget).status !== otjhStatus) return false;
         const search = filters.search.trim().toLocaleLowerCase();
         if (search && ![learner.name, learner.email, learner.programmeName]
           .some((value) => displayValue(value).toLocaleLowerCase().includes(search))) return false;
-        if (filters.cohort.startsWith('group:')) {
-          if (displayValue(learner.group) !== filters.cohort.slice(6)) return false;
-        } else if (filters.cohort !== 'all') {
-          const cohort = filters.cohort.startsWith('cohort:') ? filters.cohort.slice(7) : filters.cohort;
-          if (learner.cohortId !== cohort && displayValue(learner.cohortName) !== cohort) return false;
-        }
-        if (filters.programStatus !== 'all'
-          && displayValue(learner.rawProgramStatus).toLocaleLowerCase() !== filters.programStatus.toLocaleLowerCase()) return false;
+        if (filters.programme !== 'all' && displayValue(learner.programmeName) !== filters.programme) return false;
+        if (filters.cohort !== 'all' && learner.cohortId !== filters.cohort && displayValue(learner.cohortName) !== filters.cohort) return false;
       }
       if (!usesDashboardLearners && filters.employer !== 'all' && displayValue(learner.employer) !== filters.employer) return false;
 
       return true;
     });
-  }, [learners, insights, statusFilter, filters, usesDashboardLearners, otjhStatus]);
+  }, [learners, insights, statusFilter, filters, usesDashboardLearners]);
 
   const sorted = useMemo(() => {
     const numeric = (value: number | null | undefined, available = true) => available && Number.isFinite(value) ? Number(value) : null;
@@ -330,15 +319,11 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
     }, { resetPage: true });
   }, [setQueryValues, sortDirection, sortKey]);
 
-  const effectivePageSize = usesDashboardLearners ? EMBEDDED_PAGE_SIZE : PAGE_SIZE;
+  const effectivePageSize = PAGE_SIZE;
   const effectiveTotal = usesDashboardLearners ? sorted.length : serverTotal;
-  const totalPages = Math.max(1, usesDashboardLearners
-    ? Math.ceil(effectiveTotal / effectivePageSize)
-    : serverTotalPages);
+  const totalPages = Math.max(1, serverTotalPages);
   const safePage = Math.min(currentPage, totalPages);
-  const paginated = usesDashboardLearners
-    ? sorted.slice((safePage - 1) * effectivePageSize, safePage * effectivePageSize)
-    : sorted;
+  const paginated = sorted;
 
   const matchedIdKey = useMemo(() => sorted.map((learner) => learner.id).join(','), [sorted]);
 
@@ -368,6 +353,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
   const handleFilterChange = useCallback((patch: Partial<CaseloadFilterState>) => {
     setQueryValues({
       ...(patch.search !== undefined ? { search: patch.search } : {}),
+      ...(patch.programme !== undefined ? { programme: patch.programme } : {}),
       ...(patch.cohort !== undefined ? { cohort: patch.cohort } : {}),
       ...(patch.group !== undefined ? { group: patch.group } : {}),
       ...(patch.programStatus !== undefined ? { programmeStatus: patch.programStatus } : {}),
@@ -380,7 +366,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
   }, [setQueryValues]);
 
   const handleClearAll = useCallback(() => {
-    resetQuery(['search', 'cohort', 'group', 'programmeStatus', 'employer', 'view', 'page', 'otjhStatus', 'otjhMin', 'otjhMax']);
+    resetQuery(['search', 'programme', 'cohort', 'group', 'programmeStatus', 'employer', 'view', 'page', 'otjhMin', 'otjhMax']);
   }, [resetQuery]);
 
   const handleToggleSelect = useCallback((learnerId: string) => {
@@ -456,8 +442,8 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
 
   // --- render --------------------------------------------------------------
 
-  const hasFiltersApplied = (usesDashboardLearners ? otjhStatus !== 'all' : statusFilter !== 'all')
-    || Object.entries(filters).some(([key, value]) => (!usesDashboardLearners || ['search', 'cohort', 'programStatus'].includes(key)) && value !== INITIAL_FILTERS[key as keyof CaseloadFilterState]);
+  const hasFiltersApplied = (!usesDashboardLearners && statusFilter !== 'all')
+    || Object.entries(filters).some(([key, value]) => (!usesDashboardLearners || ['search', 'programme', 'cohort'].includes(key)) && value !== INITIAL_FILTERS[key as keyof CaseloadFilterState]);
   const allPageSelected = paginated.length > 0 && paginated.every((learner) => selectedLearnerIds.has(learner.id));
 
   // A super-admin cannot read an arbitrary coach caseload until a coach has
@@ -497,15 +483,12 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
             <div className={styles.toolbar}>
               <LearnerToolbar
                 filters={filters}
-                options={toolbarOptions}
+                options={filterOptions}
                 statusFilter={statusFilter}
                 onFilterChange={handleFilterChange}
                 onStatusFilterChange={handleStatusFilterChange}
                 onClearAll={handleClearAll}
-                dashboardFilters={usesDashboardLearners ? {
-                  otjhStatus,
-                  onStatusChange: (value) => setQueryValues({ otjhStatus: value }, { resetPage: true }),
-                } : undefined}
+                dashboardMode={usesDashboardLearners}
               />
             </div>
           ) : null}
@@ -572,7 +555,7 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
             />
           )}
 
-          {!loading && !error && sorted.length > 0 ? (
+          {!usesDashboardLearners && !loading && !error && sorted.length > 0 ? (
             <Pagination
               page={safePage}
               totalPages={totalPages}
@@ -585,7 +568,9 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
 
         {hasFiltersApplied && !loading && !error && sorted.length > 0 ? (
           <p className={styles.footerNote}>
-            Showing {paginated.length} learners on this page from {effectiveTotal} matching learners.
+            {usesDashboardLearners
+              ? `Showing ${paginated.length} matching learner${paginated.length === 1 ? '' : 's'}.`
+              : `Showing ${paginated.length} learners on this page from ${effectiveTotal} matching learners.`}
           </p>
         ) : null}
       </section>

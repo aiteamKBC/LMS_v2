@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
 import { useToast } from '@/hooks/useToast';
 import {
@@ -245,7 +246,7 @@ export default function ProgressReviewPptxModal({
   ];
   const busy = phase === 'working';
 
-  return (
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-[rgba(10,12,24,0.6)] backdrop-blur-sm" onClick={busy ? undefined : onClose} />
       <div role="dialog" aria-label={`${deckLabel} slides`} className="relative flex max-h-[90vh] w-full max-w-[680px] flex-col overflow-hidden rounded-2xl border border-white/10 bg-white shadow-2xl">
@@ -404,6 +405,7 @@ export default function ProgressReviewPptxModal({
           onSaved={handleEdited}
         />
       )}
-    </div>
+    </div>,
+    document.body,
   );
 }

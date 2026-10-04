@@ -161,7 +161,7 @@ export function normalizeLearner(
     && attendance.attendance !== undefined
     && attendance.hasAttendance !== false,
   );
-  const programme = displayValue(attendance?.programme);
+  const programme = displayValue(attendance?.programme ?? learner.programmeName);
   const learningActivityDate = learner.lastActivityDate || null;
   const attendanceActivityDate = attendance?.lastSessionDate || null;
   const attendanceIsLatest = Boolean(

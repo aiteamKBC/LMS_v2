@@ -1,6 +1,6 @@
 import { AppIcon } from '@/components/feature/AppIcon';
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
-import { EMPTY_VALUE, displayValue, getOtjhGapStatus, hasValue } from '../lib/format';
+import { EMPTY_VALUE, daysBetween, displayValue, getOtjhGapStatus, hasValue, parseDisplayDate, startOfToday } from '../lib/format';
 import type { InsightMap } from '../lib/attention';
 import type { Learner, SortDirection, SortKey } from '../types';
 import { StatusPill } from './primitives';
@@ -55,11 +55,29 @@ function Progress({ label, value, detail, metric, tone }: { label: string; value
   </div>;
 }
 
-function DateMetric({ value, emptyLabel, detail }: { value?: string | null; emptyLabel: string; detail: string }) {
+type DateTone = 'warning' | 'critical';
+
+function elapsedDays(value?: string | null) {
+  const date = parseDisplayDate(value);
+  return date ? Math.max(0, -daysBetween(startOfToday(), date)) : null;
+}
+
+function elapsedTone(days: number | null, warningAfterDays: number, criticalAfterDays: number): DateTone | undefined {
+  if (days === null) return undefined;
+  if (days >= criticalAfterDays) return 'critical';
+  if (days >= warningAfterDays) return 'warning';
+  return undefined;
+}
+
+function elapsedLabel(days: number | null, fallback: string) {
+  return days === null ? fallback : `${days} days ago`;
+}
+
+function DateMetric({ value, emptyLabel, detail, tone }: { value?: string | null; emptyLabel: string; detail: string; tone?: DateTone }) {
   const available = hasValue(value);
   return <div className={styles.date}>
     <strong>{available ? <><AppIcon name="ri-calendar-line" aria-hidden="true" />{displayValue(value)}</> : EMPTY_VALUE}</strong>
-    <small>{available ? detail : emptyLabel}</small>
+    <small data-tone={tone}>{available ? detail : emptyLabel}</small>
   </div>;
 }
 
@@ -123,6 +141,9 @@ export function LearnerTable({ learners, insights, sortKey, sortDirection, onSor
       <tbody>{learners.map(learner => {
         const insight = insights.get(learner.id);
         const activity = bestActivity(learner);
+        const activityDays = insight?.lastActivityDaysAgo ?? elapsedDays(activity);
+        const progressReviewDays = elapsedDays(learner.lastProgressReview);
+        const monthlyCoachingDays = elapsedDays(learner.lastReview);
         return <tr key={learner.id}>
           {selectionMode ? <td><input type="checkbox" aria-label={`Select ${learner.name}`} checked={selectedLearnerIds.has(learner.id)} onChange={() => onToggleSelect(learner.id)} /></td> : null}
           <td><div className={styles.learner}><span className={styles.avatar}>{learner.initials}</span><span><strong>{learner.name}</strong><small>{displayValue(learner.programmeName || learner.cohortName)}</small></span></div></td>
@@ -131,9 +152,9 @@ export function LearnerTable({ learners, insights, sortKey, sortDirection, onSor
           <td className={styles.progressCell}><Progress label="KSBs" metric="ksbs" value={percent(learner.ksbProgress, learner.ksbProgressAvailable, true)} detail={ratio(learner.ksbCompleted, learner.ksbTarget)} /></td>
           <td className={styles.progressCell}><Progress label="Activities" metric="activities" value={componentPercent(learner)} detail={ratio(learner.componentsCompleted, learner.componentsPlanned)} /></td>
           <td className={styles.progressCell}><Progress label="Attendance" metric="attendance" value={percent(learner.liveAttendanceRate, learner.liveAttendanceRateAvailable, true)} detail={attendanceRatio(learner)} /></td>
-          <td><DateMetric value={activity} emptyLabel="No activity yet" detail={insight?.lastActivityDaysAgo !== null && insight?.lastActivityDaysAgo !== undefined ? `${insight.lastActivityDaysAgo} days ago` : displayValue(learner.lastActivityLabel) !== EMPTY_VALUE ? displayValue(learner.lastActivityLabel) : 'Latest activity'} /></td>
-          <td><DateMetric value={learner.lastProgressReview} emptyLabel="No PR yet" detail="Latest completed" /></td>
-          <td><DateMetric value={learner.lastReview} emptyLabel="No MCM yet" detail="Latest completed" /></td>
+          <td><DateMetric value={activity} emptyLabel="No activity yet" detail={elapsedLabel(activityDays, displayValue(learner.lastActivityLabel) !== EMPTY_VALUE ? displayValue(learner.lastActivityLabel) : 'Latest activity')} tone={elapsedTone(activityDays, 7, 14)} /></td>
+          <td><DateMetric value={learner.lastProgressReview} emptyLabel="No PR yet" detail={elapsedLabel(progressReviewDays, 'Latest completed')} tone={elapsedTone(progressReviewDays, 70, 84)} /></td>
+          <td><DateMetric value={learner.lastReview} emptyLabel="No MCM yet" detail={elapsedLabel(monthlyCoachingDays, 'Latest completed')} tone={elapsedTone(monthlyCoachingDays, 21, 28)} /></td>
           <td><div className={styles.actions}><button type="button" className={styles.profileButton} onClick={() => onOpenProfile(learner)}>View Profile</button></div></td>
         </tr>;
       })}</tbody>

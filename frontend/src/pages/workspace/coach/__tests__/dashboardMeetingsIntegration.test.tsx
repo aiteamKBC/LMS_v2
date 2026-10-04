@@ -65,8 +65,9 @@ function expectStructuredSkeleton() {
   const skeleton = screen.getByRole('status', { name: 'Loading coach dashboard' });
   expect(skeleton).toBeVisible();
   expect(skeleton.querySelectorAll('[data-skeleton="metric"]')).toHaveLength(6);
-  for (const heading of ['All Learners', 'Upcoming Meetings', 'Risk Distribution', 'Monthly Learners at Risk']) {
-    expect(within(skeleton).getByRole('heading', { name: heading, hidden: true })).toBeInTheDocument();
+  expect(within(skeleton).getByRole('heading', { name: 'All Learners', hidden: true })).toBeInTheDocument();
+  for (const heading of ['Due Activities', 'Attendance Insights', 'OTJH Insights', 'Review Insights']) {
+    expect(within(skeleton).queryByRole('heading', { name: heading, hidden: true })).not.toBeInTheDocument();
   }
   const learnerTable = within(skeleton).getByRole('table', { name: 'Learners are loading', hidden: true });
   for (const column of ['Learner', 'OTJH', 'KSBs', 'Activities', 'Attendance', 'Last Activity', 'Last PR', 'Last MCM', 'Actions']) {
@@ -74,7 +75,7 @@ function expectStructuredSkeleton() {
   }
   // Two header rows plus seven learner rows.
   expect(within(learnerTable).getAllByRole('row', { hidden: true })).toHaveLength(9);
-  expect(skeleton.querySelectorAll('[data-skeleton="meeting"]')).toHaveLength(3);
+  expect(skeleton.querySelectorAll('[data-skeleton="meeting"]')).toHaveLength(0);
   for (const emptyState of ['No learners assigned to you yet', 'Data not available', 'History not available', 'No learner meetings scheduled']) {
     expect(screen.queryByText(emptyState)).not.toBeInTheDocument();
   }
@@ -104,11 +105,146 @@ it('shows the learner table only after a successful response', async () => {
   expect(screen.queryByRole('status', { name: 'Loading coach dashboard' })).not.toBeInTheDocument();
   expect(document.querySelectorAll('[data-skeleton]')).toHaveLength(0);
   expect(screen.getByRole('region', { name: 'Coach dashboard metrics' })).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: 'Risk Insights' }));
   expect(screen.getByRole('region', { name: 'Learner risk insights' })).toBeVisible();
   expect(mocks.load).toHaveBeenCalledTimes(1);
   expect(mocks.load).toHaveBeenCalledWith('/coach_api/coach/dashboard', expect.objectContaining({ credentials: 'include' }));
   expect(mocks.calendar).not.toHaveBeenCalled();
   expect(mocks.coachFetch).not.toHaveBeenCalled();
+});
+
+it('shows every dashboard learner without pagination', async () => {
+  vi.useRealTimers();
+  mocks.load.mockResolvedValue({
+    owner: { name: 'Example Coach' }, marking: { items: [] }, meetings: { events: [] },
+    learners: Array.from({ length: 17 }, (_, index) => ({
+      id: String(index + 1),
+      name: `Dashboard Learner ${String(index + 1).padStart(2, '0')}`,
+      programme: 'Business Administration',
+      rawProgramStatus: 'active',
+      otjhCompleted: 20,
+      otjhTarget: 40,
+    })),
+  });
+
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  const region = await screen.findByRole('region', { name: 'Coach learner caseload' });
+  expect(await within(region).findByText('Dashboard Learner 01')).toBeVisible();
+  expect(within(region).getByText('Dashboard Learner 17')).toBeVisible();
+  expect(within(region).queryByRole('button', { name: 'All OTJH statuses' })).not.toBeInTheDocument();
+  expect(within(region).queryByRole('button', { name: 'Previous page' })).not.toBeInTheDocument();
+  expect(within(region).queryByRole('button', { name: 'Next page' })).not.toBeInTheDocument();
+});
+
+it('lists dashboard programmes in the learner filter and filters the table', async () => {
+  vi.useRealTimers();
+  mocks.load.mockResolvedValue({
+    owner: { name: 'Example Coach' }, monthlyRisk: [], marking: { items: [] }, meetings: { events: [] },
+    learners: [
+      { id: 'programme-a', name: 'Programme A Learner', programme: 'Business Administration', cohortName: 'Cohort A', rawProgramStatus: 'active', otjhCompleted: 20, otjhTarget: 40 },
+      { id: 'programme-b', name: 'Programme B Learner', programme: 'Customer Service', cohortName: 'Cohort B', rawProgramStatus: 'active', otjhCompleted: 20, otjhTarget: 40 },
+    ],
+  });
+
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  await screen.findByText('Programme A Learner');
+  const region = screen.getByRole('region', { name: 'Coach learner caseload' });
+  fireEvent.click(within(region).getByRole('button', { name: 'All programmes' }));
+  expect(within(region).getAllByRole('option').map(option => option.textContent)).toEqual([
+    'All programmes', 'Business Administration', 'Customer Service',
+  ]);
+  fireEvent.click(within(region).getByRole('option', { name: 'Business Administration' }));
+  expect(within(region).getByText('Programme A Learner')).toBeVisible();
+  expect(within(region).queryByText('Programme B Learner')).not.toBeInTheDocument();
+});
+
+it('separates learners, meetings and risk insights into dashboard tabs', async () => {
+  vi.useRealTimers();
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  expect(await screen.findByRole('region', { name: 'Coach learner caseload' })).toBeVisible();
+
+  const learners = screen.getByRole('tab', { name: 'All Learners' });
+  expect(learners).toHaveAttribute('aria-selected', 'true');
+  fireEvent.keyDown(learners, { key: 'ArrowRight' });
+  expect(screen.getByRole('tab', { name: 'Due Activities' })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByRole('heading', { name: 'Due Activities' })).toBeVisible();
+  expect(screen.queryByRole('region', { name: 'Coach learner caseload' })).not.toBeInTheDocument();
+
+  fireEvent.click(screen.getByRole('tab', { name: 'Risk Insights' }));
+  expect(screen.getByRole('region', { name: 'Learner risk insights' })).toBeVisible();
+  expect(screen.queryByRole('heading', { name: 'Due Activities' })).not.toBeInTheDocument();
+});
+
+it('keeps each risk insight topic closed by default and toggles it independently', async () => {
+  vi.useRealTimers();
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('tab', { name: 'Risk Insights' }));
+
+  const insights = screen.getByRole('region', { name: 'Learner risk insights' });
+  const attendanceToggle = within(insights).getByRole('button', { name: 'Expand Attendance Insights' });
+  expect(attendanceToggle).toHaveAttribute('aria-expanded', 'false');
+  expect(within(insights).queryByRole('region', { name: 'Attendance risk insights' })).not.toBeInTheDocument();
+  expect(within(insights).queryByRole('region', { name: 'OTJH risk insights' })).not.toBeInTheDocument();
+  expect(within(insights).queryByRole('region', { name: 'Review risk insights' })).not.toBeInTheDocument();
+
+  fireEvent.click(attendanceToggle);
+  expect(within(insights).getByRole('button', { name: 'Collapse Attendance Insights' })).toHaveAttribute('aria-expanded', 'true');
+  expect(within(insights).getByRole('region', { name: 'Attendance risk insights' })).toBeVisible();
+  expect(within(insights).queryByRole('region', { name: 'OTJH risk insights' })).not.toBeInTheDocument();
+
+  fireEvent.click(within(insights).getByRole('button', { name: 'Collapse Attendance Insights' }));
+  expect(within(insights).getByRole('button', { name: 'Expand Attendance Insights' })).toHaveAttribute('aria-expanded', 'false');
+  expect(within(insights).queryByRole('region', { name: 'Attendance risk insights' })).not.toBeInTheDocument();
+});
+
+it('shows only warning and critical learners in the three risk insight tables', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(new Date('2026-10-03T12:00:00Z'));
+  mocks.load.mockResolvedValue({
+    owner: { name: 'Example Coach' }, marking: { items: [] }, meetings: { events: [] },
+    learners: [
+      {
+        id: 'warning', name: 'Warning Learner', programme: 'Business Administration', rawProgramStatus: 'active',
+        attendanceConsecutiveMissed: 2, otjhCompleted: 70, otjhTarget: 100,
+        lastPr: '25 Jul 2026', lastMcm: '12 Sep 2026',
+      },
+      {
+        id: 'critical', name: 'Critical Learner', programme: 'Customer Service', rawProgramStatus: 'active',
+        attendanceConsecutiveMissed: 3, otjhCompleted: 60, otjhTarget: 100,
+        lastPr: '11 Jul 2026', lastMcm: '05 Sep 2026',
+      },
+      {
+        id: 'safe', name: 'Safe Learner', programme: 'Team Leader', rawProgramStatus: 'active',
+        attendanceConsecutiveMissed: 1, otjhCompleted: 71, otjhTarget: 100,
+        lastPr: '26 Jul 2026', lastMcm: '13 Sep 2026',
+      },
+    ],
+  });
+
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('tab', { name: 'Risk Insights' }));
+  for (const title of ['Attendance Insights', 'OTJH Insights', 'Review Insights']) {
+    fireEvent.click(screen.getByRole('button', { name: `Expand ${title}` }));
+  }
+
+  const attendance = screen.getByRole('region', { name: 'Attendance risk insights' });
+  expect(within(attendance).getByText('Warning Learner').closest('tr')).toHaveAttribute('data-tone', 'warning');
+  expect(within(attendance).getByText('Critical Learner').closest('tr')).toHaveAttribute('data-tone', 'critical');
+  expect(within(attendance).queryByText('Safe Learner')).not.toBeInTheDocument();
+
+    const otjh = screen.getByRole('region', { name: 'OTJH risk insights' });
+    expect(within(otjh).getByRole('columnheader', { name: 'Actual' })).toBeVisible();
+    expect(within(otjh).queryByRole('columnheader', { name: 'Recorded' })).not.toBeInTheDocument();
+  expect(within(otjh).getByText('Warning Learner').closest('tr')).toHaveAttribute('data-tone', 'warning');
+  expect(within(otjh).getByText('Critical Learner').closest('tr')).toHaveAttribute('data-tone', 'critical');
+  expect(within(otjh).queryByText('Safe Learner')).not.toBeInTheDocument();
+
+  const reviews = screen.getByRole('region', { name: 'Review risk insights' });
+  expect(within(reviews).getByText('70 days ago').parentElement).toHaveAttribute('data-tone', 'warning');
+  expect(within(reviews).getByText('84 days ago').parentElement).toHaveAttribute('data-tone', 'critical');
+  expect(within(reviews).getByText('21 days ago').parentElement).toHaveAttribute('data-tone', 'warning');
+  expect(within(reviews).getByText('28 days ago').parentElement).toHaveAttribute('data-tone', 'critical');
+  expect(within(reviews).queryByText('Safe Learner')).not.toBeInTheDocument();
 });
 
 it('keeps the loaded dashboard visible while returning to the page and refreshing in the background', async () => {
@@ -352,12 +488,39 @@ it('shows the requested empty Last PR and Last MCM labels when no completed revi
   expect(within(row!).getByText('No MCM yet').parentElement).toHaveTextContent('--No MCM yet');
 });
 
+it('keeps the Learner Meetings section title without repeating it before each day', async () => {
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.setSystemTime(new Date('2026-09-23T10:00:00Z'));
+  mocks.load.mockResolvedValue({
+    owner: { name: 'Example Coach' },
+    learners: [{ id: '1', name: 'Example Learner', learnerType: 'commercial', rawProgramStatus: 'active' }],
+    marking: { items: [] },
+    meetings: { events: [
+      meeting,
+      { ...meeting, id: 'meeting-2', eventKey: 'mcr:1:2', scheduledTime: '11:30' },
+      { ...meeting, id: 'meeting-3', eventKey: 'mcr:1:3', scheduledTime: '12:30' },
+      { ...meeting, id: 'meeting-4', eventKey: 'mcr:1:4', scheduledDate: '2026-09-24' },
+    ] },
+  });
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('tab', { name: 'Due Activities' }));
+
+  const meetings = await screen.findByRole('region', { name: 'Meetings and live sessions this week' });
+  const sectionTitle = screen.getByRole('heading', { name: 'Learner Meetings' });
+  expect(sectionTitle).toBeVisible();
+  expect(within(meetings).queryByText('Learner Meetings')).not.toBeInTheDocument();
+  expect(meetings.querySelector('time[datetime="2026-09-23"]')).not.toBeNull();
+  expect(meetings.querySelectorAll('[data-day-spacer="true"]')).toHaveLength(1);
+  expect(meetings.querySelectorAll('tr[data-meeting-row="true"]:not([data-day-first]):not([data-day-last])')).toHaveLength(1);
+});
+
 it('keeps the live session calendar link while showing the new actions only on coaching meetings', async () => {
   useDashboardDate();
   render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('tab', { name: 'Due Activities' }));
   expect(await screen.findByRole('button', { name: 'Send Reminder' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'View Presentation' })).toBeVisible();
-  const meetings = screen.getByRole('region', { name: 'Upcoming meetings and live sessions' });
+  const meetings = screen.getByRole('region', { name: 'Meetings and live sessions this week' });
   const groupedDateCell = meetings.querySelector('td[rowspan="2"]');
   expect(groupedDateCell).not.toBeNull();
   expect(groupedDateCell).toHaveTextContent('WED');
@@ -370,6 +533,7 @@ it('keeps the live session calendar link while showing the new actions only on c
   expect(screen.queryByRole('heading', { name: 'My Assigned Groups' })).not.toBeInTheDocument();
   expect(screen.queryByRole('heading', { name: "Today's schedule" })).not.toBeInTheDocument();
   expect(screen.queryByRole('region', { name: 'Caseload health' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('tab', { name: 'All Learners' }));
   const riskTable = await screen.findByRole('region', { name: 'Coach learner caseload' });
   expect(within(riskTable).getByRole('heading', { name: 'All Learners' })).toBeVisible();
   expect(within(riskTable).getByRole('columnheader', { name: 'Progress' })).toBeVisible();
@@ -378,13 +542,17 @@ it('keeps the live session calendar link while showing the new actions only on c
   expect(within(riskTable).queryByRole('region', { name: 'OTJH caseload summary' })).not.toBeInTheDocument();
   expect(within(riskTable).getByRole('button', { name: 'Status' })).toBeVisible();
   expect(screen.queryByRole('link', { name: /View all learners/ })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('tab', { name: 'Risk Insights' }));
   const insights = screen.getByRole('region', { name: 'Learner risk insights' });
-  expect(within(insights).getByRole('heading', { name: 'Risk Distribution' })).toBeVisible();
-  expect(within(insights).getByRole('heading', { name: 'Monthly Learners at Risk' })).toBeVisible();
-  expect(within(insights).getByRole('list', { name: 'Learners at risk at each month end' })).toBeVisible();
-  expect(within(insights).getByRole('listitem', { name: 'Jun: 4 learners at risk' })).toBeVisible();
-  expect(within(insights).queryByText('History not available')).not.toBeInTheDocument();
-  expect(within(insights).getByRole('list', { name: 'Active learners by OTJH status' })).toBeVisible();
+  expect(within(insights).getByRole('heading', { name: 'Attendance Insights' })).toBeVisible();
+  expect(within(insights).getByRole('heading', { name: 'OTJH Insights' })).toBeVisible();
+  expect(within(insights).getByRole('heading', { name: 'Review Insights' })).toBeVisible();
+  for (const title of ['Attendance Insights', 'OTJH Insights', 'Review Insights']) {
+    fireEvent.click(within(insights).getByRole('button', { name: `Expand ${title}` }));
+  }
+  expect(within(insights).getByRole('region', { name: 'Attendance risk insights' })).toBeVisible();
+  expect(within(insights).getByRole('region', { name: 'OTJH risk insights' })).toBeVisible();
+  expect(within(insights).getByRole('region', { name: 'Review risk insights' })).toBeVisible();
   expect(mocks.load).toHaveBeenCalledWith('/coach_api/coach/dashboard', expect.objectContaining({ credentials: 'include' }));
 });
 
@@ -419,6 +587,7 @@ it('keeps a Teams warning visible when a rescheduled meeting moves out of the se
   useDashboardDate();
   mocks.schedule.mockResolvedValue({ event: { ...meeting, scheduledDate: '2026-10-10' }, warning: 'Teams sync needs retry.' });
   render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('tab', { name: 'Due Activities' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Reschedule' }));
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save new time' })); });
   expect(screen.queryByRole('button', { name: 'Send Reminder' })).not.toBeInTheDocument();
@@ -459,7 +628,7 @@ it('shows the six requested workload cards using the current week and marking qu
   expect(within(metrics).queryByText('MCM 4-week')).not.toBeInTheDocument();
 });
 
-it('uses the current work week for KPI cards and only the next work week for upcoming meetings', async () => {
+it('uses the current work week for KPI cards and due activities meetings', async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   vi.setSystemTime(new Date('2026-09-23T10:00:00Z'));
   const event = (id: string, source: string, scheduledDate: string): CoachCalendarEvent => ({
@@ -503,16 +672,17 @@ it('uses the current work week for KPI cards and only the next work week for upc
     expect(card).toHaveTextContent('25 Sep');
   }
 
-  expect(screen.getByText(/next work week \(28 Sep .* 02 Oct\)/)).toBeVisible();
-  const upcoming = screen.getByRole('region', { name: 'Upcoming meetings and live sessions' });
-  for (const title of ['Next Monday PR', 'Next Tuesday MCM', 'Next Wednesday Catch-up', 'Next Thursday Support', 'Next Friday Live Session']) {
+  fireEvent.click(screen.getByRole('tab', { name: 'Due Activities' }));
+  expect(screen.getByText(/Meetings this week/)).toBeVisible();
+  const upcoming = screen.getByRole('region', { name: 'Meetings and live sessions this week' });
+  for (const title of ['Current Monday PR', 'Current Tuesday MCM', 'Current Friday Catch-up']) {
     expect(within(upcoming).getAllByText(title)[0]).toBeVisible();
   }
-  for (const title of ['Current Friday Catch-up', 'Next Saturday PR', 'After Next Friday MCM']) {
+  for (const title of ['Next Monday PR', 'Next Tuesday MCM', 'Next Wednesday Catch-up', 'Next Thursday Support', 'Next Friday Live Session', 'Next Saturday PR', 'After Next Friday MCM']) {
     expect(within(upcoming).queryAllByText(title)).toHaveLength(0);
   }
-  expect(upcoming.querySelector('time[datetime="2026-09-28"]')).not.toBeNull();
-  expect(upcoming.querySelector('time[datetime="2026-10-02"]')).not.toBeNull();
+  expect(upcoming.querySelector('time[datetime="2026-09-21"]')).not.toBeNull();
+  expect(upcoming.querySelector('time[datetime="2026-09-25"]')).not.toBeNull();
 });
 
 it('shows resolved Aptem weekly counts when the 119-event payload also has a generation issue', async () => {
@@ -597,7 +767,6 @@ it('counts delivery learners with active learners on the coach dashboard', async
   const metrics = await screen.findByRole('region', { name: 'Coach dashboard metrics' });
   const totalLearners = within(metrics).getByRole('button', { name: 'Open Total learners details' });
   expect(totalLearners.querySelector('[class*="metricValue"]')).toHaveTextContent('2');
-  expect(screen.getByText('2 active learners grouped by their current OTJH status.')).toBeVisible();
 });
 
 it('opens a detail popup and full-page link from every workload card', async () => {

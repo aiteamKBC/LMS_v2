@@ -131,6 +131,46 @@ describe('My Learners table design', () => {
     expect(onOpenProfile).toHaveBeenCalledWith(learner);
   });
 
+  it('colours stale activity, PR and MCM recency at their agreed warning and critical thresholds', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-03T12:00:00Z'));
+    try {
+      render(<LearnerTable learners={[{
+        ...learner,
+        lastActivity: '19 Sep 2026',
+        lastProgressReview: '11 Jul 2026',
+        lastReview: '05 Sep 2026',
+      }]} insights={new Map([['42', { ...insights.get('42')!, lastActivityDaysAgo: 14 }]])} selectionMode={false} selectedLearnerIds={new Set()}
+        sortKey="risk" sortDirection="desc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} />);
+
+      expect(screen.getByText('14 days ago')).toHaveAttribute('data-tone', 'critical');
+      expect(screen.getByText('84 days ago')).toHaveAttribute('data-tone', 'critical');
+      expect(screen.getByText('28 days ago')).toHaveAttribute('data-tone', 'critical');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('colours the first stale recency threshold yellow', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-03T12:00:00Z'));
+    try {
+      render(<LearnerTable learners={[{
+        ...learner,
+        lastActivity: '26 Sep 2026',
+        lastProgressReview: '25 Jul 2026',
+        lastReview: '12 Sep 2026',
+      }]} insights={new Map([['42', { ...insights.get('42')!, lastActivityDaysAgo: 7 }]])} selectionMode={false} selectedLearnerIds={new Set()}
+        sortKey="risk" sortDirection="desc" onSort={vi.fn()} onToggleSelect={vi.fn()} onOpenProfile={vi.fn()} />);
+
+      expect(screen.getByText('7 days ago')).toHaveAttribute('data-tone', 'warning');
+      expect(screen.getByText('70 days ago')).toHaveAttribute('data-tone', 'warning');
+      expect(screen.getByText('21 days ago')).toHaveAttribute('data-tone', 'warning');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it.each([
     [120, 'OTJH: 58%', 'critical'],
     [100, 'OTJH: 70%', 'warning'],

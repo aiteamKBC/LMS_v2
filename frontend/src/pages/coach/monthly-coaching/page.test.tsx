@@ -127,6 +127,18 @@ describe('restored monthly coaching list', () => {
     expect(screen.getByText('Completed Learner')).toBeVisible();
   });
 
+  it('shows the latest completed MCM with the dashboard age colours before the meeting date', async () => {
+    fetchEvents.mockResolvedValue({ events: [
+      meeting(30, { learner: 'History Learner', learnerId: '30', status: 'completed', scheduledDate: '2026-08-01', reviewCompletedAt: '2026-08-01T15:00:00Z' }),
+      meeting(31, { learner: 'History Learner', learnerId: '30', status: 'scheduled', scheduledDate: '2026-09-22' }),
+    ] });
+    mount();
+    const row = within((await screen.findByText('History Learner')).closest('tr')!);
+    const headers = screen.getAllByRole('columnheader').map(header => header.textContent);
+    expect(headers.indexOf('Last MCM')).toBeLessThan(headers.indexOf('Date & time'));
+    expect(row.getByLabelText('Last MCM: 01 Aug 2026; 44 days ago')).toHaveAttribute('data-tone', 'critical');
+  });
+
   it('switches months and returns to the current month', async () => {
     mount();
     await screen.findByText('Scheduled Learner');
@@ -203,13 +215,16 @@ describe('restored monthly coaching list', () => {
 
     fireEvent.click(rowMenu('Scheduled Learner').getByRole('menuitem', { name: 'Reschedule' }));
     let dialog = screen.getByRole('dialog', { name: 'Schedule meeting' });
-    expect(within(dialog).getByRole('combobox', { name: 'Learner' })).toHaveValue('mcr:3');
+    expect(within(dialog).getByRole('combobox', { name: 'Search learner to schedule' })).toHaveValue('Scheduled Learner');
+    expect(within(dialog).queryByRole('button', { name: 'Clear search' })).toBeNull();
+    expect(within(dialog).getByRole('combobox', { name: 'MCM meeting' })).toHaveValue('mcr:3');
     expect(within(dialog).getByLabelText('Date')).toHaveValue('2026-09-22');
     fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
 
     fireEvent.click(rowMenu('Overdue Learner').getByRole('menuitem', { name: 'Schedule' }));
     dialog = screen.getByRole('dialog', { name: 'Schedule meeting' });
-    expect(within(dialog).getByRole('combobox', { name: 'Learner' })).toHaveValue('mcr:1');
+    expect(within(dialog).getByRole('combobox', { name: 'Search learner to schedule' })).toHaveValue('Overdue Learner');
+    expect(within(dialog).getByRole('combobox', { name: 'MCM meeting' })).toHaveValue('mcr:1');
     expect(within(dialog).getByLabelText('Date')).toHaveValue('2026-09-01');
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/monthly-coaching');
   });
@@ -266,7 +281,7 @@ describe('restored monthly coaching list', () => {
     await screen.findByText('Scheduled Learner');
     const table = screen.getByRole('table');
     expect(within(table).getAllByRole('columnheader').map(header => header.textContent)).toEqual([
-      'Learner', 'Programme', 'Cohort', 'Date & time', 'Status', 'Actions',
+      'Learner', 'Programme', 'Cohort', 'Last MCM', 'Date & time', 'Status', 'Actions',
     ]);
     const scheduledRow = within(screen.getByText('Scheduled Learner').closest('tr')!);
     expect(scheduledRow.getByText('scheduled@example.com')).toBeVisible();
@@ -493,20 +508,26 @@ describe('restored monthly coaching list', () => {
   });
 
 
-  it('collapses a learner\'s many pending MCR occurrences into a single option in the generic Schedule-meeting dropdown', async () => {
+  it('searches for a learner and shows every eligible MCR occurrence in the meeting dropdown', async () => {
     fetchEvents.mockResolvedValue({ events: [
       meeting(30, { learner: 'Repeat Learner', learnerId: '30', targetDate: '2026-09-20', status: 'not-scheduled' }),
       meeting(31, { learner: 'Repeat Learner', learnerId: '30', targetDate: '2026-11-05', status: 'not-scheduled', eventKey: 'mcr:31', id: 'meeting-31' }),
       meeting(32, { learner: 'Repeat Learner', learnerId: '30', targetDate: '2026-08-05', status: 'scheduled', scheduledDate: '2026-08-05', scheduledTime: '10:00', eventKey: 'mcr:32', id: 'meeting-32' }),
+      meeting(33, { learner: 'Repeat Learner', learnerId: '30', targetDate: '2026-07-05', status: 'completed', eventKey: 'mcr:33', id: 'meeting-33' }),
+      meeting(34, { learner: 'Repeat Learner', learnerId: '30', targetDate: '2026-12-05', status: 'cancelled', eventKey: 'mcr:34', id: 'meeting-34' }),
+      meeting(35, { learner: 'Repeat Learner', learnerId: '30', targetDate: '2026-12-20', status: 'not-scheduled', eventKey: 'mcr:35', id: 'meeting-35', reviewSource: 'aptem', aptemReviewId: '35' }),
     ] });
     mount();
     await screen.findByText('Repeat Learner');
     fireEvent.click(screen.getByRole('button', { name: 'Schedule meeting' }));
     const dialog = screen.getByRole('dialog', { name: 'Schedule meeting' });
-    const options = Array.from(within(dialog).getByRole('combobox', { name: 'Learner' }).querySelectorAll('option'))
-      .filter(option => option.textContent?.includes('Repeat Learner'));
-    expect(options).toHaveLength(1);
-    expect(options[0]).toHaveValue('mcr:30');
+    const learnerSearch = within(dialog).getByRole('combobox', { name: 'Search learner to schedule' });
+    fireEvent.change(learnerSearch, { target: { value: 'Repeat' } });
+    const learnerMatches = within(dialog).getByRole('listbox', { name: 'Matching learners' });
+    fireEvent.click(within(learnerMatches).getByRole('option', { name: 'Repeat Learner' }));
+    const options = Array.from(within(dialog).getByRole('combobox', { name: 'MCM meeting' }).querySelectorAll('option'));
+    expect(options.map(option => option.value)).toEqual(['', 'mcr:32', 'mcr:30', 'mcr:31']);
+    expect(within(dialog).getByRole('combobox', { name: 'MCM meeting' })).toHaveValue('mcr:30');
   });
 
   it.each([
@@ -523,6 +544,6 @@ describe('restored monthly coaching list', () => {
     const row = screen.getByText(dateMatcher).closest('tr')!;
     fireEvent.click(within(row).getByRole('button', { name: 'More actions for Repeat Learner' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Schedule' }));
-    expect(within(screen.getByRole('dialog', { name: 'Schedule meeting' })).getByRole('combobox', { name: 'Learner' })).toHaveValue(expectedValue);
+    expect(within(screen.getByRole('dialog', { name: 'Schedule meeting' })).getByRole('combobox', { name: 'MCM meeting' })).toHaveValue(expectedValue);
   });
 });

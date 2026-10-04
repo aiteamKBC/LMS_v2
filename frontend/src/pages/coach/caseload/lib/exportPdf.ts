@@ -18,6 +18,16 @@ import {
 import type { InsightMap } from './attention';
 import type { Learner } from '../types';
 
+// Keep the caseload export visually aligned with the Monthly Logs PDF.
+const MONTHLY_LOGS_COLORS = {
+  navy: [24, 45, 72] as [number, number, number],
+  muted: [99, 115, 136] as [number, number, number],
+  border: [222, 226, 232] as [number, number, number],
+  soft: [246, 248, 251] as [number, number, number],
+  alternate: [247, 249, 252] as [number, number, number],
+  white: [255, 255, 255] as [number, number, number],
+};
+
 function formatExportDate() {
   return new Intl.DateTimeFormat('en-GB', {
     day: '2-digit',
@@ -47,18 +57,18 @@ function drawLearnerPdfHeader(doc: jsPDF, columns: PdfColumn[], startX: number, 
   let x = startX;
   const totalWidth = columns.reduce((total, column) => total + column.width, 0);
 
-  doc.setFillColor(244, 239, 255);
+  doc.setFillColor(...MONTHLY_LOGS_COLORS.navy);
   doc.rect(startX, y, totalWidth, rowHeight, 'F');
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(9);
-  doc.setTextColor(57, 37, 103);
+  doc.setTextColor(...MONTHLY_LOGS_COLORS.white);
 
   columns.forEach((column) => {
     doc.text(column.label, x + 1.5, y + 4.7);
     x += column.width;
   });
 
-  doc.setDrawColor(222, 226, 232);
+  doc.setDrawColor(...MONTHLY_LOGS_COLORS.border);
   doc.line(startX, y + rowHeight, startX + totalWidth, y + rowHeight);
 }
 
@@ -76,6 +86,15 @@ const COLUMNS: PdfColumn[] = [
   { label: 'Group', width: 22 },
 ];
 
+function fitColumnsToWidth(columns: PdfColumn[], targetWidth: number) {
+  const sourceWidth = columns.reduce((total, column) => total + column.width, 0);
+
+  return columns.map((column) => ({
+    ...column,
+    width: (column.width / sourceWidth) * targetWidth,
+  }));
+}
+
 export function downloadLearnersPdf(learners: Learner[], ownerName: string, insights: InsightMap) {
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -83,49 +102,51 @@ export function downloadLearnersPdf(learners: Learner[], ownerName: string, insi
   const marginX = 10;
   const marginY = 12;
   const rowHeight = 7;
-  const totalWidth = COLUMNS.reduce((total, column) => total + column.width, 0);
+  const contentWidth = pageWidth - (marginX * 2);
+  const columns = fitColumnsToWidth(COLUMNS, contentWidth);
+  const totalWidth = columns.reduce((total, column) => total + column.width, 0);
 
   let y = marginY;
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(16);
-  doc.setTextColor(31, 41, 55);
+  doc.setTextColor(...MONTHLY_LOGS_COLORS.navy);
   doc.text('Coach Learners Export', marginX, y);
 
   y += 6;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
-  doc.setTextColor(107, 114, 128);
+  doc.setTextColor(...MONTHLY_LOGS_COLORS.muted);
   doc.text(`Generated ${formatExportDate()} by ${ownerName}`, marginX, y);
 
   y += 6;
-  doc.setFillColor(248, 250, 252);
-  doc.roundedRect(marginX, y - 4.5, pageWidth - (marginX * 2), 8, 2, 2, 'F');
+  doc.setFillColor(...MONTHLY_LOGS_COLORS.soft);
+  doc.roundedRect(marginX, y - 4.5, contentWidth, 8, 2, 2, 'F');
   doc.setFontSize(9);
-  doc.setTextColor(55, 65, 81);
+  doc.setTextColor(...MONTHLY_LOGS_COLORS.navy);
   doc.text(`Learners included: ${learners.length}`, marginX + 2.5, y + 0.5);
 
   y += 7.5;
-  drawLearnerPdfHeader(doc, COLUMNS, marginX, y, rowHeight);
+  drawLearnerPdfHeader(doc, columns, marginX, y, rowHeight);
   y += rowHeight;
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(8.5);
-  doc.setTextColor(31, 41, 55);
+  doc.setTextColor(...MONTHLY_LOGS_COLORS.navy);
 
   learners.forEach((learner, index) => {
     if (y + rowHeight > pageHeight - marginY) {
       doc.addPage();
       y = marginY;
-      drawLearnerPdfHeader(doc, COLUMNS, marginX, y, rowHeight);
+      drawLearnerPdfHeader(doc, columns, marginX, y, rowHeight);
       y += rowHeight;
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(8.5);
-      doc.setTextColor(31, 41, 55);
+      doc.setTextColor(...MONTHLY_LOGS_COLORS.navy);
     }
 
     if (index % 2 === 0) {
-      doc.setFillColor(250, 250, 251);
+      doc.setFillColor(...MONTHLY_LOGS_COLORS.alternate);
       doc.rect(marginX, y, totalWidth, rowHeight, 'F');
     }
 
@@ -148,12 +169,12 @@ export function downloadLearnersPdf(learners: Learner[], ownerName: string, insi
 
     let x = marginX;
     row.forEach((value, columnIndex) => {
-      const column = COLUMNS[columnIndex];
+      const column = columns[columnIndex];
       doc.text(fitPdfCellText(doc, value, column.width - 3), x + 1.5, y + 4.5);
       x += column.width;
     });
 
-    doc.setDrawColor(235, 238, 242);
+    doc.setDrawColor(...MONTHLY_LOGS_COLORS.border);
     doc.line(marginX, y + rowHeight, marginX + totalWidth, y + rowHeight);
     y += rowHeight;
   });

@@ -186,7 +186,10 @@ class DashboardAttendanceTests(SimpleTestCase):
 
     @patch("coach_api.views.caseload_canonical_attendance")
     def test_aptem_rows_carry_the_learner_dashboard_rate(self, summaries):
-        summaries.return_value = {7: {"sessions": 28, "present": 23, "absent": 5, "attendanceRate": 82, "lastSessionDate": date(2026, 9, 18)}}
+        summaries.return_value = {7: {
+            "sessions": 28, "present": 23, "absent": 5, "attendanceRate": 82,
+            "consecutiveMissed": 2, "lastSessionDate": date(2026, 9, 18),
+        }}
         rows = [SimpleNamespace(id=7, _caseload_source=SimpleNamespace(aptem_id="4321"))]
         learners = [{"id": "7", "name": "A Learner", "email": "a@example.com"}]
 
@@ -196,6 +199,7 @@ class DashboardAttendanceTests(SimpleTestCase):
         self.assertEqual(payload[0]["attendance"], 82)
         self.assertTrue(payload[0]["hasAttendance"])
         self.assertEqual(payload[0]["present"], 23)
+        self.assertEqual(payload[0]["consecutiveMissed"], 2)
         self.assertEqual(payload[0]["lastSessionDate"], "2026-09-18")
         summaries.assert_called_once_with(rows)
 
@@ -2004,7 +2008,10 @@ class CoachDashboardReadModelTests(SimpleTestCase):
             "fetch_standalone_event_records": MagicMock(return_value=[]),
             "review_type_fields_by_template": MagicMock(return_value={}),
             "collect_tracked_live_session_events": MagicMock(return_value=[]),
-            "dashboard_attendance_rows": MagicMock(return_value=[]),
+            "dashboard_attendance_rows": MagicMock(return_value=[{
+                "id": "7", "attendance": 82, "hasAttendance": True,
+                "present": 23, "sessions": 28, "absent": 5, "consecutiveMissed": 3,
+            }]),
             "fetch_official_assigned_groups": MagicMock(return_value=[]),
         }
         with patch.multiple("coach_api.views", **mocks), patch(
@@ -2015,6 +2022,7 @@ class CoachDashboardReadModelTests(SimpleTestCase):
         self.assertEqual((learner["otjhCompleted"], learner["otjhTarget"]), (164.87, 576))
         self.assertEqual((learner["componentsCompleted"], learner["componentsPlanned"], learner["activityProgress"]),
                          (137, 157, 87.3))
+        self.assertEqual(learner["attendanceConsecutiveMissed"], 3)
         mocks["caseload_canonical_metrics"].assert_called_once_with([row], learner_workspace=True)
 
     @patch("coach_api.views.caseload_latest_learning_activities", return_value={
@@ -2070,7 +2078,7 @@ class CoachDashboardReadModelTests(SimpleTestCase):
 
         self.assertEqual(payload["learners"], [{"id": "1"}])
         self.assertIn("readModel", payload)
-        objects.filter.assert_called_once_with(owner_email="coach@example.com", schema_version=13)
+        objects.filter.assert_called_once_with(owner_email="coach@example.com", schema_version=17)
         objects.filter.return_value.only.assert_called_once_with("payload", "refreshed_at")
         objects.filter.return_value.only.return_value.first.assert_called_once_with()
         build_live.assert_not_called()
@@ -2089,7 +2097,7 @@ class CoachDashboardReadModelTests(SimpleTestCase):
 
         self.assertEqual(payload["learners"], [{"id": "canonical"}])
         self.assertEqual(objects.filter.call_args_list[0].kwargs,
-                         {"owner_email": "coach@example.com", "schema_version": 13})
+                         {"owner_email": "coach@example.com", "schema_version": 17})
         self.assertEqual(objects.filter.call_args_list[1].kwargs,
                          {"owner_email": "coach@example.com"})
         refresh_metrics.assert_called_once_with(previous.payload)
@@ -2123,7 +2131,12 @@ class CoachDashboardReadModelTests(SimpleTestCase):
             "ksbCompleted": 14, "ksbTarget": 14, "ksbProgress": 100,
             "ksbProgressAvailable": True, "enrollmentStatus": "active",
         }], "meetings": {"events": [{"id": "preserved"}]}}
-        row = SimpleNamespace(id=7)
+        row = SimpleNamespace(
+            id=7,
+            enrolment_id=700,
+            programme="Business Administration",
+            _caseload_source=SimpleNamespace(programme="Business Administration"),
+        )
         with patch.multiple(
             "coach_api.views",
             fetch_caseload_learner_profiles=MagicMock(return_value=[row]),
@@ -2136,8 +2149,11 @@ class CoachDashboardReadModelTests(SimpleTestCase):
             caseload_aptem_ids=MagicMock(return_value={7: 8533}),
             dashboard_attendance_rows=MagicMock(return_value=[{
                 "id": "7", "attendance": 82, "hasAttendance": True,
-                "present": 23, "sessions": 28, "absent": 5,
+                "present": 23, "sessions": 28, "absent": 5, "consecutiveMissed": 2,
             }]),
+        ), patch(
+            "coach_api.services.dashboard.service.dashboard_marking_projection",
+            return_value={"summary": {"pendingItems": 3}, "items": [{"learnerId": "7", "pendingEvidence": 3}]},
         ):
             payload = CoachDashboardService("coach@example.com").refresh_metric_projection(previous)
 
@@ -2154,7 +2170,10 @@ class CoachDashboardReadModelTests(SimpleTestCase):
                          (canonical["otjh"]["actual"], 576))
         self.assertEqual((learner["attendancePresent"], learner["attendanceSessions"], learner["attendanceRate"]),
                          (23, 28, 82))
+        self.assertEqual(learner["attendanceConsecutiveMissed"], 2)
+        self.assertEqual(learner["programme"], "Business Administration")
         self.assertEqual(payload["meetings"], previous["meetings"])
+        self.assertEqual(payload["marking"]["summary"]["pendingItems"], 3)
         self.assertEqual(previous["learners"][0]["ksbProgress"], 100)
         objects.update_or_create.assert_called_once()
 
@@ -2172,7 +2191,7 @@ class CoachDashboardReadModelTests(SimpleTestCase):
         payload = CoachDashboardService("coach@example.com").refresh()
 
         self.assertEqual(payload["readModel"], {
-            "version": 13, "refreshedAt": refreshed_at.isoformat(),
+            "version": 17, "refreshedAt": refreshed_at.isoformat(),
         })
 
 
@@ -2538,6 +2557,44 @@ class CoachTimetableBookingConflictTests(SimpleTestCase):
 
         self.assertEqual(coach_learner_personal_calendar_conflicts.call_count, 2)
         sync_calendar_event_to_graph.assert_not_called()
+
+    @patch("coach_api.views.CoachAbsenceReport.objects.filter")
+    @patch("coach_api.views.fetch_caseload_learner_profiles")
+    def test_book_event_rejects_a_missing_catchup_report_before_creating_an_invite(
+        self,
+        fetch_caseload_learner_profiles,
+        absence_report_filter,
+    ):
+        learner = SimpleNamespace(
+            id=7,
+            username="Test User",
+            email="learner@example.com",
+            coach_name="Coach Example",
+        )
+        fetch_caseload_learner_profiles.return_value = [learner]
+        absence_report_filter.return_value.first.return_value = None
+        request = self.factory.post(
+            "/coach_api/coach/timetable/events/book",
+            data=json.dumps(
+                {
+                    "ownerEmail": "coach@example.com",
+                    "learnerId": 7,
+                    "sessionType": "catch-up",
+                    "absenceReportId": 51,
+                    "scheduledDate": self.future_date,
+                    "scheduledTime": "10:00",
+                    "durationMinutes": 45,
+                    "timezoneOffsetMinutes": -180,
+                }
+            ),
+            content_type="application/json",
+            HTTP_IDEMPOTENCY_KEY="missing-catchup-report",
+        )
+
+        response = call_coach_view(coach_timetable_book_event, request)
+
+        self.assertEqual(response.status_code, 409)
+        self.assertIn("Missed lecture not found", response.content.decode())
 
     @patch("coach_api.views.sync_calendar_event_to_graph")
     @patch("coach_api.views.CoachCalendarEvent.objects.get_or_create")
@@ -3466,6 +3523,7 @@ class CaseloadOtjhSnapshotTests(SimpleTestCase):
         self.assertEqual(payload["ksbCompleted"], 2)
         self.assertEqual(payload["ksbTarget"], 3)
         self.assertEqual(payload["ksbProgress"], 67)
+        self.assertEqual(payload["programme"], "Project Management")
         self.assertEqual(payload["knowledgeCompleted"], 1)
         self.assertEqual(payload["knowledgeTarget"], 1)
         self.assertEqual(payload["skillsCompleted"], 1)

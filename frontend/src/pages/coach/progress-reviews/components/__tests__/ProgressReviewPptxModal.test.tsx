@@ -93,6 +93,23 @@ beforeEach(() => {
 });
 
 describe('ProgressReviewPptxModal', () => {
+  it('portals the full-screen dialog outside transformed caller containers', () => {
+    const transformedHost = document.createElement('div');
+    transformedHost.style.transform = 'translateY(-1px)';
+    document.body.appendChild(transformedHost);
+
+    const view = render(
+      <ProgressReviewPptxModal open target={slidesTargetFromEvent(REVIEW)} onClose={vi.fn()} />,
+      { container: transformedHost },
+    );
+
+    const dialog = screen.getByRole('dialog', { name: 'Progress Review slides' });
+    expect(dialog.parentElement?.parentElement).toBe(document.body);
+
+    view.unmount();
+    transformedHost.remove();
+  });
+
   it('asks for the enrolment id, never the profile id', async () => {
     render(<ProgressReviewPptxModal open target={slidesTargetFromEvent(REVIEW)} onClose={vi.fn()} />);
 
