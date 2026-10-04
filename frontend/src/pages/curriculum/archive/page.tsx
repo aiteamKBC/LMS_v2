@@ -26,7 +26,7 @@
 // ============================================================================
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
 import { curriculumNavItems } from '@/mocks/navigation';
 import {
@@ -503,10 +503,12 @@ function componentFlags(component: CurriculumArchivedModuleWeek['components'][nu
  * catalogue, so the two cannot end up calling the same component different
  * things.
  */
-function ArchivedWeek({ week, open, onToggle }: {
+function ArchivedWeek({ week, open, onToggle, focusComponentId = '' }: {
   week: CurriculumArchivedModuleWeek;
   open: boolean;
   onToggle: () => void;
+  /** The component a deep link named, ringed and scrolled to. */
+  focusComponentId?: string;
 }) {
   const components = week.components || [];
   const otjh = components.reduce((sum, component) => sum + (Number(component.expectedOtjh) || 0), 0);
@@ -553,7 +555,14 @@ function ArchivedWeek({ week, open, onToggle }: {
               .map(mapping => cleanText(mapping.code))
               .filter(Boolean);
             return (
-              <div key={component.id} className="rounded-lg border border-background-200 bg-background-100/50 px-3 py-2.5">
+              <div
+                key={component.id}
+                data-focused={focusComponentId === component.id ? 'true' : undefined}
+                ref={focusComponentId === component.id ? node => node?.scrollIntoView?.({ block: 'center' }) : undefined}
+                className={`rounded-lg border px-3 py-2.5 ${focusComponentId === component.id
+                  ? 'border-primary-400 bg-primary-50 ring-2 ring-primary-300'
+                  : 'border-background-200 bg-background-100/50'}`}
+              >
                 <div className="flex items-start gap-2.5">
                   <AppIcon className={`${definition.icon} mt-0.5 shrink-0 text-sm text-primary-600`}></AppIcon>
                   <div className="min-w-0 flex-1">
@@ -637,6 +646,22 @@ export default function CurriculumArchivePage() {
   // Which weeks of an open module are expanded. Reset when the panel changes
   // module, so week 3 of the last one does not open week 3 of the next.
   const [openWeekIds, setOpenWeekIds] = useState<string[]>([]);
+  const navigate = useNavigate();
+  // A link that names one record -- the audit trail's "archived" row -- rather
+  // than only filtering the list. Read once: it is a request to arrive
+  // somewhere, and the reader closing the panel must not have it reopen.
+  const [deepLink] = useState(() => ({
+    open: (searchParams.get('open') || '').trim(),
+    week: (searchParams.get('week') || '').trim(),
+    component: (searchParams.get('component') || '').trim(),
+    archived: (searchParams.get('archived') || '').trim(),
+    archivedName: (searchParams.get('archivedName') || '').trim(),
+    archivedAt: (searchParams.get('archivedAt') || '').trim(),
+  }));
+  const [deepLinkHandled, setDeepLinkHandled] = useState(() => !deepLink.open);
+  const [deepLinkMissing, setDeepLinkMissing] = useState(false);
+  // The week and component to show once the opened module's weeks arrive.
+  const [focus, setFocus] = useState<{ key: string; weekId: string; componentId: string } | null>(null);
 
   useEffect(() => {
     const next = new URLSearchParams(searchParams);
@@ -696,6 +721,80 @@ export default function CurriculumArchivePage() {
   );
 
   useEffect(() => { setOpenWeekIds([]); }, [openKey]);
+
+  // Resolved against what is archived NOW, not what was archived when the link
+  // was made: a record restored since is not here, and a module whose week or
+  // component was archived on its own is still live, so the Module Builder is
+  // where that item's place is.
+  const linkedModuleId = deepLink.open.startsWith('module:') ? deepLink.open.slice('module:'.length) : '';
+  const sendToBuilder = useCallback(() => {
+    const params = new URLSearchParams({ module: linkedModuleId });
+    if (deepLink.week) params.set('week', deepLink.week);
+    if (deepLink.component) {
+      params.set('component', deepLink.component);
+      params.set('focus', 'component');
+    }
+    if (deepLink.archived) params.set('archived', deepLink.archived);
+    if (deepLink.archivedName) params.set('archivedName', deepLink.archivedName);
+    if (deepLink.archivedAt) params.set('archivedAt', deepLink.archivedAt);
+    navigate(`/curriculum/module-builder?${params.toString()}`, { replace: true });
+  }, [deepLink, linkedModuleId, navigate]);
+
+  // Whether a linked module is archived is answered by the archived-module list
+  // alone. Waiting for the whole index instead held a reader following a live
+  // module's link on a skeleton for the programme list's minute -- and for good
+  // when that request failed, though nothing about programmes decides it.
+  useEffect(() => {
+    if (!linkedModuleId || deepLinkHandled) return undefined;
+    const controller = new AbortController();
+    fetchArchivedCurriculumModules(controller.signal)
+      .then(modules => {
+        if (controller.signal.aborted) return;
+        if (modules.some(module => module.id === linkedModuleId)) return;
+        setDeepLinkHandled(true);
+        sendToBuilder();
+      })
+      // The index read below still decides, and still reports its own failure.
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [deepLinkHandled, linkedModuleId, sendToBuilder]);
+
+  useEffect(() => {
+    if (deepLinkHandled || !archive.loaded) return;
+    setDeepLinkHandled(true);
+    const row = archive.rows.find(candidate => candidate.key === deepLink.open);
+    if (row) {
+      setOpenKey(row.key);
+      if (row.kind === 'module' && (deepLink.week || deepLink.component)) {
+        setFocus({ key: row.key, weekId: deepLink.week, componentId: deepLink.component });
+      }
+      return;
+    }
+    if (linkedModuleId) {
+      sendToBuilder();
+      return;
+    }
+    setDeepLinkMissing(true);
+  }, [archive.loaded, archive.rows, deepLink, deepLinkHandled, linkedModuleId, sendToBuilder]);
+
+  // Declared after the reset above so, when both fire together, the week the
+  // link named is the one left open.
+  useEffect(() => {
+    const weeks = moduleStructure.structure?.weekStructure;
+    if (!focus || focus.key !== openKey || !weeks) return;
+    const week = weeks.find(item => item.id === focus.weekId)
+      || weeks.find(item => (item.components || []).some(component => component.id === focus.componentId));
+    if (week) setOpenWeekIds([week.id]);
+  }, [focus, openKey, moduleStructure.structure]);
+
+  const closePanel = () => {
+    setOpenKey(null);
+    setFocus(null);
+    // The record the link named has been seen; a reload should show the list.
+    const next = new URLSearchParams(searchParams);
+    ['open', 'week', 'component', 'archived', 'archivedName', 'archivedAt'].forEach(key => next.delete(key));
+    if (next.toString() !== searchParams.toString()) setSearchParams(next, { replace: true });
+  };
 
   // A restore or a permanent delete run from inside the panel takes the record
   // out of the archive, so the panel it was opened from has nothing left to
@@ -822,6 +921,9 @@ export default function CurriculumArchivePage() {
 
         {archive.error && <InlineError message={archive.error} onRetry={() => void archive.reload()} />}
         {actionError && <InlineError message={actionError} />}
+        {deepLinkMissing && (
+          <InlineError message="The record this link points to is no longer in the archive. It may have been restored, or deleted permanently." />
+        )}
 
         <ArchiveNotice>
           Archived records are hidden from planning but still in the database. Restoring one puts it back in its own
@@ -930,7 +1032,7 @@ export default function CurriculumArchivePage() {
           subtitle={openRow
             ? `Archived ${KIND_LABEL[openRow.kind].toLowerCase()}${openRow.parents.length ? ` · ${openRow.parents.join(' › ')}` : ''}`
             : ''}
-          onClose={() => setOpenKey(null)}
+          onClose={closePanel}
           onSubmit={() => { if (openRow) void restore(openRow); }}
           submitLabel="Restore"
           submitDisabled={Boolean(openRow?.restoreBlockedBy) || Boolean(busyKey)}
@@ -1013,6 +1115,7 @@ export default function CurriculumArchivePage() {
                       key={week.id}
                       week={week}
                       open={openWeekIds.includes(week.id)}
+                      focusComponentId={focus && focus.key === openRow.key ? focus.componentId : ''}
                       onToggle={() => setOpenWeekIds(previous => (
                         previous.includes(week.id)
                           ? previous.filter(id => id !== week.id)
