@@ -633,6 +633,7 @@ export function CoachMeetingArtifactsPanel({
   saveSummary = updateCoachMeetingSummary,
   refreshOnLoad = false,
   canCheck = true,
+  showCheckAction = canCheck,
   checkLabel = 'Check Teams',
   hasTeamsMeeting = false,
   allowContentAccess = true,
@@ -650,6 +651,7 @@ export function CoachMeetingArtifactsPanel({
   saveSummary?: typeof updateCoachMeetingSummary;
   refreshOnLoad?: boolean;
   canCheck?: boolean;
+  showCheckAction?: boolean;
   checkLabel?: string;
   hasTeamsMeeting?: boolean;
   allowContentAccess?: boolean;
@@ -760,13 +762,14 @@ export function CoachMeetingArtifactsPanel({
             {sourceLabel(event.source)} artifacts from Microsoft Teams.
           </p>
         </div>
-        {canCheck ? <button
+        {showCheckAction ? <button
           type="button"
           onClick={() => {
+            if (!canCheck || isLoading) return;
             setPreview(null);
             void loadArtifacts(undefined, true);
           }}
-          disabled={isLoading}
+          disabled={!canCheck || isLoading}
           className="inline-flex items-center gap-1.5 rounded-md border border-primary-200 bg-primary-50 px-3 py-1.5 text-[12px] font-semibold text-primary-700 transition hover:border-primary-300 hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <AppIcon className={isLoading ? 'ri-loader-4-line animate-spin' : 'ri-refresh-line'}></AppIcon>

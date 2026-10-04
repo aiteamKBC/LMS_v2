@@ -220,6 +220,8 @@ class ImportedReviewInstance(models.Model):
     template_snapshot = models.JSONField(default=dict, blank=True)
     signature_requirements = models.JSONField(default=dict, blank=True)
     answers = models.JSONField(default=dict, blank=True)
+    # Explicit coach calculation only; existing and uncalculated reviews stay NULL.
+    progress_snapshot = models.JSONField(null=True, blank=True)
     # Phase E metadata only. Full transcripts and attendance remain in the
     # existing Teams snapshot tables keyed by this overlay's calendar event.
     meeting_intelligence = models.JSONField(default=dict, blank=True)

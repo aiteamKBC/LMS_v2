@@ -171,6 +171,19 @@ export interface ReviewInstanceFormDefinition {
   summaryOnly?: boolean;
   migratedForm?: boolean;
   answerVersion?: string;
+  templateSync?: {
+    status: 'working' | 'frozen' | 'conflict';
+    upToDate: boolean | null;
+    fingerprint?: string;
+    synchronizedAt?: string | null;
+    source?: { id?: number; scope?: string; programmeKey?: string; family?: string };
+    code?: string;
+    message?: string;
+    fields?: string[];
+  };
+  /** Current overlay mutation version, required by explicit migrated Calculate. */
+  progressVersion?: string;
+  canCalculateProgress?: boolean;
   summaryBinding?: CoachMeetingArtifactsResponse['summaryBinding'];
   /** Approved template rendered for admin view-as without an LMS overlay. */
   previewOnly?: boolean;
@@ -268,14 +281,25 @@ export async function fetchMigratedReviewIntelligence(
   }));
 }
 
-export async function saveMigratedMeetingSummary(instanceId: string, summary: CoachMeetingSummaryPayload): Promise<{ meetingSummary: CoachMeetingSummary | null }> {
-  return readJsonResponse<{ meetingSummary: CoachMeetingSummary | null }>(
+type MigratedSummarySaveResponse = { meetingSummary: CoachMeetingSummary | null }
+  & Pick<CoachMeetingArtifactsResponse, 'answerVersion' | 'progressVersion' | 'reviewAnswers' | 'summaryBinding'>;
+
+export async function saveMigratedMeetingSummary(instanceId: string, summary: CoachMeetingSummaryPayload): Promise<MigratedSummarySaveResponse> {
+  return readJsonResponse<MigratedSummarySaveResponse>(
     await coachFetch(`${migratedUrl(instanceId)}/summary`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ summary }),
     }),
   );
+}
+
+export async function uploadMigratedSummaryTranscript(instanceId: string, transcript: File): Promise<CoachMeetingArtifactsResponse> {
+  const body = new FormData();
+  body.append('transcript', transcript);
+  return readJsonResponse<CoachMeetingArtifactsResponse>(await coachFetch(`${migratedUrl(instanceId)}/summary/from-upload`, {
+    method: 'POST', body,
+  }));
 }
 
 export interface MigratedAnswerWrite {
@@ -318,6 +342,14 @@ export async function downloadReviewInstancePdf(instanceId: string): Promise<voi
 export async function calculateReviewInstanceProgress(instanceId: string) {
   const response = await coachFetch(`${instanceUrl(instanceId)}/progress`, { method: 'POST' });
   return readJsonResponse<ReviewInstanceFormDefinition>(response);
+}
+
+export async function calculateMigratedReviewProgress(instanceId: string, progressVersion: string) {
+  return readJsonResponse<ReviewInstanceFormDefinition>(await coachFetch(`${migratedUrl(instanceId)}/progress`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ progressVersion }),
+  }));
 }
 
 /**

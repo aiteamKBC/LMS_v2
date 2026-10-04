@@ -121,9 +121,14 @@ def resolution_metadata(template, family):
 
 
 def snapshot_for(template):
-    return {**deepcopy(template.definition_json), "name": template.name,
+    snapshot = {**deepcopy(template.definition_json), "name": template.name,
             "templateSource": {"id": template.pk, "scope": template.scope,
                                "programmeKey": template.programme_key, "family": template.review_family}}
+    from .migrated_template_sync import snapshot_fingerprint
+    from django.utils import timezone
+    snapshot["templateSync"] = {"fingerprint": snapshot_fingerprint(snapshot),
+                                "synchronizedAt": timezone.now().isoformat(), "retiredFields": {}}
+    return snapshot
 
 
 def snapshot_assignment_valid(overlay, family, key):
