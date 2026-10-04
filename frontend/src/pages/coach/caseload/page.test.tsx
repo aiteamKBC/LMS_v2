@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReactNode } from 'react';
 import type { CaseloadApiLearner } from './types';
@@ -38,6 +38,23 @@ const learner = {
 } satisfies CaseloadApiLearner;
 
 describe('Coach caseload loading', () => {
+  it('opens the learner profile with the exact activity counts shown in the selected table row', async () => {
+    function Destination() {
+      const location = useLocation();
+      return <output data-testid="destination">{JSON.stringify({ pathname: location.pathname, state: location.state })}</output>;
+    }
+    render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={[{
+      ...learner, componentsCompleted: 137, componentsPlanned: 157,
+      activityProgress: 87.26, activityProgressAvailable: true,
+    }]} /><Destination /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole('button', { name: 'View Profile' }));
+    const destination = JSON.parse(screen.getByTestId('destination').textContent || '{}');
+    expect(destination.pathname).toBe('/coach/learner-case-file');
+    expect(destination.state).toMatchObject({ learnerId: '42',
+      activitySnapshot: { learnerId: '42', completed: 137, total: 157, percent: 87.26 },
+    });
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     fetchCoachCalendarEvents.mockResolvedValue({ events: [] });

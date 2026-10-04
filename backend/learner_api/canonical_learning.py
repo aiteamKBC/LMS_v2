@@ -773,6 +773,17 @@ def recorded_course_items(courses, catalogue, records):
     return items, subjects, links
 
 
+def ksb_point_definition(record, code):
+    """Only an unambiguous stored link may enrich an activity/code label."""
+    matches = {(str(item.get('ksb_definition_id')), item.get('definition_code'))
+               for item in record.get('ksb_definitions') or []
+               if item.get('ksb_code') == code and item.get('ksb_definition_id') is not None}
+    if len(matches) != 1:
+        return {'ksbDefinitionId': None, 'definitionCode': None}
+    definition_id, definition_code = next(iter(matches))
+    return {'ksbDefinitionId': definition_id, 'definitionCode': definition_code}
+
+
 def metrics_from_records(records, monthly_targets, *, include_ksb_points=False):
     """Count final activity records once, using accepted evidence only for hours.
 
@@ -811,6 +822,7 @@ def metrics_from_records(records, monthly_targets, *, include_ksb_points=False):
         # belongs to this activity, never to every activity sharing its code.
         result['ksb']['points'] = [
             {'activityId': str(item['id']), 'code': code,
+             **ksb_point_definition(item, code),
              'completed': item.get('accepted') is True,
              'title': item.get('component_title') or None,
              'type': item.get('component_type') or item.get('kind') or None,
@@ -908,12 +920,17 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
 
     progress_ids = list(records_by_progress)
     if progress_ids:
-        for item in query('''SELECT progress_id,ksb_code
-            FROM "Learner".learner_progress_ksbs
-            WHERE progress_id=ANY(%s) ORDER BY progress_id,position''', [progress_ids]):
+        definition_columns = ",to_jsonb(k)->>'ksb_definition_id' AS ksb_definition_id,d.code AS definition_code" if include_ksb_points else ''
+        definition_join = "LEFT JOIN curriculum.ksb_definitions d ON d.id::text=to_jsonb(k)->>'ksb_definition_id'" if include_ksb_points else ''
+        for item in query(f'''SELECT k.progress_id,k.ksb_code{definition_columns}
+            FROM "Learner".learner_progress_ksbs k
+            {definition_join}
+            WHERE k.progress_id=ANY(%s) ORDER BY k.progress_id,k.position''', [progress_ids]):
             record = records_by_progress.get(int(item['progress_id']))
             if record is not None:
                 record['ksbs'].append(item['ksb_code'])
+                if include_ksb_points:
+                    record.setdefault('ksb_definitions', []).append(item)
         for item in query('''SELECT progress_id,to_jsonb(s) AS payload
             FROM "Learner".learner_activity_reporting_segments s
             WHERE progress_id=ANY(%s) ORDER BY progress_id,segment_order,id''', [progress_ids]):

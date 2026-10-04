@@ -403,6 +403,14 @@ export function CoachCaseloadContent({ embedded = false, embeddedLearners }: { e
       state: {
         learnerId: learner.id,
         learnerName: learner.name,
+        activitySnapshot: {
+          learnerId: learner.id,
+          completed: learner.componentsCompleted ?? null,
+          total: learner.componentsPlanned ?? null,
+          percent: learner.activityProgressAvailable ? learner.activityProgress ?? null
+            : learner.componentsPlanned && learner.componentsCompleted != null
+              ? Math.round(learner.componentsCompleted / learner.componentsPlanned * 100) : null,
+        },
         ...(learner.learnerType ? { kind: learner.learnerType } : {}),
         ...(learner.enrolmentId ? { enrolmentId: learner.enrolmentId } : {}),
         ...(tab ? { tab } : {}),
