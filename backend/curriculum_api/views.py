@@ -3244,6 +3244,17 @@ def curriculum_teams_meeting(request):
         if requested_catalogue_id
         else ''
     )
+    # A shared duplicate points at the source calendar. Treat the source as
+    # the owner before checking for an active series so this path cannot create
+    # a second Graph event for the alias.
+    owner_resolver = globals().get('teams_module_owner_id')
+    if resolved_catalogue_id and callable(owner_resolver):
+        resolved_catalogue_id = owner_resolver(resolved_catalogue_id)
+        if resolved_catalogue_id and resolved_catalogue_id != requested_catalogue_id:
+            # A shared alias must never create or persist a calendar under its
+            # own id. From this point the source id is the Teams owner for both
+            # the weekday-series path and the normal Graph create path.
+            payload = {**payload, 'moduleCatalogueId': resolved_catalogue_id}
     module_draft_id = clean_str(payload.get('moduleDraftId'))
     existing_series = []
     if resolved_catalogue_id and authoring_module_exists(resolved_catalogue_id):
@@ -13198,7 +13209,7 @@ COMPACT_MODULE_LIST_FIELDS = frozenset({
     # Scope. Filters, the programme/cohort/group chain on the card, and the
     # `moduleBelongsToVisibleProgramme()` gate.
     'programmeId', 'programme', 'cohortId', 'cohort', 'groupId', 'group',
-    'isProgrammeDeleted',
+    'learnerRosterMode', 'teamsSharedSourceModuleId', 'ksbRemapReport', 'isProgrammeDeleted',
     # Counts the catalogue card and the OTJH input render.
     'weeks', 'sessionsNumber', 'ksbCount', 'lessons', 'quizzes',
     'totalOtjh', 'declaredTotalOtjh', 'assignments',
@@ -13565,6 +13576,7 @@ AUTHORING_COMPONENTS_TABLE = 'components'
 AUTHORING_KSB_MAPPINGS_TABLE = 'ksb_mappings'
 AUTHORING_COMPLETION_TABLE = 'module_completion_criteria'
 AUTHORING_ADVANCED_TABLE = 'module_details'
+MODULE_TEAMS_SHARES_TABLE = 'module_teams_shares'
 COHORT_AUTHORING_DETAILS_TABLE = 'cohorts'
 GROUPS_TABLE = 'groups'
 FREE_COURSES_TABLE = 'free_courses'
@@ -13856,6 +13868,9 @@ def provision_module_authoring_tables():
                 cohort_name varchar(255),
                 group_id varchar(255),
                 group_name varchar(255),
+                learner_roster_mode varchar(32) not null default 'inherited',
+                teams_shared_source_module_id varchar(128),
+                ksb_remap_report text,
                 tutor_name varchar(255),
                 tutor_email varchar(320),
                 title text not null,
@@ -13888,6 +13903,9 @@ def provision_module_authoring_tables():
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists cohort_name varchar(255)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists group_id varchar(255)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists group_name varchar(255)')
+            cursor.execute(f"alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists learner_roster_mode varchar(32) not null default 'inherited'")
+            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists teams_shared_source_module_id varchar(128)')
+            cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists ksb_remap_report text')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists ksb_profile_source_id varchar(128)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists session_week_day varchar(255)')
             cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column if not exists session_start_time varchar(32)')
@@ -13918,6 +13936,12 @@ def provision_module_authoring_tables():
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column group_id varchar(255)')
             if 'group_name' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column group_name varchar(255)')
+            if 'learner_roster_mode' not in columns:
+                cursor.execute(f"alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column learner_roster_mode varchar(32) not null default 'inherited'")
+            if 'teams_shared_source_module_id' not in columns:
+                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column teams_shared_source_module_id varchar(128)')
+            if 'ksb_remap_report' not in columns:
+                cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column ksb_remap_report text')
             if 'ksb_profile_source_id' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column ksb_profile_source_id varchar(128)')
             if 'session_week_day' not in columns:
@@ -13940,6 +13964,24 @@ def provision_module_authoring_tables():
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column is_programme_deleted boolean not null default false')
             if 'cover_image_url' not in columns:
                 cursor.execute(f'alter table {authoring_table_name(AUTHORING_MODULES_TABLE)} add column cover_image_url text')
+        cursor.execute(f'''
+            create table if not exists {authoring_table_name(MODULE_TEAMS_SHARES_TABLE)} (
+                module_catalogue_id varchar(128) primary key,
+                source_module_catalogue_id varchar(128) not null,
+                created_at timestamp not null default current_timestamp,
+                updated_at timestamp not null default current_timestamp,
+                foreign key (module_catalogue_id)
+                    references {authoring_table_name(AUTHORING_MODULES_TABLE)} (module_catalogue_id)
+                    on delete cascade,
+                foreign key (source_module_catalogue_id)
+                    references {authoring_table_name(AUTHORING_MODULES_TABLE)} (module_catalogue_id)
+                    on delete restrict
+            )
+        ''')
+        cursor.execute(
+            f'create index if not exists curriculum_module_teams_shares_source_idx '
+            f'on {authoring_table_name(MODULE_TEAMS_SHARES_TABLE)} (source_module_catalogue_id)'
+        )
         cursor.execute(f'''
             create table if not exists {authoring_table_name(AUTHORING_WEEKS_TABLE)} (
                 id varchar(128) primary key,
@@ -17168,12 +17210,38 @@ def teams_delivery_metadata_from_live_session_row(session_row):
     }
 
 
+def teams_module_owner_id(module_catalogue_id):
+    """Resolve a shared-Teams module alias to its canonical module owner.
+
+    A duplicate that shares a meeting deliberately has no ``live_sessions`` row
+    of its own.  Following this small, bounded chain keeps all Teams reads and
+    writes on the original record without copying its provider identifiers or
+    allowing an alias to take ownership of the calendar.
+    """
+    current = clean_str(module_catalogue_id)
+    seen = set()
+    while current and current not in seen:
+        seen.add(current)
+        row = (authoring_fetch_all(
+            AUTHORING_MODULES_TABLE,
+            'module_catalogue_id = %s',
+            [current],
+        ) or [{}])[0]
+        source = clean_str(row.get('teams_shared_source_module_id'))
+        if not source or source in seen:
+            break
+        current = source
+    return current
+
+
 def teams_delivery_metadata_from_live_session(module_catalogue_id):
     ensure_live_session_tracking_tables()
+    owner_resolver = globals().get('teams_module_owner_id')
+    owner_id = owner_resolver(module_catalogue_id) if callable(owner_resolver) else clean_str(module_catalogue_id)
     sessions = authoring_fetch_all(
         LIVE_SESSIONS_TABLE,
         "module_catalogue_id = %s and status = 'active'",
-        [module_catalogue_id],
+        [owner_id],
         'updated_at desc, created_at desc',
     )
     return teams_delivery_metadata_from_live_session_row(sessions[0] if sessions else None)
@@ -17736,11 +17804,13 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
     resolved_id = resolve_stored_module_catalogue_id(requested_id) or requested_id
     if not authoring_module_exists(resolved_id):
         return json_error('Module authoring structure not found.', status=404)
+    owner_resolver = globals().get('teams_module_owner_id')
+    owner_id = owner_resolver(resolved_id) if callable(owner_resolver) else resolved_id
 
     sessions = authoring_fetch_all(
         LIVE_SESSIONS_TABLE,
         "module_catalogue_id = %s and status = 'active'",
-        [resolved_id],
+        [owner_id],
         'updated_at desc, created_at desc',
     )
     if not sessions:
@@ -17773,8 +17843,11 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
     # is nothing rather than offering an action with no effect.
     pending_components = None
     if request.method == 'POST':
+        # Re-attach the canonical source components, not the alias.  This keeps
+        # provider ids and occurrence links out of the duplicate while making
+        # the explicit Teams edit visible to both modules through the owner.
         updated_components, created_components = attach_teams_meeting_to_module_weeks(
-            resolved_id,
+            owner_id,
             sessions[0],
             settings_update,
             occurrence_rows,
@@ -19315,6 +19388,9 @@ def get_authoring_structure_payload(module_catalogue_id, include_archived=False)
         'cohort': module.get('cohort_name') or '',
         'groupId': module.get('group_id') or '',
         'group': module.get('group_name') or '',
+        'learnerRosterMode': clean_str(module.get('learner_roster_mode') or 'inherited').lower() or 'inherited',
+        'teamsSharedSourceModuleId': clean_str(module.get('teams_shared_source_module_id')),
+        'ksbRemapReport': parse_json_value(module.get('ksb_remap_report'), {}) or None,
         'title': module.get('title') or '',
         'description': module.get('description') or '',
         'color': module.get('color') or '#6941c6',
@@ -19433,10 +19509,17 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
     live_session_by_module = {}
     if include_extra:
         ensure_live_session_tracking_tables()
+        shared_source_by_module = {
+            clean_str(row.get('module_catalogue_id')): clean_str(row.get('teams_shared_source_module_id'))
+            for row in module_rows
+            if clean_str(row.get('module_catalogue_id')) and clean_str(row.get('teams_shared_source_module_id'))
+        }
+        session_lookup_ids = unique([*found_ids, *shared_source_by_module.values()])
+        session_placeholders = ', '.join(['%s'] * len(session_lookup_ids))
         for row in authoring_fetch_all(
             LIVE_SESSIONS_TABLE,
-            f"module_catalogue_id in ({placeholders}) and status = 'active'",
-            found_ids,
+            f"module_catalogue_id in ({session_placeholders}) and status = 'active'",
+            session_lookup_ids,
             'updated_at desc, created_at desc',
         ):
             key = clean_str(row.get('module_catalogue_id'))
@@ -19444,6 +19527,9 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
             # the single-module reader would have taken as sessions[0].
             if key and key not in live_session_by_module:
                 live_session_by_module[key] = row
+        for alias_id, source_id in shared_source_by_module.items():
+            if alias_id not in live_session_by_module and source_id in live_session_by_module:
+                live_session_by_module[alias_id] = live_session_by_module[source_id]
     group_ids = unique([clean_str(row.get('group_id')) for row in module_rows])
     group_rows_by_id = {}
     if group_ids:
@@ -19567,6 +19653,9 @@ def get_authoring_structure_payloads(module_catalogue_ids, include_staff=True, i
             'cohort': module.get('cohort_name') or '',
             'groupId': module.get('group_id') or '',
             'group': module.get('group_name') or '',
+            'learnerRosterMode': clean_str(module.get('learner_roster_mode') or 'inherited').lower() or 'inherited',
+            'teamsSharedSourceModuleId': clean_str(module.get('teams_shared_source_module_id')),
+            'ksbRemapReport': parse_json_value(module.get('ksb_remap_report'), {}) or None,
             'title': module.get('title') or '',
             'description': module.get('description') or '',
             'color': module.get('color') or '#6941c6',
@@ -19703,6 +19792,9 @@ def authoring_catalogue_summaries(include_programme_deleted=False):
             'cohort': row.get('cohort_name') or '',
             'groupId': row.get('group_id') or '',
             'group': row.get('group_name') or '',
+            'learnerRosterMode': clean_str(row.get('learner_roster_mode') or 'inherited').lower() or 'inherited',
+            'teamsSharedSourceModuleId': clean_str(row.get('teams_shared_source_module_id')),
+            'ksbRemapReport': parse_json_value(row.get('ksb_remap_report'), {}) or None,
             'description': row.get('description') or '',
             'coverImage': row.get('cover_image_url') or '',
             'status': row.get('status') or 'draft',
@@ -20740,6 +20832,52 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
     cohort_name = clean_str(payload.get('cohortName') or payload.get('cohort_name') or payload.get('cohort') or delivery_metadata.get('cohort') or existing_module_row.get('cohort_name'))
     group_id = clean_str(payload.get('groupId') or payload.get('group_id') or delivery_metadata.get('groupId') or delivery_metadata.get('group_id') or existing_module_row.get('group_id'))
     group_name = clean_str(payload.get('groupName') or payload.get('group_name') or payload.get('group') or delivery_metadata.get('group') or existing_module_row.get('group_name'))
+    if truthy(payload.get('duplicateDestination')):
+        destination_errors = []
+        programme_row = next((row for row in get_program_config_rows() if programme_config_identity(row) == programme_id), None) if programme_id else None
+        cohort_row = fetch_cohort_row(cohort_id) if cohort_id else None
+        group_row = fetch_group_row(group_id) if group_id else None
+        if not programme_id or not programme_row:
+            destination_errors.append({'path': 'programmeId', 'message': 'The destination Programme was not found.'})
+        if not cohort_id or not cohort_row:
+            destination_errors.append({'path': 'cohortId', 'message': 'The destination Cohort was not found.'})
+        if not group_id or not group_row:
+            destination_errors.append({'path': 'groupId', 'message': 'The destination Group was not found.'})
+        if cohort_row and programme_id and clean_str(cohort_row.get('programme_id')) != programme_id:
+            destination_errors.append({'path': 'cohortId', 'message': 'The destination Cohort does not belong to the selected Programme.'})
+        if group_row and cohort_id and clean_str(group_row.get('cohort_id')) != cohort_id:
+            destination_errors.append({'path': 'groupId', 'message': 'The destination Group does not belong to the selected Cohort.'})
+        if group_row and programme_id and clean_str(group_row.get('programme_id')) != programme_id:
+            destination_errors.append({'path': 'groupId', 'message': 'The destination Group does not belong to the selected Programme.'})
+        if destination_errors:
+            raise ModuleAuthoringValidationError(destination_errors)
+    if 'ksbRemapReport' in payload or 'ksb_remap_report' in payload:
+        ksb_remap_report = payload.get('ksbRemapReport') if 'ksbRemapReport' in payload else payload.get('ksb_remap_report')
+        if not isinstance(ksb_remap_report, dict):
+            ksb_remap_report = {}
+    else:
+        ksb_remap_report = parse_json_value(existing_module_row.get('ksb_remap_report'), {})
+    learner_roster_mode = clean_str(
+        payload.get('learnerRosterMode')
+        or payload.get('learner_roster_mode')
+        or existing_module_row.get('learner_roster_mode')
+        or 'inherited'
+    ).lower()
+    if learner_roster_mode not in {'inherited', 'manual'}:
+        learner_roster_mode = 'inherited'
+    if 'teamsSharedSourceModuleId' in payload:
+        teams_shared_source_module_value = payload.get('teamsSharedSourceModuleId')
+    elif 'teams_shared_source_module_id' in payload:
+        teams_shared_source_module_value = payload.get('teams_shared_source_module_id')
+    else:
+        teams_shared_source_module_value = existing_module_row.get('teams_shared_source_module_id')
+    teams_shared_source_module_id = clean_str(teams_shared_source_module_value)
+    if (teams_shared_source_module_id == module_catalogue_id
+            or (teams_shared_source_module_id and not authoring_module_exists(teams_shared_source_module_id))):
+        # A share must point at a different, existing module. Invalid input is
+        # treated as an independent Teams copy rather than creating a cycle or
+        # a dangling relation that could steal a calendar later.
+        teams_shared_source_module_id = ''
     tutor_name = canonical_staff_assignment_name('tutor', payload.get('tutor') or payload.get('tutorName') or payload.get('tutor_name') or delivery_metadata.get('tutor') or existing_module_row.get('tutor_name'))
     tutor_email = resolve_staff_assignment_email('tutor', tutor_name) if tutor_name else ''
     session_week_day = payload.get('weekDays') or payload.get('sessionWeekDay') or payload.get('session_week_day') or payload.get('deliveryDays') or delivery_metadata.get('weekDays') or delivery_metadata.get('deliveryDays') or existing_module_row.get('session_week_day')
@@ -20813,6 +20951,9 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
             'cohort_name': cohort_name,
             'group_id': group_id,
             'group_name': group_name,
+            'learner_roster_mode': learner_roster_mode,
+            'teams_shared_source_module_id': teams_shared_source_module_id or None,
+            'ksb_remap_report': json.dumps(ksb_remap_report or {}),
             'title': payload.get('title') or payload.get('name') or existing_module_row.get('title') or f'Module {module_catalogue_id}',
             'description': payload.get('description') if 'description' in payload else existing_module_row.get('description') or '',
             'color': payload.get('color') if 'color' in payload else delivery_metadata.get('color') or existing_module_row.get('color') or '',
@@ -20845,7 +20986,21 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
             'tutor_name': tutor_name or None,
             'tutor_email': tutor_email or None,
         })
-        link_live_session_series_to_module(module_catalogue_id, {**payload, 'weekStructure': weeks})
+        if teams_shared_source_module_id:
+            authoring_upsert(MODULE_TEAMS_SHARES_TABLE, ['module_catalogue_id'], {
+                'module_catalogue_id': module_catalogue_id,
+                'source_module_catalogue_id': teams_shared_source_module_id,
+                'updated_at': datetime.utcnow(),
+            })
+        else:
+            delete_rows(MODULE_TEAMS_SHARES_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
+        # A shared-Teams duplicate is an alias, not a second owner.  Replaying
+        # the source's delivery metadata through the normal linker would move
+        # the live_sessions row away from its canonical module, breaking the
+        # original's calendar, attendance and recordings.  The alias resolves
+        # the source row on reads instead.
+        if not teams_shared_source_module_id:
+            link_live_session_series_to_module(module_catalogue_id, {**payload, 'weekStructure': weeks})
         # Read before the withdraw-and-rewrite below, because the assurance
         # flags a payload does not mention must survive this save - see
         # component_assurance_flag(). Keyed by id; a component this payload is
@@ -23274,6 +23429,10 @@ def curriculum_module_collection(request):
             'cohortName': payload.get('cohortName') or payload.get('cohort') or payload.get('cohort_name') or '',
             'groupId': payload.get('groupId') or payload.get('group_id') or '',
             'groupName': payload.get('groupName') or payload.get('group') or payload.get('group_name') or '',
+            'learnerRosterMode': payload.get('learnerRosterMode') or payload.get('learner_roster_mode') or 'inherited',
+            'teamsSharedSourceModuleId': payload.get('teamsSharedSourceModuleId') or payload.get('teams_shared_source_module_id') or '',
+            'ksbRemapReport': payload.get('ksbRemapReport') or payload.get('ksb_remap_report') or {},
+            'duplicateDestination': truthy(payload.get('duplicateDestination') or payload.get('duplicate_destination')),
             'declaredTotalOtjh': payload.get('totalOtjh') or 0,
             'moduleKsbMappings': payload.get('moduleKsbMappings') or [],
             'completionCriteria': payload.get('completionCriteria') or default_completion_payload(),
@@ -23340,6 +23499,10 @@ def curriculum_module_collection(request):
         'cohortName': payload.get('cohortName') or payload.get('cohort') or payload.get('cohort_name') or '',
         'groupId': payload.get('groupId') or payload.get('group_id') or '',
         'groupName': payload.get('groupName') or payload.get('group') or payload.get('group_name') or '',
+        'learnerRosterMode': payload.get('learnerRosterMode') or payload.get('learner_roster_mode') or 'inherited',
+        'teamsSharedSourceModuleId': payload.get('teamsSharedSourceModuleId') or payload.get('teams_shared_source_module_id') or '',
+        'ksbRemapReport': payload.get('ksbRemapReport') or payload.get('ksb_remap_report') or {},
+        'duplicateDestination': truthy(payload.get('duplicateDestination') or payload.get('duplicate_destination')),
         'title': name,
         'description': payload.get('notes') or payload.get('description') or '',
         'color': payload.get('color') or '',
@@ -25411,6 +25574,7 @@ def scope_placement_lineage(scope, identifier):
         'cohortName': '',
         'groupId': '',
         'groupName': '',
+        'learnerRosterMode': 'inherited',
         'moduleCatalogueId': '',
         'moduleTitle': '',
         'weekId': '',
@@ -25432,6 +25596,7 @@ def scope_placement_lineage(scope, identifier):
         lineage['cohortName'] = lineage['cohortName'] or clean_str(row.get('cohort_name'))
         lineage['groupId'] = lineage['groupId'] or clean_str(row.get('group_id'))
         lineage['groupName'] = lineage['groupName'] or clean_str(row.get('group_name'))
+        lineage['learnerRosterMode'] = clean_str(row.get('learner_roster_mode') or 'inherited').lower() or 'inherited'
 
     if scope == 'programme':
         config = programme_config_by_identifier(ident)
@@ -25560,16 +25725,30 @@ def assigned_learners_for_scope(scope, identifier, lifecycle_status='', lineage=
     module_id = clean_str(lineage.get('moduleCatalogueId')) if scope in {'module', 'week', 'component'} else ''
     if not programme_ident and not module_id:
         return []
-    learners = assigned_learners_for_programme(programme_ident, lifecycle_status) if programme_ident else []
-    learners = narrow_learners_to_placement(
-        learners, 'cohortId', lineage.get('cohortId'), 'cohort', lineage.get('cohortName'),
-    )
-    learners = narrow_learners_to_placement(
-        learners, 'groupId', lineage.get('groupId'), 'group', lineage.get('groupName'),
-    )
     if module_id and connection.vendor == 'postgresql':
         from .learner_assignments import module_assignment_roster
-        learners = module_assignment_roster(module_id, learners, lifecycle_status)
+        if clean_str(lineage.get('learnerRosterMode')).lower() == 'manual':
+            # A duplicated module remains attached to its group for curriculum
+            # navigation, but its roster is opt-in.  Start from explicit module
+            # plan entries only; never seed the group placement learners.
+            learners = module_assignment_roster(module_id, [], lifecycle_status)
+        else:
+            learners = assigned_learners_for_programme(programme_ident, lifecycle_status) if programme_ident else []
+            learners = narrow_learners_to_placement(
+                learners, 'cohortId', lineage.get('cohortId'), 'cohort', lineage.get('cohortName'),
+            )
+            learners = narrow_learners_to_placement(
+                learners, 'groupId', lineage.get('groupId'), 'group', lineage.get('groupName'),
+            )
+            learners = module_assignment_roster(module_id, learners, lifecycle_status)
+    else:
+        learners = assigned_learners_for_programme(programme_ident, lifecycle_status) if programme_ident else []
+        learners = narrow_learners_to_placement(
+            learners, 'cohortId', lineage.get('cohortId'), 'cohort', lineage.get('cohortName'),
+        )
+        learners = narrow_learners_to_placement(
+            learners, 'groupId', lineage.get('groupId'), 'group', lineage.get('groupName'),
+        )
     return learners
 
 

@@ -13,11 +13,13 @@ import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 import { formatHoursMinutes } from '@/lib/format';
 import { curriculumNavItems } from '@/mocks/navigation';
-import { fetchLearnerAssignments, type LearnerAssignmentTarget } from '@/api/curriculumLearnerAssignments';
+import { applyCurriculumLearnerAssignments, fetchLearnerAssignments, unassignCurriculumLearners, type LearnerAssignmentTarget } from '@/api/curriculumLearnerAssignments';
 import {
   curriculumErrorMessage,
   fetchCurriculumHolidays,
+  fetchCurriculumKsbSets,
   fetchCurriculumOverview,
+  fetchCurriculumScopeLearnerRoster,
   fetchCurriculumScopeLearnerKsbImpact,
   fetchCurriculumStandards,
   fetchCurriculumTeamsMeetingSummaries,
@@ -122,6 +124,8 @@ import {
   type AdvancedModuleDetails,
   type CompletionCriteria,
   type KsbMapping,
+  type DuplicateKsbSource,
+  type KsbRemapReport,
   type KsbMappingType,
   type KsbWeightClass,
   type KsbOption,
@@ -438,6 +442,193 @@ async function showBuilderDeleteSwal({
     successText,
     onConfirm,
   });
+}
+
+type DuplicateDestination = {
+  programme: CurriculumProgramme;
+  cohort: CurriculumCohort;
+  group: CurriculumGroup;
+};
+
+type DuplicateDialogResult = DuplicateDestination & {
+  teamsCopyMode: 'shared' | 'independent';
+  startDate: string;
+};
+
+function htmlEscape(value: unknown) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function curriculumProgrammeId(programme: CurriculumProgramme) {
+  return String(programme.sourceId || programme.id || '').trim();
+}
+
+function curriculumProgrammeMatches(record: { programmeId?: string; programme?: string }, programme: CurriculumProgramme) {
+  const values = [record.programmeId, record.programme].map(normaliseDeepLinkValue).filter(Boolean);
+  return values.includes(normaliseDeepLinkValue(curriculumProgrammeId(programme)))
+    || values.includes(normaliseDeepLinkValue(programme.id))
+    || values.includes(normaliseDeepLinkValue(programme.name));
+}
+
+function duplicateTargetKsbSource(programme: CurriculumProgramme, ksbSets: CurriculumKsbSet[], standards: CurriculumStandard[]): DuplicateKsbSource | undefined {
+  const configured = cleanKsbSourceId(programme.ksbProfileSourceId);
+  const set = ksbSets.find(candidate => (
+    (configured && ksbSourceIdsMatch(ksbSetSourceId(candidate), configured))
+      || (!configured && ([candidate.programmeId, ...(candidate.programmeIds || []), candidate.programmeName].map(normaliseDeepLinkValue).includes(normaliseDeepLinkValue(curriculumProgrammeId(programme)))
+        || normaliseDeepLinkValue(candidate.programmeName) === normaliseDeepLinkValue(programme.name)))
+  ));
+  if (set) {
+    return {
+      sourceType: 'framework',
+      sourceId: ksbSetSourceId(set),
+      programmeId: curriculumProgrammeId(programme),
+      programmeName: programme.name,
+      entries: flattenKsbEntries(set.ksbs),
+    };
+  }
+  const standard = standards.find(candidate => {
+    const keys = [candidate.id, candidate.code, candidate.standardRef, candidate.name].map(normaliseDeepLinkValue);
+    return (configured && ksbSourceIdsMatch(ksbStandardSourceId(candidate), configured))
+      || keys.includes(normaliseDeepLinkValue(programme.standard))
+      || keys.includes(normaliseDeepLinkValue(programme.name));
+  });
+  if (!standard) return undefined;
+  return {
+    sourceType: 'standard',
+    sourceId: ksbStandardSourceId(standard),
+    programmeId: curriculumProgrammeId(programme),
+    programmeName: programme.name,
+    entries: standardToKsbOptions(standard),
+  };
+}
+
+async function showDuplicateModuleSwal(
+  module: ModuleCatalogueItem,
+  options: { programmes: CurriculumProgramme[]; cohorts: CurriculumCohort[]; groups: CurriculumGroup[] },
+): Promise<DuplicateDialogResult | null> {
+  const liveProgrammes = options.programmes.filter(programme => !programmeRecordArchived(programme));
+  const sourceProgramme = liveProgrammes.find(programme => (
+    normaliseDeepLinkValue(curriculumProgrammeId(programme)) === normaliseDeepLinkValue(module.programmeId)
+      || normaliseDeepLinkValue(programme.id) === normaliseDeepLinkValue(module.programmeId)
+      || normaliseDeepLinkValue(programme.name) === normaliseDeepLinkValue(module.programmeName)
+  ));
+  if (!sourceProgramme) {
+    await showCurriculumAlert({ title: 'Choose a destination Programme first', text: 'No active Programme is available for this duplicate.', icon: 'warning', confirmButtonText: 'Close' });
+    return null;
+  }
+  const sourceProgrammeValue = curriculumProgrammeId(sourceProgramme);
+  const programmeOptions = liveProgrammes.map(programme => `<option value="${htmlEscape(curriculumProgrammeId(programme))}" ${curriculumProgrammeId(programme) === sourceProgrammeValue ? 'selected' : ''}>${htmlEscape(programme.name)}</option>`).join('');
+  const sourceCohort = options.cohorts.find(cohort => cohort.id === module.cohortId && curriculumProgrammeMatches(cohort, sourceProgramme));
+  const sourceGroup = options.groups.find(group => group.id === module.groupId && group.cohortId === sourceCohort?.id);
+  const cohortOptions = (programme: CurriculumProgramme, selectedId = '') => options.cohorts
+    .filter(cohort => curriculumProgrammeMatches(cohort, programme) && cohort.status !== 'archived')
+    .map(cohort => `<option value="${htmlEscape(cohort.id)}" ${cohort.id === selectedId ? 'selected' : ''}>${htmlEscape(cohort.name)}</option>`).join('');
+  const groupOptions = (cohortId: string, selectedId = '') => options.groups
+    .filter(group => group.cohortId === cohortId && group.status !== 'archived')
+    .map(group => `<option value="${htmlEscape(group.id)}" ${group.id === selectedId ? 'selected' : ''}>${htmlEscape(group.name)}</option>`).join('');
+  const destination = await Swal.fire({
+    title: `Duplicate ${module.title}`,
+    html: `
+      <p style="margin:0 0 12px;text-align:left">Choose where the new module will run. The current learners of the selected Group will be assigned, and future Group learners will inherit it.</p>
+      <p style="margin:0 0 12px;text-align:left">Progress, submissions, attendance and files are never copied.</p>
+      <label style="display:block;text-align:left;font-weight:700;margin:10px 0 4px">Programme</label>
+      <select id="duplicate-programme" class="swal2-select" style="display:flex;width:100%;margin:0">${programmeOptions}</select>
+      <label style="display:block;text-align:left;font-weight:700;margin:10px 0 4px">Cohort</label>
+      <select id="duplicate-cohort" class="swal2-select" style="display:flex;width:100%;margin:0">${cohortOptions(sourceProgramme, sourceCohort?.id || '')}</select>
+      <label style="display:block;text-align:left;font-weight:700;margin:10px 0 4px">Group</label>
+      <select id="duplicate-group" class="swal2-select" style="display:flex;width:100%;margin:0">${groupOptions(sourceCohort?.id || '', sourceGroup?.id || '')}</select>
+    `,
+    icon: 'question',
+    width: 600,
+    showCancelButton: true,
+    confirmButtonText: 'Continue',
+    cancelButtonText: 'Cancel',
+    reverseButtons: true,
+    focusCancel: true,
+    buttonsStyling: false,
+    customClass: { popup: 'kbc-standard-swal-popup', title: 'kbc-standard-swal-title', htmlContainer: 'kbc-standard-swal-text', actions: 'kbc-standard-swal-actions', confirmButton: 'kbc-standard-swal-confirm', cancelButton: 'kbc-standard-swal-cancel', validationMessage: 'kbc-standard-swal-validation' },
+    didOpen: () => {
+      const popup = Swal.getPopup();
+      const programmeSelect = popup?.querySelector<HTMLSelectElement>('#duplicate-programme');
+      const cohortSelect = popup?.querySelector<HTMLSelectElement>('#duplicate-cohort');
+      const groupSelect = popup?.querySelector<HTMLSelectElement>('#duplicate-group');
+      const refreshCohorts = () => {
+        const programme = liveProgrammes.find(item => curriculumProgrammeId(item) === programmeSelect?.value);
+        if (!programme || !cohortSelect || !groupSelect) return;
+        cohortSelect.innerHTML = cohortOptions(programme);
+        groupSelect.innerHTML = '';
+      };
+      const refreshGroups = () => {
+        if (groupSelect && cohortSelect) groupSelect.innerHTML = groupOptions(cohortSelect.value);
+      };
+      programmeSelect?.addEventListener('change', refreshCohorts);
+      cohortSelect?.addEventListener('change', refreshGroups);
+    },
+    preConfirm: () => {
+      const popup = Swal.getPopup();
+      const programmeId = popup?.querySelector<HTMLSelectElement>('#duplicate-programme')?.value || '';
+      const cohortId = popup?.querySelector<HTMLSelectElement>('#duplicate-cohort')?.value || '';
+      const groupId = popup?.querySelector<HTMLSelectElement>('#duplicate-group')?.value || '';
+      const programme = liveProgrammes.find(item => curriculumProgrammeId(item) === programmeId);
+      const cohort = options.cohorts.find(item => item.id === cohortId);
+      const group = options.groups.find(item => item.id === groupId);
+      if (!programme || !cohort || !group || group.cohortId !== cohort.id || !curriculumProgrammeMatches(cohort, programme) || !curriculumProgrammeMatches(group, programme)) {
+        Swal.showValidationMessage('Choose a valid Programme, Cohort and Group combination.');
+        return false;
+      }
+      return { programme, cohort, group };
+    },
+  });
+  if (!destination.isConfirmed || !destination.value) return null;
+  const selected = destination.value as DuplicateDestination;
+  const teams = await Swal.fire({
+    title: 'Teams meeting and dates',
+    html: '<p style="margin:0 0 12px;text-align:left">Choose whether the duplicate shares the original Teams meeting.</p><label style="display:block;text-align:left;margin:8px 0"><input id="duplicate-teams-shared" type="radio" name="duplicate-teams" value="shared" checked> Share the same Teams meeting and record</label><label style="display:block;text-align:left;margin:8px 0"><input id="duplicate-teams-independent" type="radio" name="duplicate-teams" value="independent"> Create an independent Teams meeting later</label><div id="duplicate-start-date-wrap" style="display:none;text-align:left;margin-top:12px"><label style="font-weight:700">Start Date</label><input id="duplicate-start-date" type="date" class="swal2-input" style="width:100%;margin:4px 0"></div>',
+    icon: 'question',
+    width: 560,
+    showCancelButton: true,
+    confirmButtonText: 'Duplicate module',
+    cancelButtonText: 'Back',
+    reverseButtons: true,
+    focusCancel: true,
+    buttonsStyling: false,
+    customClass: { popup: 'kbc-standard-swal-popup', title: 'kbc-standard-swal-title', htmlContainer: 'kbc-standard-swal-text', actions: 'kbc-standard-swal-actions', confirmButton: 'kbc-standard-swal-confirm', cancelButton: 'kbc-standard-swal-cancel', validationMessage: 'kbc-standard-swal-validation' },
+    didOpen: () => {
+      const popup = Swal.getPopup();
+      const independent = popup?.querySelector<HTMLInputElement>('#duplicate-teams-independent');
+      const wrap = popup?.querySelector<HTMLElement>('#duplicate-start-date-wrap');
+      independent?.addEventListener('change', () => { if (wrap) wrap.style.display = independent.checked ? 'block' : 'none'; });
+    },
+    preConfirm: () => {
+      const popup = Swal.getPopup();
+      const independent = popup?.querySelector<HTMLInputElement>('#duplicate-teams-independent')?.checked;
+      const startDate = popup?.querySelector<HTMLInputElement>('#duplicate-start-date')?.value || '';
+      if (independent && !startDate) {
+        Swal.showValidationMessage('Choose the Start Date for the independent module.');
+        return false;
+      }
+      return { teamsCopyMode: independent ? 'independent' : 'shared', startDate };
+    },
+  });
+  if (!teams.isConfirmed || !teams.value) return null;
+  const teamsValue = teams.value as { teamsCopyMode: 'shared' | 'independent'; startDate: string };
+  if (teamsValue.teamsCopyMode === 'shared') {
+    const accepted = await showCurriculumConfirm({
+      title: 'Share the Teams meeting?',
+      text: 'The original and duplicate will use the same meeting identity. Links, attendees, invitations, attendance, recordings and later meeting changes can affect both modules.',
+      icon: 'warning',
+      confirmButtonText: 'Yes, share the meeting',
+      cancelButtonText: 'Go back',
+      onConfirm: async () => {},
+    });
+    if (!accepted) return null;
+  }
+  return { ...selected, ...teamsValue };
 }
 
 export default function ModuleBuilder() {
@@ -2098,17 +2289,88 @@ export default function ModuleBuilder() {
     }
   }, [updateWorkingModule, workingModule, workingModuleScopeLock?.ksbSourceId, workspaceKsbProfileEntries, workspaceKsbProfileValue]);
 
-  const duplicateModule = async (module: ModuleCatalogueItem) => {
+  const duplicateModule = async (module: ModuleCatalogueItem, dialog: DuplicateDialogResult) => {
     setDuplicatingModule(module);
     setDuplicatingModuleComplete(false);
     setActionMessage(null);
+    setActionMessageRetry(null);
     setNoticeAlert(null);
     try {
       const source = getDefaultStructure((await loadModuleStructure(moduleStructureIdentifier(module))) || module);
-      const duplicate = await duplicateModuleStructure(source);
+      const sourceProgrammeId = normaliseDeepLinkValue(module.programmeId || module.programmeName || '');
+      const targetProgrammeId = normaliseDeepLinkValue(curriculumProgrammeId(dialog.programme));
+      const sameProgramme = sourceProgrammeId === targetProgrammeId
+        || sourceProgrammeId === normaliseDeepLinkValue(dialog.programme.name);
+      if (dialog.teamsCopyMode === 'shared' && source.startDate && dialog.cohort.startDate && source.startDate < dialog.cohort.startDate) {
+        throw new Error('The original dates start before the selected Cohort. Choose an independent Teams meeting or a Cohort that contains the original dates.');
+      }
+      if (dialog.teamsCopyMode === 'shared' && source.endDate && dialog.cohort.endDate && source.endDate > dialog.cohort.endDate) {
+        throw new Error('The original dates end after the selected Cohort. Choose an independent Teams meeting or a Cohort that contains the original dates.');
+      }
+      const roster = await fetchCurriculumScopeLearnerRoster('group', dialog.group.id, { learnerStatus: 'active' });
+      const learnerIds = roster.assignedLearners.map(learner => String(learner.id)).filter(Boolean);
+      let ksbSource: DuplicateKsbSource | undefined;
+      if (!sameProgramme) {
+        const [allKsbSets, allStandards] = await Promise.all([
+          fetchCurriculumKsbSets(undefined, { all: true }),
+          fetchCurriculumStandards(),
+        ]);
+        ksbSource = duplicateTargetKsbSource(dialog.programme, allKsbSets, allStandards)
+          || { sourceType: '', sourceId: '', programmeId: curriculumProgrammeId(dialog.programme), programmeName: dialog.programme.name, entries: [] };
+      }
+      const duplicate = await duplicateModuleStructure(source, {
+        learnerRosterMode: 'inherited',
+        teamsCopyMode: dialog.teamsCopyMode,
+        keepDates: dialog.teamsCopyMode === 'shared',
+        startDate: dialog.startDate,
+        programmeId: curriculumProgrammeId(dialog.programme),
+        programmeName: dialog.programme.name,
+        cohortId: dialog.cohort.id,
+        cohortName: dialog.cohort.name,
+        groupId: dialog.group.id,
+        groupName: dialog.group.name,
+        ksbSource,
+        deliveryMetadata: dialog.teamsCopyMode === 'independent'
+          ? {
+              ...(source.deliveryMetadata || {}),
+              cohortId: dialog.cohort.id,
+              cohort: dialog.cohort.name,
+              groupId: dialog.group.id,
+              group: dialog.group.name,
+              weekDays: dialog.group.weekDays || source.deliveryMetadata?.weekDays || '',
+              startTime: dialog.group.startTime || source.deliveryMetadata?.startTime || '',
+              endTime: dialog.group.endTime || source.deliveryMetadata?.endTime || '',
+            }
+          : undefined,
+      });
+      const moduleTarget: LearnerAssignmentTarget = { scope: 'module', id: duplicate.catalogueId, name: duplicate.title };
+      const applyAssignments = async (ids: string[]) => applyCurriculumLearnerAssignments(moduleTarget, { add: ids, remove: [] });
+      const assignment = learnerIds.length
+        ? await applyAssignments(learnerIds)
+        : { added: [], removed: [], failed: [], failureMessage: null, abandoned: false, changedCount: 0, moduleCount: 1 };
+      const report = duplicate.ksbRemapReport as KsbRemapReport | null | undefined;
+      const ksbMessage = report && report.unmatched?.length
+        ? ` ${report.matchedCount} KSBs matched; ${report.unmatched.length} need review in the saved remap report.`
+        : '';
+      if (assignment.failed.length) {
+        const failed = [...assignment.failed];
+        setActionMessage(`Module created, but ${failed.length} learner assignment${failed.length === 1 ? '' : 's'} failed.${assignment.failureMessage ? ` ${assignment.failureMessage}` : ''}`);
+        setActionMessageRetry(() => () => {
+          void applyAssignments(failed).then(retry => {
+            if (retry.failed.length) {
+              setActionMessage(`Retry completed with ${retry.failed.length} learner assignment failure${retry.failed.length === 1 ? '' : 's'}.`);
+              setActionMessageRetry(() => () => { void applyAssignments(retry.failed); });
+            } else {
+              setActionMessage(null);
+              setActionMessageRetry(null);
+              void reload({ silent: true });
+            }
+          }).catch(error => setActionMessage(error instanceof Error ? error.message : 'Unable to retry learner assignments.'));
+        });
+      }
       setNoticeAlert({
         title: 'Module duplicated',
-        message: `${duplicate.title} was created as a draft with its authoring structure.`,
+        message: `${duplicate.title} was created in ${dialog.programme.name} / ${dialog.cohort.name} / ${dialog.group.name}. ${assignment.added.length} active Group learner${assignment.added.length === 1 ? '' : 's'} assigned.${ksbMessage}`,
       });
       reload();
       await finishLoadingProgress(setDuplicatingModuleComplete);
@@ -2118,6 +2380,17 @@ export default function ModuleBuilder() {
       setDuplicatingModule(null);
       setDuplicatingModuleComplete(false);
     }
+  };
+
+  const confirmDuplicateModule = async (module: ModuleCatalogueItem) => {
+    if (duplicatingModule) return;
+    const dialog = await showDuplicateModuleSwal(module, {
+      programmes: curriculumProgrammes,
+      cohorts: scopeCohorts,
+      groups: scopeGroups,
+    });
+    if (!dialog) return;
+    await duplicateModule(module, dialog);
   };
 
   const deleteModule = async (module: ModuleCatalogueItem) => {
@@ -2720,6 +2993,15 @@ export default function ModuleBuilder() {
               module={workingModule}
             />
           )}
+          {workingModule.ksbRemapReport?.unmatched?.length ? (
+            <details data-testid="module-ksb-remap-report" className="rounded-xl border border-amber-200/70 bg-amber-50 px-4 py-3 text-[12px] text-amber-900">
+              <summary className="cursor-pointer font-bold">KSB remap review required ({workingModule.ksbRemapReport.unmatched.length} unmatched)</summary>
+              <p className="mt-2">This duplicate was created successfully, but the following source mappings were not found in the destination Programme:</p>
+              <ul className="mt-2 list-disc space-y-1 pl-5">
+                {workingModule.ksbRemapReport.unmatched.map((entry, index) => <li key={`${entry.path || entry.code}-${index}`}>{entry.code || 'Unknown code'} — {entry.reason || 'Review this mapping.'}</li>)}
+              </ul>
+            </details>
+          ) : null}
 
           {/* The receipt for a merge that has already happened -- their work is
               in the weeks on screen by the time this renders.
@@ -3273,7 +3555,7 @@ export default function ModuleBuilder() {
                     // returns to this list instead of the page that led here.
                     onBuild={() => openModule(module, false, 'push')}
                     onSettings={() => openPlacementForm(module)}
-                    onDuplicate={() => duplicateModule(module)}
+                    onDuplicate={() => void confirmDuplicateModule(module)}
                     onDelete={() => confirmDeleteModule(module)}
                   />
                 ))}
@@ -3394,6 +3676,25 @@ export default function ModuleBuilder() {
             onAssignMore={() => {
               setLearnerProgress(null);
               setLearnerAssignmentTarget(learnerProgress.target);
+            }}
+            onRemoveLearner={async learner => {
+              const learnerId = String(learner.id);
+              const result = await unassignCurriculumLearners(learnerProgress.target, [learnerId]);
+              const failedIds = new Set((result.failedIds || []).map(String));
+              if (failedIds.has(learnerId)) {
+                throw new Error(result.failureMessage || 'Unable to remove this learner from the module.');
+              }
+              setLearnerProgress(current => current
+                ? { ...current, assignedLearners: current.assignedLearners.filter(row => String(row.id) !== learnerId) }
+                : current);
+              const catalogueId = learnerAssignmentModuleIdRef.current;
+              if (catalogueId) {
+                setLearnerCountOverrides(previous => ({
+                  ...previous,
+                  [catalogueId]: Math.max(0, (previous[catalogueId] ?? learnerProgress.assignedLearners.length) - 1),
+                }));
+              }
+              void reload({ silent: true });
             }}
           />
         )}

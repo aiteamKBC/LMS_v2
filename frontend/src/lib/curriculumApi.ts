@@ -364,6 +364,14 @@ export interface CurriculumModule {
   cohort?: string;
   groupId?: string;
   group?: string;
+  learnerRosterMode?: 'inherited' | 'manual' | string;
+  teamsSharedSourceModuleId?: string;
+  ksbRemapReport?: {
+    status?: 'complete' | 'partial' | 'no-source' | string;
+    matchedCount?: number;
+    unmatched?: Array<{ location?: string; path?: string; code?: string; description?: string; reason?: string }>;
+    [key: string]: unknown;
+  } | null;
   isProgrammeDeleted?: boolean;
   /**
    * The authored week count — what the week builder holds and what the UI shows

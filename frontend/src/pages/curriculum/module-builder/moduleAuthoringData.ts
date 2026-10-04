@@ -46,6 +46,44 @@ export interface KsbMapping {
   weight_class?: KsbWeightClass;
 }
 
+export interface KsbRemapReportEntry {
+  location: 'module' | 'week' | 'component';
+  path: string;
+  code: string;
+  description?: string;
+  reason: string;
+}
+
+export interface KsbRemapReport {
+  status: 'complete' | 'partial' | 'no-source';
+  sourceProgrammeId?: string;
+  sourceProgrammeName?: string;
+  sourceType?: string;
+  sourceId?: string;
+  targetProgrammeId?: string;
+  targetProgrammeName?: string;
+  targetType?: string;
+  targetId?: string;
+  matchedCount: number;
+  unmatched: KsbRemapReportEntry[];
+  createdAt: string;
+}
+
+export interface DuplicateKsbSourceEntry {
+  id?: string | number;
+  code: string;
+  description?: string;
+  type?: string;
+}
+
+export interface DuplicateKsbSource {
+  sourceType: string;
+  sourceId: string;
+  programmeId?: string;
+  programmeName?: string;
+  entries: DuplicateKsbSourceEntry[];
+}
+
 export interface CompletionCriteria {
   quizzesCompletedRequired: boolean;
   checkpointsCompletedRequired: boolean;
@@ -922,6 +960,10 @@ export function resequenceWeekSessionDates(weeks: ModuleWeek[]): ModuleWeek[] {
 }
 
 export interface ModuleCatalogueItem {
+  learnerRosterMode?: 'inherited' | 'manual' | string;
+  teamsSharedSourceModuleId?: string;
+  ksbRemapReport?: KsbRemapReport | null;
+  duplicateDestination?: boolean;
   startTime?: string;
   endTime?: string;
   weeklySchedule?: CurriculumModule['weeklySchedule'];
@@ -1135,7 +1177,7 @@ export function weekExpectedOtjhTotal(week: Pick<ModuleWeek, 'components'>): num
   return roundedMinutesToHours(totalMinutes);
 }
 
-export function createLocalModuleDraft(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; catalogueId?: string; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string; coverImage?: string }): ModuleCatalogueItem {
+export function createLocalModuleDraft(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; catalogueId?: string; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string; coverImage?: string; learnerRosterMode?: 'inherited' | 'manual'; teamsSharedSourceModuleId?: string }): ModuleCatalogueItem {
   const catalogueId = input.catalogueId || makeAuthoringId('MOD');
   const id = `local-${catalogueId}`;
   const weekCount = Math.max(0, Math.round(Number(input.weeks) || 0));
@@ -1154,6 +1196,8 @@ export function createLocalModuleDraft(input: { programme: string; title: string
     cohort: input.cohortName || '',
     groupId: input.groupId || '',
     group: input.groupName || '',
+    learnerRosterMode: input.learnerRosterMode || 'inherited',
+    teamsSharedSourceModuleId: input.teamsSharedSourceModuleId || '',
     title: input.title,
     description: input.description,
     coverImage: input.coverImage || '',
@@ -1184,7 +1228,7 @@ export function createLocalModuleDraft(input: { programme: string; title: string
   });
 }
 
-export async function createNewModule(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string; coverImage?: string }) {
+export async function createNewModule(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string; coverImage?: string; learnerRosterMode?: 'inherited' | 'manual'; teamsSharedSourceModuleId?: string; ksbRemapReport?: KsbRemapReport | null; moduleKsbMappings?: KsbMapping[]; weekStructure?: ModuleWeek[]; duplicateDestination?: boolean }) {
   const draft = createLocalModuleDraft(input);
   try {
     const response = await apiJson<{ created: boolean; moduleCatalogueId?: string; module?: ModuleCatalogueItem }>('/curriculum/modules/', {
@@ -1203,16 +1247,20 @@ export async function createNewModule(input: { programme: string; title: string;
         cohortName: input.cohortName || '',
         groupId: input.groupId || '',
         groupName: input.groupName || '',
+        learnerRosterMode: input.learnerRosterMode || 'inherited',
+        teamsSharedSourceModuleId: input.teamsSharedSourceModuleId || '',
+        ksbRemapReport: input.ksbRemapReport || null,
+        duplicateDestination: Boolean(input.duplicateDestination),
         status: draft.status || 'draft',
         sessionsNumber: draft.sessionsNumber ?? draft.weeks,
         // The authored week count, sent apart from the calendar session count.
         weeksNumber: draft.weeks,
         startDate: draft.startDate || '',
         endDate: draft.endDate || '',
-        weekStructure: draft.weekStructure,
+        weekStructure: input.weekStructure || draft.weekStructure,
         completionCriteria: draft.completionCriteria,
         advancedDetails: draft.advancedDetails,
-        moduleKsbMappings: draft.moduleKsbMappings,
+        moduleKsbMappings: input.moduleKsbMappings || draft.moduleKsbMappings,
         ksbProfileSourceId: draft.ksbProfileSourceId || '',
         background: draft.background,
         epaRequirements: draft.epaRequirements,
@@ -1242,6 +1290,88 @@ export interface DuplicateModuleStructureOptions {
   cohortName?: string;
   groupId?: string;
   groupName?: string;
+  programmeId?: string;
+  programmeName?: string;
+  learnerRosterMode?: 'inherited' | 'manual';
+  teamsCopyMode?: 'shared' | 'independent';
+  /** Independent copies use this date to regenerate their calendar plan. */
+  startDate?: string;
+  /** The destination Programme's authoritative KSB source, when it changed. */
+  ksbSource?: DuplicateKsbSource;
+  ksbRemapReport?: KsbRemapReport | null;
+  deliveryMetadata?: Record<string, ComponentSettingValue>;
+}
+
+function normaliseDuplicateKsbCode(value: unknown) {
+  return String(value || '').trim().toUpperCase().replace(/\s+/g, '');
+}
+
+function remapMapping(mapping: KsbMapping, source: DuplicateKsbSource | undefined, location: KsbRemapReportEntry['location'], path: string) {
+  const code = normaliseDuplicateKsbCode(mapping.code);
+  const target = source?.entries.find(entry => normaliseDuplicateKsbCode(entry.code) === code);
+  if (!source || !source.sourceType || !source.sourceId) {
+    return { mapping: null, unmatched: { location, path, code: mapping.code || code, description: mapping.description, reason: 'The destination Programme has no valid KSB source.' } };
+  }
+  if (!target) {
+    return { mapping: null, unmatched: { location, path, code: mapping.code || code, description: mapping.description, reason: 'The KSB code does not exist in the destination source.' } };
+  }
+  return {
+    mapping: {
+      ...mapping,
+      id: makeAuthoringId('ksb'),
+      ksbId: String(target.id ?? mapping.ksbId ?? ''),
+      code: target.code,
+      description: target.description || mapping.description,
+      sourceType: source.sourceType,
+      sourceId: source.sourceId,
+    },
+    unmatched: null,
+  };
+}
+
+/**
+ * Repoint every module/week/component mapping to a destination Programme's
+ * source. Unmatched mappings are intentionally omitted from the saved payload
+ * so backend source validation cannot reject the otherwise valid duplicate;
+ * their exact location is retained in the report for review.
+ */
+export function remapModuleKsbMappings(
+  module: ModuleCatalogueItem,
+  source: DuplicateKsbSource | undefined,
+  reportBase: Omit<KsbRemapReport, 'matchedCount' | 'unmatched' | 'createdAt' | 'status'>,
+) {
+  let matchedCount = 0;
+  const unmatched: KsbRemapReportEntry[] = [];
+  const mapList = (mappings: KsbMapping[], location: KsbRemapReportEntry['location'], path: string) => mappings.flatMap((mapping, index) => {
+    const result = remapMapping(mapping, source, location, `${path}[${index}]`);
+    if (result.mapping) {
+      matchedCount += 1;
+      return [result.mapping];
+    }
+    if (result.unmatched) unmatched.push(result.unmatched);
+    return [];
+  });
+  const next = recalculateModule({
+    ...module,
+    moduleKsbMappings: mapList(module.moduleKsbMappings || [], 'module', 'moduleKsbMappings'),
+    weekStructure: module.weekStructure.map((week, weekIndex) => ({
+      ...week,
+      ksbMappings: mapList(week.ksbMappings || [], 'week', `weekStructure[${weekIndex}].ksbMappings`),
+      components: week.components.map((component, componentIndex) => ({
+        ...component,
+        ksbMappings: mapList(component.ksbMappings || [], 'component', `weekStructure[${weekIndex}].components[${componentIndex}].ksbMappings`),
+      })),
+    })),
+    ksbProfileSourceId: source?.sourceId || '',
+  });
+  const report: KsbRemapReport = {
+    ...reportBase,
+    status: !source?.sourceId ? 'no-source' : unmatched.length ? 'partial' : 'complete',
+    matchedCount,
+    unmatched,
+    createdAt: new Date().toISOString(),
+  };
+  return { module: { ...next, ksbRemapReport: report }, report };
 }
 
 export async function duplicateModuleStructure(
@@ -1249,6 +1379,8 @@ export async function duplicateModuleStructure(
   options: DuplicateModuleStructureOptions = {},
 ) {
   const { keepDates = false, renameCopy = true } = options;
+  const learnerRosterMode = options.learnerRosterMode || (keepDates ? 'inherited' : 'manual');
+  const teamsCopyMode = options.teamsCopyMode || 'independent';
   const copyId = `copy-${Date.now().toString(36)}`;
   const cloneMappings = (mappings: KsbMapping[] = [], scope: string) => mappings.map((mapping, index) => ({
     ...mapping,
@@ -1284,8 +1416,8 @@ export async function duplicateModuleStructure(
     // everything that reads the table by module (the Teams Meetings page,
     // attendance, recordings, the sync) followed the meeting to the copy.
     // Stripped the same way the components are, and for the same reason.
-    deliveryMetadata: source.deliveryMetadata
-      ? independentCopySettings(structuredClone(source.deliveryMetadata), { keepDates })
+    deliveryMetadata: (options.deliveryMetadata || source.deliveryMetadata)
+      ? independentCopySettings(structuredClone(options.deliveryMetadata || source.deliveryMetadata), { keepDates })
       : source.deliveryMetadata,
     // The run the source is on is the source's, not the copy's. `createNewModule`
     // below already withholds these, but the structure save right after it sends
@@ -1298,12 +1430,20 @@ export async function duplicateModuleStructure(
     // so the sessions simply landed on the old run's dates spelled in new days.
     // Undated is the honest state: the module drawer asks for a start date before
     // it will save, and the plan fills the weeks from the answer.
-    startDate: keepDates ? source.startDate : '',
+    startDate: keepDates ? source.startDate : options.startDate || '',
     endDate: keepDates ? source.endDate : '',
     cohortId: options.cohortId ?? source.cohortId,
     cohort: options.cohortName ?? source.cohort,
     groupId: options.groupId ?? source.groupId,
     group: options.groupName ?? source.group,
+    programmeId: options.programmeId ?? source.programmeId,
+    programmeName: options.programmeName ?? source.programmeName,
+    learnerRosterMode,
+    teamsSharedSourceModuleId: teamsCopyMode === 'shared'
+      ? (source.catalogueId || source.id)
+      : '',
+    ksbRemapReport: options.ksbRemapReport || null,
+    duplicateDestination: true,
     moduleKsbMappings: cloneMappings(source.moduleKsbMappings, 'module'),
     completionCriteria: { ...source.completionCriteria },
     advancedDetails: { ...source.advancedDetails },
@@ -1345,28 +1485,58 @@ export async function duplicateModuleStructure(
     }),
   });
 
+  let preparedDuplicate = duplicate;
+  if (options.ksbSource) {
+    preparedDuplicate = remapModuleKsbMappings(preparedDuplicate, options.ksbSource, options.ksbRemapReport || {
+      sourceProgrammeId: source.programmeId,
+      sourceProgrammeName: source.programmeName,
+      sourceType: source.ksbProfileSourceId ? 'framework' : '',
+      sourceId: source.ksbProfileSourceId || '',
+      targetProgrammeId: preparedDuplicate.programmeId,
+      targetProgrammeName: preparedDuplicate.programmeName,
+      targetType: options.ksbSource.sourceType,
+      targetId: options.ksbSource.sourceId,
+    }).module;
+  }
+
   try {
     const created = await createNewModule({
-      programme: duplicate.programmeName,
-      title: duplicate.title,
-      description: duplicate.description,
-      weeks: Math.max(1, duplicate.weekStructure.length),
+      programme: preparedDuplicate.programmeName,
+      title: preparedDuplicate.title,
+      description: preparedDuplicate.description,
+      weeks: Math.max(1, preparedDuplicate.weekStructure.length),
       status: 'draft',
-      cohortId: duplicate.cohortId,
-      cohortName: duplicate.cohort,
-      groupId: duplicate.groupId,
-      groupName: duplicate.group,
-      startDate: keepDates ? duplicate.startDate : undefined,
-      endDate: keepDates ? duplicate.endDate : undefined,
+      programmeId: preparedDuplicate.programmeId,
+      ksbProfileSourceId: preparedDuplicate.ksbProfileSourceId,
+      cohortId: preparedDuplicate.cohortId,
+      cohortName: preparedDuplicate.cohort,
+      groupId: preparedDuplicate.groupId,
+      groupName: preparedDuplicate.group,
+      startDate: preparedDuplicate.startDate || undefined,
+      endDate: keepDates ? preparedDuplicate.endDate : undefined,
+      learnerRosterMode,
+      teamsSharedSourceModuleId: teamsCopyMode === 'shared'
+        ? (source.catalogueId || source.id)
+        : '',
+      ksbRemapReport: preparedDuplicate.ksbRemapReport,
+      moduleKsbMappings: preparedDuplicate.moduleKsbMappings,
+      weekStructure: preparedDuplicate.weekStructure,
+      duplicateDestination: true,
     });
-    const payload = recalculateModule({
-      ...duplicate,
+    let payload = recalculateModule({
+      ...preparedDuplicate,
       catalogueId: created.catalogueId,
       id: created.id || duplicate.id,
       // An authored module's `source_id` is its own catalogue id -- that is what
       // the estate holds for the modules the builder made. The copy names
       // itself here rather than the module it was copied from.
       sourceId: created.catalogueId,
+      learnerRosterMode,
+      teamsSharedSourceModuleId: teamsCopyMode === 'shared'
+        ? (source.catalogueId || source.id)
+        : '',
+      ksbRemapReport: preparedDuplicate.ksbRemapReport || null,
+      duplicateDestination: true,
     });
     const saved = await saveModuleStructure(payload.catalogueId, payload);
     return saved;
@@ -1996,6 +2166,9 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     cohort: module.cohort || '',
     groupId: module.groupId || '',
     group: module.group || '',
+    learnerRosterMode: module.learnerRosterMode || 'inherited',
+    teamsSharedSourceModuleId: module.teamsSharedSourceModuleId || '',
+    ksbRemapReport: (module.ksbRemapReport || null) as unknown as KsbRemapReport | null,
     isProgrammeDeleted: Boolean(module.isProgrammeDeleted),
     title,
     description,
