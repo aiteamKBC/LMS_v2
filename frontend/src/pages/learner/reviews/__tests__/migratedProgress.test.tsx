@@ -52,6 +52,18 @@ describe('migrated progress for review participants', () => {
 });
 
 describe.each(['participant', 'employer'] as const)('migrated signed PDF for %s', viewerRole => {
+  it('keeps unavailable historical originals disabled without a generated fallback', () => {
+    const download = vi.fn();
+    render(<LearnerReviewInstanceForm definition={{ ...definition, migratedForm: false,
+      pdf: { available: false, reason: 'The original Aptem PDF is unavailable.' },
+    }} viewerRole={viewerRole} onDownload={download} />);
+    const button = screen.getByRole('button', { name: 'Download signed PDF' });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(download).not.toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Generate LMS review PDF' })).not.toBeInTheDocument();
+  });
+
   it.each(['not-scheduled', 'scheduled', 'in-progress', 'awaiting-signature'])('hides signed downloads while %s even with stale availability', status => {
     const download = vi.fn();
     render(<LearnerReviewInstanceForm definition={{ ...definition,
@@ -79,20 +91,29 @@ describe.each(['participant', 'employer'] as const)('migrated signed PDF for %s'
     await waitFor(() => expect(download).toHaveBeenCalledOnce());
   });
 
-  it.each([undefined, { available: false, reason: 'Generate the LMS review PDF after completion.' }])('keeps missing completed PDFs unavailable: %s', pdf => {
-    const download = vi.fn();
+  it.each([undefined, { available: false, reason: 'Generate the LMS review PDF after completion.' }])('prepares missing completed PDFs on download: %s', async pdf => {
+    let finish!: () => void;
+    const download = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
     render(<LearnerReviewInstanceForm definition={{ ...definition, pdf }} viewerRole={viewerRole} onDownload={download} />);
     const button = screen.getByRole('button', { name: 'Download signed PDF' });
-    expect(button).toBeDisabled();
-    expect(screen.getByText('The signed PDF is not available yet.')).toBeVisible();
+    expect(button).toBeEnabled();
     fireEvent.click(button);
-    expect(download).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Preparing PDF...' })).toBeDisabled();
+    expect(download).toHaveBeenCalledOnce();
+    finish();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Download signed PDF' })).toBeEnabled());
   });
 
-  it('preserves a clear server refusal if stored availability changes before download', async () => {
-    render(<LearnerReviewInstanceForm definition={{ ...definition, pdf: { available: true, reason: '' } }}
-      viewerRole={viewerRole} onDownload={vi.fn().mockRejectedValue(new Error('The LMS PDF has not been generated yet.'))} />);
+  it('shows preparation failure and retries without changing review content', async () => {
+    const download = vi.fn().mockRejectedValueOnce(new Error('Unable to prepare the signed PDF. Please try again.'))
+      .mockResolvedValueOnce(undefined);
+    render(<LearnerReviewInstanceForm definition={definition} viewerRole={viewerRole} onDownload={download} />);
     fireEvent.click(screen.getByRole('button', { name: 'Download signed PDF' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('The LMS PDF has not been generated yet.');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Unable to prepare the signed PDF. Please try again.');
+    expect(screen.getByRole('button', { name: 'Download signed PDF' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Download signed PDF' }));
+    await waitFor(() => expect(download).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Generate from Teams' })).not.toBeInTheDocument();
   });
 });

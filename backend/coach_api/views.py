@@ -14583,7 +14583,6 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         "historicalReview": review,
     }
     if migrated_form:
-        from coach_api.models import MigratedReviewDocument
         from coach_api.migrated_summary_binding import answer_version
         from coach_api.migrated_summary_generation import summary_binding_response
         from coach_api.migrated_progress import calculation_available
@@ -14595,11 +14594,10 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         from coach_api.migrated_template_sync import snapshot_state
         definition["templateSync"] = snapshot_state(saved_instance)
         definition["answerVersion"] = answer_version(saved_instance)
-        pdf_ready = bool(saved_instance and saved_instance.status == ImportedReviewInstance.STATUS_COMPLETED
-                         and MigratedReviewDocument.objects.filter(overlay=saved_instance).exists())
+        pdf_ready = saved_instance.status == ImportedReviewInstance.STATUS_COMPLETED
         definition["pdf"] = {
             "available": pdf_ready,
-            "reason": "" if pdf_ready else "Generate the LMS review PDF after completion." if saved_instance.status == ImportedReviewInstance.STATUS_COMPLETED else "Available after completion.",
+            "reason": "" if pdf_ready else "Available after completion.",
             "source": "lms-migrated",
         }
     else:

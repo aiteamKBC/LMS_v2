@@ -1335,43 +1335,67 @@ describe('migrated signed PDF lifecycle', () => {
       expect(completeMigratedReview).not.toHaveBeenCalled();
     });
 
-    it.each([false, true])('keeps missing completed PDFs unavailable with admin=%s', async viewAs => {
+    it.each([false, true])('downloads missing completed PDFs without a separate generation action with admin=%s', async viewAs => {
       coachMode.isViewingAsCoach = viewAs;
       const review = reviewFor(family, 'completed');
       review.pdf = { available: false, reason: 'Generate the LMS review PDF after completion.' };
       vi.mocked(fetchReviewInstanceForm).mockResolvedValue(review);
+      let finish!: () => void;
+      vi.mocked(downloadReviewInstancePdf).mockReturnValue(new Promise<void>(resolve => { finish = resolve; }));
       mount(review.instance.id);
       const download = await screen.findByRole('button', { name: 'Download signed PDF' });
-      expect(download).toBeDisabled();
-      expect(screen.getByText('The signed PDF is not available yet.')).toBeVisible();
+      expect(download).toBeEnabled();
       fireEvent.click(download);
-      expect(downloadReviewInstancePdf).not.toHaveBeenCalled();
+      expect(screen.getByRole('button', { name: 'Preparing PDF...' })).toBeDisabled();
+      fireEvent.click(screen.getByRole('button', { name: 'Preparing PDF...' }));
+      expect(downloadReviewInstancePdf).toHaveBeenCalledExactlyOnceWith(review.instance.id);
+      finish();
+      await waitFor(() => expect(screen.getByRole('button', { name: 'Download signed PDF' })).toBeEnabled());
       expect(generateMigratedReviewPdf).not.toHaveBeenCalled();
-      expect(Boolean(screen.queryByRole('button', { name: 'Generate LMS review PDF' }))).toBe(!viewAs);
+      expect(screen.queryByRole('button', { name: 'Generate LMS review PDF' })).not.toBeInTheDocument();
+      expect(completeMigratedReview).not.toHaveBeenCalled();
     });
   });
 
-  it('keeps completion intact after PDF generation fails and permits an explicit retry', async () => {
+  it('keeps completion intact after PDF preparation fails and permits another download', async () => {
     const missing = reviewFor('PR', 'completed');
     delete missing.pdf;
-    vi.mocked(fetchReviewInstanceForm).mockResolvedValueOnce(missing).mockResolvedValueOnce(reviewFor('PR', 'completed'));
-    vi.mocked(generateMigratedReviewPdf).mockRejectedValueOnce(new Error('The LMS PDF could not be generated. Retry this action.'))
-      .mockResolvedValueOnce({ available: true, documentId: 7 });
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(missing);
+    vi.mocked(downloadReviewInstancePdf).mockRejectedValueOnce(new Error('Unable to prepare the signed PDF. Please try again.'))
+      .mockResolvedValueOnce(undefined);
     mount(missing.instance.id);
-    expect(await screen.findByRole('button', { name: 'Download signed PDF' })).toBeDisabled();
-    fireEvent.click(screen.getByRole('button', { name: 'Generate LMS review PDF' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('Retry this action');
+    fireEvent.click(await screen.findByRole('button', { name: 'Download signed PDF' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Unable to prepare the signed PDF. Please try again.');
     expect(screen.getByText('Review completed')).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Download signed PDF' })).toBeDisabled();
-    fireEvent.click(screen.getByRole('button', { name: 'Generate LMS review PDF' }));
+    expect(screen.getByRole('button', { name: 'Download signed PDF' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Download signed PDF' }));
     await waitFor(() => expect(screen.getByRole('button', { name: 'Download signed PDF' })).toBeEnabled());
-    expect(generateMigratedReviewPdf).toHaveBeenCalledTimes(2);
+    expect(downloadReviewInstancePdf).toHaveBeenCalledTimes(2);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(generateMigratedReviewPdf).not.toHaveBeenCalled();
     expect(completeMigratedReview).not.toHaveBeenCalled();
-    expect(downloadReviewInstancePdf).not.toHaveBeenCalled();
   });
 });
 
 describe('Monthly Coaching Meeting signature summary + signed PDF', () => {
+  it('does not offer migrated generation when a historical original PDF is unavailable', async () => {
+    const imported = mcmDefinition('completed');
+    imported.source = 'aptem';
+    imported.migratedForm = false;
+    imported.instance = { ...imported.instance, id: 'imported-review:historical', reviewTemplateId: '' };
+    imported.template = { ...imported.template, reviewTypeCode: 'aptem_mcm' };
+    imported.pdf = { available: false, reason: 'The original Aptem PDF is unavailable.' };
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(imported);
+    mount(imported.instance.id);
+    await screen.findByDisplayValue('Review the next module');
+    const download = screen.getByRole('button', { name: 'Download signed PDF' });
+    expect(download).toBeDisabled();
+    fireEvent.click(download);
+    expect(screen.queryByRole('button', { name: 'Generate LMS review PDF' })).not.toBeInTheDocument();
+    expect(downloadReviewInstancePdf).not.toHaveBeenCalled();
+    expect(generateMigratedReviewPdf).not.toHaveBeenCalled();
+  });
+
   it('shows the same PDF download for a completed imported Aptem MCM', async () => {
     const imported = mcmDefinition('completed');
     imported.source = 'aptem';

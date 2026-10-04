@@ -390,8 +390,8 @@ export function LearnerReviewInstanceForm({
       <div ref={signatureSection} tabIndex={-1} aria-label="Signature step" className="scroll-mt-6 space-y-3 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500">
         <ReviewSignatures signatures={definition.signatures} />
         {(definition.source !== 'aptem' || definition.instance?.status === 'completed') && <ReviewPdfDownload
-          availability={definition.migratedForm && !definition.pdf?.available
-            ? { available: false, reason: 'The signed PDF is not available yet.' }
+          availability={definition.migratedForm
+            ? { available: definition.instance?.status === 'completed', reason: 'Available after completion.' }
             : definition.pdf}
           onDownload={onDownload}
         />}
