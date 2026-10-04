@@ -157,6 +157,27 @@ class MigratedBindingFlowTests(TestCase):
         self.assertEqual(json.loads(response.content)["summaryBinding"]["status"], "no-binding")
         self.assertEqual(self.overlay.answers, {"other": "Keep this answer"})
         self.assertEqual(self.overlay.template_snapshot, before)
+        self.assertEqual(json.loads(response.content)["answerVersion"], answer_version(self.overlay))
+        self.assertEqual(json.loads(response.content)["reviewAnswers"], self.overlay.answers)
+
+    def test_unbound_summary_save_returns_the_new_form_version(self):
+        self.template.definition_json["sections"][0]["fields"][0].pop("semanticKey")
+        self.template.save()
+        self.overlay.template_snapshot = snapshot_for(self.template)
+        self.overlay.meeting_intelligence = {"summary": {"overview": "Original"}, "summaryStatus": "ready"}
+        self.overlay.save()
+        before = answer_version(self.overlay)
+        request = self.factory.patch("/", data=json.dumps({"summary": {"overview": "Coach revision"}}), content_type="application/json")
+        request.login_account = SimpleNamespace(email=OWNER)
+        with patch.object(intelligence, "_coach_review", return_value=(OWNER, self.definition)):
+            response = unwrap(intelligence.migrated_review_summary)(request, self.overlay.event_key)
+        self.assertEqual(response.status_code, 200)
+        self.overlay.refresh_from_db()
+        data = json.loads(response.content)
+        self.assertNotEqual(data["answerVersion"], before)
+        self.assertEqual(data["answerVersion"], answer_version(self.overlay))
+        self.assertEqual(data["reviewAnswers"], self.overlay.answers)
+        self.assertEqual(self.save({"other": "Next answer"}, version=data["answerVersion"]).status_code, 200)
 
     def test_manual_edit_and_clear_preserve_original_on_repeated_and_new_transcript_checks(self):
         self.check()
@@ -211,6 +232,10 @@ class MigratedBindingFlowTests(TestCase):
         self.assertEqual(len(self.overlay.answers["recap"]), 4000)
 
     def test_ai_failure_and_no_transcript_preserve_answers_and_allow_manual_required_completion(self):
+        # The required rule belongs to the effective template as well as the
+        # working snapshot now that submission revalidates its definition.
+        self.template.definition_json["sections"][0]["fields"][0]["mandatory"] = True
+        self.template.save()
         self.overlay.template_snapshot["sections"][0]["fields"][0]["mandatory"] = True
         self.overlay.save()
         response, _ = self.check(ai_error=RuntimeError("synthetic"))

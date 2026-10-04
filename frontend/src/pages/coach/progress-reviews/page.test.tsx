@@ -104,6 +104,18 @@ describe('progress review list navigation and filters', () => {
     expect(filters.getByRole('button', { name: 'Not Scheduled1' })).toBeVisible();
   });
 
+  it('shows the latest completed PR with the dashboard age colours before the review date', async () => {
+    fetchEvents.mockResolvedValue({ events: [
+      review(30, { learner: 'History Learner', learnerId: '30', status: 'completed', scheduledDate: '2026-07-01', reviewCompletedAt: '2026-07-01T15:00:00Z' }),
+      review(31, { learner: 'History Learner', learnerId: '30', status: 'scheduled', scheduledDate: '2026-09-22' }),
+    ] });
+    mount();
+    const row = within((await screen.findByText('History Learner')).closest('tr')!);
+    const headers = screen.getAllByRole('columnheader').map(header => header.textContent);
+    expect(headers.indexOf('Last PR')).toBeLessThan(headers.indexOf('Date & time'));
+    expect(row.getByLabelText('Last PR: 01 Jul 2026; 75 days ago')).toHaveAttribute('data-tone', 'warning');
+  });
+
   it('loads past and upcoming progress reviews across all months', async () => {
     mount();
     await screen.findByText('Scheduled Review');
@@ -153,9 +165,23 @@ describe('progress review list navigation and filters', () => {
   it('opens View on the progress review detail page without expanding the row', async () => {
     mount();
     await screen.findByText('Scheduled Review');
-    fireEvent.click(within(screen.getByText('Scheduled Review').closest('tr')!).getByRole('button', { name: 'View' }));
+    fireEvent.click(within(screen.getByText('Scheduled Review').closest('tr')!).getByRole('button', { name: 'More actions for Scheduled Review' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'View details' }));
     expect(await screen.findByText('Review details page')).toBeVisible();
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/progress-reviews/progress-review%3A2');
+  });
+
+  it('moves Schedule into the MCM-style actions menu', async () => {
+    mount();
+    const learner = await screen.findByText('Needs Schedule');
+    const table = learner.closest('table')!;
+    expect(within(table).queryByRole('columnheader', { name: 'Schedule' })).toBeNull();
+
+    const row = within(learner.closest('tr')!);
+    fireEvent.click(row.getByRole('button', { name: 'More actions for Needs Schedule' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Schedule' }));
+
+    expect(screen.getByRole('dialog', { name: 'Schedule progress review' })).toBeVisible();
   });
 
   it('removes Schedule from progress reviews that cannot be booked', async () => {
@@ -167,7 +193,12 @@ describe('progress review list navigation and filters', () => {
     mount();
     await screen.findByText('In Progress Review');
     for (const learner of ['In Progress Review', 'Awaiting Review', 'Completed Review']) {
-      expect(within(screen.getByText(learner).closest('tr')!).queryByRole('button', { name: /Schedule/ })).toBeNull();
+      const row = within(screen.getByText(learner).closest('tr')!);
+      expect(row.queryByRole('button', { name: /Schedule/ })).toBeNull();
+      fireEvent.click(row.getByRole('button', { name: `More actions for ${learner}` }));
+      const menu = screen.getByRole('menu', { name: `Actions for ${learner}` });
+      expect(within(menu).queryByRole('menuitem', { name: /Schedule/ })).toBeNull();
+      fireEvent.keyDown(menu, { key: 'Escape' });
     }
   });
 
@@ -180,15 +211,14 @@ describe('progress review list navigation and filters', () => {
     await screen.findByText('Imported Scheduled');
 
     const unscheduledRow = within(screen.getByText('Imported Unscheduled').closest('tr')!);
-    expect(unscheduledRow.getByRole('button', { name: 'View Form' })).toBeVisible();
+    expect(unscheduledRow.getByRole('button', { name: 'View form' })).toBeVisible();
     expect(unscheduledRow.queryByRole('button', { name: 'Schedule' })).not.toBeInTheDocument();
     expect(within(screen.getByText('Imported Scheduled').closest('tr')!).queryByRole('button', { name: 'Reschedule' })).not.toBeInTheDocument();
 
     const scheduledRow = within(screen.getByText('Imported Scheduled').closest('tr')!);
-    expect(scheduledRow.getAllByRole('button').map(button => button.textContent)).toEqual([
-      'View', 'View Form', 'Create Slides',
-    ]);
-    fireEvent.click(scheduledRow.getByRole('button', { name: 'View Form' }));
+    expect(scheduledRow.getByRole('button', { name: 'View form' })).toBeVisible();
+    expect(scheduledRow.getByRole('button', { name: 'More actions for Imported Scheduled' })).toBeVisible();
+    fireEvent.click(scheduledRow.getByRole('button', { name: 'View form' }));
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A21');
     expect(openReview).not.toHaveBeenCalled();
   });
@@ -199,7 +229,7 @@ describe('progress review list navigation and filters', () => {
     ] });
     mount();
     const row = within((await screen.findByText('Imported Completed')).closest('tr')!);
-    fireEvent.click(row.getByRole('button', { name: 'View Form' }));
+    fireEvent.click(row.getByRole('button', { name: 'View form' }));
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A21');
     expect(screen.getByTestId('route')).not.toHaveTextContent('/coach/learner-case-file');
   });
@@ -209,7 +239,7 @@ describe('progress review list navigation and filters', () => {
       review(22, { id: 'imported-review:22', eventKey: 'imported-review:22', learner: 'Imported Draft', status: 'confirmed', scheduledDate: '2026-09-23', scheduledTime: '11:00', reviewSource: 'aptem', aptemReviewId: '22', hasReviewForm: true, reviewTemplateId: undefined }),
     ] });
     mount();
-    fireEvent.click(within((await screen.findByText('Imported Draft')).closest('tr')!).getByRole('button', { name: 'View Form' }));
+    fireEvent.click(within((await screen.findByText('Imported Draft')).closest('tr')!).getByRole('button', { name: 'View form' }));
     expect(screen.getByTestId('route')).toHaveTextContent('/coach/review-instances/imported-review%3A22');
     expect(openReview).not.toHaveBeenCalled();
   });

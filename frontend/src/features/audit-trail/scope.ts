@@ -72,3 +72,30 @@ export function windowLimitFor(workspace: string | undefined): number {
   return workspace && UNLIMITED_WORKSPACES.has(workspace) ? 3650 : DEFAULT_WINDOW_DAYS;
 }
 
+/**
+ * The Changes feed reads saved history -- the revision log, and the records'
+ * own timestamps before it -- which is kept, unlike page activity. So every
+ * workspace, and the system-wide door, may look back 30 or 60 days. Seven
+ * stays the default so an ordinary page load reads no more than it did.
+ * Matches `MAX_CHANGE_WINDOW_DAYS` on the server.
+ */
+export const MAX_CHANGE_WINDOW_DAYS = 60;
+
+const CHANGE_WINDOW_OPTIONS = [
+  { value: '30', label: 'Last 30 days' },
+  { value: '60', label: 'Last 60 days' },
+];
+
+export function changeWindowOptionsFor(workspace: string | undefined) {
+  const short = windowOptionsFor(undefined);
+  if (workspace && UNLIMITED_WORKSPACES.has(workspace)) {
+    const [thirty, ...longer] = LONG_WINDOW_OPTIONS;
+    return [...short, thirty, CHANGE_WINDOW_OPTIONS[1], ...longer];
+  }
+  return [...short, ...CHANGE_WINDOW_OPTIONS];
+}
+
+export function changeWindowLimitFor(workspace: string | undefined): number {
+  return workspace && UNLIMITED_WORKSPACES.has(workspace) ? 3650 : MAX_CHANGE_WINDOW_DAYS;
+}
+

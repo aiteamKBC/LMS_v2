@@ -177,6 +177,29 @@ describe('Dashboard training plan controls', () => {
     expect(screen.queryByRole('region', { name: 'Module progress' })).not.toBeInTheDocument();
   });
 
+  it('uses coach table activity totals instead of the module slot counts', () => {
+    render(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={summarySubjects} kind="commercial" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} activityOverviewOnly programmeSnapshot={{
+        overall: 87.26, activitiesCompleted: 137, activitiesTotal: 157, activitiesPercent: 87.26,
+        otjhActual: 164.87, otjhTarget: 576, ksb: 85.27, attendancePresent: 23, attendanceTotal: 45,
+      }} /></MemoryRouter>);
+    const chart = within(screen.getByRole('region', { name: 'Whole programme progress' }));
+    expect(chart.getByText('137 / 157 completed across all modules')).toBeVisible();
+    expect(chart.queryByText('3 / 7 completed across all modules')).not.toBeInTheDocument();
+    expect(chart.getByRole('img')).toHaveAccessibleName(/Activities: 87.26%/);
+  });
+
+  it('does not replace unavailable coach totals with module counts', () => {
+    render(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={summarySubjects} kind="commercial" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} activityOverviewOnly programmeSnapshot={{
+        overall: null, activitiesCompleted: null, activitiesTotal: null, activitiesPercent: null,
+        otjhActual: null, otjhTarget: null, ksb: null, attendancePresent: null, attendanceTotal: null,
+      }} /></MemoryRouter>);
+    const chart = within(screen.getByRole('region', { name: 'Whole programme progress' }));
+    expect(chart.getByText('Activity progress unavailable')).toBeVisible();
+    expect(chart.queryByText('3 / 7 completed across all modules')).not.toBeInTheDocument();
+  });
+
   it('renders programme modules as selectable cards with a visible progress track', () => {
     renderBoard(fixture(), summarySubjects, vi.fn(), undefined, undefined, true);
     const programme = within(screen.getByRole('region', { name: 'Programme module progress' }));

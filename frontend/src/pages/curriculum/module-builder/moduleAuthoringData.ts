@@ -381,6 +381,103 @@ export function moduleWeekSessionSlots(
 }
 
 /**
+ * How many live sessions one authored week has a planned date for.
+ *
+ * The group's delivery days are what a week can plan: a Monday group gives
+ * each week one, a Mon+Fri group two. The Nth live session of the week takes
+ * the Nth of them, and one beyond them runs on a date its author sets by hand
+ * or on no date at all.
+ *
+ * Read from the fetched plan wherever it reaches, so a week the group pauses
+ * correctly answers nothing. A week the plan has NOT been recomputed for yet —
+ * one just added in the builder, or a template week appended a moment ago —
+ * would otherwise read as zero slots and have every live session called
+ * unplanned; the module's own delivery pattern is the honest answer there.
+ */
+export function weekDeliverySlotCapacity(
+  module: ModuleCatalogueItem | null | undefined,
+  weekIndex: number,
+  plannedSessions?: ModuleWeekSessionPlan['sessions'],
+): number {
+  if (!module || weekIndex < 0) return 0;
+  const plan = plannedSessions || [];
+  const plannedWeeks = plan.reduce((furthest, session) => Math.max(furthest, Number(session.weekNumber) || 0), 0);
+  if (plannedWeeks > 0 && weekIndex + 1 <= plannedWeeks && weekIndex < module.weekStructure.length) {
+    return moduleWeekSessionSlots(module, plan)[weekIndex] ?? 0;
+  }
+  return moduleDeliveryDaysPerWeek(module);
+}
+
+/** A week asked to hold more live sessions than it has planned dates for. */
+export interface LiveSessionSlotOverflow {
+  weekNumber: number;
+  /** Planned delivery dates this week owns. */
+  capacity: number;
+  /** Live sessions the week already holds. */
+  existing: number;
+  /** Live sessions about to be added to it. */
+  adding: number;
+  /** How many of them would have no planned date. */
+  beyond: number;
+}
+
+/**
+ * Whether adding live sessions to a week would outrun its delivery days.
+ *
+ * `null` when they all fit — the caller then adds them with nothing to say.
+ * Otherwise the counts behind the warning, so the screen can name the gap
+ * rather than refuse the edit: an unplanned live session is allowed, it simply
+ * has no date until somebody gives it one, and the author is the one who
+ * decides whether that is what they meant.
+ */
+export function liveSessionSlotOverflow(
+  module: ModuleCatalogueItem | null | undefined,
+  weekIndex: number,
+  adding: number,
+  plannedSessions?: ModuleWeekSessionPlan['sessions'],
+): LiveSessionSlotOverflow | null {
+  if (!module || adding <= 0) return null;
+  const week = module.weekStructure[weekIndex];
+  if (!week) return null;
+  const capacity = weekDeliverySlotCapacity(module, weekIndex, plannedSessions);
+  const existing = (week.components || []).filter(component => component.type === 'live-session').length;
+  const beyond = Math.max(0, existing + adding - capacity);
+  if (!beyond) return null;
+  return { weekNumber: Number(week.weekNumber) || weekIndex + 1, capacity, existing, adding, beyond };
+}
+
+/**
+ * What to tell the author before adding a live session the week cannot date.
+ *
+ * Says what the group delivers, what that leaves unplanned, and what happens
+ * if they go ahead — in those words, not in slot counts. Nothing is refused:
+ * the buttons decide, and the caller only adds on a yes.
+ */
+export function liveSessionSlotOverflowNotice(overflow: LiveSessionSlotOverflow): { title: string; text: string } {
+  const { weekNumber, capacity, adding, beyond } = overflow;
+  const delivers = capacity === 0
+    ? 'This group delivers on no day of the week'
+    : capacity === 1
+      ? 'This group delivers on one day a week'
+      : `This group delivers on ${capacity} days a week`;
+  const held = capacity === 0
+    ? `week ${weekNumber} has no planned date at all`
+    : capacity === 1
+      ? `week ${weekNumber} has one planned date, and its live session already has it`
+      : `week ${weekNumber} has ${capacity} planned dates, and its live sessions already have them`;
+  const subject = beyond === 1
+    ? (adding === 1 ? 'The live session you are adding' : 'One of the live sessions you are adding')
+    : `${beyond} of the live sessions you are adding`;
+  const verb = beyond === 1 ? 'has' : 'have';
+  return {
+    title: beyond === 1 ? 'This live session will have no date' : `${beyond} of these live sessions will have no date`,
+    text: `${delivers}, so ${held}. ${subject} ${verb} no date to run on. `
+      + `${beyond === 1 ? 'It' : 'They'} will show as "No date yet" until you set one by hand, and `
+      + `${beyond === 1 ? 'it is' : 'they are'} left out of the module's Teams calendar until then.`,
+  };
+}
+
+/**
  * The dates each authored week runs on, in week order.
  *
  * A week owns a run of dates, not one date: `week.sessionDate` is only the first

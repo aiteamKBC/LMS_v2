@@ -15047,16 +15047,17 @@ def authoring_bulk_upsert(table, key_columns, payloads, batch_size=100):
         seen_columns.add('created_at')
     update_columns = [column for column in all_columns if column not in set(key_columns) | {'created_at'}]
     quoted_columns = ', '.join(quote_ident(column) for column in all_columns)
-    if connection.vendor == 'postgresql':
-        conflict = ', '.join(quote_ident(column) for column in key_columns)
-        assignments = ', '.join(f'{quote_ident(column)} = excluded.{quote_ident(column)}' for column in update_columns)
-        row_placeholder = f'({", ".join(["%s"] * len(all_columns))})'
-        prefix = f'insert into {authoring_table_name(table)} ({quoted_columns}) values '
-        suffix = f' on conflict ({conflict}) do update set {assignments}'
-    else:
-        row_placeholder = f'({", ".join(["%s"] * len(all_columns))})'
-        prefix = f'insert or replace into {authoring_table_name(table)} ({quoted_columns}) values '
-        suffix = ''
+    # One statement shape on both vendors. SQLite's `insert or replace` deleted
+    # the old row and wrote a fresh `created_at`, so an edit could not be told
+    # from a create; `on conflict ... do update` keeps the stored `created_at`
+    # (it is never in `update_columns`), and SQLite has supported it and
+    # `returning` since 3.24 / 3.35.
+    conflict = ', '.join(quote_ident(column) for column in key_columns)
+    assignments = ', '.join(f'{quote_ident(column)} = excluded.{quote_ident(column)}' for column in update_columns)
+    row_placeholder = f'({", ".join(["%s"] * len(all_columns))})'
+    prefix = f'insert into {authoring_table_name(table)} ({quoted_columns}) values '
+    suffix = f' on conflict ({conflict}) do update set {assignments} returning *'
+    saved = []
     with connection.cursor() as cursor:
         for start in range(0, len(payloads), batch_size):
             batch = payloads[start:start + batch_size]
@@ -15068,15 +15069,20 @@ def authoring_bulk_upsert(table, key_columns, payloads, batch_size=100):
                 values.extend(row.get(column) for column in all_columns)
             placeholders = ', '.join([row_placeholder] * len(batch))
             cursor.execute(f'{prefix}{placeholders}{suffix}', values)
+            saved.extend(rows_as_dicts(cursor))
     # Deliberately one line for the whole call, not one per row: a tree save
     # bulk-writes thousands of components and a per-row trace would bury
     # everything else in the request.
     log_curriculum_storage('bulk_upsert', table, rows=len(payloads))
-    # The payloads are what was written, so they serve as the snapshots without
-    # reading the rows back. record_rows drops the ones whose content is
-    # unchanged, which on this path is nearly all of them: a tree save rewrites
-    # every component in the module whether or not the author touched it.
-    versioning.record_rows(table, payloads)
+    # The rows the statement returned are the snapshots, so history still costs
+    # no extra read. They have to be the stored rows and not the payloads: only
+    # the stored row carries the `created_at` / `updated_at` pair that tells a
+    # record made by this save from one that predates history and is merely
+    # being edited. The payloads carry neither, so every create read as "first
+    # recorded". record_rows drops the rows whose content is unchanged, which
+    # on this path is nearly all of them: a tree save rewrites every component
+    # in the module whether or not the author touched it.
+    versioning.record_rows(table, saved)
 
 
 def free_programme_upsert(table, key_columns, payload):

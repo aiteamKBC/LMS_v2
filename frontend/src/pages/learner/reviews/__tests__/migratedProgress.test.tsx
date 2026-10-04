@@ -15,7 +15,10 @@ const definition: LearnerReviewDefinition = {
     signatures: { advisor: true, participant: true, employer: true, referrer: false },
     visibleTo: { advisor: true, participant: true, employer: true, referrer: false },
     recurrence: { interval: 0, unit: 'none' }, notifications: {}, allowEditingPriorDays: 0 },
-  sections: [],
+  sections: [{ id: 'summary', title: 'Discussion', enabled: true, displayOrder: 0, estimatedMinutes: 0, fields: [
+    { id: 'recap', title: 'Meeting Summary', fieldType: 'text_multiline', required: false, displayOrder: 0,
+      configuration: { semanticKey: 'meeting_summary' }, answer: 'Saved coach summary' },
+  ] }],
   signatures: { advisor: { required: true, signed: true }, participant: { required: true, signed: true },
     employer: { required: true, signed: true }, referrer: { required: false, signed: false } },
   progressSnapshot: { calculatedFrom: '2025-01-02', calculatedAt: '2026-10-04T10:00:00Z', calculatedBy: 'coach@example.invalid',
@@ -31,6 +34,15 @@ describe('migrated progress for review participants', () => {
     expect(screen.getByRole('region', { name: 'Learning progress' })).toBeVisible();
     expect(screen.getByText('64%')).toBeVisible();
     expect(screen.queryByRole('button', { name: /^(Calculate|Recalculate)$/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Generate from Teams' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Upload Transcript' })).not.toBeInTheDocument();
+    expect(document.querySelector('input[type="file"]')).not.toBeInTheDocument();
+  });
+
+  it.each(['participant', 'employer'] as const)('keeps coach actions hidden from %s on editable lifecycle reviews too', viewerRole => {
+    render(<LearnerReviewInstanceForm definition={{ ...definition, instance: { ...definition.instance, status: 'in-progress' } }} viewerRole={viewerRole} />);
+    expect(screen.queryByRole('button', { name: /^(Calculate|Recalculate|Generate from Teams|Upload Transcript|Check Session)$/ })).not.toBeInTheDocument();
+    expect(document.querySelector('input[type="file"]')).not.toBeInTheDocument();
   });
 
   it('keeps an uncalculated continuation visibly uncalculated', () => {

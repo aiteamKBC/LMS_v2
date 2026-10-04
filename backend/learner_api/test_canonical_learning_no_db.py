@@ -64,6 +64,23 @@ class CanonicalLearningTests(unittest.TestCase):
         }))
         self.assertFalse(self.scope['counts_as_completed']({'activity_status': 'not accepted'}))
 
+    def test_estimate_metadata_does_not_override_stored_hours_acceptance_or_month(self):
+        entry = {'id': 1, 'accepted': True, 'actual_seconds': 3600,
+                 'reporting_month': '2026-09', 'ksbs': [],
+                 'source_payload': {'reconciliation': {'reporting_allocation': {
+                     'estimated': True, 'method': 'historical_estimate'}}},
+                 'segments': [{'id': 10, 'actual_seconds': 7200, 'reporting_month': '2026-08'}]}
+        rejected = {**entry, 'id': 2, 'accepted': False}
+        self.assertTrue(self.scope['counts_as_actual'](entry))
+        self.assertFalse(self.scope['counts_as_actual'](rejected))
+        self.assertEqual(self.scope['metrics_from_records']([entry, rejected], {})['otjh']['actual'], 1)
+        self.query.return_value = []
+        rows = self.scope['rows_for'](self.owner, [entry])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['actual_hours'], 1)
+        self.assertEqual(rows[0]['reporting_month'], '2026-09')
+        self.assertTrue(rows[0]['actual_estimated'])
+
     def test_material_preview_requires_exact_unique_activity_or_component_id(self):
         self.scope['__package__'] = 'learner_api'
         record = {'id': 20, 'actual_seconds': 9000,
@@ -239,6 +256,67 @@ class CanonicalLearningTests(unittest.TestCase):
                       'account_record_id': 271, 'email': 'learner@example.test',
                       'account_email': 'learner@example.test', 'account_aptem_id': '3582'}
 
+
+    def test_current_completion_cannot_replace_ledger_hours_or_add_submissions(self):
+        stored = [
+            {'id': 1, 'accepted': True, 'actual_seconds': 1200, 'reporting_month': '2026-08', 'ksbs': []},
+            {'id': 2, 'accepted': False, 'actual_seconds': None, 'reporting_month': '2026-09', 'ksbs': []},
+            {'id': 3, 'accepted': True, 'actual_seconds': 1800, 'reporting_month': None, 'ksbs': []},
+        ]
+        current = [
+            {**stored[0], 'actual_seconds': 9900, 'reporting_month': '2026-10', 'accepted': False,
+             'completed': True, 'achieved_score': 80, 'total_score': 100},
+            {**stored[1], 'actual_seconds': 3600, 'accepted': True, 'completed': True},
+            {'id': 'reflection:4', 'accepted': True, 'actual_seconds': 7200, 'ksbs': []},
+        ]
+        result = self.scope['progress_records_with_completion'](stored, current)
+        self.assertEqual([r['id'] for r in result], [1, 2, 3])
+        self.assertEqual([r['actual_seconds'] for r in result], [1200, None, 1800])
+        self.assertEqual([r['accepted'] for r in result], [True, False, True])
+        self.assertEqual([r['reporting_month'] for r in result], ['2026-08', '2026-09', None])
+        self.assertTrue(result[0]['completed'])
+        self.assertEqual(result[0]['achieved_score'], 80)
+        self.assertNotIn('completed', stored[0])
+        self.assertEqual(self.scope['metrics_from_records'](result, {})['otjh']['actual'], .8333)
+
+    def test_single_reader_retains_distinct_accepted_rows_sharing_a_source_key(self):
+        first = {'id': 1, 'canonical_activity_key': 'shared', 'accepted': True,
+                 'actual_seconds': 1800, 'reporting_month': '2026-08'}
+        second = {**first, 'id': 2, 'actual_seconds': 3600}
+        self.query.return_value = [{'payload': r, 'ksbs': []} for r in (first, second)]
+        self.scope['current_records'] = lambda owner, loaded: [
+            {**loaded[0], 'actual_seconds': 99999},
+            {'id': 'reflection:3', 'accepted': True, 'actual_seconds': 7200},
+        ]
+        result = self.scope['entries_for'](self.owner)
+        self.assertEqual([r['id'] for r in result], [1, 2])
+        self.assertEqual(self.scope['metrics_from_records'](result, {})['otjh']['actual'], 1.5)
+        sql, params = self.query.call_args.args
+        self.assertEqual(params, [510])
+        self.assertIn('progress.deleted_at IS NULL', sql)
+        self.assertNotIn('row_number()', sql)
+
+    def test_bulk_reader_uses_stored_seconds_despite_segments_and_current_saves(self):
+        self.query.side_effect = [
+            [self.owner],
+            [{'owner_id': 510, 'id': 1, 'accepted': True, 'actual_seconds': 3600,
+              'reporting_month': '2026-08', 'source_payload': {}}],
+            [],
+            [{'progress_id': 1, 'payload': {'id': 10, 'actual_seconds': 9000, 'reporting_month': '2026-09'}}],
+            [], [], [],
+        ]
+        self.scope['current_records_bulk'] = lambda owners, records: {
+            271: [{**records[510][0], 'actual_seconds': 18000, 'reporting_month': '2026-10'},
+                  {'id': 'reflection:7', 'accepted': True, 'actual_seconds': 3600, 'ksbs': []}]
+        }
+        result = self.scope['metrics_bulk']([271])
+        self.assertEqual(result[271]['otjh']['actual'], 1)
+        self.assertEqual(result[271]['programme']['total'], 1)
+        sql, params = self.query.call_args_list[1].args
+        self.assertEqual(params, [[510]])
+        self.assertIn('p.deleted_at IS NULL', sql)
+        self.assertNotIn('canonical_rank', sql)
+
     def test_unlinked_learner_does_not_guess_identity(self):
         self.query.return_value = []
         self.assertIsNone(self.scope['profile'](272))
@@ -311,8 +389,9 @@ class CanonicalLearningTests(unittest.TestCase):
         self.assertTrue(row['accepted'])  # preserve the stored decision for the detail view
         self.assertEqual(row['source_system'], 'old_lms')
 
-    def test_segments_replace_parent_hours_without_multiplying_activity_count(self):
-        entry = {'id': 1, 'accepted': True, 'actual_seconds': 99999, 'ksbs': ['K1'],
+    def test_progress_month_and_seconds_remain_authoritative_with_segments(self):
+        entry = {'id': 1, 'accepted': True, 'actual_seconds': 7200, 'ksbs': ['K1'],
+                 'reporting_month': '2026-09',
                  'segments': [{'id': 10, 'actual_seconds': 1800, 'reporting_month': '2026-07'},
                               {'id': 11, 'actual_seconds': 3600, 'reporting_month': '2026-08'}]}
         self.scope['profile'] = Mock(return_value=self.owner)
@@ -320,13 +399,13 @@ class CanonicalLearningTests(unittest.TestCase):
         self.scope['targets_for'] = Mock(return_value={})
         result = self.scope['metrics'](271)
         self.assertEqual(result['programme']['total'], 1)
-        self.assertEqual(result['otjh']['actual'], 1.5)
+        self.assertEqual(result['otjh']['actual'], 2)
         self.scope['entries_for'] = Mock(return_value=[entry])
         self.query.return_value = [{'id': 9, 'progress_id': 1, 'display_name': 'Evidence.pdf', 'content_type': 'application/pdf'}]
         rows = self.scope['rows_for'](self.owner)
-        self.assertEqual([r['reporting_month'] for r in rows], ['2026-07', '2026-08'])
-        self.assertEqual([r['actual_hours'] for r in rows], [.5, 1])
-        self.assertNotEqual(rows[0]['id'], rows[1]['id'])
+        self.assertEqual([r['reporting_month'] for r in rows], ['2026-09'])
+        self.assertEqual([r['actual_hours'] for r in rows], [2])
+        self.assertEqual(rows[0]['progress_id'], 1)
         self.assertTrue(all(len(r['documents']) == 1 for r in rows))
 
     def test_typed_course_lineage_takes_precedence_over_legacy_payload(self):
@@ -541,8 +620,8 @@ class CanonicalLearningTests(unittest.TestCase):
         self.assertEqual(len(rows[0]['documents']), 1)
         sql, params = self.query.call_args_list[1].args
         self.assertIn('progress.deleted_at IS NULL', sql)
-        self.assertIn('canonical_activity_key', sql)
-        self.assertIn('canonical_rank=1', sql)
+        self.assertNotIn('row_number()', sql)
+        self.assertNotIn('canonical_rank=1', sql)
         self.assertIn('progress_ksbs AS', sql)
         self.assertIn('reporting_segments AS', sql)
         self.assertIn('activity_sources AS', sql)
@@ -551,21 +630,22 @@ class CanonicalLearningTests(unittest.TestCase):
         self.assertEqual(params, [510])
         self.assertIn('s.canonical_progress_id=p.id', sql)
 
-    def test_otjh_activity_log_uses_accepted_segments_and_keeps_ksbs(self):
+    def test_otjh_activity_log_uses_accepted_progress_seconds_and_keeps_ksbs(self):
         records = [{
             'id': 7, 'kind': 'component', 'component_ref': 'COMP-7',
             'component_title': 'Reading', 'component_type': 'reading',
-            'accepted': True, 'actual_seconds': 99999, 'expected_otjh': 2,
+            'accepted': True, 'actual_seconds': 10800, 'expected_otjh': 2,
+            'reporting_started_at': '2026-09-02T09:00:00Z',
             'ksbs': ['K1'], 'segments': [
                 {'id': 70, 'actual_seconds': 1800, 'reporting_started_at': '2026-08-01T09:00:00Z'},
                 {'id': 71, 'actual_seconds': 3600, 'reporting_started_at': '2026-09-01T09:00:00Z'},
             ],
         }, {'id': 8, 'accepted': False, 'actual_seconds': 7200, 'ksbs': []}]
         rows = self.scope['otjh_activities'](records)
-        self.assertEqual([row['actualSeconds'] for row in rows], [1800, 3600])
-        self.assertEqual(sum(row['actualSeconds'] for row in rows), 5400)
+        self.assertEqual([row['actualSeconds'] for row in rows], [10800])
+        self.assertEqual(rows[0]['id'], '7:0')
         self.assertEqual(rows[0]['expectedOtjh'], 2)
-        self.assertIsNone(rows[1]['expectedOtjh'])
+        self.assertEqual(rows[0]['submittedAt'], '2026-09-02T10:00:00+01:00')
         self.assertEqual(rows[0]['ksbs'], ['K1'])
 
     def test_missing_timestamp_is_not_invented_and_rejection_is_preserved(self):

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Swal from 'sweetalert2';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { type EvidenceRecord } from '@/api/evidence';
@@ -12,7 +12,6 @@ import { SearchInput } from '@/components/ui/FilterToolbar';
 import { PageContainer } from '@/components/ui/PageContainer';
 import { PageTabs, type PageTabItem } from '@/components/ui/PageTabs';
 import { Pagination } from '@/components/ui/Pagination';
-import { Panel } from '@/components/ui/Panel';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { cn } from '@/lib/cn';
@@ -24,6 +23,7 @@ import { LearnerAvatar } from '../shared/LearnerIdentity';
 import { ModernDatePicker, ModernDurationPicker, ScheduleFieldLabel, ScheduleTimeInput } from '../shared/ScheduleControls';
 import ProgressReviewCompletionModal from '../shared/ProgressReviewCompletionModal';
 import { reviewInstancePath, reviewInstanceRouteState } from '../shared/reviewInstanceNavigation';
+import { ReviewAge } from '../shared/ReviewAge';
 import {
   type CoachCalendarEvent,
   type ScheduleFormState,
@@ -40,6 +40,7 @@ import {
   isInProgressEvent,
   isScheduledEvent,
   isCompletedEvent,
+  latestCompletedReviewDate,
   meetingUrl,
   needsScheduling,
   parseLocalDate,
@@ -57,6 +58,8 @@ import {
 } from './components/ProgressReviewSlidesModal';
 import ProgressReviewPptxModal from './components/ProgressReviewPptxModal';
 import { slidesTargetFromEvent } from './components/slidesTarget';
+import { MeetingActionsMenu } from '../monthly-coaching/components/MeetingActionsMenu';
+import styles from '../monthly-coaching/monthlyCoaching.module.css';
 import { bulkGenerateProgressReviews, fetchLatestRun } from '@/api/progressReviews';
 import { openReviewInstanceForEvent } from '@/api/reviewInstances';
 import {
@@ -1061,6 +1064,16 @@ export default function CoachProgressReviews() {
     ? 'Past and upcoming progress reviews across all months.'
     : `Progress reviews due or scheduled in ${selectedMonthLabel}.`;
   const selectedMonthEvents = allMonths ? events : events.filter(event => isEventInMonth(event, selectedMonth));
+  const learnerSuggestions = useMemo(() => Array.from(new Set(
+    events.map(event => event.learner?.trim()).filter((learner): learner is string => Boolean(learner)),
+  )).sort((left, right) => left.localeCompare(right)), [events]);
+  const lastPrByLearner = useMemo(
+    () => new Map(Array.from(new Set(events.map(event => event.learnerId).filter(Boolean))).map(learnerId => [
+      learnerId!,
+      latestCompletedReviewDate(events, learnerId!, 'progress-review'),
+    ])),
+    [events],
+  );
   const scheduledEvents = selectedMonthEvents.filter(event => isScheduledEvent(event));
   const inProgressEvents = selectedMonthEvents.filter(event => isInProgressEvent(event));
   const awaitingSignatureEvents = selectedMonthEvents.filter(event => isAwaitingSignatureEvent(event));
@@ -1320,123 +1333,75 @@ export default function CoachProgressReviews() {
 
   return (
     <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle="Progress Reviews" pageSubtitle="Manage learner progress reviews and sign-offs" userName={ownerName} userRole="Progress Coach">
-      <PageContainer>
-        {error ? (
-          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-[13px] text-red-700">
-            {error}
+      <PageContainer className={styles.page}>
+        <section className={styles.banner} aria-label="Progress review support">
+          <span aria-hidden="true" className={styles.dots} />
+          <svg aria-hidden="true" className={styles.waves} viewBox="0 0 800 200" preserveAspectRatio="none">
+            <defs>
+              <linearGradient id="progress-review-wave-a" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stopColor="var(--banner-wave-a)" stopOpacity="0" /><stop offset="1" stopColor="var(--banner-wave-a)" stopOpacity=".28" /></linearGradient>
+              <linearGradient id="progress-review-wave-b" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stopColor="var(--banner-wave-b)" stopOpacity="0" /><stop offset="1" stopColor="var(--banner-wave-b)" stopOpacity=".24" /></linearGradient>
+              <linearGradient id="progress-review-wave-c" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stopColor="var(--banner-wave-c)" stopOpacity="0" /><stop offset="1" stopColor="var(--banner-wave-c)" stopOpacity=".22" /></linearGradient>
+            </defs>
+            <path d="M0 200 C 180 200 260 60 430 70 S 650 170 800 120 L 800 200 Z" fill="url(#progress-review-wave-a)" />
+            <path d="M120 200 C 300 190 380 20 560 30 S 720 110 800 60 L 800 200 Z" fill="url(#progress-review-wave-b)" />
+            <path d="M340 200 C 470 170 560 110 680 130 S 770 170 800 150 L 800 200 Z" fill="url(#progress-review-wave-c)" />
+            <path d="M60 170 C 240 160 330 40 500 50 S 700 140 800 95" fill="none" stroke="var(--banner-wave-line)" strokeWidth="1.5" />
+          </svg>
+          <span aria-hidden="true" className={styles.glow} />
+          <div><h2>Review. Reflect. Progress.</h2><p>Meaningful reviews help learners stay on track and achieve their goals.</p></div>
+          <img src="/coach-meetings-calendar.webp" alt="" aria-hidden="true" width={312} height={312} />
+        </section>
+        {error ? <EmptyState variant="error" title="Unable to load progress reviews." description={error} /> : null}
+        <section className={styles.controlsCard} aria-label="Progress review filters and summary">
+          <div className={styles.toolbar}>
+            <div className={styles.monthNav} aria-label="Review month"><button type="button" onClick={() => changeMonth(addMonths(selectedMonth, -1))} aria-label="Previous month"><AppIcon className="ri-arrow-left-s-line text-xl" /></button><span>{selectedMonthLabel}</span><button type="button" onClick={() => changeMonth(addMonths(selectedMonth, 1))} aria-label="Next month"><AppIcon className="ri-arrow-right-s-line text-xl" /></button></div>
+            <button type="button" onClick={showAllMonths} aria-pressed={allMonths} className={styles.control}>All months<AppIcon className="ri-arrow-down-s-line" /></button>
+            {!selectedMonthIsCurrent ? <button type="button" onClick={() => changeMonth(startOfMonth())} className={styles.control}>Today</button> : null}
+            <SearchInput className={styles.search} value={searchTerm} suggestions={learnerSuggestions} onChange={handleSearchChange} placeholder="Search learners..." ariaLabel="Search progress reviews by learner" />
+            <button type="button" onClick={handleBulkGenerateSlides} disabled={bulkGenerating} className={styles.control}><AppIcon className={bulkGenerating ? 'ri-loader-4-line animate-spin' : 'ri-stack-line'} />{bulkGenerating ? 'Generating slides...' : 'Bulk generate slides'}</button>
+            <button type="button" onClick={openSchedulePicker} disabled={schedulableReviews.length === 0} className={cn(styles.control, styles.primary)}><AppIcon className="ri-add-line text-xl" />Schedule review</button>
           </div>
-        ) : null}
-
-        <Panel padding="none">
-          <div className="border-b border-foreground-100 px-4 py-5 md:px-5">
-            <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
-              <div className="flex shrink-0 flex-wrap items-center gap-2">
-                <div className="inline-flex items-center gap-2" aria-label="Review month">
-                  <button type="button" onClick={() => changeMonth(addMonths(selectedMonth, -1))} className="flex h-9 w-9 items-center justify-center rounded-lg border border-primary-100 bg-white text-primary-700 shadow-sm transition hover:bg-primary-50" aria-label="Previous month"><AppIcon className="ri-arrow-left-s-line text-lg" /></button>
-                  <span className="min-w-36 text-center text-[14px] font-bold text-primary-900">{selectedMonthLabel}</span>
-                  <button type="button" onClick={() => changeMonth(addMonths(selectedMonth, 1))} className="flex h-9 w-9 items-center justify-center rounded-lg border border-primary-100 bg-white text-primary-700 shadow-sm transition hover:bg-primary-50" aria-label="Next month"><AppIcon className="ri-arrow-right-s-line text-lg" /></button>
-                </div>
-                <button type="button" onClick={showAllMonths} aria-pressed={allMonths} className={cn('h-9 rounded-lg border px-3 text-[12px] font-semibold transition', allMonths ? 'border-primary-600 bg-primary-600 text-white' : 'border-primary-200 bg-primary-50 text-primary-700 hover:bg-primary-100')}>All months</button>
-                {!selectedMonthIsCurrent ? <button type="button" onClick={() => changeMonth(startOfMonth())} className="h-9 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-semibold text-primary-700 transition hover:bg-primary-100">Today</button> : null}
-              </div>
-              <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center xl:justify-end">
-                <div className="w-full sm:w-56"><SearchInput value={searchTerm} onChange={handleSearchChange} placeholder="Search learner name..." ariaLabel="Search progress reviews by learner" /></div>
-                <button type="button" onClick={handleBulkGenerateSlides} disabled={bulkGenerating} className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className={bulkGenerating ? 'ri-loader-4-line animate-spin' : 'ri-stack-line'} />{bulkGenerating ? 'Generating slides...' : 'Bulk generate slides'}</button>
-                <button type="button" onClick={openSchedulePicker} disabled={schedulableReviews.length === 0} className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg bg-primary-700 px-4 text-[12px] font-bold text-white shadow-sm transition hover:bg-primary-800 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className="ri-add-line text-lg" />Schedule review</button>
-              </div>
+          <PageTabs className={styles.tabs} items={tabItems} value={tab} onChange={(next) => changeTab(next as ReviewTab)} label="Filter progress reviews by status" />
+          <div className={styles.listMeta}><div><h3>{filteredData.length} progress review{filteredData.length === 1 ? '' : 's'}</h3><p>{tab === 'all' ? monthTabDescription : FILTER_COPY[tab].description}</p></div>{normalizedSearchTerm ? <span className="text-[12px] font-semibold text-primary-700">Showing {filteredData.length} of {data.length}</span> : null}</div>
+        </section>
+        <div>
+          {loading ? <RowsSkeleton rows={6} /> : null}
+          {!loading && !error && data.length === 0 ? <EmptyState variant="empty" icon="ri-file-chart-line" title="No progress reviews found." /> : null}
+          {!loading && !error && data.length > 0 && filteredData.length === 0 ? <EmptyState variant="no-matches" icon="ri-user-search-line" title="No learner matches this search." /> : null}
+          {!loading && filteredData.length > 0 ? (
+            <div className={styles.tableScroll} role="region" aria-label="Progress reviews table; scroll horizontally on smaller screens" tabIndex={0}>
+              <table className={`${styles.table} ${styles.prTable}`}>
+                <caption className="sr-only">Progress reviews for {selectedMonthLabel}</caption>
+                <colgroup><col /><col /><col /><col /><col /><col /></colgroup>
+                <thead><tr><th scope="col">Learner</th><th scope="col">Programme</th><th scope="col">Last PR</th><th scope="col">Date &amp; time</th><th scope="col">Status</th><th scope="col">Actions</th></tr></thead>
+                <tbody>{paginatedReviews.map(review => {
+                  const reviewKey = eventIdentity(review);
+                  const isBusy = busyEventId === reviewKey;
+                  const hasSlides = generatedReviewKeys.has(reviewKey);
+                  const actions = reviewActionMatrix(review);
+                  const statusIcon = review.status === 'completed' ? 'ri-checkbox-circle-line' : review.status === 'scheduled' ? 'ri-calendar-line' : review.status === 'awaiting-signature' ? 'ri-edit-line' : 'ri-time-line';
+                  return <tr key={reviewKey} className="ui-action-row" onClick={() => openDetails(review)}>
+                    <td><div className={styles.identity}><LearnerAvatar name={review.learner} tone={isAtRiskProgressReview(review) ? 'critical' : statusTone(review.status)} size="lg" /><div><strong className={styles.learnerName}>{review.learner || 'Unknown learner'}</strong><span className={styles.learnerEmail}>{review.email || 'Progress review'}</span></div></div></td>
+                    <td>{review.programme || '--'}</td>
+                    <td><ReviewAge value={review.learnerId ? lastPrByLearner.get(review.learnerId) : undefined} label="PR" /></td>
+                    <td><span className={styles.date}><span>{formatDateLabel(eventDisplayDate(review))}</span><span>{formatTimeRangeLabel(review)}</span></span></td>
+                    <td><span className={styles.status} data-status={review.status}><AppIcon className={statusIcon} />{statusLabel(review.status)}</span>{isAtRiskProgressReview(review) || isDueSoonEvent(review) ? <div className={styles.alerts}>{isAtRiskProgressReview(review) ? <StatusBadge tone="critical" label="Overdue" dot={false} size="sm" /> : null}{isDueSoonEvent(review) ? <StatusBadge tone="upcoming" label="Due Soon" dot={false} size="sm" /> : null}</div> : null}</td>
+                    <td onClick={(clickEvent) => clickEvent.stopPropagation()}><div className={styles.actions}>
+                      {actions.viewForm ? <button type="button" onClick={() => { void openCompletionForm(review); }} disabled={isBusy} className={cn(styles.control, styles.primary, styles.formButton)}>View form</button> : null}
+                      <MeetingActionsMenu learner={review.learner || 'Unknown learner'} actions={[
+                        { label: 'View details', icon: 'ri-eye-line', onSelect: () => openDetails(review) },
+                        ...(actions.presentation && reviewHasLearnerReference(review) ? [{ label: hasSlides ? 'View slides' : 'Create slides', icon: hasSlides ? 'ri-slideshow-2-line' : 'ri-file-ppt-line', onSelect: () => handleCreateSlides(review) }] : []),
+                        ...(actions.schedule ? [{ label: actions.schedule, icon: 'ri-calendar-line', onSelect: () => openScheduleModal(review) }] : []),
+                        ...(actions.join && !isBusy ? [{ label: 'Join', icon: 'ri-video-on-line', onSelect: () => handleJoin(review) }] : []),
+                      ]} />
+                    </div></td>
+                  </tr>;
+                })}</tbody>
+              </table>
             </div>
-            <div className="mt-5 border-t border-foreground-100 pt-4">
-              <PageTabs items={tabItems} value={tab} onChange={(next) => changeTab(next as ReviewTab)} label="Filter progress reviews by status" />
-            </div>
-          </div>
-
-          <div className="bg-background-100/55 p-3 sm:p-5">
-            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <h3 className="text-[16px] font-bold text-primary-900">{filteredData.length} progress review{filteredData.length === 1 ? '' : 's'}</h3>
-                <p className="text-[12px] text-foreground-500">{tab === 'all' ? monthTabDescription : FILTER_COPY[tab].description}</p>
-              </div>
-              {normalizedSearchTerm ? <span className="text-[12px] font-semibold text-primary-700">Showing {filteredData.length} of {data.length}</span> : null}
-            </div>
-            {loading ? <RowsSkeleton rows={6} /> : null}
-            {!loading && !error && data.length === 0 ? (
-              <div className="xl:col-span-2">
-                <EmptyState variant="empty" icon="ri-file-chart-line" title="No progress reviews found." />
-              </div>
-            ) : null}
-            {!loading && !error && data.length > 0 && filteredData.length === 0 ? (
-              <div className="xl:col-span-2">
-                <EmptyState variant="no-matches" icon="ri-user-search-line" title="No learner matches this search." />
-              </div>
-            ) : null}
-
-            {!loading && filteredData.length > 0 ? (
-              <div className="overflow-x-auto rounded-xl border border-primary-100 bg-white shadow-sm">
-                <table className="w-full min-w-[1120px] border-collapse text-left">
-                  <caption className="sr-only">Progress reviews for {selectedMonthLabel}</caption>
-                  <thead>
-                    <tr className="bg-primary-50/70 text-[11px] font-bold uppercase tracking-wide text-primary-800">
-                      <th className="whitespace-nowrap px-4 py-3 align-middle">Learner</th>
-                      <th className="whitespace-nowrap px-4 py-3 align-middle">Programme</th>
-                      <th className="whitespace-nowrap px-4 py-3 align-middle">Date &amp; time</th>
-                      <th className="whitespace-nowrap px-4 py-3 text-center align-middle">Status</th>
-                      <th className="whitespace-nowrap px-4 py-3 align-middle">Schedule</th>
-                      <th className="whitespace-nowrap px-4 py-3 text-right align-middle">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {paginatedReviews.map(review => {
-                      const reviewKey = eventIdentity(review);
-                      const isBusy = busyEventId === reviewKey;
-                      const hasSlides = generatedReviewKeys.has(reviewKey);
-                      const actions = reviewActionMatrix(review);
-                      return (
-                        <tr key={reviewKey} className="ui-action-row border-t border-primary-100/70 transition hover:bg-primary-50/35" onClick={() => openDetails(review)}>
-                          <td className="px-4 py-3 align-middle">
-                            <div className="flex items-center gap-3">
-                              <LearnerAvatar name={review.learner} tone={isAtRiskProgressReview(review) ? 'critical' : statusTone(review.status)} />
-                              <div className="min-w-0">
-                                <strong className="block text-[13px] font-bold text-primary-900">{review.learner || 'Unknown learner'}</strong>
-                                <span className="block text-[11px] text-foreground-500">{review.email || 'Progress review'}</span>
-                              </div>
-                            </div>
-                          </td>
-                          <td className="px-4 py-3 align-middle text-[12px] text-foreground-700"><span className="inline-flex items-center gap-1.5 whitespace-nowrap"><AppIcon className="ri-book-open-line text-primary-500" />{review.programme || '--'}</span></td>
-                          <td className="whitespace-nowrap px-4 py-3 align-middle text-[12px] text-foreground-700"><span className="inline-flex min-w-[150px] flex-col gap-1"><span className="flex items-center gap-1.5 whitespace-nowrap"><AppIcon className="ri-calendar-line shrink-0 text-primary-500" />{formatDateLabel(eventDisplayDate(review))}</span><span className="flex items-center gap-1.5 whitespace-nowrap text-foreground-500"><AppIcon className="ri-time-line shrink-0 text-primary-500" />{formatTimeRangeLabel(review)}</span></span></td>
-                          <td className="px-4 py-3 text-center align-middle"><div className="flex flex-wrap justify-center gap-1.5"><StatusBadge tone={statusTone(review.status)} label={statusLabel(review.status)} size="sm" />{isAtRiskProgressReview(review) ? <StatusBadge tone="critical" label="Overdue" dot={false} size="sm" /> : null}{isDueSoonEvent(review) ? <StatusBadge tone="upcoming" label="Due Soon" dot={false} size="sm" /> : null}</div></td>
-                          <td className="px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}>{actions.schedule ? <button type="button" onClick={() => openScheduleModal(review)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-calendar-schedule-line" />{actions.schedule}</button> : null}</td>
-                          <td className="min-w-[320px] px-4 py-3 align-middle" onClick={(clickEvent) => clickEvent.stopPropagation()}>
-                            <div className="flex justify-end gap-1.5">
-                              <button type="button" onClick={() => openDetails(review)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50"><AppIcon className="ri-eye-line" />View</button>
-                              {actions.viewForm ? <button type="button" onClick={() => { void openCompletionForm(review); }} disabled={isBusy} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className="ri-file-edit-line" />View Form</button> : null}
-                              {actions.presentation ? <button type="button" onClick={() => { handleCreateSlides(review); }} disabled={!reviewHasLearnerReference(review)} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-primary-100 bg-white px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className={hasSlides ? 'ri-slideshow-2-line' : 'ri-file-ppt-line'} />{hasSlides ? 'View Slides' : 'Create Slides'}</button> : null}
-                              {actions.join ? <button type="button" onClick={() => { handleJoin(review); }} disabled={isBusy} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-emerald-200 bg-emerald-50 px-3 text-[12px] font-semibold text-primary-700 shadow-sm transition hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60"><AppIcon className="ri-video-on-line" />Join</button> : null}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            ) : null}
-
-            {!loading && pageCount > 1 ? (
-              <div className="mt-4 xl:col-span-2">
-                <Pagination
-                  page={activePage}
-                  totalPages={pageCount}
-                  total={filteredData.length}
-                  pageSize={REVIEWS_PER_PAGE}
-                  onPageChange={(page) => {
-                    setCurrentPage(page);
-                  }}
-                  noun="reviews"
-                />
-              </div>
-            ) : null}
-          </div>
-        </Panel>
+          ) : null}
+          {!loading && filteredData.length > 0 ? <div className={styles.footer}><span>Showing {Math.min(filteredData.length, paginatedReviews.length)} of {filteredData.length} reviews</span>{pageCount > 1 ? <Pagination page={activePage} totalPages={pageCount} total={filteredData.length} pageSize={REVIEWS_PER_PAGE} onPageChange={setCurrentPage} noun="reviews" /> : null}</div> : null}
+        </div>
 
         {scheduleModalEvent ? (
           <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm" onClick={() => { if (!busyEventId) setScheduleModalEvent(null); }}>

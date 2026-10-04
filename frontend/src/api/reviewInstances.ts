@@ -171,6 +171,16 @@ export interface ReviewInstanceFormDefinition {
   summaryOnly?: boolean;
   migratedForm?: boolean;
   answerVersion?: string;
+  templateSync?: {
+    status: 'working' | 'frozen' | 'conflict';
+    upToDate: boolean | null;
+    fingerprint?: string;
+    synchronizedAt?: string | null;
+    source?: { id?: number; scope?: string; programmeKey?: string; family?: string };
+    code?: string;
+    message?: string;
+    fields?: string[];
+  };
   /** Current overlay mutation version, required by explicit migrated Calculate. */
   progressVersion?: string;
   canCalculateProgress?: boolean;
@@ -271,8 +281,11 @@ export async function fetchMigratedReviewIntelligence(
   }));
 }
 
-export async function saveMigratedMeetingSummary(instanceId: string, summary: CoachMeetingSummaryPayload): Promise<{ meetingSummary: CoachMeetingSummary | null }> {
-  return readJsonResponse<{ meetingSummary: CoachMeetingSummary | null }>(
+type MigratedSummarySaveResponse = { meetingSummary: CoachMeetingSummary | null }
+  & Pick<CoachMeetingArtifactsResponse, 'answerVersion' | 'progressVersion' | 'reviewAnswers' | 'summaryBinding'>;
+
+export async function saveMigratedMeetingSummary(instanceId: string, summary: CoachMeetingSummaryPayload): Promise<MigratedSummarySaveResponse> {
+  return readJsonResponse<MigratedSummarySaveResponse>(
     await coachFetch(`${migratedUrl(instanceId)}/summary`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },

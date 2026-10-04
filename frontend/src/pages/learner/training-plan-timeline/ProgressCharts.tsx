@@ -16,6 +16,9 @@ type Props = {
 };
 export type ProgrammeProgressSnapshot = {
   overall: number | null;
+  activitiesCompleted?: number | null;
+  activitiesTotal?: number | null;
+  activitiesPercent?: number | null;
   otjhActual: number | null;
   otjhTarget: number | null;
   ksb: number | null;
@@ -112,8 +115,13 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
   const expectedPercent = ratio(expectedTarget, progressTarget);
   const overallVariance = expectedTarget == null || totalCompleted == null ? null : totalCompleted - expectedTarget;
   const variancePercent = ratio(overallVariance, expectedTarget);
-  const activityDone = modules.reduce((sum, module) => sum + module.done, 0);
-  const activityTotal = modules.reduce((sum, module) => sum + module.activityCount, 0);
+  // Coach snapshots use the same canonical activity population as the caseload
+  // table. Module summaries describe a different population of curriculum slots.
+  const hasActivitySnapshot = programmeSnapshot?.activitiesTotal !== undefined;
+  const activityDone = hasActivitySnapshot ? programmeSnapshot?.activitiesCompleted ?? null
+    : modules.reduce((sum, module) => sum + module.done, 0);
+  const activityTotal = hasActivitySnapshot ? programmeSnapshot?.activitiesTotal ?? null
+    : modules.reduce((sum, module) => sum + module.activityCount, 0);
   const wholeProgrammeProgress = programmeSnapshot ? {
     value: programmeSnapshot.overall,
     available: 5,
@@ -123,8 +131,10 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
         ? null : percent(programmeSnapshot.attendancePresent, programmeSnapshot.attendanceTotal),
         detail: programmeSnapshot.attendancePresent == null || programmeSnapshot.attendanceTotal == null
           ? 'Attendance unavailable' : `${programmeSnapshot.attendancePresent} / ${programmeSnapshot.attendanceTotal} sessions attended` },
-      { label: 'Activities', value: activityTotal ? percent(activityDone, activityTotal) : null,
-        detail: activityTotal ? `${activityDone} / ${activityTotal} completed across all modules` : 'No activities assigned' },
+      { label: 'Activities', value: hasActivitySnapshot ? programmeSnapshot.activitiesPercent ?? null
+        : activityTotal && activityDone != null ? percent(activityDone, activityTotal) : null,
+        detail: activityTotal == null || activityDone == null ? 'Activity progress unavailable'
+          : activityTotal ? `${activityDone} / ${activityTotal} completed across all modules` : 'No activities assigned' },
       { label: 'Hours', value: programmeSnapshot.otjhActual == null || programmeSnapshot.otjhTarget == null
         ? null : percent(programmeSnapshot.otjhActual, programmeSnapshot.otjhTarget),
         detail: programmeSnapshot.otjhActual == null || programmeSnapshot.otjhTarget == null
@@ -180,7 +190,9 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
         <dl className={styles.measures}>{chartProgress.measures.map((measure, index) => <div key={measure.label}>
           <dt><i style={{ background: colors[index] }} />{measure.label}</dt><dd>{measure.detail}</dd>
         </div>)}</dl>
-        <p className={styles.note}>Overall, OTJH, KSB and attendance match the case-file cards. Activities are aggregated across all learner modules.</p>
+        <p className={styles.note}>{hasActivitySnapshot
+          ? 'Activities use the same programme totals as the coach learner table. Overall, OTJH, KSB and attendance match the case-file cards.'
+          : 'Overall, OTJH, KSB and attendance match the case-file cards. Activities are aggregated across all learner modules.'}</p>
       </> : <p className={styles.empty}>Select a module to see attendance, activities, hours and KSBs.</p>}
     </section> : <section className={`${styles.card} ${styles.moduleProgressCard}`} aria-label="Module progress">
       <header><div><p className={styles.eyebrow}>Selected module</p><h2>Module progress</h2></div>

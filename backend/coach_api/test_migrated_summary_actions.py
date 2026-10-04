@@ -238,6 +238,50 @@ class MigratedSummaryActionTests(TestCase):
             if source == 'teams':
                 ai.assert_not_called()
 
+    def test_template_sync_during_generation_rejects_old_binding_without_writing_intelligence(self):
+        from django.db import transaction
+        from .migrated_template_sync import synchronize_locked
+        original = deepcopy(self.template.definition_json)
+        for source in ('teams', 'upload'):
+            with self.subTest(source=source):
+                self.template.definition_json = deepcopy(original)
+                self.template.save()
+                self.overlay.template_snapshot = fixtures.snapshot_for(self.template)
+                self.overlay.meeting_intelligence = {}
+                self.overlay.answers = {'recap': 'Coach edited answer', 'other': 'Keep'}
+                self.overlay.save()
+                def synchronize():
+                    self.template.definition_json['sections'][0]['fields'][0].pop('semanticKey')
+                    self.template.definition_json['sections'][0]['fields'].append({
+                        'key': 'new-recap', 'title': 'New summary', 'aptemType': 13, 'semanticKey': 'meeting_summary'})
+                    self.template.save()
+                    with transaction.atomic():
+                        locked = type(self.overlay).objects.select_for_update().get(pk=self.overlay.pk)
+                        synchronize_locked(locked, 'MCM', None)
+                response, ai = self.check(during_fetch=synchronize) if source == 'teams' else self.upload(during_generation=synchronize)
+                self.assertEqual(response.status_code, 409)
+                self.assertEqual(json.loads(response.content)['code'], 'template_sync_changed')
+                self.assertEqual(self.overlay.meeting_intelligence, {})
+                self.assertEqual(self.overlay.answers, {'recap': 'Coach edited answer', 'other': 'Keep'})
+                if source == 'teams':
+                    ai.assert_not_called()
+
+    def test_retired_summary_answer_stays_internal_after_new_summary_generation(self):
+        from django.db import transaction
+        from .migrated_template_sync import synchronize_locked
+        self.overlay.answers['recap'] = 'Retired coach words'
+        self.overlay.save()
+        self.template.definition_json['sections'][0]['fields'][0]['key'] = 'new-recap'
+        self.template.save()
+        with transaction.atomic():
+            locked = type(self.overlay).objects.select_for_update().get(pk=self.overlay.pk)
+            synchronize_locked(locked, 'MCM', None)
+        response, _ = self.upload(summary='New suggestion')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.overlay.answers['recap'], 'Retired coach words')
+        self.assertEqual(self.overlay.answers['new-recap'], 'New suggestion')
+        self.assertNotIn('recap', json.loads(response.content)['reviewAnswers'])
+
     def test_upload_is_scoped_to_one_review_and_all_migrated_families_use_shared_context(self):
         other = type(self.overlay).objects.create(event_key='imported-review:other', owner_email=OWNER,
             learner_id=43, source_review_id=7002, template_snapshot=deepcopy(self.overlay.template_snapshot),

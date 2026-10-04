@@ -40,12 +40,14 @@ is saved, so treating it as "already taken" would make this feature unusable on
 exactly the modules it is for. A week carrying the module's link is free to
 take an additional meeting, and that link is left untouched when it does.
 
-No schedule email, no learner calendar, no attendance roster: only the people
-named on this form are invited, by Microsoft, on the one date chosen.
+Only the people named on this form are invited, by Microsoft, on the one date
+chosen. The meeting keeps one ``live_session_occurrences`` row (session 1) of
+its own -- see ``save_week_meeting_occurrence`` -- so its recording, transcript
+and attendance are synced and saved like any other live session's.
 """
 import logging
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -71,6 +73,67 @@ def may_send_schedule_email(request):
     except Exception:
         return False
     return account is not None and getattr(account, 'role', None) in EMAIL_ROLES
+
+
+#: An additional meeting is a single event, so it delivers exactly one session.
+WEEK_MEETING_SESSION_NUMBER = 1
+
+
+def save_week_meeting_occurrence(v, live_session_id, *, start, duration, join_url, event_id, status='scheduled'):
+    """Write the one session an additional meeting delivers.
+
+    Recordings, transcripts and attendance are all saved against an occurrence
+    row, so without one the sync has nowhere to put them. Re-saving keeps the
+    same row (and everything synced onto it); a session already marked
+    completed stays completed when only its schedule is edited.
+    """
+    now = datetime.utcnow()
+    existing = v.authoring_fetch_all(
+        v.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s and session_number = %s',
+        [live_session_id, WEEK_MEETING_SESSION_NUMBER],
+    )
+    values = {
+        'live_session_id': live_session_id,
+        'session_number': WEEK_MEETING_SESSION_NUMBER,
+        'graph_event_id': v.clean_str(event_id),
+        'scheduled_start': start,
+        'scheduled_end': start + timedelta(minutes=int(duration or 60)),
+        'join_url': v.clean_str(join_url),
+        'status': status,
+        'updated_at': now,
+    }
+    if existing:
+        if status == 'scheduled' and v.clean_str(existing[0].get('status')) == 'completed':
+            values['status'] = 'completed'
+        v.update_authoring_rows(v.LIVE_SESSION_OCCURRENCES_TABLE, 'id = %s', [existing[0]['id']], values)
+    else:
+        v.authoring_upsert(v.LIVE_SESSION_OCCURRENCES_TABLE, ['live_session_id', 'session_number'], {
+            **values, 'id': f'OCC-{uuid.uuid4().hex.upper()}', 'created_at': now,
+        })
+
+
+def ensure_week_meeting_occurrence(series):
+    """Give an additional meeting booked before occurrences were saved its session row.
+
+    Only for a live additional meeting with no occurrence yet; every other
+    series, and every meeting that already has its row, is left untouched.
+    """
+    if not isinstance(series, dict) or str(series.get('status') or '').strip() != WEEK_MEETING_STATUS:
+        return
+    from . import views as v
+    live_id = v.clean_str(series.get('id'))
+    if not live_id or v.authoring_fetch_all(v.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [live_id],
+                                            ensure_tables=False):
+        return
+    start = series.get('start_datetime')
+    if isinstance(start, str):
+        start = v.parse_graph_datetime(start)
+    if not isinstance(start, datetime):
+        return
+    save_week_meeting_occurrence(
+        v, live_id, start=start, duration=series.get('duration_minutes'),
+        join_url=series.get('join_url'), event_id=series.get('graph_event_id'),
+    )
 
 
 def component_extra_meeting_settings(row, v):
@@ -425,6 +488,16 @@ def curriculum_week_teams_meeting(request, module_catalogue_id):
             status=502, meetingCreated=True, liveSessionId=live_session_id, joinUrl=join_url,
         )
 
+    # The session its recording and attendance are saved against. Not fatal:
+    # the meeting is booked and linked, and the first sync writes this row again.
+    try:
+        save_week_meeting_occurrence(
+            v, live_session_id, start=utc_start, duration=duration, join_url=join_url, event_id=event_id,
+        )
+    except Exception:
+        logger.exception('The additional week Teams meeting session row could not be saved.')
+        warnings.append('The meeting is booked, but its recording and attendance tracking will start at the first sync.')
+
     # Partial success is never reported as success. The meeting exists and its
     # link is attached to the live session -- said here so the author does not
     # book a second one -- but somebody named on the form may not have been
@@ -662,6 +735,10 @@ def curriculum_week_teams_meeting_detail(request, module_catalogue_id, live_sess
         'warnings': v.json_db_value(warnings),
         'updated_at': now,
     })
+    save_week_meeting_occurrence(
+        v, live_id, start=utc_start, duration=duration, join_url=join_url,
+        event_id=series.get('graph_event_id'),
+    )
 
     updated_settings = {
         'extraTeamsOrganizerEmail': organizer,
@@ -730,6 +807,10 @@ def cancel_week_meeting(v, graph_request, component_row, settings, owner_key, ev
 
     v.update_authoring_rows(v.LIVE_SESSIONS_TABLE, 'id = %s', [live_id], {
         'status': 'cancelled', 'warnings': v.json_db_value(warnings), 'updated_at': now,
+    })
+    # Its session is cancelled with it; anything already synced onto it stays.
+    v.update_authoring_rows(v.LIVE_SESSION_OCCURRENCES_TABLE, 'live_session_id = %s', [live_id], {
+        'status': 'cancelled', 'updated_at': now,
     })
     if component_row is not None:
         cleared = {key: value for key, value in settings.items()

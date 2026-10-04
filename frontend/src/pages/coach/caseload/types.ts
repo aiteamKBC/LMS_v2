@@ -30,6 +30,7 @@ export type StatusFilter =
 export type SortKey =
   | 'risk'
   | 'name'
+  | 'start-date'
   | 'activity'
   | 'progress-review'
   | 'monthly-coaching'
@@ -146,6 +147,9 @@ export interface Learner {
   recentFlag: string | null;
   progressVariance: string;
   startDate: string;
+  /** Contract window used by existing OTJH/review pacing, separate from Profile date. */
+  otjhProgrammeStartDate?: string;
+  displayStartDate?: string;
   gatewayReviewDate: string;
   plannedEndDate: string;
   coachName?: string;
@@ -162,7 +166,7 @@ export interface CaseloadApiLearner extends Omit<Learner, 'enrollmentStatus' | '
   employerEmail?: string | null;
   employerPhone?: string | null;
   progressVariance?: string;
-  startDate?: string;
+  startDate?: string | null;
   gatewayReviewDate?: string;
   plannedEndDate?: string;
   lastPr?: string | null;
