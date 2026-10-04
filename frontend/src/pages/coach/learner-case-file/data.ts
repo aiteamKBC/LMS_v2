@@ -726,6 +726,8 @@ function buildCaseFileData(args: {
     employerEmail: '',
     employerPhone: '',
     overallProgress,
+    activitiesCompleted: args.learnerMetrics?.programmeCompleted ?? null,
+    activitiesTotal: args.learnerMetrics?.programmeTotal ?? null,
     // Prefer the learner's canonical register. The coach attendance projection
     // remains a fallback so a temporary register failure does not blank the file.
     attendanceRate: null,
