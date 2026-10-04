@@ -65,6 +65,7 @@ export interface CoachCaseloadLearner {
   recentFlag: string | null;
   progressVariance: string;
   startDate: string;
+  otjhProgrammeStartDate?: string;
   gatewayReviewDate: string;
   plannedEndDate: string;
   coachName?: string;

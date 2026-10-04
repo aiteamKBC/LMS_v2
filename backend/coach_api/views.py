@@ -655,7 +655,7 @@ def apply_otjh_to_date_metrics(payload: dict, *, today: date | None = None) -> d
     if total <= 0:
         total = to_number(payload.get("otjhTarget"))
 
-    start = parse_date_value(payload.get("startDate"))
+    start = parse_date_value(payload.get("otjhProgrammeStartDate", payload.get("startDate")))
     end = parse_date_value(payload.get("plannedEndDate"))
     start_day = start.date() if isinstance(start, datetime) else start
     end_day = end.date() if isinstance(end, datetime) else end
@@ -2430,6 +2430,25 @@ def caseload_schedule_values(row) -> tuple[object, object, object]:
     return planned, start, end
 
 
+def caseload_profile_start_date(row):
+    """Profile programmeStartDate, from its existing recorded-date resolver."""
+    from learner_api.apprenticeship_agreement import _group_dates
+
+    source = getattr(row, "_caseload_source", None)
+    if source is not None:
+        start, _, _ = _group_dates(source)
+        if start is not None:
+            return start.isoformat()
+    # Identical to the Case File's shell fallback; never use a contract date.
+    start = parse_date_value(getattr(row, "start_date", None) or getattr(source, "start_date", None))
+    return start.isoformat()[:10] if start else "--"
+
+
+def caseload_display_start_date(row):
+    """Compatibility display alias of the one Profile start date."""
+    return format_date(caseload_profile_start_date(row))
+
+
 # Why a learner could not be anchored for Review recurrence. One vocabulary
 # shared by the debug diagnostics, the timetable's diagnostic counts and the
 # audit_review_anchor_dates command, so a reason string never has to be
@@ -3421,6 +3440,7 @@ def serialize_caseload_learner(
     component_progress = percentage(completed_components, planned_components) if component_available else 0
 
     schedule_planned, schedule_start, schedule_end = caseload_schedule_values(row)
+    profile_start = caseload_profile_start_date(row)
     target_hours_value = (
         clean_text(row.target_hours)
         or clean_text(row.minimum_hours)
@@ -3560,7 +3580,9 @@ def serialize_caseload_learner(
         "employerEmail": None,
         "employerPhone": None,
         "progressVariance": progress_variance or "--",
-        "startDate": format_date(schedule_start),
+        "startDate": profile_start,
+        "displayStartDate": format_date(profile_start),
+        "otjhProgrammeStartDate": format_date(schedule_start),
         "gatewayReviewDate": format_date(getattr(row, "gateway_review_date", None)),
         "plannedEndDate": format_date(schedule_end),
         "coachName": clean_text(row.coach_name) or None,
@@ -3573,6 +3595,7 @@ def serialize_caseload_learner(
 def serialize_caseload_dashboard_learner(row: LearnerProfile | SimpleNamespace) -> dict:
     """Serialize only the fields the coach dashboard needs immediately."""
     schedule_planned, schedule_start, schedule_end = caseload_schedule_values(row)
+    profile_start = caseload_profile_start_date(row)
     target_hours_value = (
         clean_text(getattr(row, "target_hours", None))
         or clean_text(getattr(row, "minimum_hours", None))
@@ -3666,7 +3689,9 @@ def serialize_caseload_dashboard_learner(row: LearnerProfile | SimpleNamespace) 
         "recentFlag": risk_flags[0] if risk_flags else None,
         "email": clean_text(getattr(row, "email", None)) or None,
         "progressVariance": progress_variance or "--",
-        "startDate": format_date(schedule_start),
+        "startDate": profile_start,
+        "displayStartDate": format_date(profile_start),
+        "otjhProgrammeStartDate": format_date(schedule_start),
         "gatewayReviewDate": format_date(getattr(row, "gateway_review_date", None)),
         "plannedEndDate": format_date(schedule_end),
         "rawProgramStatus": program_status or "--",

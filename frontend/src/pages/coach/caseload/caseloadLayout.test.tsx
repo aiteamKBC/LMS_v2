@@ -19,7 +19,7 @@ const learner = {
   evidenceCount: 2, liveAttendanceRate: 90, liveAttendanceRateAvailable: true, nextCoaching: '20 Sep 2026', nextReview: '--',
   lastContact: '--', lastAttendanceDate: '--', lastProgressReview: '--', lastReview: '--', lastCoachingSession: '--',
   lastActivity: '19 Sep 2026', lastActivityDate: '2026-09-19T12:30:00Z', lastActivityLabel: 'Latest quiz',
-  lastSubmittedEvidence: '--', recentFlag: null, progressVariance: '--', startDate: '01 Jan 2020', gatewayReviewDate: '--', plannedEndDate: '01 Jan 2021',
+  lastSubmittedEvidence: '--', recentFlag: null, progressVariance: '--', startDate: '01 Jan 2020', displayStartDate: '01 Jan 2020', gatewayReviewDate: '--', plannedEndDate: '01 Jan 2021',
   otjhPlanned: 90,
   currentModule: 'Customer Service Excellence', currentWeek: 'Week 4',
 } satisfies Learner;
