@@ -15,7 +15,7 @@ import type { DirectoryCoach } from '@/api/coachDirectory';
 import { cn } from '@/lib/cn';
 import { ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
 import { toneStyle, type StatusTone } from '@/lib/statusTone';
-import { otjhProgressAsOfToday } from '@/pages/coach/caseload/lib/format';
+import { isVisibleCaseloadLearner, otjhProgressAsOfToday } from '@/pages/coach/caseload/lib/format';
 import styles from '@/pages/workspace/coach/dashboard.module.css';
 import { CoachCaseloadContent } from '@/pages/coach/caseload/page';
 import { CaseloadLoading } from '@/pages/coach/caseload/components/CaseloadStates';
@@ -34,7 +34,7 @@ import {
   eventTargetDate,
   eventPeriodLabel,
   formatDateLabel,
-  formatTimeLabel,
+  formatTimeLabel as calendarTimeLabel,
   formatTimeRangeLabel,
   isAtRiskEvent,
   getCurrentWorkWeekRange,
@@ -85,6 +85,7 @@ interface CoachLearner {
   startDate?: string | null;
   plannedEndDate?: string | null;
   programme: string;
+  programmeName?: string | null;
   cohortName?: string | null;
   group: string;
   employer: string;
@@ -355,7 +356,9 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
   const fallbackName = name === EMPTY_VALUE ? `Learner ${index + 1}` : name;
   const initials = displayValue(learner.initials);
   const id = displayValue(learner.id);
-  const programme = displayValue(learner.programme) === EMPTY_VALUE ? displayValue(learner.cohortName) : displayValue(learner.programme);
+  const apiProgrammeName = displayValue(learner.programmeName);
+  const programmeName = apiProgrammeName === EMPTY_VALUE ? displayValue(learner.programme) : apiProgrammeName;
+  const programme = programmeName === EMPTY_VALUE ? displayValue(learner.cohortName) : programmeName;
   const cohortName = displayValue(learner.cohortName);
   const riskFlags = Array.isArray(learner.riskFlags) ? learner.riskFlags.filter(isVisibleRiskFlag) : [];
   const recentFlag = isVisibleRiskFlag(learner.recentFlag) && !riskFlags.includes(String(learner.recentFlag))
@@ -375,6 +378,7 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     startDate: learner.startDate ?? null,
     plannedEndDate: learner.plannedEndDate ?? null,
     programme,
+    programmeName: programmeName === EMPTY_VALUE ? null : programmeName,
     cohortName: cohortName === EMPTY_VALUE ? null : cohortName,
     group: displayValue(learner.group),
     employer: displayValue(learner.employer),
@@ -728,6 +732,11 @@ function isWithinNextWorkWeek(event: CoachCalendarEvent) {
   return date.getTime() >= start.getTime() && date.getTime() <= end.getTime();
 }
 
+function formatTimeLabel(event: CoachCalendarEvent) {
+  const label = calendarTimeLabel(event);
+  return label === 'Time TBC' ? '-' : label;
+}
+
 function upcomingLiveSessionTimeLabel(event: CoachCalendarEvent) {
   if (event.timeLabel && event.timeLabel !== 'Time TBC') {
     return event.timeLabel;
@@ -735,7 +744,7 @@ function upcomingLiveSessionTimeLabel(event: CoachCalendarEvent) {
   if (event.scheduledTime) {
     return event.scheduledTime.slice(0, 5);
   }
-  return 'Time TBC';
+  return '-';
 }
 
 function upcomingLiveSessionMetaLabel(event: CoachCalendarEvent) {
@@ -994,7 +1003,7 @@ function scheduleEventTime(event: CoachCalendarEvent) {
   if (event.source === 'live-session') return upcomingLiveSessionTimeLabel(event);
   if (event.scheduledTime) return formatTimeRangeLabel(event);
   if (event.timeLabel && event.timeLabel !== 'Time TBC') return event.timeLabel;
-  return 'TBC';
+  return '-';
 }
 
 /** Just the start, for the fixed-size "Next" badge -- a live session's
@@ -1388,7 +1397,11 @@ export default function CoachDashboard() {
   }, [selectedKpi]);
 
   const enrichedLearners = useMemo(() => enrichLearnerSchedule(learners, calendarEvents), [learners, calendarEvents]);
-  const activeLearners = useMemo(() => enrichedLearners.filter(isActiveLearner), [enrichedLearners]);
+  const visibleLearners = useMemo(
+    () => enrichedLearners.filter(isVisibleCaseloadLearner),
+    [enrichedLearners],
+  );
+  const activeLearners = useMemo(() => visibleLearners.filter(isActiveLearner), [visibleLearners]);
   const atRiskLearners = useMemo(
     () => activeLearners.filter(learner => canonicalOtjhStatus(learner) === 'at-risk'),
     [activeLearners],
@@ -1404,7 +1417,7 @@ export default function CoachDashboard() {
     [evidenceQueue],
   );
   const atRiskCount = atRiskLearners.length;
-  const totalCaseload = enrichedLearners.length;
+  const totalCaseload = visibleLearners.length;
   const pendingEvidence = useMemo(
     () => evidenceLearners.reduce((total, learner) => total + learner.pendingEvidence, 0),
     [evidenceLearners],
@@ -1536,7 +1549,7 @@ export default function CoachDashboard() {
         </section>
 
         <div id="learner-caseload" className={styles.fullWidthCaseload}>
-          <CoachCaseloadContent embedded embeddedLearners={enrichedLearners} />
+          <CoachCaseloadContent embedded embeddedLearners={visibleLearners} />
         </div>
 
         <Panel className={styles.panel}>
@@ -1611,7 +1624,7 @@ export default function CoachDashboard() {
       {selectedKpi && (
         <KpiDetailModal
           type={selectedKpi}
-          learners={enrichedLearners}
+          learners={visibleLearners}
           calendarEvents={activeCalendarEvents}
           weekEvents={weekEvents}
           evidenceQueue={evidenceLearners}
