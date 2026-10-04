@@ -28,7 +28,7 @@ vi.mock('@/lib/coachFetch', () => ({ coachFetch }));
 vi.mock('@/pages/coach/shared/calendarEvents', () => ({ fetchCoachCalendarEvents }));
 
 const learner = {
-  id: '42', name: 'Final Learner', initials: 'FL', employer: '--', cohortId: 'c1', cohortName: 'Business Admin L3', group: 'G1',
+  id: '42', name: 'Final Learner', initials: 'FL', employer: '--', cohortId: 'c1', cohortName: 'Business Admin L3', programmeName: 'Business Administrator Level 3', group: 'G1',
   status: 'on-track', enrollmentStatus: 'active', riskFlags: [], overallProgress: 78, overallProgressAvailable: true,
   attendanceRate: 80, attendanceRateAvailable: true, componentsCompleted: 8, componentsPlanned: 10,
   otjhCompleted: 70, otjhTarget: 90, ksbProgress: 65, ksbProgressAvailable: true, ksbCompleted: 13, ksbTarget: 20,
@@ -55,6 +55,8 @@ describe('Coach caseload loading', () => {
     render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={[learner]} /></MemoryRouter>);
 
     expect(await screen.findByText('Final Learner')).toBeInTheDocument();
+    expect(screen.getByText('Business Administrator Level 3')).toBeInTheDocument();
+    expect(screen.queryByText('Business Admin L3')).not.toBeInTheDocument();
     expect(screen.getByText('19 Sep 2026')).toBeInTheDocument();
     expect(screen.queryByText('Loading learners')).not.toBeInTheDocument();
     expect(coachFetch).not.toHaveBeenCalled();
@@ -69,6 +71,50 @@ describe('Coach caseload loading', () => {
     expect(screen.queryByText(/\d+ shown/)).not.toBeInTheDocument();
     expect(screen.queryByText('Most urgent first')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Sort direction:/ })).not.toBeInTheDocument();
+  });
+
+  it('hides onboarding, entered EPA and withdrawn learners from the table and status filter', async () => {
+    const learners = [
+      { ...learner, id: 'active', name: 'Included Learner', rawProgramStatus: 'Delivery' },
+      { ...learner, id: 'onboarding', name: 'Onboarding Learner', rawProgramStatus: 'Onboarding Stage' },
+      { ...learner, id: 'epa', name: 'EPA Learner', rawProgramStatus: 'Entered-EPA' },
+      { ...learner, id: 'withdrawn', name: 'Withdrawn Learner', rawProgramStatus: 'Withdrawn' },
+      { ...learner, id: 'fallback', name: 'Fallback Withdrawn', rawProgramStatus: '--', enrollmentStatus: 'withdrawn' as const },
+    ] satisfies CaseloadApiLearner[];
+
+    render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={learners} /></MemoryRouter>);
+
+    expect(await screen.findByText('Included Learner')).toBeVisible();
+    for (const name of ['Onboarding Learner', 'EPA Learner', 'Withdrawn Learner', 'Fallback Withdrawn']) {
+      expect(screen.queryByText(name)).not.toBeInTheDocument();
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'All programme statuses' }));
+    expect(screen.getAllByRole('option').map(option => option.textContent)).toEqual([
+      'All programme statuses', 'Delivery',
+    ]);
+  });
+
+  it('sorts dashboard learners by start date in both directions and keeps missing dates last', async () => {
+    const learners = [
+      { ...learner, id: 'newer', name: 'Newer Learner', startDate: '15 Jun 2026' },
+      { ...learner, id: 'older', name: 'Older Learner', startDate: '02 May 2025' },
+      { ...learner, id: 'missing-start', name: 'Missing Start Learner', startDate: '--' },
+    ] satisfies CaseloadApiLearner[];
+    render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={learners} /></MemoryRouter>);
+
+    await screen.findByText('Newer Learner');
+    const learnerOrder = () => Array.from(screen.getByRole('table').querySelectorAll('tbody tr')).map((row) => {
+      return ['Newer Learner', 'Older Learner', 'Missing Start Learner'].find((name) => row.textContent?.includes(name));
+    });
+    const startDateHeader = screen.getByRole('columnheader', { name: 'Start Date' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sort by Start Date' }));
+    expect(learnerOrder()).toEqual(['Older Learner', 'Newer Learner', 'Missing Start Learner']);
+    expect(startDateHeader).toHaveAttribute('aria-sort', 'ascending');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sort by Start Date' }));
+    expect(learnerOrder()).toEqual(['Newer Learner', 'Older Learner', 'Missing Start Learner']);
+    expect(startDateHeader).toHaveAttribute('aria-sort', 'descending');
   });
 
   it('filters dashboard-owned learners locally and paginates after fifteen rows', async () => {

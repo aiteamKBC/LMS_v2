@@ -30,6 +30,7 @@ export type StatusFilter =
 export type SortKey =
   | 'risk'
   | 'name'
+  | 'start-date'
   | 'activity'
   | 'progress-review'
   | 'monthly-coaching'
