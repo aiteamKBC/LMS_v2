@@ -87,6 +87,8 @@ export interface LearnerComponentEntry {
   durationMinutes?: number | null;
   isQuiz?: boolean;
   quizMeta?: { quizId: number; questions: number | null; duration: number | null; timeUnit: string | null };
+  /** A passed quiz whose slot an author has since removed from the module. */
+  retired?: boolean;
 }
 export interface LearnerKsbItem {
   code: string;
@@ -193,6 +195,9 @@ export interface LearnerDetail {
   modules: string[];
   week: LearnerWeekEntry[];
   components: LearnerComponentEntry[];
+  /** Passed quizzes whose slot was later removed; kept so the module still
+   *  shows the completed work. Never part of `components`. */
+  retiredQuizComponents?: LearnerComponentEntry[];
   ksbs: LearnerKsbItem[];
   progressKsbCodes?: string[];
   quizAttempts: LearnerQuizAttempt[];

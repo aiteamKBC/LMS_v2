@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import repair_sharon_evidence_allocations as base
 
 CONTAINER = "fetch-aptem-evidences"
-LABEL = "تقديري — يحتاج اعتماد"
+LABEL = "Estimated — approval required"
 BASIS = "aptem:accepted-evidence-spent-minutes;estimated-reporting-allocation"
 RUN_KIND = "sharon-estimated-remaining-evidence-v1"
 

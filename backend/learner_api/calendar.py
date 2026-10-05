@@ -427,6 +427,13 @@ def _serialize_event(record, *, review_types_by_template=None, templates_by_id=N
         and event_type in {"mcr", "progress-review"}
         and booking_parts[2] in SOURCE_MODELS and booking_parts[5].isdigit()
     )
+    review_id = booking_parts[5] if imported_booking else ""
+    assignment_month = booking_parts[4] if imported_booking else ""
+    if event_type == "mcr" and record.event_key.startswith("imported-review:"):
+        from coach_api.local_mcm_bookings import local_mcm_metadata
+        local_review = local_mcm_metadata(record)
+        if local_review:
+            review_id, assignment_month = local_review
     migrated_form = (record.event_key.startswith("imported-review:")
                      and ImportedReviewInstance.objects.filter(
                          event_key=record.event_key, learner_id=record.learner_id,
@@ -469,8 +476,8 @@ def _serialize_event(record, *, review_types_by_template=None, templates_by_id=N
         "syncError": sync_warning,
         "syncState": getattr(record, "sync_state", ""),
         "syncWarning": _friendly_sync_warning(sync_warning) if sync_warning else "",
-        "reviewId": booking_parts[5] if imported_booking else "",
-        "assignmentMonth": booking_parts[4] if imported_booking else "",
+        "reviewId": review_id,
+        "assignmentMonth": assignment_month,
         # Catch-up only: too close to the start for the learner to move or cancel it.
         "changeClosed": _catchup_change_closed(record),
     }
@@ -2170,6 +2177,7 @@ def learner_calendar_book(request, kind, pk):
             notes=notes,
             idempotency_key=idempotency_key,
             initial_status=CoachCalendarEvent.STATUS_NOT_SCHEDULED if requires_coach_approval else CoachCalendarEvent.STATUS_SCHEDULED,
+            **({"local_mcm_review_id": imported_review_id} if assignment_booking and imported_review_id else {}),
         )
         if requires_coach_approval:
             return JsonResponse(

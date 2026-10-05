@@ -13,7 +13,8 @@ import { type UpdateProgress } from './updateProgress';
 import { syncTeamsCalendarState } from './calendarState';
 import { compareTeamsAttendees, type AttendeeComparison } from './attendeeComparison';
 import { type CalendarActionTarget } from './CalendarActionDialog';
-import { calendarAction, type ActionResult } from './calendarActions';
+import { calendarAction, type ActionResult, type ActionReview } from './calendarActions';
+import { leftoverSlotLabel } from './leftoverSlots';
 import { normalizedClock } from './calendarTime';
 import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { useCurriculumEntities } from '@/hooks/useCurriculumEntities';
@@ -30,6 +31,8 @@ import {
   CurriculumRequestTimeout,
   createTeamsMeeting,
   fetchTeamsCreateStatus,
+  fetchTeamsCreateDraft,
+  saveTeamsCreateDraft,
   fetchModuleMeetingInvitees,
   fetchModuleSessionPlan,
   getCalendarTimeZone,
@@ -47,6 +50,8 @@ import {
   type TeamsMeetingArtifactsResult,
   type TeamsMeetingInput,
   type TeamsCreateStatus,
+  type TeamsCreateDraft,
+  type TeamsLeftoverSlot,
   type TeamsMeetingResult,
   type ModuleWeekSessionPlan,
   type ModuleCatalogueItem,
@@ -484,6 +489,16 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
   // The shared form's own empty state, rather than a second copy of its fields
   // that has to be kept in step by hand.
   const createDrawer = useDrawerState<TeamsCalendarForm>(emptyTeamsCalendarForm());
+  // The Teams slot whose explicit Cancel is under way, by Microsoft event id.
+  const [leftoverCancelling, setLeftoverCancelling] = useState('');
+  // The module's saved create form (Save draft), and whether one is being saved.
+  // A draft is only the form's values: nothing in Teams, nobody emailed.
+  const [createDraft, setCreateDraft] = useState<(TeamsCreateDraft & { catalogueId: string }) | null>(null);
+  const [createDraftSaving, setCreateDraftSaving] = useState(false);
+  const createDraftFor = useRef('');
+  // Read by the draft's late-arriving load, which must not overwrite typing.
+  const createDirty = useRef(false);
+  createDirty.current = createDrawer.dirty;
   // The same form for an existing calendar, and what it held when opened.
   const updateDrawer = useDrawerState<TeamsCalendarForm>(emptyTeamsCalendarForm());
   const updateBaseline = useRef<TeamsCalendarForm | null>(null);
@@ -963,13 +978,20 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
           } else await loadDetail(liveSessionId);
         }
         await loadTeamsState();
+      } else if (selectedLiveId.current === liveSessionId && result.leftovers) {
+        // The check found (or stopped finding) slots outside the plan; they are
+        // shown from the calendar's own read, so refresh just that.
+        setDetail(current => (current && current.series.id === liveSessionId
+          ? { ...current, leftoverSlots: result.leftovers } : current));
       }
       if (source === 'manual' || result.changed || result.errors.length) {
         const owner = moduleByLiveSession.get(liveSessionId);
         const body = result.errors.length ? result.errors.join(' ')
           : result.seriesStatus === 'cancelled' ? 'This calendar was cancelled in Microsoft and is now cancelled in the LMS.'
             : result.cancelledSessions.length ? `Cancelled sessions updated: ${result.cancelledSessions.join(', ')}.`
-              : 'Calendar status is up to date.';
+              : result.leftovers?.length
+                ? `Calendar status is up to date. Teams also shows ${result.leftovers.length === 1 ? 'a slot' : `${result.leftovers.length} slots`} that ${result.leftovers.length === 1 ? 'is' : 'are'} not part of this module; nothing was cancelled. Review them in the calendar.`
+                : 'Calendar status is up to date.';
         setNotice({
           tone: result.errors.length ? 'warning' : 'info',
           moduleId: owner?.catalogueId,
@@ -1194,7 +1216,10 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     const summary = row.summary;
     if (blockedReason || !summary || !row.sessions.length) return;
     setBusy(`${row.catalogueId}:dates`);
-    setNotice(null);
+    setNotice({
+      tone: 'warning',
+      text: 'Heads up: updating the schedule sends an update email to the invited people because the session dates changed.',
+    });
     // Only what the author changed in the invitation fields is sent: an
     // untouched field keeps what the calendar has saved.
     const update = invitationEdits(row);
@@ -1212,8 +1237,15 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       if (!planned.length) throw new Error('This module has no planned session dates to send.');
       const firstStart = planned[0].startTime || row.groupPattern?.startTime || '09:00';
       const fallbackDuration = Math.max(15, row.groupPattern?.durationMinutes || summary.durationMinutes || DEFAULT_DURATION_MINUTES);
+      // Some planner responses number sessions per week, so two different
+      // weeks can both arrive as "session 1". The Teams calendar contract
+      // requires one unique occurrence number for the whole module. Preserve
+      // the planner numbers when they are already unique; otherwise use the
+      // ordered module sequence without changing the dates or durations.
+      const plannedNumbers = planned.map(session => session.sessionNumber).filter((value): value is number => Number.isInteger(value) && value > 0);
+      const plannerNumbersRepeat = new Set(plannedNumbers).size !== plannedNumbers.length || plannedNumbers.length !== planned.length;
       const occurrences = planned.map((session, index) => ({
-        sessionNumber: session.sessionNumber || index + 1,
+        sessionNumber: plannerNumbersRepeat ? index + 1 : (session.sessionNumber || index + 1),
         startDateTimeUtc: zonedNaiveToUtcIso(`${session.date}T${session.startTime || firstStart}`, summary.timeZone),
         durationMinutes: session.durationMinutes || Math.max(15, minutesBetween(session.startTime || firstStart, session.endTime || '') || fallbackDuration),
       }));
@@ -1266,6 +1298,16 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       // it is taken again. This one IS awaited: the drawer is open in front of
       // the reader, and showing it the dates it just replaced would be wrong.
       if (summary.liveSessionId) await loadDetail(summary.liveSessionId);
+      // Slots this update left on Teams rather than cancel -- shown at once,
+      // without waiting for the next status check to notice them.
+      if (summary.liveSessionId && result.leftoverSlots?.length) {
+        const liveId = summary.liveSessionId;
+        const found = result.leftoverSlots;
+        setDetail(current => (current && current.series.id === liveId ? {
+          ...current,
+          leftoverSlots: [...(current.leftoverSlots || []).filter(item => !found.some(slot => slot.eventId === item.eventId)), ...found],
+        } : current));
+      }
       notifyChanged(row.catalogueId);
       const warning = result.warnings?.[0]?.message || '';
       if (warning) {
@@ -1547,7 +1589,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
    */
   const seedCreateForm = (row: MeetingRow) => {
     setDrawerTarget(row);
-    createDrawer.openWith({
+    const seed: TeamsCalendarForm = {
       ...emptyTeamsCalendarForm(),
       // The meeting is named after the module itself. The module's stored notes
       // are deliberately *not* offered as the description: they carry the
@@ -1563,7 +1605,78 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       coOrganizers: '',
       details: '',
       durationMinutes: '',
-    });
+    };
+    createDrawer.openWith(seed);
+    // A saved draft, when the module has one, replaces the blank answers -- but
+    // only while the author has not started typing over them.
+    createDraftFor.current = row.catalogueId;
+    setCreateDraft(null);
+    void fetchTeamsCreateDraft(row.catalogueId).then(({ draft }) => {
+      if (!draft || createDraftFor.current !== row.catalogueId || createDirty.current) return;
+      setCreateDraft({ ...draft, catalogueId: row.catalogueId });
+      createDrawer.openWith({ ...seed, ...draftFormValues(draft.form) });
+    }).catch(() => undefined);
+  };
+
+  /**
+   * Cancel one Teams slot that is not a session of this module -- by hand.
+   *
+   * The one way such a slot leaves Microsoft. Update, Create and the status
+   * check only ever report it, because removing it makes Microsoft email
+   * everyone invited. Here the author has pressed Cancel and confirmed: the
+   * server re-proves the slot is still outside the plan, then sends exactly one
+   * cancellation and verifies it.
+   */
+  const cancelLeftover = async (slot: TeamsLeftoverSlot) => {
+    const liveId = selected?.summary?.liveSessionId;
+    if (!liveId || leftoverCancelling) return;
+    const what = leftoverSlotLabel(slot);
+    setLeftoverCancelling(slot.eventId);
+    try {
+      await showCurriculumConfirm({
+        title: 'Cancel this Teams slot?',
+        text: `${what} is on Teams but is not a session of this module. Cancelling it removes it from Teams, and Microsoft emails everyone invited that it is cancelled. This cannot be undone.`,
+        icon: 'warning',
+        confirmButtonText: 'Cancel it and email everyone',
+        cancelButtonText: 'Keep it',
+        onConfirm: async () => {
+          const review = await calendarAction<ActionReview>(liveId, { stage: 'review', action: 'cancel', scope: 'leftover', eventId: slot.eventId });
+          const result = await calendarAction<ActionResult>(liveId, { stage: 'confirm', reviewToken: review.reviewToken, acknowledgeNotifications: true });
+          if (result.status !== 'done') throw new Error(result.message);
+          await loadDetail(liveId);
+        },
+        successTitle: 'Slot cancelled',
+        successText: `${what} was cancelled on Teams. Module sessions are unchanged.`,
+      });
+    } finally {
+      setLeftoverCancelling('');
+    }
+  };
+
+  /**
+   * Keep the create form for this module without creating anything.
+   *
+   * Saved on the server against the module, so the dialog can be closed and
+   * finished later, by anyone. Microsoft is not called and nobody is emailed;
+   * only Create does that.
+   */
+  const saveCreateDraft = async (target?: MeetingRow) => {
+    const row = target || drawerTarget;
+    if (!row || createDraftSaving || createDrawer.saving) return;
+    const saved = createDrawer.form;
+    // The title is always the module's own name, so it is not kept.
+    const { title: _title, ...values } = saved;
+    setCreateDraftSaving(true);
+    createDrawer.setError(null);
+    try {
+      const { draft } = await saveTeamsCreateDraft(row.catalogueId, values as Record<string, string>);
+      if (draft) setCreateDraft({ ...draft, catalogueId: row.catalogueId });
+      createDrawer.markSaved(saved);
+    } catch (err) {
+      createDrawer.setError(err instanceof Error ? err.message : 'The draft could not be saved.');
+    } finally {
+      setCreateDraftSaving(false);
+    }
   };
 
   /**
@@ -1793,7 +1906,9 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       title: 'Discard unsaved changes?',
       text: invitationsDirty
         ? 'Your changes to the invitations have not been sent to Teams. Closing now throws them away.'
-        : 'This Teams calendar has not been created yet. Closing now throws away what you filled in.',
+        : createDraft?.catalogueId === selected?.catalogueId
+          ? 'This Teams calendar has not been created yet. Closing now throws away what you changed since the saved draft.'
+          : 'This Teams calendar has not been created yet. Closing now throws away what you filled in. Save draft keeps it for later.',
       icon: 'warning',
       confirmButtonText: 'Discard changes',
       cancelButtonText: 'Keep editing',
@@ -1862,7 +1977,7 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     busy, notice, setNotice, detail, detailLoading, detailError, loadDetail, detailOccurrenceFor,
     artifactSyncing, autoSyncEnabled, setAutoSyncEnabled, calendarSyncing, resultsModule, setResultsModule,
     preview, setPreview, transcriptPreview, setTranscriptPreview, pendingComponents, now,
-    settingsDrawer, createDrawer, updateDrawer, drawerTarget, invitedPrefilling, prefillNotice,
+    settingsDrawer, createDrawer, createDraft, createDraftSaving, saveCreateDraft, leftoverCancelling, cancelLeftover, updateDrawer, drawerTarget, invitedPrefilling, prefillNotice,
     loadTeamsState, holidayLabelFor, rows, selected, selectedForDisplay, stats,
     openCalendarAction, checkCalendarAction, runArtifactSync, runCalendarSync,
     pushDates, resendSchedule, saveInvitations, reattach, prefillInvitees, openSettings, saveSettings,
@@ -1873,3 +1988,14 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
 }
 
 export type TeamsMeetingsWorkspace = ReturnType<typeof useTeamsMeetingsWorkspace>;
+
+/** The draft's saved values that the create form holds, and nothing else. */
+function draftFormValues(saved: Record<string, string>): Partial<TeamsCalendarForm> {
+  const values: Partial<TeamsCalendarForm> = {};
+  const text = ['organizerEmail', 'attendees', 'presenters', 'coOrganizers', 'details', 'durationMinutes',
+    'lobbyBypass', 'recording', 'spokenLanguage', 'meetingType'] as const;
+  for (const key of text) if (typeof saved[key] === 'string') values[key] = saved[key];
+  if (saved.scheduleTimeZone === 'Africa/Cairo' || saved.scheduleTimeZone === 'Europe/London') values.scheduleTimeZone = saved.scheduleTimeZone;
+  if (saved.seriesMode === 'auto' || saved.seriesMode === 'shared' || saved.seriesMode === 'per_day') values.seriesMode = saved.seriesMode;
+  return values;
+}

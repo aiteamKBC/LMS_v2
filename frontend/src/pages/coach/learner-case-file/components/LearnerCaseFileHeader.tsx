@@ -44,7 +44,6 @@ export function LearnerCaseFileHeader({ data, pageTitle, pageSubtitle }: Props) 
     {data && <div className={styles.dateStrip}>
       <ProfileInfo icon="ri-calendar-event-line" label="Start Date" value={data.startDate} />
       <ProfileInfo icon="ri-calendar-check-line" label="Planned End Date" value={data.plannedEndDate} />
-      <ProfileInfo icon="ri-calendar-line" label="Gateway Due" value={data.gatewayReviewDate} />
     </div>}
 
   </section>;

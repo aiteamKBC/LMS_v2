@@ -189,6 +189,8 @@ export function useDrawerState<T>(initial: T) {
     setSaving,
     setError,
     openWith,
+    /** Take the given values as saved, so `dirty` reads against them; the form is untouched. */
+    markSaved: (saved: T) => { baseline.current = saved; },
     close: () => { if (!saving) setOpen(false); },
     patch: (patchValue: Partial<T>) => setForm(previous => ({ ...previous, ...patchValue })),
   };

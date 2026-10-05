@@ -25,8 +25,12 @@ export interface LearnerProfileShell {
     coachName: string | null;
     coachEmail: string | null;
     status: string | null;
+    learnerStartDate?: string | null;
+    learnerEndDate?: string | null;
     startDate: string | null;
     plannedEndDate: string | null;
+    otjhProgrammeStartDate?: string | null;
+    otjhProgrammeEndDate?: string | null;
     gatewayReviewDate: string | null;
     coachRag: string | null;
   };

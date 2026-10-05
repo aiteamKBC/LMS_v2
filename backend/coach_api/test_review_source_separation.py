@@ -144,7 +144,8 @@ class ReviewSourceSeparationTests(SimpleTestCase):
 
     def test_another_learner_cannot_borrow_a_key_or_overlay(self):
         event = base_event()
-        self.assertIsNone(linked_booking(event, [booking(learner_id=99)]))
+        with self.assertRaises(ReviewIdentityConflict):
+            linked_booking(event, [booking(learner_id=99)])
         self.assertIsNone(linked_overlay(event, [overlay(learner_id=99)]))
         self.assertIsNone(linked_overlay(event, [overlay(source_review_id=999)]))
 

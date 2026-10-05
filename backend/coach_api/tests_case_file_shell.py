@@ -9,6 +9,12 @@ from coach_api.tests import SerializeCaseloadDashboardLearnerTests as DashboardF
 
 
 class CaseFileShellTests(SimpleTestCase):
+    def setUp(self):
+        super().setUp()
+        contracts = patch("coach_api.views.load_contracts_bulk", return_value={})
+        contracts.start()
+        self.addCleanup(contracts.stop)
+
     def test_query_is_scoped_by_stable_profile_id_and_coach(self):
         profile = SimpleNamespace(id=316, enrolment_id=5170)
         profile_queryset = MagicMock()

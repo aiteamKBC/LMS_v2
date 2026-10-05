@@ -103,7 +103,7 @@
 .metricLabel { color: #6f6888; font-size: 9px; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; }
 .metricValue { display: block; overflow: hidden; margin-top: 2px; color: #1c1748; font-size: 15px; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Profile summary: learner identity beside three individual date cards. */
+/* Profile summary: learner identity beside the programme start and end dates. */
 .hero { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); align-items: center; gap: 28px; padding: 30px 32px; border-radius: 18px; background: linear-gradient(120deg, #fdfcff, #f8f5ff); box-shadow: 0 14px 32px rgb(88 53 163 / 10%); }
 .heroTop { min-width: 0; padding: 0; }
 .identity { gap: 24px; }
@@ -117,7 +117,7 @@
 .programmeLine span { display: inline-flex; align-items: center; gap: 10px; }
 .programmeLine span + span { padding-left: 24px; border-left: 1px solid #d9cef4; }
 .programmeLine svg { font-size: 22px; }
-.dateStrip { display: grid; min-width: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px; }
+.dateStrip { display: grid; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
 .dateStrip .info { grid-template-columns: 56px minmax(0, 1fr); align-items: center; gap: 16px; min-height: 112px; padding: 20px; border: 1px solid #eee8fb; border-radius: 18px; background: rgb(255 255 255 / 72%); }
 .dateStrip .info > svg { box-sizing: border-box; width: 56px; height: 56px; margin: 0; padding: 12px; border-radius: 14px; background: #f2ecff; color: #7835ff; }
 .dateStrip .infoLabel { font-size: 13px; }
@@ -577,3 +577,47 @@
   .ksbModalBody { padding: 6px 8px 12px; }
   .ksbActivitiesTable td, .ksbActivitiesTable th { padding: 8px 6px; }
 }
+
+/* Lazy-loaded case-file styles need local dark overrides so their light card
+   rules cannot override the workspace theme. Semantic status colours stay
+   intact; neutral surfaces follow the coach/learner navy palette. */
+:global(html[data-theme="dark"]) .page {
+  --case-border: var(--coach-dark-border);
+  --case-ink: var(--coach-dark-text);
+  --case-muted: var(--coach-dark-muted);
+  color: var(--coach-dark-text);
+}
+:global(html[data-theme="dark"]) .breadcrumb { color: var(--coach-dark-muted); }
+:global(html[data-theme="dark"]) .breadcrumb strong { color: var(--coach-dark-text); }
+:global(html[data-theme="dark"]) .hero { border-color: var(--coach-dark-border); background: linear-gradient(135deg, var(--coach-dark-surface), var(--coach-dark-soft)); box-shadow: none; }
+:global(html[data-theme="dark"]) :is(.subtitle, .programmeLine, .metricLabel, .panelSubtitle, .infoLabel, .progressMeta, .summaryDetails, .hoursMetricLabel, .attendanceResults, .pageSize, .ksbModalMeta) { color: var(--coach-dark-muted); }
+:global(html[data-theme="dark"]) :is(.nameRow h1, .metricValue, .panelTitle, .infoValue, .progressMeta strong, .subPanelTitle, .bigMetricLabel, .browserPanel .panelTitle, .progressTab .panelTitle, .progressTab .ksbSummaryCard strong, .ksbParentRow td:nth-child(2)) { color: var(--coach-dark-text); }
+:global(html[data-theme="dark"]) :is(.dateStrip .info, .metric, .panel, .subPanel, .contactCard, .bigMetric, .ksbSummaryCard, .coverageCard, .timelineItem, .quickAction, .learningMetrics, .coachNotes, .hoursMetric, .ksbGroupModal) { border-color: var(--coach-dark-border); background: var(--coach-dark-surface); box-shadow: none; }
+:global(html[data-theme="dark"]) :is(.dateStrip .info, .metric, .subPanel, .bigMetric, .progressTab .ksbSummaryCard, .hoursMetric) { background: var(--coach-dark-soft); }
+:global(html[data-theme="dark"]) :is(.heroSnapshotHeading > span, .dateStrip .info > svg, .metricIcon, .panelIcon, .contactAvatar, .note i, .ksbSummaryCard i, .timelineIcon, .quickAction > i:first-child, .coachNotes i) { background: var(--coach-dark-hover); color: var(--coach-dark-accent); }
+:global(html[data-theme="dark"]) :is(.secondaryAction, .outlineButton, .filterPill, .tableButton, .ksbStatusTrigger, .pageSize select) { border-color: var(--coach-dark-border); background: var(--coach-dark-soft); color: #d8c5f6; }
+:global(html[data-theme="dark"]) :is(.secondaryAction, .outlineButton, .filterPill, .tableButton):hover { border-color: #806ba4; background: var(--coach-dark-hover); }
+:global(html[data-theme="dark"]) .tabs,
+:global(html[data-theme="dark"]) .page:has(.progressTab) .tabs { border-color: var(--coach-dark-border); background: var(--coach-dark-surface); box-shadow: none; }
+:global(html[data-theme="dark"]) .tab { color: var(--coach-dark-muted); }
+:global(html[data-theme="dark"]) .tab:hover,
+:global(html[data-theme="dark"]) .tabActive { color: #d8c5f6; }
+:global(html[data-theme="dark"]) .page:has(.progressTab) .tabActive { background: var(--coach-dark-hover); color: var(--coach-dark-text); box-shadow: inset 0 -2px 0 var(--coach-dark-accent); }
+:global(html[data-theme="dark"]) .progressTab .panel { border-color: var(--coach-dark-border); background: var(--coach-dark-surface); box-shadow: none; }
+:global(html[data-theme="dark"]) :is(.track, .metricTrack) { background: #e9edf3; }
+:global(html[data-theme="dark"]) .striped { background: repeating-linear-gradient(135deg, #40546a 0 4px, #657589 4px 8px); }
+:global(html[data-theme="dark"]) .empty { border-color: var(--coach-dark-border); background: var(--coach-dark-soft); color: var(--coach-dark-muted); }
+:global(html[data-theme="dark"]) :is(.attendanceSearch input, .attendanceFilter select, .search input) { border-color: var(--coach-dark-border); background: var(--coach-dark-page); color: var(--coach-dark-text); }
+:global(html[data-theme="dark"]) :is(.attendanceTable, .ksbTable) { color: var(--coach-dark-text); }
+:global(html[data-theme="dark"]) :is(.attendanceTable th, .ksbTable th, .progressTab .ksbTable th) { border-color: var(--coach-dark-border); background: var(--coach-dark-hover); color: var(--coach-dark-text); }
+:global(html[data-theme="dark"]) :is(.attendanceTable td, .ksbTable td) { border-color: var(--coach-dark-border); color: var(--coach-dark-text); }
+:global(html[data-theme="dark"]) .ksbTable tbody tr:nth-child(odd) td { background: var(--coach-dark-surface); }
+:global(html[data-theme="dark"]) .ksbTable tbody tr:nth-child(even) td { background: var(--coach-dark-soft); }
+:global(html[data-theme="dark"]) :is(.attendanceTable, .ksbTable) tbody tr:hover td { background: var(--coach-dark-hover); }
+:global(html[data-theme="dark"]) .ksbStatusMenu { border-color: var(--coach-dark-border); background: var(--coach-dark-soft); box-shadow: var(--kbc-shadow-popover); }
+:global(html[data-theme="dark"]) .ksbStatusMenu [role="option"] { color: var(--coach-dark-text); }
+:global(html[data-theme="dark"]) .ksbStatusMenu [role="option"]:is(:hover, :focus, [aria-selected="true"]) { background: var(--coach-dark-hover); color: #d8c5f6; }
+:global(html[data-theme="dark"]) .ksbModalHeader { border-color: var(--coach-dark-border); background: var(--coach-dark-soft); }
+:global(html[data-theme="dark"]) .ksbModalClose { color: var(--coach-dark-muted); }
+:global(html[data-theme="dark"]) .ksbModalClose:hover { background: var(--coach-dark-hover); }
+:global(html[data-theme="dark"]) .ksbActivitiesTable :is(th, td) { border-color: var(--coach-dark-border); color: var(--coach-dark-text); }

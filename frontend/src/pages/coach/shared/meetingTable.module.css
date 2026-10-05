@@ -33,3 +33,9 @@
   background: #F7F4FF !important;
   color: #6B6385 !important;
 }
+
+:global(html[data-theme="dark"]) :global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .meetingTable thead th {
+  border-color: var(--coach-dark-border) !important;
+  background: var(--coach-dark-hover) !important;
+  color: var(--coach-dark-text) !important;
+}

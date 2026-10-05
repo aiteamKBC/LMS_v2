@@ -83,17 +83,28 @@ class CoachDashboardService:
 
         Preserve every metric and the existing contractual OTJH window. Older
         snapshots must not expose their outdated startDate while refresh queues.
+        Learners who have since been withdrawn, completed or entered EPA are
+        dropped the same way, so an hourly snapshot never shows them.
         """
         from coach_api import views as domain
 
         payload = deepcopy(previous_payload)
         rows = domain.fetch_caseload_dashboard_profiles(self.context.owner_email)
         rows_by_id = {str(row.id): row for row in rows}
+        learners = []
         for learner in payload.get("learners") or []:
             row = rows_by_id.get(str(learner.get("id")))
+            if row is not None and domain.is_hidden_caseload_programme_status(
+                domain.get_lms_row_program_status(row),
+            ):
+                continue
             learner.setdefault("otjhProgrammeStartDate", learner.get("startDate", "--"))
             learner["startDate"] = domain.caseload_profile_start_date(row)
             learner["displayStartDate"] = learner["startDate"]
+            learner["displayEndDate"] = domain.format_date(getattr(getattr(row, "_caseload_source", None), "learner_end_date", None))
+            learners.append(learner)
+        if "learners" in payload:
+            payload["learners"] = learners
         return payload
 
     @staticmethod
@@ -132,6 +143,7 @@ class CoachDashboardService:
             )
             learner["startDate"] = domain.caseload_profile_start_date(rows_by_id[profile_id])
             learner["displayStartDate"] = learner["startDate"]
+            learner["displayEndDate"] = domain.format_date(getattr(getattr(rows_by_id[profile_id], "_caseload_source", None), "learner_end_date", None))
             learner["otjhProgrammeStartDate"] = domain.format_date(schedule_start)
             if schedule_planned not in (None, ""):
                 learner["otjhPlanned"] = domain.to_number(schedule_planned)

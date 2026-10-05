@@ -1,5 +1,7 @@
 export const caseFileTabs = [
   { id: 'overview', label: 'Overview', icon: 'ri-dashboard-line' },
+  { id: 'weekly-learning', label: 'Weekly Learning', icon: 'ri-book-open-line' },
+  { id: 'monthly-focus', label: 'Monthly Focus', icon: 'ri-calendar-2-line' },
   { id: 'progress', label: 'OTJH & KSB Progress', icon: 'ri-line-chart-line' },
   { id: 'attendance', label: 'Attendance', icon: 'ri-calendar-check-line' },
   { id: 'support', label: 'Learning Plan', icon: 'ri-route-line' },

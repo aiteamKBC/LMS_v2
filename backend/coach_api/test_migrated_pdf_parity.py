@@ -454,11 +454,58 @@ class MigratedPdfAccessTests(SimpleTestCase):
     def test_pdf_review_date_uses_saved_booking_date_or_source_target(self):
         review = sample_review()
         definition = {"instance": {"targetDate": "2026-10-05"}, "historicalReview": {"type": "Monthly Coaching Meeting"}}
-        with patch.object(endpoints.CoachCalendarEvent.objects, "filter") as calendars:
-            for calendar, expected in ((None, "2026-10-05"), (SimpleNamespace(scheduled_date=None), "2026-10-05"),
-                                       (SimpleNamespace(scheduled_date=AT.date()), AT.date())):
-                calendars.return_value.first.return_value = calendar
-                self.assertEqual(endpoints._pdf_context(review, definition)["scheduled_date"], expected)
+        owned = {"owner_email": review.owner_email, "learner_id": review.learner_id}
+        saved = SimpleNamespace(**owned, scheduled_date=AT.date())
+        with patch("coach_api.views.imported_review_calendar_rows") as calendars:
+            for rows, expected in (([], "2026-10-05"),
+                                   ([SimpleNamespace(**owned, scheduled_date=None)], "2026-10-05"),
+                                   ([saved], AT.date()),
+                                   ([SimpleNamespace(**{**owned, "learner_id": 999}, scheduled_date=AT.date())], "2026-10-05"),
+                                   ([SimpleNamespace(**{**owned, "owner_email": "other@example.invalid"}, scheduled_date=AT.date())], "2026-10-05"),
+                                   ([saved, saved], "2026-10-05")):
+                with self.subTest(rows=rows):
+                    calendars.return_value = rows
+                    self.assertEqual(endpoints._pdf_context(review, definition)["scheduled_date"], expected)
+                    calendars.assert_called_with(review.owner_email, review.event_key)
+
+    def test_participant_pdf_context_reads_saved_identity_and_owned_booking_without_a_definition(self):
+        review = sample_review()
+        profile = SimpleNamespace(full_name="Sample learner", email="learner@example.invalid", programme="Sample programme")
+        saved = SimpleNamespace(owner_email=review.owner_email, learner_id=review.learner_id, scheduled_date=AT.date())
+        with patch.object(endpoints.LearnerProfile.objects, "filter") as profiles, \
+             patch.object(endpoints, "connections") as connections, \
+             patch("coach_api.views.get_learner_db_alias", return_value="default"), \
+             patch("coach_api.views.imported_review_calendar_rows", return_value=[saved]) as calendars, \
+             patch("coach_api.views._imported_review_definition", side_effect=AssertionError("Participant required coach caseload")):
+            profiles.return_value.first.return_value = profile
+            cursor = connections["default"].cursor.return_value.__enter__.return_value
+            cursor.fetchone.return_value = ("2026-10-05", "Monthly Coaching Meeting", "Scheduled", None)
+            context = endpoints._pdf_context(review)
+            self.assertEqual(context["learner_name"], profile.full_name)
+            self.assertEqual(context["learner_email"], profile.email)
+            self.assertEqual(context["programme"], profile.programme)
+            self.assertEqual(context["scheduled_date"], saved.scheduled_date)
+            self.assertEqual(cursor.execute.call_args.args[1], [review.source_review_id, review.learner_id])
+            profiles.assert_called_once_with(pk=review.learner_id)
+            calendars.assert_called_once_with(review.owner_email, review.event_key)
+
+    def test_participant_pdf_context_rejects_missing_or_historically_completed_sources(self):
+        review = sample_review()
+        profile = SimpleNamespace(full_name="Sample learner", email="learner@example.invalid", programme="Sample programme")
+        source = ("2026-10-05", "Monthly Coaching Meeting", "Scheduled", None)
+        with patch.object(endpoints.LearnerProfile.objects, "filter") as profiles, \
+             patch.object(endpoints, "connections") as connections, \
+             patch("coach_api.views.get_learner_db_alias", return_value="default"), \
+             patch("coach_api.views.imported_review_calendar_rows") as calendars:
+            cursor = connections["default"].cursor.return_value.__enter__.return_value
+            for current_profile, current_source in ((None, source), (profile, None),
+                    (profile, (*source[:2], " Completed ", None)), (profile, (*source[:3], AT))):
+                with self.subTest(profile=current_profile, source=current_source):
+                    profiles.return_value.first.return_value = current_profile
+                    cursor.fetchone.return_value = current_source
+                    with self.assertRaisesRegex(ValueError, "Migrated source association is unavailable"):
+                        endpoints._pdf_context(review)
+            calendars.assert_not_called()
 
     def test_pdf_context_keeps_source_identity_gates_without_loading_form_services(self):
         from . import views

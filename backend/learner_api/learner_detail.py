@@ -37,6 +37,7 @@ from .learning_plan import effective_training_plan
 from .programme_access import learning_access
 from .mappers import _s, get_training_plan, to_learner_detail
 from .models import EnrolmentUser, LearnerProfile
+from .retained_quiz_progress import retain_quiz_progress
 from .student_activity_access import student_activity_available
 
 logger = logging.getLogger(__name__)
@@ -1864,6 +1865,10 @@ def build_learner_detail(source, pk, *, compact=False):
             persist_live_otjh_snapshot(learner_profile, snapshot)
         except DatabaseError as exc:
             logger.warning("Could not persist hours columns for learner %s: %s", pk, exc)
+    # After the hours snapshot so OTJH persistence is unaffected; this only
+    # re-attaches earned quiz results to slots an author has since re-linked
+    # or removed.
+    retain_quiz_progress(detail)
 
     if compact:
         # Nullable optional fields dominate the JSON for large plans. Omission

@@ -51,7 +51,7 @@ def _mirror_status(overlay):
     update = {"status": overlay.status}
     if overlay.status == ImportedReviewInstance.STATUS_COMPLETED:
         update["review_completed_at"] = overlay.completed_at
-    calendar = booking_for_overlay(overlay)
+    calendar = booking_for_overlay(overlay, lock=True)
     if calendar:
         CoachCalendarEvent.objects.filter(pk=calendar.pk).update(**update)
 

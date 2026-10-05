@@ -33,7 +33,7 @@ import reconcile_additional_hours_social_media as base  # noqa: E402
 
 REPORT = Path(__file__).resolve().parents[1] / "reports" / "additional_hours_89_dryrun_2026-10-04.json"
 CONTAINER = "fetch-aptem-evidences"
-LABEL = "تقديري — يحتاج اعتماد"
+LABEL = "Estimated — approval required"
 BASIS = "aptem:accepted-additional-job-activity-spent-minutes;azure-verified;month-only-reporting"
 RUN_KIND = "additional-hours-approved-candidates-v1"
 PROMPT_VERSION = "v2-additional-hours-azure-approved-candidates"

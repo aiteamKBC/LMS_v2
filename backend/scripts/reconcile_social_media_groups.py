@@ -32,7 +32,7 @@ from psycopg.types.json import Jsonb
 
 UK = ZoneInfo("Europe/London")
 CONTAINER = "fetch-aptem-evidences"
-LABEL = "\u062a\u0642\u062f\u064a\u0631\u064a \u2014 \u064a\u062d\u062a\u0627\u062c \u0627\u0639\u062a\u0645\u0627\u062f"
+LABEL = "Estimated — approval required"
 BASIS = "aptem:accepted-evidence-spent-minutes;estimated-reporting-allocation"
 RUN_KIND = "social-media-groups-reconciliation-v1"
 DAILY_SECONDS = 8 * 60 * 60

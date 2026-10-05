@@ -6,6 +6,8 @@ import type { AptemKsbRow } from '../domain/aptemKsbBreakdown';
 import { summarizeAptemKsbGroups } from '../domain/aptemKsbBreakdown';
 import { useState } from 'react';
 import type { EvidencePreviewTarget } from '../domain/ksbSelectors';
+import type { DashboardPlanState } from '@/pages/workspace/learner/useDashboardPlan';
+import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 
 const read = vi.hoisted(() => vi.fn());
 vi.mock('@/api/learnerRead', () => ({ readLearnerJson: read }));
@@ -85,6 +87,85 @@ describe('Progress KSB detailed breakdown', () => {
     fireEvent.click(within(screen.getByText('K1').closest('tr')!).getByRole('button', { name: 'View' }));
     expect(within(screen.getByRole('dialog')).getAllByText('Source: old_lms').length).toBeGreaterThan(0);
     expect(within(screen.getByRole('dialog')).queryByText('Source: Aptem')).not.toBeInTheDocument();
+  });
+  it('uses the dashboard plan for OTJH totals and places the monthly chart below the summary', async () => {
+    read.mockResolvedValue({ rows });
+    const planData = {
+      months: {
+        '2000-01': { label: 'January 2000', topics: [], planned: 50, source: 'ssot' },
+        '2000-02': { label: 'February 2000', topics: [], planned: 100, source: 'ssot' },
+      },
+      monthlyLogOtjh: {
+        '2000-01': { target: 50, submitted: 2, completed: 7.3 },
+        '2000-02': { target: 100, submitted: 3, completed: 10 },
+      },
+      requiredOtjh: 500,
+      actual: [], actualAvailable: true, modules: [], moduleLinks: {}, sessions: [], reviews: [],
+      coach: { name: 'Coach', bookingUrl: null }, contractStatus: 'ready', generatedAt: '2000-02-29T00:00:00Z',
+    } as TrainingPlanDashboard;
+    const plan = { data: planData, otjh: { actual: 17.3, planned: 500 } } as unknown as DashboardPlanState;
+
+    render(<ProgressTab data={{ ...data, otjhCompleted: 5.65, otjhTarget: null, otjhPlanned: null }} plan={plan} onViewEvidence={vi.fn()} />);
+
+    expect(screen.getByText('Actual').parentElement).toHaveTextContent('17h 18m');
+    expect(screen.getByText('Target Hours').parentElement).toHaveTextContent('150h');
+    expect(screen.getByText('Planned').parentElement).toHaveTextContent('500h');
+    expect(screen.getByText('Hours Remaining').parentElement).toHaveTextContent('132h 42m');
+    const summary = screen.getByRole('heading', { name: 'Off-the-Job Hours (OTJH)' }).closest('section')!;
+    const chart = screen.getByRole('region', { name: 'Off-the-job hours by month' });
+    expect(summary.compareDocumentPosition(chart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(chart).getByRole('button', { name: /January 2000: target 50 hours/ })).toBeVisible();
+  });
+  it('keeps the OTJH card aligned with the selected caseload row snapshot', () => {
+    read.mockResolvedValue({ rows });
+
+    render(<ProgressTab
+      data={{ ...data, otjhCompleted: 5.65, otjhTarget: 169, otjhPlanned: 850 }}
+      otjhSnapshot={{ completed: 104.71, target: 140.6, planned: 850, percent: 74 }}
+      onViewEvidence={vi.fn()}
+    />);
+
+    expect(screen.getByText('Actual').parentElement).toHaveTextContent('104h 43m');
+    expect(screen.getByText('Target Hours').parentElement).toHaveTextContent('140h 36m');
+    expect(screen.getByText('Planned').parentElement).toHaveTextContent('850h');
+    expect(screen.getByText('Hours Remaining').parentElement).toHaveTextContent('35h 53m');
+    expect(screen.getByText('OTJH Progress').parentElement).toHaveTextContent('74%');
+  });
+  it('recalculates the caseload target after a direct load or refresh loses navigation state', () => {
+    read.mockResolvedValue({ rows });
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-10-05T12:00:00Z'));
+    const planData = {
+      months: { '2026-08': { label: 'August 2026', topics: [], planned: 850, source: 'ssot' } },
+      monthlyLogOtjh: { '2026-08': { target: 850, submitted: 0, completed: 104.71 } }, requiredOtjh: 850,
+      programmeStartDate: '2026-08-22', programmeEndDate: '2027-05-15',
+      actual: [], actualAvailable: true, modules: [], moduleLinks: {}, sessions: [], reviews: [],
+      coach: { name: 'Coach', bookingUrl: null }, contractStatus: 'ready', generatedAt: '2026-10-05T00:00:00Z',
+    } as TrainingPlanDashboard;
+    const plan = {
+      data: planData,
+      otjh: { actual: 104.71, planned: 850 },
+      plannedEndDate: '2027-05-15',
+    } as unknown as DashboardPlanState;
+
+    try {
+      render(<ProgressTab
+        data={{ ...data, startDate: '22 Aug 2026', plannedEndDate: '15 May 2027', otjhCompleted: 104.71, otjhTarget: 850, otjhPlanned: 850 }}
+        plan={plan}
+        onViewEvidence={vi.fn()}
+      />);
+
+      expect(screen.getByText('Actual').parentElement).toHaveTextContent('104h 43m');
+      expect(screen.getByText('Target Hours').parentElement).toHaveTextContent('140h 36m');
+      expect(screen.getByText('Planned').parentElement).toHaveTextContent('850h');
+      expect(screen.getByText('Hours Remaining').parentElement).toHaveTextContent('35h 53m');
+      expect(screen.getByText('OTJH Progress').parentElement).toHaveTextContent('74%');
+      const chart = within(screen.getByRole('region', { name: 'Off-the-job hours by month' }));
+      expect(chart.getByRole('progressbar', { name: 'Overall off-the-job hours progress' })).toHaveAttribute('aria-valuenow', '74');
+      expect(chart.getByText('-26% (-35.9h)')).toBeVisible();
+    } finally {
+      vi.useRealTimers();
+    }
   });
   it('shows linked progress codes and highlights only completed accepted rows', async () => {
     const newRows: AptemKsbRow[] = [

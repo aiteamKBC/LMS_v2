@@ -12,7 +12,7 @@ describe('coach attendance detail', () => {
     vi.mocked(coachFetch)
       .mockClear()
       .mockResolvedValueOnce(new Response(JSON.stringify({
-        learner: { id: '42', name: 'Aya Khater', email: 'same@example.com', programme: 'Data', cohort: 'September', group: 'Cairo A', programmeStartDate: '01 Sep 2026', programmeEndDate: '31 Aug 2027', coachName: 'Coach Sara' },
+        learner: { id: '42', name: 'Aya Khater', email: 'same@example.com', programme: 'Data', cohort: 'September', group: 'Cairo A', programmeStartDate: '01 Sep 2020', programmeEndDate: '31 Aug 2021', learnerStartDate: '01 Sep 2026', learnerEndDate: '31 Aug 2027', coachName: 'Coach Sara' },
         summary: { attendanceRate: 79, total: 32, present: 26, absent: 6, unknown: 0 },
         sessions: [{ sessionId: 'session-2', source: 'microsoft-teams', sourceId: 'occ-2', sessionTitle: 'Data session', module: 'Data Foundations', sessionType: 'live_session', sessionDate: '2026-09-16', sessionDateLabel: '16 Sep 2026', status: 'present' }],
       })));
