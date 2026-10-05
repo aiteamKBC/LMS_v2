@@ -6154,7 +6154,29 @@ def fetch_calendar_event_records(owner_email: str, event_keys: list[str]) -> dic
             )
         )
     )
-    return {record.event_key: record for record in records}
+    result = {record.event_key: record for record in records}
+    missing = [key for key in event_keys if key not in result and key.startswith("imported-review:")]
+    if missing:
+        from .local_mcm_bookings import legacy_mcm_calendar_records
+        for key, matches in legacy_mcm_calendar_records(owner_email, missing).items():
+            if len(matches) != 1:
+                raise DatabaseError("Multiple local bookings are linked to this Monthly Coaching Meeting.")
+            result[key] = matches[0]
+    return result
+
+
+def imported_review_calendar_rows(owner_email, event_key, *, lock=False):
+    """Keep canonical records and legacy learner bookings on one review."""
+    query = CoachCalendarEvent.objects.filter(event_key=event_key)
+    if lock:
+        query = query.select_for_update()
+    records = list(query[:2])
+    if records:
+        return records
+    from .local_mcm_bookings import legacy_mcm_calendar_records
+    # As with canonical keys, return a former coach's exact booking so the
+    # caller's ownership check blocks a second meeting after reassignment.
+    return legacy_mcm_calendar_records(None, [event_key], lock=lock).get(event_key, [])
 
 
 def fetch_catchup_event_records(owner_email: str) -> list[CoachCalendarEvent]:
@@ -7059,6 +7081,8 @@ def meeting_summary_plain_text(summary: dict) -> str:
 
 
 def coach_meeting_artifact_record(owner_email: str, event_key: str) -> CoachCalendarEvent | None:
+    if event_key.startswith("imported-review:"):
+        return fetch_calendar_event_records(owner_email, [event_key]).get(event_key)
     return CoachCalendarEvent.objects.filter(
         owner_email__iexact=owner_email,
         event_key=event_key,
@@ -10229,7 +10253,12 @@ def collect_generated_timetable(
     aptem_keys = [event["eventKey"] for event in aptem_events]
     aptem_record_map = fetch_calendar_event_records(owner_email, aptem_keys) if aptem_keys else {}
     events = [overlay_calendar_record(event, record_map.get(event["eventKey"])) for event in curriculum_events]
-    events.extend(overlay_calendar_record(event, aptem_record_map.get(event["eventKey"])) for event in aptem_events)
+    for event in aptem_events:
+        record = aptem_record_map.get(event["eventKey"])
+        if record and (str(record.learner_id) != str(event.get("learnerId"))
+                       or record.event_type != event.get("source")):
+            raise DatabaseError("The local review calendar association is inconsistent.")
+        events.append(overlay_calendar_record(event, record))
     events.extend(persisted_standalone_events)
     events.extend(live_session_events)
 
@@ -10509,6 +10538,7 @@ def reserve_coach_calendar_booking(
     notes: str,
     idempotency_key: str,
     initial_status: str = CoachCalendarEvent.STATUS_SCHEDULED,
+    local_mcm_review_id: int | str | None = None,
 ) -> tuple[CoachCalendarEvent, bool]:
     """Durably reserve one booking before any external call.
 
@@ -10550,6 +10580,25 @@ def reserve_coach_calendar_booking(
             # One shared row per learner serializes bookings even when two
             # coaches submit different session types at the same instant.
             lock_learner_calendar(learner_id)
+            if local_mcm_review_id is not None:
+                from .local_mcm_bookings import local_mcm_event_key
+                if session_type != "mcr":
+                    raise LearnerCalendarConflict("Only an MCM can use this local review identity.")
+                review_key = local_mcm_event_key(learner_id, local_mcm_review_id)
+                matches = imported_review_calendar_rows(owner_email, review_key, lock=True)
+                if len(matches) > 1:
+                    raise LearnerCalendarConflict("Multiple bookings are linked to this review. Contact support before booking again.")
+                if matches:
+                    existing = matches[0]
+                    if (normalize_email(existing.owner_email) != owner_email
+                            or existing.learner_id != learner_id or existing.event_type != "mcr"
+                            or existing.review_template_id or existing.review_instance_id
+                            or existing.status != CoachCalendarEvent.STATUS_SCHEDULED):
+                        raise LearnerCalendarConflict("This review already has an incompatible booking.")
+                    if (existing.scheduled_date, existing.scheduled_time, existing.duration_minutes) != (
+                            scheduled_date, scheduled_time, duration_minutes):
+                        raise LearnerCalendarConflict("This review is already booked at another time. Open the existing booking to reschedule it.")
+                    return existing, False
             # Recheck after entering the transaction. The unique constraint is
             # the final authority if another transaction is still uncommitted.
             existing = (
@@ -14703,7 +14752,6 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         "historicalReview": review,
     }
     if migrated_form:
-        from coach_api.models import MigratedReviewDocument
         from coach_api.migrated_summary_binding import answer_version
         from coach_api.migrated_summary_generation import summary_binding_response
         from coach_api.migrated_progress import calculation_available
@@ -14715,11 +14763,10 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         from coach_api.migrated_template_sync import snapshot_state
         definition["templateSync"] = snapshot_state(saved_instance)
         definition["answerVersion"] = answer_version(saved_instance)
-        pdf_ready = bool(saved_instance and saved_instance.status == ImportedReviewInstance.STATUS_COMPLETED
-                         and MigratedReviewDocument.objects.filter(overlay=saved_instance).exists())
+        pdf_ready = saved_instance.status == ImportedReviewInstance.STATUS_COMPLETED
         definition["pdf"] = {
             "available": pdf_ready,
-            "reason": "" if pdf_ready else "Generate the LMS review PDF after completion." if saved_instance.status == ImportedReviewInstance.STATUS_COMPLETED else "Available after completion.",
+            "reason": "" if pdf_ready else "Available after completion.",
             "source": "lms-migrated",
         }
     else:
@@ -14729,11 +14776,11 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         "source": "aptem",
         }
     if not historical_completed and (migrated_form or can_initialize or is_template_preview):
-        calendar_rows = list(CoachCalendarEvent.objects.filter(event_key=canonical_event_key)[:2])
+        calendar_rows = imported_review_calendar_rows(canonical_owner, canonical_event_key)
         calendar = calendar_rows[0] if calendar_rows else None
         booking_template = getattr(saved_instance, "migrated_template", None) if saved_instance else None
         association_valid = bool(
-            calendar and calendar.owner_email.casefold() == canonical_owner
+            len(calendar_rows) == 1 and calendar and calendar.owner_email.casefold() == canonical_owner
             and calendar.learner_id == profile_id
             and not calendar.review_instance_id and not calendar.review_template_id
             and calendar.event_type == migrated_booking_event_type(family)
@@ -14868,7 +14915,8 @@ def coach_review_instance_local_status(request, instance_id):
             synchronize_definition_locked(overlay, definition)
         except TemplateSyncConflict as exc:
             return JsonResponse({"detail": str(exc), "templateSync": exc.response()}, status=409)
-        calendar = CoachCalendarEvent.objects.select_for_update().filter(event_key=instance_id).first()
+        calendar_rows = imported_review_calendar_rows(owner_email, instance_id, lock=True)
+        calendar = calendar_rows[0] if len(calendar_rows) == 1 else None
         if not calendar or calendar.owner_email.casefold() != owner_email or calendar.learner_id != overlay.learner_id or calendar.review_instance_id or calendar.review_template_id or calendar.sync_state != CoachCalendarEvent.SYNC_SYNCED or not calendar.graph_event_id or not calendar_record_has_launch_url(calendar):
             return coach_error(request, code="BOOKING_CONFLICT", message="Book and confirm the Teams meeting before starting this review.", status=409)
         overlay.status = ImportedReviewInstance.STATUS_IN_PROGRESS
@@ -14932,7 +14980,10 @@ def coach_review_instance_book(request, instance_id):
     try:
         with transaction.atomic():
             lock_learner_calendar(learner_id)
-            record = CoachCalendarEvent.objects.select_for_update().filter(event_key=instance_id).first()
+            calendar_rows = imported_review_calendar_rows(owner_email, instance_id, lock=True)
+            if len(calendar_rows) > 1:
+                return coach_error(request, code="BOOKING_CONFLICT", message="Multiple bookings are linked to this review. Contact support before booking again.", status=409)
+            record = calendar_rows[0] if calendar_rows else None
             if record:
                 if (record.owner_email.casefold() != owner_email or record.learner_id != learner_id
                     or record.event_type != event_type or record.review_instance_id or record.review_template_id):

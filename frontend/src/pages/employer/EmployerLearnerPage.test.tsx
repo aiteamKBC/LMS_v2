@@ -18,11 +18,13 @@ const mocks = vi.hoisted(() => ({
   downloadReviewPdf: vi.fn(),
   fetchMigratedReviewForParty: vi.fn(() => Promise.resolve(null)),
   signMigratedReviewAsParty: vi.fn(() => Promise.resolve({ signed: true, role: 'employer' })),
+  downloadMigratedReviewForParty: vi.fn(() => Promise.resolve()),
+  toastError: vi.fn(),
 }));
 
 vi.mock('@/hooks/useAuth', () => ({ useAuth: mocks.useAuth }));
 vi.mock('@/hooks/useToast', () => ({
-  useToast: () => ({ success: vi.fn(), error: vi.fn() }),
+  useToast: () => ({ success: vi.fn(), error: mocks.toastError }),
 }));
 vi.mock('@/api/employerPortal', () => ({
   fetchEmployerLearner: mocks.fetchEmployerLearner,
@@ -41,6 +43,7 @@ vi.mock('@/api/learnerCalendar', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/api/learnerCalendar')>(),
   fetchMigratedReviewForParty: mocks.fetchMigratedReviewForParty,
   signMigratedReviewAsParty: mocks.signMigratedReviewAsParty,
+  downloadMigratedReviewForParty: mocks.downloadMigratedReviewForParty,
 }));
 vi.mock('@/pages/learner/onboarding/reviews/reviewDocument', () => ({ downloadReviewPdf: mocks.downloadReviewPdf }));
 // The pad's own behaviour is covered by savedSignaturePad.test.tsx; here it
@@ -214,5 +217,36 @@ describe('EmployerLearnerPage review signing', () => {
     await waitFor(() => expect(mocks.downloadReviewPdf).toHaveBeenCalledWith({ eventKey: 'enrol-eligibility-1' }, expect.anything()));
     expect(mocks.fetchEmployerEnrolmentReview).toHaveBeenCalledWith('7', 'commercial', '499', 'enrol-eligibility-1');
     expect(mocks.fetchReviewForm).not.toHaveBeenCalled();
+  });
+
+  it('keeps a signed migrated review unavailable until final completion', async () => {
+    mocks.fetchEmployerLearner.mockResolvedValue(detail([{ ...review,
+      eventKey: 'imported-review:synthetic', migratedForm: true, signed: true, completed: false,
+    }]));
+    renderPage();
+    expect(await screen.findByText('Signed · awaiting final completion')).toBeVisible();
+    expect(screen.queryByRole('button', { name: /Show document/ })).not.toBeInTheDocument();
+    expect(mocks.downloadMigratedReviewForParty).not.toHaveBeenCalled();
+  });
+
+  it('downloads a completed migrated review through the authorized party endpoint', async () => {
+    mocks.fetchEmployerLearner.mockResolvedValue(detail([{ ...review,
+      eventKey: 'imported-review:synthetic', migratedForm: true, signed: true, completed: true,
+    }]));
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: /Show document/ }));
+    await waitFor(() => expect(mocks.downloadMigratedReviewForParty).toHaveBeenCalledWith('imported-review:synthetic'));
+    expect(mocks.downloadReviewPdf).not.toHaveBeenCalled();
+  });
+
+  it('shows the missing migrated PDF error without falling back to a draft or legacy PDF', async () => {
+    mocks.fetchEmployerLearner.mockResolvedValue(detail([{ ...review,
+      eventKey: 'imported-review:synthetic', migratedForm: true, signed: true, completed: true,
+    }]));
+    mocks.downloadMigratedReviewForParty.mockRejectedValueOnce(new Error('The LMS PDF has not been generated yet.'));
+    renderPage();
+    await userEvent.click(await screen.findByRole('button', { name: /Show document/ }));
+    await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith('Could not open the document', 'The LMS PDF has not been generated yet.'));
+    expect(mocks.downloadReviewPdf).not.toHaveBeenCalled();
   });
 });

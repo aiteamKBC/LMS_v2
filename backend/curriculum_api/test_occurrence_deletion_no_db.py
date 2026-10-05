@@ -7,9 +7,12 @@ additional meeting is absent. A week that simply is not part of this send is
 absent. Reading absence as intent deleted live occurrences and had Exchange
 email the whole cohort "Canceled: <module>".
 
-These tests pin the rule that replaced it: an occurrence the LMS owns is retired
-only when this operation PROVES the same session moved off that date, and
-everything else is left alone.
+These tests pin the rule that replaced it: the shift only ever REPORTS what it
+has proved -- the slot a session moved off, or weekly filler no session
+occupied -- and nothing removes even those. Each is handed to
+`flag_teams_occurrence_leftovers`, which records it for a person to review and
+makes no Microsoft call at all: only the explicit Cancel on that slot may send
+the cancellation Exchange emails to everyone invited.
 """
 import ast
 import types
@@ -24,7 +27,7 @@ ROOT = Path(__file__).resolve().parent
 #: Real implementations under test, plus the small pure helpers they lean on.
 NAMES = {
     'apply_teams_occurrence_shifts', 'vacated_occurrence_keys', 'tracked_occurrence_keys',
-    'execute_teams_occurrence_deletions', 'teams_expanded_instances',
+    'flag_teams_occurrence_leftovers', 'teams_expanded_instances',
     'clean_str', 'parse_int', 'parse_graph_datetime', 'teams_calendar_minute_key',
 }
 
@@ -128,11 +131,16 @@ class OccurrenceDeletionTests(unittest.TestCase):
         return deletions, graph
 
     def run_deletions(self, deletions):
+        """What the save does with the proved list now: flag it, delete nothing."""
         graph = FakeGraph([])
-        self.v.execute_teams_occurrence_deletions(
-            graph, 'organizer%40example.invalid', deletions,
-            live_session_id='LIVE-1', module_catalogue_id='MOD-1', source='holiday_move_cleanup',
-        )
+        transport = types.ModuleType('coach_api.views')
+        transport.microsoft_graph_request = graph
+        with patch.dict('sys.modules', {'coach_api': types.ModuleType('coach_api'), 'coach_api.views': transport}):
+            flagged = self.v.flag_teams_occurrence_leftovers(
+                deletions, live_session_id='LIVE-1', module_catalogue_id='MOD-1', source='update_reconcile',
+            )
+        self.assertEqual(graph.calls, [], 'flagging a slot must never reach Microsoft')
+        self.assertEqual([item['eventId'] for item in flagged], [item['instance_id'] for item in deletions])
         return graph.deleted
 
     # ------------------------------------------------------------------ A
@@ -215,12 +223,12 @@ class OccurrenceDeletionTests(unittest.TestCase):
         self.assertIn('instance-4', graph.instances)
 
     def test_a_slot_the_recurrence_invented_is_not_an_lms_session(self):
-        """The one absence that IS removable: weekly filler no session ever occupied.
+        """Weekly filler no session ever occupied is reported -- and still not removed.
 
         Graph materialises an instance in every weekly slot of a recurrence, so a
-        holiday-shifted plan cannot match until the unoccupied slots go. These
-        have no LMS occurrence row behind them, which is exactly what separates
-        them from a real session that is merely absent from this send.
+        gap in the plan leaves one behind. It has no LMS occurrence row, which is
+        what tells it apart from a real session; but removing it still emails the
+        whole cohort a cancellation, so it is flagged for a person instead.
         """
         instances = [
             instance('instance-1', at((9, 15))),
@@ -234,7 +242,7 @@ class OccurrenceDeletionTests(unittest.TestCase):
 
         self.assertEqual([item['instance_id'] for item in deletions], ['filler'])
         self.assertEqual(deletions[0]['reason'], 'recurrence_filler_never_an_lms_session')
-        self.assertEqual(self.run_deletions(deletions), ['filler'])
+        self.assertEqual(self.run_deletions(deletions), [])
 
     def test_no_deletion_reason_is_mere_absence(self):
         """Every reason names what was proved; none says "it was not in the array"."""
