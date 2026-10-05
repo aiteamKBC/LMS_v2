@@ -121,6 +121,11 @@ def cancellation_plan(series, occurrences, previous, read):
         return True
 
     cancelled_roots = set()
+    # Live on Teams, but no scheduled LMS session is held there: weekly filler
+    # in a gap, a week handed to its own additional meeting, a session the plan
+    # dropped, a weekday the plan stopped using. Never cancelled by this or any
+    # automatic path -- only reported, for the explicit Cancel on that slot.
+    leftovers = []
     for root_id, group in groups.items():
         event = get(root_id, expand=True)
         if event is None:
@@ -152,6 +157,8 @@ def cancellation_plan(series, occurrences, previous, read):
             raise CalendarStateError('Microsoft returned an unexpected meeting type.')
         removed = set(event.get('cancelledOccurrences') or [])
         claimed = set()
+        held = set()
+        errors_before = len(errors)
         for row in group['rows']:
             dates = [utc_datetime(row[key]).isoformat() for key in ('scheduled_start', 'scheduled_end')]
             saved = previous.get('occurrences', {}).get(row['id'], {})
@@ -179,14 +186,37 @@ def cancellation_plan(series, occurrences, previous, read):
             if _join(match) and _join(match) != (row.get('join_url') or group['link']):
                 raise CalendarStateError('A session has a different Microsoft join link.')
             claimed.add(match['id'])
+            if row.get('status') != 'cancelled':
+                held.add(match['id'])
             snapshot['occurrences'][row['id']] = {'rootId': root_id, 'eventId': match['id'],
                 'occurrenceId': match.get('occurrenceId') or '', 'dates': dates}
             if match.get('isCancelled') is True:
                 cancelled.add(row['id'])
+        # A session that could not be matched may be any of these, so a root
+        # with an unmatched session reports nothing rather than guess.
+        if len(errors) == errors_before:
+            for item in available:
+                if item.get('id') and item['id'] not in held and item.get('isCancelled') is not True:
+                    leftovers.append({'kind': 'occurrence' if item['id'] != root_id else 'event', 'rootId': root_id,
+                                      'eventId': item['id'], 'occurrenceId': item.get('occurrenceId') or '',
+                                      'startDateTimeUtc': event_instant(item, 'start').isoformat(),
+                                      'endDateTimeUtc': event_instant(item, 'end').isoformat()})
+    # A weekday series the plan no longer uses holds no sessions, so no group
+    # above reads it. It is still on Teams until somebody cancels it.
+    for entry in manifest:
+        event_id = entry.get('eventId') or ''
+        if entry.get('sessionNumbers') or not event_id or event_id in groups:
+            continue
+        event = get(event_id)
+        if event and event.get('isCancelled') is not True:
+            leftovers.append({'kind': 'series', 'rootId': event_id, 'eventId': event_id, 'occurrenceId': '',
+                              'day': entry.get('day') or '', 'startDateTimeUtc': '', 'endDateTimeUtc': ''})
+    snapshot['leftovers'] = leftovers
     # Preserve completed attendance and all historical evidence. This operation
     # updates calendar availability, never recategorizes a session that ran.
     eligible = {row['id'] for row in occurrences if row.get('status') == 'scheduled'
                 and not row.get('actual_start') and not row.get('attendance_report_id')
                 and not row.get('participant_count')}
     return {'cancelledIds': sorted(cancelled & eligible), 'seriesCancelled': bool(groups) and len(cancelled_roots) == len(groups),
-            'snapshot': snapshot, 'errors': errors, 'cancelledRootIds': sorted(cancelled_roots)}
+            'snapshot': snapshot, 'errors': errors, 'cancelledRootIds': sorted(cancelled_roots),
+            'leftovers': leftovers}
