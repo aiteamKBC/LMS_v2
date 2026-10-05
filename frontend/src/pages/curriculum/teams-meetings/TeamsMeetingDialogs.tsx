@@ -9,6 +9,7 @@ import {
 import { EntraPeopleInput } from './EntraPeopleInput';
 import { CalendarActionDialog } from './CalendarActionDialog';
 import { CreateProgressPanel } from './CreateProgressPanel';
+import { LeftoverSlotsPanel } from './LeftoverSlotsPanel';
 import { AttendeeComparisonPanel } from './AttendeeComparisonPanel';
 import { MeetingScopePanel } from './MeetingScopePanel';
 import { pendingInvitations } from './attendeeComparison';
@@ -16,6 +17,7 @@ import { emailList } from '../module-builder/EmailChipsInput';
 import { updateProgressSteps } from './updateProgress';
 import { createPortal } from 'react-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { formatSystemTimestamp } from '@/lib/format';
 import { Modal } from '@/pages/users/components/Modal';
 import {
   parseUtcInstant,
@@ -374,6 +376,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
     requestCloseSelected, notice, openCalendarAction, busy, detailLoading, detail, graphConfigured,
     graphStatus, checkGraphConfiguration,
     checkCalendarAction, pendingComponents, reattach, selectedForDisplay, createCalendar, createDrawer, createRecovery,
+    createDraft, createDraftSaving, saveCreateDraft, leftoverCancelling, cancelLeftover,
     runCalendarSync, calendarSyncing, autoSyncEnabled, setAutoSyncEnabled,
     openSettings, setResultsModule, resultsModule, detailError, loadDetail, holidayLabelFor,
     detailOccurrenceFor, now, setPreview, setTranscriptPreview, invitedPrefilling, prefillNotice, prefillInvitees, preview,
@@ -511,6 +514,26 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     </button>
                    </div>
                  ) : (
+                  <>
+                  {createDraft?.catalogueId === selected.catalogueId && !createDrawer.dirty && (
+                    <span className="mr-auto text-[11px] font-semibold text-foreground-500">
+                      Draft saved {formatSystemTimestamp(createDraft.updatedAt, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}
+                      {createDraft.updatedByName ? ` by ${createDraft.updatedByName}` : ''}. Nothing is in Teams yet.
+                    </span>
+                  )}
+                  {/* Keeps the answers on the server for this module and
+                      nothing more: no Microsoft call, no email. */}
+                  <button
+                    type="button"
+                    onClick={() => void saveCreateDraft(selected)}
+                    disabled={!createDrawer.dirty || createDraftSaving || createDrawer.saving
+                      || Boolean(createProgress) || Boolean(createRecovery && createRecovery.phase !== 'failed')}
+                    title="Keep what you have filled in for this module without creating anything in Teams. Nobody is emailed."
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-300 bg-white px-4 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <AppIcon className={createDraftSaving ? 'ri-loader-4-line animate-spin text-sm' : 'ri-save-3-line text-sm'}></AppIcon>
+                    Save draft
+                  </button>
                   <button
                     type="button"
                     onClick={() => void createCalendar(selected)}
@@ -524,6 +547,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     <AppIcon className={createDrawer.saving ? 'ri-loader-4-line animate-spin text-sm' : 'ri-calendar-check-line text-sm'}></AppIcon>
                     Create
                   </button>
+                  </>
                 )}
               </div>
             )}
@@ -848,6 +872,15 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                       </>
                     );
                   }}
+                />
+
+                {/* Slots Teams holds that the plan does not. Only their own
+                    Cancel removes one -- never Update or the status check. */}
+                <LeftoverSlotsPanel
+                  slots={detail?.series.id === selected.summary?.liveSessionId ? detail?.leftoverSlots || [] : []}
+                  cancelling={leftoverCancelling}
+                  disabled={Boolean(busy) || Boolean(updateProgress) || updateDrawer.saving || !graphConfigured}
+                  onCancel={slot => void cancelLeftover(slot)}
                 />
 
                 {/* Under the dates, the same fields the create form asks for,

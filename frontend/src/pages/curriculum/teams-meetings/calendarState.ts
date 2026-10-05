@@ -1,11 +1,14 @@
 import { coachFetch } from '@/lib/coachFetch';
 import { clearCurriculumGetCache } from '@/lib/curriculumApi';
+import type { TeamsLeftoverSlot } from '../module-builder/moduleAuthoringData';
 
 export interface CalendarSyncResult {
   changed: boolean;
   seriesStatus: string;
   cancelledSessions: number[];
   errors: string[];
+  /** On Teams but not in the module plan. Reported only; never cancelled by the check. */
+  leftovers?: TeamsLeftoverSlot[];
 }
 
 /** Reads Microsoft status and reconciles the LMS; sends no calendar invitations. */

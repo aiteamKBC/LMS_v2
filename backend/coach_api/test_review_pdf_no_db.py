@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from django.test import RequestFactory, SimpleTestCase
+from django.http import JsonResponse
 
 from coach_api.review_pdf import coach_mcm_pdf
 
@@ -14,6 +15,7 @@ class ImportedReviewPdfTests(SimpleTestCase):
             patch("coach_api.views._imported_review_definition", return_value={"migratedForm": True}),
             patch("coach_api.auth.authenticated_coach_email", return_value="coach@example.test"),
             patch("learner_api.aptem_review_pdf.original_review_pdf") as original_pdf,
+            patch("coach_api.migrated_completion_views.migrated_review_pdf_response", return_value=JsonResponse({"detail": "Incomplete"}, status=409)) as migrated_pdf,
         ):
             response = unwrap(coach_mcm_pdf)(
                 RequestFactory().get("/coach/reviews/imported-review:A-7/pdf"),
@@ -21,6 +23,7 @@ class ImportedReviewPdfTests(SimpleTestCase):
             )
         self.assertEqual(response.status_code, 409)
         original_pdf.assert_not_called()
+        migrated_pdf.assert_called_once()
 
     def test_imported_review_pdf_uses_the_definition_learner_id(self):
         definition = {
@@ -47,6 +50,8 @@ class ImportedReviewPdfTests(SimpleTestCase):
             patch("learner_api.models.LearnerProfile.objects.filter") as profile_filter,
             patch("learner_api.models.EnrolmentUser.all_learners.filter") as source_filter,
             patch("learner_api.aptem_review_pdf.original_review_pdf", return_value=b"%PDF-original"),
+            patch("coach_api.migrated_completion.build_pdf", side_effect=AssertionError("Historical generation")),
+            patch("coach_api.models.MigratedReviewDocument.objects.create", side_effect=AssertionError("Historical document write")),
         ):
             profile_filter.return_value.first.return_value = profile
             source_filter.return_value.first.return_value = source
@@ -109,6 +114,8 @@ class ImportedReviewPdfTests(SimpleTestCase):
             patch("coach_api.auth.authenticated_coach_email", return_value="coach@example.test"),
             patch("learner_api.models.LearnerProfile.objects.filter") as profile_filter,
             patch("learner_api.aptem_review_pdf.original_review_pdf", return_value=None),
+            patch("coach_api.migrated_completion.build_pdf", side_effect=AssertionError("Historical fallback")),
+            patch("coach_api.models.MigratedReviewDocument.objects.create", side_effect=AssertionError("Historical document write")),
         ):
             profile_filter.return_value.first.return_value = None
 

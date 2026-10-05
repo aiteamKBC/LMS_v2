@@ -47,8 +47,9 @@ const STATUS_LABEL: Record<ActivityStatus, string> = {
 };
 const ACTIVITY_PAGE_SIZE = 8;
 
-export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading, scheduleError }: {
+export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading, scheduleError, canOpenActivities = true }: {
   kind: LearnerKind; learnerId: string; schedule: TrainingPlanDashboard | null; scheduleLoading: boolean; scheduleError?: string;
+  canOpenActivities?: boolean;
 }) {
   const { real, loading: detailLoading, loadError: detailError, refresh: refreshDetail } = useLearnerDetailParam(kind, learnerId, true);
   const [now, setNow] = useState(Date.now);
@@ -209,7 +210,7 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
           </div>
 
           {isTeachingWeek && <section aria-labelledby="weekly-session-heading" className="mt-5">
-            {selectedWeek.start ? <LiveSessionSummary week={selectedWeek} now={now} headingId="weekly-session-heading" />
+            {selectedWeek.start ? <LiveSessionSummary week={selectedWeek} now={now} headingId="weekly-session-heading" canJoinSession={canOpenActivities} />
               : <p id="weekly-session-heading" className="flex min-h-[136px] items-center rounded-xl border border-foreground-100 bg-background-50 p-5 text-sm text-foreground-500">No live session is scheduled for this week.</p>}
           </section>
           }
@@ -224,7 +225,8 @@ export function WeeklyLearningPlan({ kind, learnerId, schedule, scheduleLoading,
             {detailError && !real ? <Panel><EmptyState variant="error" title="Could not load this week's activities" description={detailError}
               action={<button type="button" onClick={refreshDetail} className="rounded-lg bg-primary-600 px-3.5 py-2 text-xs font-semibold text-white">Try again</button>} /></Panel>
               : detailLoading && !real ? <><ActivitiesHeading count={components.length} /><Panel><RowsSkeleton rows={3} avatar={false} /></Panel></>
-                : <ActivitiesTableModern components={components} completedIds={completedIds} kind={kind} learnerId={learnerId} week={selectedWeek.weekTitle} />}
+                : <ActivitiesTableModern components={components} completedIds={completedIds} kind={kind} learnerId={learnerId}
+                  week={selectedWeek.weekTitle} canOpenActivities={canOpenActivities} />}
           </div>
         </section>}
       </>}
@@ -276,7 +278,9 @@ function PaginationControls({ page, pageCount, onPageChange, label, className }:
   </nav>;
 }
 
-function LiveSessionSummary({ week, now, headingId }: { week: SessionRow; now: number; headingId: string }) {
+function LiveSessionSummary({ week, now, headingId, canJoinSession }: {
+  week: SessionRow; now: number; headingId: string; canJoinSession: boolean;
+}) {
   const start = week.start as string;
   const startMs = Date.parse(start);
   const end = week.minutes ? new Date(startMs + week.minutes * 60_000) : null;
@@ -317,7 +321,7 @@ function LiveSessionSummary({ week, now, headingId }: { week: SessionRow; now: n
         </p> : null}
       </div>
     </div>
-    {hasJoinUrl ? canJoin ? <a href={week.joinUrl!} target="_blank" rel="noopener noreferrer"
+    {canJoinSession && hasJoinUrl ? canJoin ? <a href={week.joinUrl!} target="_blank" rel="noopener noreferrer"
       className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-primary-700 px-4 text-xs font-bold text-white shadow-sm transition hover:bg-primary-800 md:min-w-[128px]">
       Join session<ExternalLink size={13} aria-hidden="true" />
     </a> : <button type="button" disabled title={state === 'upcoming' ? 'Joining opens 1 hour before the session starts.'
@@ -396,8 +400,9 @@ function ActivitiesHeading({ count, controls }: { count: number; controls?: Reac
   </div>;
 }
 
-function ActivitiesTableModern({ components, completedIds, kind, learnerId, week }: {
+function ActivitiesTableModern({ components, completedIds, kind, learnerId, week, canOpenActivities }: {
   components: JourneyComponent[]; completedIds: Set<string>; kind: LearnerKind; learnerId: string; week?: string;
+  canOpenActivities: boolean;
 }) {
   const [query, setQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
@@ -450,10 +455,10 @@ function ActivitiesTableModern({ components, completedIds, kind, learnerId, week
     <div className="max-w-full" style={{ overflowX: 'auto' }}>
       <table className="w-full min-w-[660px] table-fixed text-left text-[10px]">
         <caption className="sr-only">This week's learning activities</caption>
-        <colgroup><col className="w-9" /><col className="w-24" /><col /><col className="w-24" /><col className="w-32" /><col className="w-24" /><col className="w-24" /></colgroup>
+        <colgroup><col className="w-9" /><col className="w-24" /><col /><col className="w-24" /><col className="w-32" /><col className="w-24" />{canOpenActivities && <col className="w-24" />}</colgroup>
         <thead className="bg-background-100/90">
           <tr>
-            {['#', 'Type', 'Title', 'Expected time', 'KSB mapping', 'Status', 'Action'].map(label => (
+            {['#', 'Type', 'Title', 'Expected time', 'KSB mapping', 'Status', ...(canOpenActivities ? ['Action'] : [])].map(label => (
               <th key={label} scope="col" className={cn(
                 'px-2 py-2 text-left text-[9px] font-bold uppercase tracking-[0.05em] text-foreground-500',
                 ['Expected time', 'KSB mapping', 'Status', 'Action'].includes(label) && 'text-center',
@@ -466,7 +471,7 @@ function ActivitiesTableModern({ components, completedIds, kind, learnerId, week
         <tbody>
           {visibleComponents.map((component, index) => {
             const status = activityStatus(component, completedIds);
-            const href = activityHref(component, week, kind, learnerId, status === 'completed');
+            const href = canOpenActivities ? activityHref(component, week, kind, learnerId, status === 'completed') : null;
             const typeLabel = activityTypeLabel(component);
             const meta = resourceTypeMeta(component.type || typeLabel);
             return <tr key={component.componentId || component.title} className="border-t border-foreground-100 transition-colors hover:bg-primary-50/30">
@@ -487,12 +492,12 @@ function ActivitiesTableModern({ components, completedIds, kind, learnerId, week
               </td>
               <td className="px-2 py-2 text-center align-middle"><div className="flex justify-center"><KsbChips codes={activityKsbCodes(component)} /></div></td>
               <td className="px-2 py-2 text-center align-middle"><StatusBadge tone={STATUS_TONE[status]} label={STATUS_LABEL[status]} size="sm" showIcon={status === 'completed'} className="whitespace-nowrap text-[10px]" /></td>
-              <td className="px-2 py-2 text-center align-middle">
+              {canOpenActivities && <td className="px-2 py-2 text-center align-middle">
                 {href ? <Link to={href} className={cn(
                   'inline-flex min-h-7 min-w-[64px] items-center justify-center whitespace-nowrap rounded-lg px-1.5 text-[10px] font-bold leading-none transition',
                   status === 'in-progress' ? 'bg-primary-600 text-white shadow-sm hover:bg-primary-700' : 'border border-primary-200 bg-background-50 text-primary-700 hover:border-primary-300 hover:bg-primary-50',
                 )}>{activityActionLabel(status)}</Link> : <span className="inline-block whitespace-nowrap text-[10px] text-foreground-400">Not available</span>}
-              </td>
+              </td>}
             </tr>;
           })}
         </tbody>

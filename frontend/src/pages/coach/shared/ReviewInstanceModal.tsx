@@ -15,7 +15,6 @@ import {
   fetchReviewInstanceForm,
   flattenReviewFields,
   generateReviewMeetingSummary,
-  generateMigratedReviewPdf,
   initializeMigratedReview,
   reopenReviewInstance,
   saveReviewInstanceAnswers,
@@ -587,20 +586,6 @@ export function ReviewInstanceModal({
       onStatusChanged?.(updated.instance.status);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to complete the migrated review.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const generateMigratedPdf = async () => {
-    if (!definition?.migratedForm || isViewingAsCoach || saving) return;
-    setSaving(true);
-    setError(null);
-    try {
-      await generateMigratedReviewPdf(definition.instance.id);
-      setDefinition(await fetchReviewInstanceForm(definition.instance.id));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unable to generate the LMS review PDF.');
     } finally {
       setSaving(false);
     }
@@ -1321,14 +1306,12 @@ export function ReviewInstanceModal({
                 {definition.migratedForm && definition.localStatus === 'awaiting-signature' && allRequiredSignaturesSaved && !isViewingAsCoach ? (
                   <button type="button" onClick={() => { void finalizeMigrated(); }} disabled={busy} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-60">Complete review</button>
                 ) : null}
-                {definition.migratedForm && definition.localStatus === 'completed' && !definition.pdf?.available && !isViewingAsCoach ? (
-                  <button type="button" onClick={() => { void generateMigratedPdf(); }} disabled={busy} className="rounded-lg bg-primary-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-60">Generate LMS review PDF</button>
-                ) : null}
-                <ReviewPdfDownload
-                  availability={definition.pdf}
+                {(definition.source !== 'aptem' || definition.instance.status === 'completed') && <ReviewPdfDownload
+                  availability={definition.migratedForm
+                    ? { available: definition.instance.status === 'completed', reason: 'Available after completion.' }
+                    : definition.pdf}
                   onDownload={() => downloadReviewInstancePdf(definition.instance.id)}
-                  label={definition.migratedForm ? 'Download LMS-generated review PDF' : undefined}
-                />
+                />}
               </>
             ) : null}
           </>

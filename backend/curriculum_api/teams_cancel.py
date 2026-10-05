@@ -148,6 +148,10 @@ def persist_cancellation(live_id, command, scope, *, complete):
               AND COALESCE(attendance_report_id, '') = ''
               AND COALESCE(participant_count, 0) = 0"""
     changed = 0
+    if scope == 'leftover':
+        # A slot on Teams that no LMS session is held on: Microsoft's own record
+        # of it is the only thing the cancellation changes.
+        return 0
     with connection.cursor() as cursor:
         if scope == 'occurrence':
             cursor.execute(f"""UPDATE curriculum.live_session_occurrences

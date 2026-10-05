@@ -1,4 +1,5 @@
 import type { LearnerDetail, LearnerQuizAttempt } from '@/api/learnerDetail';
+import { quizAttemptsFor } from '@/utils/learnerJourney';
 
 export interface LinkedQuiz {
   quizId: number;
@@ -39,7 +40,7 @@ export function buildLinkedQuizzes(real: LearnerDetail | null): LinkedQuiz[] {
       module: c.module,
       week: c.week,
       questions: c.quizMeta.questions,
-      attempts: real.quizAttempts.filter((a) => a.quizId === quizId),
+      attempts: quizAttemptsFor(c, real.quizAttempts),
     });
   }
   return Array.from(byQuiz.values());
