@@ -171,3 +171,34 @@ describe('canonical KSB activity rows', () => {
       [{ code: 'K1', description: 'Knowledge', type: 'Knowledge', number: '1' }])).toEqual([]);
   });
 });
+
+
+describe('KSB cell display resolution', () => {
+  it.each([
+    ['B1.1', '101', 'B1.2', 'B1.1'],
+    ['K2', '202', 'K2.3', 'K2.3'],
+    ['S4', '303', 'S4.1', 'S4.1'],
+    ['B1', undefined, undefined, 'B1'],
+    ['B1', '404', undefined, 'B1'],
+    ['B1', undefined, 'B1.2', 'B1'],
+    ['B1', '505', 'B2.1', 'B1'],
+    ['K2', '606', 'K2.3.1', 'K2.3.1'],
+  ])('resolves %s through its own stored definition', (code, ksbDefinitionId, definitionCode, expected) => {
+    const point = { activityId: 'activity', code, ksbDefinitionId, definitionCode, completed: true,
+      title: null, type: null, module: null, status: null, source: null, completedAt: null, componentId: null };
+    const [row] = selectCaseFileKsbPointRows(caseFile({ ksbActivityPoints: [point] }));
+    expect(row.displayCode).toBe(expected);
+    expect(row.typeLetter).toBe(code[0]);
+    expect(row.code).toBe(code);
+    expect(row.id).toBe(JSON.stringify(['activity', code]));
+    expect(row.linked).toBe(true);
+  });
+
+  it('never numbers repeated parent rows or guesses from framework children', () => {
+    const points = ['one', 'two'].map(activityId => ({ activityId, code: 'B1', completed: false,
+      title: null, type: null, module: null, status: null, source: null, completedAt: null, componentId: null }));
+    const rows = selectCaseFileKsbPointRows(caseFile({ ksbActivityPoints: points }),
+      [{ code: 'B1.1', description: 'Framework child', type: 'Behaviours', number: '1.1' }]);
+    expect(rows.map(row => row.displayCode)).toEqual(['B1', 'B1']);
+  });
+});

@@ -6,7 +6,8 @@ export type NormalizedReviewStatus =
   | 'scheduled'
   | 'in-progress'
   | 'awaiting-signature'
-  | 'completed';
+  | 'completed'
+  | 'cancelled';
 
 export interface ReviewActionMatrix {
   schedule: 'Schedule' | 'Reschedule' | null;
@@ -19,6 +20,7 @@ export interface ReviewActionMatrix {
 /** Normalize source statuses only after both adapters have produced the common event contract. */
 export function normalizedReviewStatus(event: CoachCalendarEvent): NormalizedReviewStatus {
   if (event.status === 'completed') return 'completed';
+  if (event.status === 'cancelled') return 'cancelled';
   if (event.status === 'awaiting-signature') return 'awaiting-signature';
   if (event.status === 'in-progress') return 'in-progress';
   if (event.status === 'scheduled') return 'scheduled';

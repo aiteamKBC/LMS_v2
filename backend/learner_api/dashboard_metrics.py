@@ -487,7 +487,10 @@ def learner_metrics(request, kind, pk):
         with measure_projection('metrics', kind=kind, learner_id=pk) as measurement:
             source = model.all_learners.only('id', 'aptem_id', 'email').get(pk=pk)
             with measurement.stage('metrics'):
-                if request.GET.get('view') == 'learner-overview':
+                if request.GET.get('view') == 'coach-ksb-breakdown':
+                    from .aptem_ksb_breakdown import read_learner_breakdown
+                    payload = read_learner_breakdown(connections['enrolment'], source.pk)
+                elif request.GET.get('view') == 'learner-overview':
                     payload = canonical_learning.metrics_bulk(
                         [source.pk], learner_workspace=True, include_ksb_points=True,
                     ).get(source.pk)

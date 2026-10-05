@@ -176,4 +176,27 @@ describe('component editor saved session results', () => {
     expect(onChange).not.toHaveBeenCalled();
     expect(coachFetch).not.toHaveBeenCalled();
   });
+
+  it('opens an additional meeting’s own saved results, not the module calendar’s', async () => {
+    const extraUrl = '/curriculum_api/curriculum/session-results/EXTRA/sessions/1/';
+    fetchMock.mockImplementation((url: string) => {
+      if (url === extraUrl) return ok({ sessions: [{ ...saved, id: 'OX', seriesId: 'EXTRA', sessionNumber: 1 }] });
+      throw new Error(`Unexpected network request: ${url}`);
+    });
+    const component: ComponentProps<typeof ComponentEditor>['component'] = {
+      id: 'CX', weekId: 'W1', type: 'live-session', title: 'Master class', description: '',
+      expectedOtjh: 8, points: 30, reflectionRequired: false, reflectionQuestion: '',
+      workplaceEvidenceRequired: false, tutorValidationRequired: false, coachValidationRequired: true,
+      ksbMappings: [], settings: {
+        liveSessionUrl: 'https://teams.example.invalid/extra', extraTeamsMeetingUrl: 'https://teams.example.invalid/extra',
+        extraTeamsLiveSessionId: 'EXTRA', extraTeamsStartDateTimeUtc: '2026-09-30T09:00:00+00:00',
+      },
+    };
+    render(<ComponentEditor component={component} onChange={vi.fn()} onBack={vi.fn()} groupOptions={[]}
+      weekScope={{} as ComponentProps<typeof ComponentEditor>['weekScope']} weekSessionDate="2026-09-30" />);
+    await screen.findByLabelText('Session recording 1');
+    expect(screen.getByText('Recording & attendance')).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(extraUrl, expect.anything());
+    expect(fetchArtifacts).not.toHaveBeenCalled();
+  });
 });

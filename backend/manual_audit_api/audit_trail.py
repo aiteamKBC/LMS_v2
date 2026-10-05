@@ -66,12 +66,17 @@ DATE_OVERRIDE_COLUMNS = (
 SIGNOFF_COLUMNS = (
     'signoff_key', 'learner_id', 'programme_key', 'report_month', 'signer_role',
     'signer_name', 'review_confirmed', 'signed_at', 'snapshot_hash',
-    'audit_version', 'updated_at',
+    'audit_version', 'updated_at', 'created_at',
 )
 SIGNOFF_RETURNING = (
     'learner_id', 'programme_key', 'report_month', 'signer_role',
     'signer_name', 'review_confirmed', 'signed_at', 'snapshot_hash',
     'audit_version', 'updated_at',
+    # Last, so positional reads are unchanged. Not a snapshot column -- the
+    # registration lists its own. The insert stamps both with `now()` and the
+    # upsert moves only `updated_at`, so only a sign-off this write created
+    # reads as created.
+    'created_at',
 )
 
 

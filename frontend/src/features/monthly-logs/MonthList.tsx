@@ -8,6 +8,12 @@ import type { LogMonth, LogPerspective, LogSummary } from './api';
 import styles from './monthlyLogs.module.css';
 
 export function MonthList({ summary, base, perspective }: { summary: LogSummary; base: string; perspective: LogPerspective }) {
+  return perspective === 'coach'
+    ? <CoachMonthList summary={summary} base={base} />
+    : <LearnerMonthList summary={summary} base={base} perspective={perspective} />;
+}
+
+function LearnerMonthList({ summary, base, perspective }: { summary: LogSummary; base: string; perspective: LogPerspective }) {
   const [year, setYear] = useState('all');
   const [pendingOnly, setPendingOnly] = useState(false);
   const signature = perspective === 'learner' ? 'student_signature' : 'coach_signature';
@@ -78,6 +84,86 @@ export function MonthList({ summary, base, perspective }: { summary: LogSummary;
     </>}
     <p className={styles.scheduleNote}><AppIcon className="ri-information-line" />The current month updates as activities are recorded. Signatures become available after month-end.</p>
   </div>;
+}
+
+function learnerInitials(name?: string) {
+  return String(name || '').split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join('').toUpperCase() || 'L';
+}
+
+function CoachMonthList({ summary, base }: { summary: LogSummary; base: string }) {
+  const [year, setYear] = useState('');
+  const [pendingOnly, setPendingOnly] = useState(false);
+  const years = [...new Set(summary.months.map(item => item.month.slice(0, 4)))];
+  const selectedYear = years.includes(year) ? year : years.at(-1) || '';
+  const yearMonths = summary.months.filter(item => !selectedYear || item.month.startsWith(selectedYear));
+  const pending = yearMonths.filter(item => !item.is_open && !item.coach_signature);
+  const visible = pendingOnly ? pending : yearMonths;
+  const closed = summary.months.filter(item => !item.is_open);
+  const signed = closed.filter(item => item.coach_signature).length;
+  const total = closed.length;
+  const percent = total ? Math.round(signed / total * 100) : 0;
+  const plan = summary.training_plan_totals;
+  const acceptedHours = plan ? `${hours(plan.accepted_hours)} h` : 'Unavailable';
+  const plannedHours = plan?.planned_hours == null ? 'Unavailable' : `${hours(plan.planned_hours)} h`;
+  const warnings = [...new Set(summary.months.map(item => item.target_warning).filter(Boolean))];
+
+  return <div className={styles.coachLogOverview}>
+    <section className={styles.coachProfileCard} aria-label="Selected learner summary">
+      <div className={styles.coachProfileIdentity}>
+        <span className={styles.coachProfileAvatar}>{learnerInitials(summary.learner?.name)}</span>
+        <div><h2>{summary.learner?.name}</h2><p>{summary.learner?.programme}</p></div>
+      </div>
+      <div className={styles.coachProfileFact}>
+        <span>Coach signatures</span><strong>{signed} <small>/ {total}</small></strong>
+        <p>{total - signed ? `${total - signed} ${total - signed === 1 ? 'month awaits' : 'months await'} signature` : total ? 'All signatures saved' : 'No closed months yet'}</p>
+        <span className="sr-only" role="progressbar" aria-label="Coach signatures saved" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} />
+      </div>
+      <div className={styles.coachProfileFact}><span>Training plan</span><strong className={styles.coachPlanValue}>{plannedHours}</strong></div>
+    </section>
+
+    <section className={styles.coachSummaryCard} aria-labelledby="coach-monthly-summary-heading">
+      <h2 id="coach-monthly-summary-heading">Summary</h2>
+      <div className={styles.coachSummaryGrid}>
+        <div><span className={styles.coachSummaryIcon}><AppIcon className="ri-time-line" /></span><p>Accepted OTJ hours<strong>{acceptedHours}</strong></p></div>
+        <div><span className={styles.coachSummaryIcon}><AppIcon className="ri-file-list-3-line" /></span><p>Training plan<strong>{plannedHours}</strong></p></div>
+      </div>
+    </section>
+
+    {warnings.map(warning => <p key={warning} role="status" className={styles.coachWarning}>{warning}</p>)}
+
+    <section className={styles.coachMonthsCard} aria-label="Learner monthly log reports">
+      <div className={styles.coachMonthsToolbar}>
+        <div className={styles.coachMonthTabs} role="group" aria-label="Filter monthly logs">
+          <button type="button" aria-pressed={!pendingOnly} onClick={() => setPendingOnly(false)}>All months <span>{yearMonths.length}</span></button>
+          <button type="button" aria-pressed={pendingOnly} onClick={() => setPendingOnly(true)}>Awaiting signature <span>{pending.length}</span></button>
+        </div>
+        {years.length > 0 && <label className={styles.coachYearFilter}><span>Year</span><select aria-label="Filter by year" value={selectedYear} onChange={event => setYear(event.target.value)}>
+          {years.map(value => <option key={value} value={value}>{value}</option>)}
+        </select></label>}
+      </div>
+
+      {!summary.months.length ? <EmptyState title="No monthly logs yet" description="Recorded learner activities will appear here as they are completed." />
+        : !visible.length ? <div className={styles.coachNoMonths}><AppIcon className="ri-checkbox-circle-line" /><h3>All signatures saved for {selectedYear}</h3><p>There are no months awaiting a coach signature in this view.</p><button type="button" onClick={() => setPendingOnly(false)}>View all months</button></div>
+          : <div className={styles.coachTableScroll}><table className={styles.coachMonthTable}>
+            <thead><tr><th scope="col">Month</th><th scope="col">Activities</th><th scope="col">Accepted OTJ hours</th><th scope="col">Target hours</th><th scope="col">Learner signature</th><th scope="col">Coach signature</th><th scope="col">Report</th></tr></thead>
+            <tbody>{visible.map(item => <tr key={item.month}>
+              <td><strong>{monthLabel(item.month)}</strong></td>
+              <td>{item.row_count} {item.row_count === 1 ? 'activity' : 'activities'}</td>
+              <td>{duration(item.actual_hours)}</td>
+              <td>{item.training_plan_target == null ? 'Unavailable' : `${hours(item.training_plan_target)} h`}</td>
+              <td><CoachSignatureState signed={!!item.student_signature} open={!!item.is_open} /></td>
+              <td><CoachSignatureState signed={!!item.coach_signature} open={!!item.is_open} /></td>
+              <td><Link className={styles.coachReportButton} to={`${base}/${item.month}`} aria-label={`Review month: ${monthLabel(item.month)}`}>{item.is_open ? 'View log' : 'View report'}</Link></td>
+            </tr>)}</tbody>
+          </table></div>}
+      <p className={styles.coachHelperNote}><AppIcon className="ri-information-line" />Signatures become available after month-end.</p>
+    </section>
+  </div>;
+}
+
+function CoachSignatureState({ signed, open }: { signed: boolean; open: boolean }) {
+  const label = open ? 'Month in progress' : signed ? 'Signed' : 'Awaiting signature';
+  return <span className={styles.coachSignatureState} data-tone={open ? 'progress' : signed ? 'signed' : 'pending'}>{label}</span>;
 }
 
 function SignatureState({ role, signed }: { role: string; signed: boolean }) {

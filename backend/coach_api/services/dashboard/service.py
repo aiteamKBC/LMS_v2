@@ -29,9 +29,11 @@ class CoachDashboardService:
     # v14 carries the Aptem-backed programme plan/window into the learner DTO.
     # v15 adds the verified training-plan contract as the first schedule source.
     # v16 emits the API-owned OTJH target-to-date/RAG contract.
+    # v17 carries the Case File start date separately for table display.
+    # v18 makes startDate itself use the Profile resolver.
     # Older snapshots may legitimately contain ``--`` dates, so they must not
     # be served as if they were current after the serializer is corrected.
-    SCHEMA_VERSION = 16
+    SCHEMA_VERSION = 18
 
     def build(self) -> dict:
         """Read the persistent projection; build once only if it is absent."""
@@ -52,7 +54,7 @@ class CoachDashboardService:
                     "version": shared.schema_version,
                     "refreshedAt": shared.refreshed_at.isoformat(),
                 }
-                return payload
+                return self.normalize_start_dates(payload)
 
         # Resolve through the compatibility module so existing patch points and
         # operational tooling remain valid during the module relocation.
@@ -62,7 +64,7 @@ class CoachDashboardService:
             schema_version=self.SCHEMA_VERSION,
         ).only("payload", "refreshed_at").first()
         if snapshot is not None:
-            return self._snapshot_payload(snapshot, version=self.SCHEMA_VERSION)
+            return self.normalize_start_dates(self._snapshot_payload(snapshot, version=self.SCHEMA_VERSION))
         previous = compatibility.CoachDashboardSnapshot.objects.filter(
             owner_email=self.context.owner_email,
         ).order_by("-refreshed_at").only(
@@ -72,8 +74,26 @@ class CoachDashboardService:
             # A schema mismatch should not make the first page load wait for a
             # full caseload rebuild.  Serve the newest durable projection and
             # let dashboard_view enqueue the schema refresh after responding.
-            return self._snapshot_payload(previous, version=previous.schema_version)
+            return self.normalize_start_dates(self._snapshot_payload(previous, version=previous.schema_version))
         return self.refresh()
+
+    def normalize_start_dates(self, previous_payload: dict) -> dict:
+        """Correct persisted/cached dates with read-only, coach-scoped source reads.
+
+        Preserve every metric and the existing contractual OTJH window. Older
+        snapshots must not expose their outdated startDate while refresh queues.
+        """
+        from coach_api import views as domain
+
+        payload = deepcopy(previous_payload)
+        rows = domain.fetch_caseload_dashboard_profiles(self.context.owner_email)
+        rows_by_id = {str(row.id): row for row in rows}
+        for learner in payload.get("learners") or []:
+            row = rows_by_id.get(str(learner.get("id")))
+            learner.setdefault("otjhProgrammeStartDate", learner.get("startDate", "--"))
+            learner["startDate"] = domain.caseload_profile_start_date(row)
+            learner["displayStartDate"] = learner["startDate"]
+        return payload
 
     @staticmethod
     def _snapshot_payload(snapshot, *, version: int) -> dict:
@@ -109,10 +129,11 @@ class CoachDashboardService:
             schedule_planned, schedule_start, schedule_end = domain.caseload_schedule_values(
                 rows_by_id[profile_id],
             )
+            learner["startDate"] = domain.caseload_profile_start_date(rows_by_id[profile_id])
+            learner["displayStartDate"] = learner["startDate"]
+            learner["otjhProgrammeStartDate"] = domain.format_date(schedule_start)
             if schedule_planned not in (None, ""):
                 learner["otjhPlanned"] = domain.to_number(schedule_planned)
-            if schedule_start not in (None, ""):
-                learner["startDate"] = domain.format_date(schedule_start)
             if schedule_end not in (None, ""):
                 learner["plannedEndDate"] = domain.format_date(schedule_end)
             domain.apply_canonical_learner_metrics(learner, canonical_metrics.get(profile_id), learner_workspace=True)

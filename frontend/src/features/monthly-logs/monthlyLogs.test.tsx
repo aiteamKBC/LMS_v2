@@ -50,6 +50,10 @@ beforeEach(() => {
   Object.assign(account, { role: 'learner', subjectId: 7, access: 'learner' });
   vi.mocked(getLogSummary).mockResolvedValue(summary);
   vi.mocked(getLogMonth).mockImplementation(async (_id, month) => month === '2026-08' ? retained : current);
+  vi.mocked(getLogLearners).mockResolvedValue({ learners: [
+    { id: 7, name: 'Example learner', programme: 'Programme' },
+    { id: 8, name: 'Second learner', programme: 'Data Technician' },
+  ] });
   vi.mocked(getLogContent).mockResolvedValue({ id: 44, parts: [{ id: 44, title: 'Original material', category: 'Reading',
     url: 'https://example.org/reading', html: null, quiz: null }] });
 });
@@ -344,7 +348,31 @@ describe('monthly logs', () => {
     vi.mocked(getLogLearners).mockResolvedValue({ learners: [{ id: 7, name: 'Example learner', programme: 'Programme' }] });
     page('/coach/monthly-logs');
     expect(await screen.findByRole('link', { name: /Example learner/ })).toHaveAttribute('href', '/coach/monthly-logs/7');
-    expect(getLogSummary).not.toHaveBeenCalled();
+    expect(screen.getByRole('link', { name: /Example learner/ })).toHaveAttribute('aria-current', 'page');
+    expect(await screen.findByRole('region', { name: 'Example learner monthly logs' })).toBeVisible();
+    expect(getLogSummary).toHaveBeenCalledWith('7', expect.any(AbortSignal), 'coach');
+  });
+
+  it('uses a coach loading layout without the decorative background image', () => {
+    Object.assign(account, { role: 'staff', access: 'coach' });
+    vi.mocked(getLogLearners).mockReturnValue(new Promise(() => undefined));
+    page('/coach/monthly-logs');
+    const loading = screen.getByRole('status', { name: 'Loading coach monthly logs' });
+    expect(loading.querySelector('img')).toBeNull();
+  });
+
+  it('keeps the learner list visible and updates the selected learner in the same coach workspace', async () => {
+    Object.assign(account, { role: 'staff', access: 'coach' });
+    vi.mocked(getLogSummary).mockImplementation(async id => id === '8'
+      ? { ...summary, learner: { ...summary.learner!, id: 8, name: 'Second learner', programme: 'Data Technician' } }
+      : summary);
+    page('/coach/monthly-logs/7');
+    await screen.findByRole('region', { name: 'Example learner monthly logs' });
+    fireEvent.click(screen.getByRole('link', { name: /Second learner/ }));
+    expect(await screen.findByRole('region', { name: 'Second learner monthly logs' })).toBeVisible();
+    expect(screen.getByRole('navigation', { name: 'Choose a learner' })).toBeVisible();
+    expect(screen.getByRole('link', { name: /Second learner/ })).toHaveAttribute('aria-current', 'page');
+    expect(getLogSummary).toHaveBeenCalledWith('8', expect.any(AbortSignal), 'coach');
   });
 
   it('disables signing for the admin read-only coach view', async () => {

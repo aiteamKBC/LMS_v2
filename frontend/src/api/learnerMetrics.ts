@@ -4,6 +4,8 @@ import type { LearnerKind } from './learnerDetail';
 export interface KsbActivityPoint {
   activityId: string;
   code: string;
+  ksbDefinitionId?: string | null;
+  definitionCode?: string | null;
   completed: boolean;
   title: string | null;
   type: string | null;

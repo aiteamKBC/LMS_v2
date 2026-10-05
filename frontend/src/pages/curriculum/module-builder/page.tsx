@@ -13,15 +13,18 @@ import { useCurriculumProgrammes } from '@/hooks/useCurriculumProgrammes';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 import { formatHoursMinutes } from '@/lib/format';
 import { curriculumNavItems } from '@/mocks/navigation';
-import { fetchLearnerAssignments, type LearnerAssignmentTarget } from '@/api/curriculumLearnerAssignments';
+import { applyCurriculumLearnerAssignments, fetchLearnerAssignments, unassignCurriculumLearners, type LearnerAssignmentTarget } from '@/api/curriculumLearnerAssignments';
 import {
   curriculumErrorMessage,
   fetchCurriculumHolidays,
+  fetchCurriculumKsbSets,
   fetchCurriculumOverview,
+  fetchCurriculumScopeLearnerRoster,
   fetchCurriculumScopeLearnerKsbImpact,
   fetchCurriculumStandards,
   fetchCurriculumTeamsMeetingSummaries,
   fetchCurriculumTutors,
+  curriculumLearnerAssignmentId,
   type CurriculumCohort,
   type CurriculumGroup,
   type CurriculumHoliday,
@@ -42,6 +45,7 @@ import {
   cleanText,
   findByIdentifierThenName,
   formatDateLabel,
+  formatDateTimeLabel,
   moduleIdentity,
   namedCurriculumWorkspacePath,
   sortEntities,
@@ -109,6 +113,13 @@ import {
   // Live sessions left behind on an old date when their week was re-planned.
   // States the fact; the correction is a button the author presses.
   moduleLiveSessionDateDrift,
+  // Adding more live sessions to a week than its group has delivery days for.
+  // The extras are allowed, they simply have no date to run on -- so the
+  // author is told before it happens rather than finding "No date yet" later.
+  liveSessionSlotOverflow,
+  liveSessionSlotOverflowNotice,
+  weekDeliverySlotCapacity,
+  type LiveSessionSlotOverflow,
   resequenceWeekSessionDates,
   makeAuthoringId,
   recalculateModule,
@@ -122,6 +133,8 @@ import {
   type AdvancedModuleDetails,
   type CompletionCriteria,
   type KsbMapping,
+  type DuplicateKsbSource,
+  type KsbRemapReport,
   type KsbMappingType,
   type KsbWeightClass,
   type KsbOption,
@@ -166,6 +179,7 @@ import {
   validateModuleAuthoringStructure,
 } from './componentAuthoringModel';
 import { RichTextDraft } from './RichTextEditor';
+import { componentTypeCounts, mergeFilteredComponents } from './courseStructureFilter';
 
 // Course structure accordion: whether expanding a week collapses the others.
 // false = classic single-open accordion (the current default look/feel).
@@ -440,6 +454,193 @@ async function showBuilderDeleteSwal({
   });
 }
 
+type DuplicateDestination = {
+  programme: CurriculumProgramme;
+  cohort: CurriculumCohort;
+  group: CurriculumGroup;
+};
+
+type DuplicateDialogResult = DuplicateDestination & {
+  teamsCopyMode: 'shared' | 'independent';
+  startDate: string;
+};
+
+function htmlEscape(value: unknown) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+function curriculumProgrammeId(programme: CurriculumProgramme) {
+  return String(programme.sourceId || programme.id || '').trim();
+}
+
+function curriculumProgrammeMatches(record: { programmeId?: string; programme?: string }, programme: CurriculumProgramme) {
+  const values = [record.programmeId, record.programme].map(normaliseDeepLinkValue).filter(Boolean);
+  return values.includes(normaliseDeepLinkValue(curriculumProgrammeId(programme)))
+    || values.includes(normaliseDeepLinkValue(programme.id))
+    || values.includes(normaliseDeepLinkValue(programme.name));
+}
+
+function duplicateTargetKsbSource(programme: CurriculumProgramme, ksbSets: CurriculumKsbSet[], standards: CurriculumStandard[]): DuplicateKsbSource | undefined {
+  const configured = cleanKsbSourceId(programme.ksbProfileSourceId);
+  const set = ksbSets.find(candidate => (
+    (configured && ksbSourceIdsMatch(ksbSetSourceId(candidate), configured))
+      || (!configured && ([candidate.programmeId, ...(candidate.programmeIds || []), candidate.programmeName].map(normaliseDeepLinkValue).includes(normaliseDeepLinkValue(curriculumProgrammeId(programme)))
+        || normaliseDeepLinkValue(candidate.programmeName) === normaliseDeepLinkValue(programme.name)))
+  ));
+  if (set) {
+    return {
+      sourceType: 'framework',
+      sourceId: ksbSetSourceId(set),
+      programmeId: curriculumProgrammeId(programme),
+      programmeName: programme.name,
+      entries: flattenKsbEntries(set.ksbs),
+    };
+  }
+  const standard = standards.find(candidate => {
+    const keys = [candidate.id, candidate.code, candidate.standardRef, candidate.name].map(normaliseDeepLinkValue);
+    return (configured && ksbSourceIdsMatch(ksbStandardSourceId(candidate), configured))
+      || keys.includes(normaliseDeepLinkValue(programme.standard))
+      || keys.includes(normaliseDeepLinkValue(programme.name));
+  });
+  if (!standard) return undefined;
+  return {
+    sourceType: 'standard',
+    sourceId: ksbStandardSourceId(standard),
+    programmeId: curriculumProgrammeId(programme),
+    programmeName: programme.name,
+    entries: standardToKsbOptions(standard),
+  };
+}
+
+async function showDuplicateModuleSwal(
+  module: ModuleCatalogueItem,
+  options: { programmes: CurriculumProgramme[]; cohorts: CurriculumCohort[]; groups: CurriculumGroup[] },
+): Promise<DuplicateDialogResult | null> {
+  const liveProgrammes = options.programmes.filter(programme => !programmeRecordArchived(programme));
+  const sourceProgramme = liveProgrammes.find(programme => (
+    normaliseDeepLinkValue(curriculumProgrammeId(programme)) === normaliseDeepLinkValue(module.programmeId)
+      || normaliseDeepLinkValue(programme.id) === normaliseDeepLinkValue(module.programmeId)
+      || normaliseDeepLinkValue(programme.name) === normaliseDeepLinkValue(module.programmeName)
+  ));
+  if (!sourceProgramme) {
+    await showCurriculumAlert({ title: 'Choose a destination Programme first', text: 'No active Programme is available for this duplicate.', icon: 'warning', confirmButtonText: 'Close' });
+    return null;
+  }
+  const sourceProgrammeValue = curriculumProgrammeId(sourceProgramme);
+  const programmeOptions = liveProgrammes.map(programme => `<option value="${htmlEscape(curriculumProgrammeId(programme))}" ${curriculumProgrammeId(programme) === sourceProgrammeValue ? 'selected' : ''}>${htmlEscape(programme.name)}</option>`).join('');
+  const sourceCohort = options.cohorts.find(cohort => cohort.id === module.cohortId && curriculumProgrammeMatches(cohort, sourceProgramme));
+  const sourceGroup = options.groups.find(group => group.id === module.groupId && group.cohortId === sourceCohort?.id);
+  const cohortOptions = (programme: CurriculumProgramme, selectedId = '') => options.cohorts
+    .filter(cohort => curriculumProgrammeMatches(cohort, programme) && cohort.status !== 'archived')
+    .map(cohort => `<option value="${htmlEscape(cohort.id)}" ${cohort.id === selectedId ? 'selected' : ''}>${htmlEscape(cohort.name)}</option>`).join('');
+  const groupOptions = (cohortId: string, selectedId = '') => options.groups
+    .filter(group => group.cohortId === cohortId && group.status !== 'archived')
+    .map(group => `<option value="${htmlEscape(group.id)}" ${group.id === selectedId ? 'selected' : ''}>${htmlEscape(group.name)}</option>`).join('');
+  const destination = await Swal.fire({
+    title: `Duplicate ${module.title}`,
+    html: `
+      <p style="margin:0 0 12px;text-align:left">Choose where the new module will run. The current learners of the selected Group will be assigned, and future Group learners will inherit it.</p>
+      <p style="margin:0 0 12px;text-align:left">Progress, submissions, attendance and files are never copied.</p>
+      <label style="display:block;text-align:left;font-weight:700;margin:10px 0 4px">Programme</label>
+      <select id="duplicate-programme" class="swal2-select" style="display:flex;width:100%;margin:0">${programmeOptions}</select>
+      <label style="display:block;text-align:left;font-weight:700;margin:10px 0 4px">Cohort</label>
+      <select id="duplicate-cohort" class="swal2-select" style="display:flex;width:100%;margin:0">${cohortOptions(sourceProgramme, sourceCohort?.id || '')}</select>
+      <label style="display:block;text-align:left;font-weight:700;margin:10px 0 4px">Group</label>
+      <select id="duplicate-group" class="swal2-select" style="display:flex;width:100%;margin:0">${groupOptions(sourceCohort?.id || '', sourceGroup?.id || '')}</select>
+    `,
+    icon: 'question',
+    width: 600,
+    showCancelButton: true,
+    confirmButtonText: 'Continue',
+    cancelButtonText: 'Cancel',
+    reverseButtons: true,
+    focusCancel: true,
+    buttonsStyling: false,
+    customClass: { popup: 'kbc-standard-swal-popup', title: 'kbc-standard-swal-title', htmlContainer: 'kbc-standard-swal-text', actions: 'kbc-standard-swal-actions', confirmButton: 'kbc-standard-swal-confirm', cancelButton: 'kbc-standard-swal-cancel', validationMessage: 'kbc-standard-swal-validation' },
+    didOpen: () => {
+      const popup = Swal.getPopup();
+      const programmeSelect = popup?.querySelector<HTMLSelectElement>('#duplicate-programme');
+      const cohortSelect = popup?.querySelector<HTMLSelectElement>('#duplicate-cohort');
+      const groupSelect = popup?.querySelector<HTMLSelectElement>('#duplicate-group');
+      const refreshCohorts = () => {
+        const programme = liveProgrammes.find(item => curriculumProgrammeId(item) === programmeSelect?.value);
+        if (!programme || !cohortSelect || !groupSelect) return;
+        cohortSelect.innerHTML = cohortOptions(programme);
+        groupSelect.innerHTML = '';
+      };
+      const refreshGroups = () => {
+        if (groupSelect && cohortSelect) groupSelect.innerHTML = groupOptions(cohortSelect.value);
+      };
+      programmeSelect?.addEventListener('change', refreshCohorts);
+      cohortSelect?.addEventListener('change', refreshGroups);
+    },
+    preConfirm: () => {
+      const popup = Swal.getPopup();
+      const programmeId = popup?.querySelector<HTMLSelectElement>('#duplicate-programme')?.value || '';
+      const cohortId = popup?.querySelector<HTMLSelectElement>('#duplicate-cohort')?.value || '';
+      const groupId = popup?.querySelector<HTMLSelectElement>('#duplicate-group')?.value || '';
+      const programme = liveProgrammes.find(item => curriculumProgrammeId(item) === programmeId);
+      const cohort = options.cohorts.find(item => item.id === cohortId);
+      const group = options.groups.find(item => item.id === groupId);
+      if (!programme || !cohort || !group || group.cohortId !== cohort.id || !curriculumProgrammeMatches(cohort, programme) || !curriculumProgrammeMatches(group, programme)) {
+        Swal.showValidationMessage('Choose a valid Programme, Cohort and Group combination.');
+        return false;
+      }
+      return { programme, cohort, group };
+    },
+  });
+  if (!destination.isConfirmed || !destination.value) return null;
+  const selected = destination.value as DuplicateDestination;
+  const teams = await Swal.fire({
+    title: 'Teams meeting and dates',
+    html: '<p style="margin:0 0 12px;text-align:left">Choose whether the duplicate shares the original Teams meeting.</p><label style="display:block;text-align:left;margin:8px 0"><input id="duplicate-teams-shared" type="radio" name="duplicate-teams" value="shared" checked> Share the same Teams meeting and record</label><label style="display:block;text-align:left;margin:8px 0"><input id="duplicate-teams-independent" type="radio" name="duplicate-teams" value="independent"> Create an independent Teams meeting later</label><div id="duplicate-start-date-wrap" style="display:none;text-align:left;margin-top:12px"><label style="font-weight:700">Start Date</label><input id="duplicate-start-date" type="date" class="swal2-input" style="width:100%;margin:4px 0"></div>',
+    icon: 'question',
+    width: 560,
+    showCancelButton: true,
+    confirmButtonText: 'Duplicate module',
+    cancelButtonText: 'Back',
+    reverseButtons: true,
+    focusCancel: true,
+    buttonsStyling: false,
+    customClass: { popup: 'kbc-standard-swal-popup', title: 'kbc-standard-swal-title', htmlContainer: 'kbc-standard-swal-text', actions: 'kbc-standard-swal-actions', confirmButton: 'kbc-standard-swal-confirm', cancelButton: 'kbc-standard-swal-cancel', validationMessage: 'kbc-standard-swal-validation' },
+    didOpen: () => {
+      const popup = Swal.getPopup();
+      const independent = popup?.querySelector<HTMLInputElement>('#duplicate-teams-independent');
+      const wrap = popup?.querySelector<HTMLElement>('#duplicate-start-date-wrap');
+      independent?.addEventListener('change', () => { if (wrap) wrap.style.display = independent.checked ? 'block' : 'none'; });
+    },
+    preConfirm: () => {
+      const popup = Swal.getPopup();
+      const independent = popup?.querySelector<HTMLInputElement>('#duplicate-teams-independent')?.checked;
+      const startDate = popup?.querySelector<HTMLInputElement>('#duplicate-start-date')?.value || '';
+      if (independent && !startDate) {
+        Swal.showValidationMessage('Choose the Start Date for the independent module.');
+        return false;
+      }
+      return { teamsCopyMode: independent ? 'independent' : 'shared', startDate };
+    },
+  });
+  if (!teams.isConfirmed || !teams.value) return null;
+  const teamsValue = teams.value as { teamsCopyMode: 'shared' | 'independent'; startDate: string };
+  if (teamsValue.teamsCopyMode === 'shared') {
+    const accepted = await showCurriculumConfirm({
+      title: 'Share the Teams meeting?',
+      text: 'The original and duplicate will use the same meeting identity. Links, attendees, invitations, attendance, recordings and later meeting changes can affect both modules.',
+      icon: 'warning',
+      confirmButtonText: 'Yes, share the meeting',
+      cancelButtonText: 'Go back',
+      onConfirm: async () => {},
+    });
+    if (!accepted) return null;
+  }
+  return { ...selected, ...teamsValue };
+}
+
 export default function ModuleBuilder() {
   const { auth } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -476,8 +677,19 @@ export default function ModuleBuilder() {
    */
   const workingModuleRef = useRef<ModuleCatalogueItem | null>(null);
   workingModuleRef.current = workingModule;
+  /**
+   * The fetched session plan, for the same reason: the add/reuse/import
+   * callbacks are declared above the state that holds it and run long after
+   * the render that filled it. Null while it is still loading, which the
+   * delivery-slot capacity reads as "fall back to the module's own pattern".
+   */
+  const sessionPlanRef = useRef<ModuleWeekSessionPlan | null>(null);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [focusedComponentId, setFocusedComponentId] = useState('');
+  // Said when a link (the audit trail's "archived" row) names an item archived
+  // out of this module: it is no longer on screen, so without this the reader
+  // lands on its week and sees nothing of what they followed.
+  const [archivedItemNotice, setArchivedItemNotice] = useState('');
   const [expandedWeekIds, setExpandedWeekIds] = useState<Set<string>>(new Set());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [placementModule, setPlacementModule] = useState<ModuleFormTarget | null>(null);
@@ -1371,6 +1583,9 @@ export default function ModuleBuilder() {
         const params = new URLSearchParams(previous);
         if (next.catalogueId) params.set('module', next.catalogueId);
         params.delete('moduleTitle');
+        // Read into the notice above; left in the address they would follow the
+        // reader into the next module they open.
+        ['archived', 'archivedName', 'archivedAt'].forEach(key => params.delete(key));
         return params;
       }, { replace: historyMode === 'replace' });
       setWorkingModule(next);
@@ -1379,6 +1594,7 @@ export default function ModuleBuilder() {
         ? deepLinkTarget.selection.componentId
         : '');
       setSettingsOpen(openSettings || deepLinkTarget.openSettings);
+      setArchivedItemNotice(archivedItemNoticeFor(next, new URLSearchParams(window.location.search)));
       await finishLoadingProgress(setOpeningModuleComplete);
     } catch (err) {
       setActionMessage(err instanceof Error ? err.message : 'Unable to load module structure.');
@@ -1666,17 +1882,78 @@ export default function ModuleBuilder() {
     setWorkingModule(current => (current ? recalculateModule(updater(current)) : current));
   }, [workingModuleProgrammeArchived]);
 
+  // A week can plan as many live sessions as its group has delivery days. Past
+  // that there is no date to give one, so the author is asked before it
+  // happens instead of discovering a "No date yet" row afterwards. Nothing is
+  // refused -- an unplanned live session is a legitimate thing to author, it
+  // just has to be dated by hand -- so a yes goes ahead exactly as before.
+  //
+  // Read through a ref because the fetched plan is state declared further
+  // down; these callbacks run long after the render that filled it.
+  const confirmLiveSessionSlotOverflow = useCallback(async (overflow: LiveSessionSlotOverflow | null) => {
+    if (!overflow) return true;
+    const notice = liveSessionSlotOverflowNotice(overflow);
+    return showCurriculumConfirm({
+      title: notice.title,
+      text: notice.text,
+      icon: 'warning',
+      confirmButtonText: overflow.beyond === 1 ? 'Add it anyway' : 'Add them anyway',
+      cancelButtonText: 'Cancel',
+      onConfirm: async () => {},
+    });
+  }, []);
+
+  /** The overflow of adding live sessions to a week this module already has. */
+  const weekSlotOverflow = useCallback((weekId: string, adding: number) => {
+    const module = workingModuleRef.current;
+    if (!module) return null;
+    return liveSessionSlotOverflow(
+      module,
+      module.weekStructure.findIndex(week => week.id === weekId),
+      adding,
+      sessionPlanRef.current?.sessions,
+    );
+  }, []);
+
+  /**
+   * The overflow of a week that does not exist yet — a template copy or a
+   * clone. It lands at the end, past anything the fetched plan covers, so its
+   * capacity is the group's own delivery pattern.
+   */
+  const newWeekSlotOverflow = useCallback((liveSessions: number): LiveSessionSlotOverflow | null => {
+    const module = workingModuleRef.current;
+    if (!module || liveSessions <= 0) return null;
+    const capacity = weekDeliverySlotCapacity(module, module.weekStructure.length);
+    const beyond = Math.max(0, liveSessions - capacity);
+    if (!beyond) return null;
+    return {
+      weekNumber: module.weekStructure.length + 1,
+      capacity,
+      existing: 0,
+      adding: liveSessions,
+      beyond,
+    };
+  }, []);
+
   // One state update appends the requested number of independent template copies.
-  const importWeekTemplateAsNewWeek = useCallback((template: WeekTemplate, count: number) => {
+  const importWeekTemplateAsNewWeek = useCallback(async (template: WeekTemplate, count: number) => {
+    // Every copy is the same week, so they all raise the same question: ask it
+    // once, about the week the template describes.
+    const liveSessions = (template.components || []).filter(component => component.type === 'live-session').length;
+    if (!(await confirmLiveSessionSlotOverflow(newWeekSlotOverflow(liveSessions)))) return;
     updateWorkingModule(module => appendWeekTemplateCopies(module, template, count));
     setWeekTemplateImportOpen(false);
-  }, [updateWorkingModule]);
+  }, [updateWorkingModule, confirmLiveSessionSlotOverflow, newWeekSlotOverflow]);
 
   // Copy components chosen from the reuse library into an existing week. The
   // copies land in client state and are persisted by the normal module save -
   // a per-component write would be undone by it, because saving re-upserts the
   // module's whole week structure.
-  const addLibraryComponentsToWeek = useCallback((weekId: string, picked: LibraryComponent[]) => {
+  const addLibraryComponentsToWeek = useCallback(async (weekId: string, picked: LibraryComponent[]) => {
+    // `componentType` is the authoring type; `type` carries a human label that
+    // several activity types share (see LibraryComponent).
+    const liveSessions = picked.filter(source => source.componentType === 'live-session').length;
+    if (!(await confirmLiveSessionSlotOverflow(weekSlotOverflow(weekId, liveSessions)))) return;
     let lastComponentId = '';
     updateWorkingModule(module => ({
       ...module,
@@ -1689,13 +1966,19 @@ export default function ModuleBuilder() {
     }));
     if (lastComponentId) setSelection({ kind: 'component', weekId, componentId: lastComponentId });
     setReusePickerWeekId(null);
-  }, [updateWorkingModule]);
+  }, [updateWorkingModule, confirmLiveSessionSlotOverflow, weekSlotOverflow]);
 
   // Clone a week in place: the twin lands directly beneath its source, carrying
   // every component in full except the live session (`duplicateWeekInModule`
   // says why). Client state only -- the normal module save writes the whole week
   // structure, so a per-week write here would only be undone by it.
-  const duplicateWeek = useCallback((weekId: string) => {
+  const duplicateWeek = useCallback(async (weekId: string) => {
+    // The clone is a week of its own at the end of the run, so it faces the
+    // same question the source did -- and answers it differently only when the
+    // source was already carrying more live sessions than a week can date.
+    const source = workingModuleRef.current?.weekStructure.find(week => week.id === weekId);
+    const liveSessions = (source?.components || []).filter(component => component.type === 'live-session').length;
+    if (!(await confirmLiveSessionSlotOverflow(newWeekSlotOverflow(liveSessions)))) return;
     let copyId = '';
     updateWorkingModule(module => {
       const next = duplicateWeekInModule(module, weekId);
@@ -1707,7 +1990,7 @@ export default function ModuleBuilder() {
     // Open it straight away: the point of a clone is the edit you make to it.
     setExpandedWeekIds(prev => new Set(prev).add(copyId));
     setSelection({ kind: 'week', weekId: copyId });
-  }, [updateWorkingModule]);
+  }, [updateWorkingModule, confirmLiveSessionSlotOverflow, newWeekSlotOverflow]);
 
   // The clone button's "copy to another week" option: the twin lands at the
   // end of the target week, carrying the source in full except a live
@@ -2098,17 +2381,112 @@ export default function ModuleBuilder() {
     }
   }, [updateWorkingModule, workingModule, workingModuleScopeLock?.ksbSourceId, workspaceKsbProfileEntries, workspaceKsbProfileValue]);
 
-  const duplicateModule = async (module: ModuleCatalogueItem) => {
+  const duplicateModule = async (module: ModuleCatalogueItem, dialog: DuplicateDialogResult) => {
     setDuplicatingModule(module);
     setDuplicatingModuleComplete(false);
     setActionMessage(null);
+    setActionMessageRetry(null);
     setNoticeAlert(null);
     try {
       const source = getDefaultStructure((await loadModuleStructure(moduleStructureIdentifier(module))) || module);
-      const duplicate = await duplicateModuleStructure(source);
+      const sourceProgrammeId = normaliseDeepLinkValue(module.programmeId || module.programmeName || '');
+      const targetProgrammeId = normaliseDeepLinkValue(curriculumProgrammeId(dialog.programme));
+      const sameProgramme = sourceProgrammeId === targetProgrammeId
+        || sourceProgrammeId === normaliseDeepLinkValue(dialog.programme.name);
+      if (dialog.teamsCopyMode === 'shared' && source.startDate && dialog.cohort.startDate && source.startDate < dialog.cohort.startDate) {
+        throw new Error('The original dates start before the selected Cohort. Choose an independent Teams meeting or a Cohort that contains the original dates.');
+      }
+      if (dialog.teamsCopyMode === 'shared' && source.endDate && dialog.cohort.endDate && source.endDate > dialog.cohort.endDate) {
+        throw new Error('The original dates end after the selected Cohort. Choose an independent Teams meeting or a Cohort that contains the original dates.');
+      }
+      const roster = await fetchCurriculumScopeLearnerRoster('group', dialog.group.id, { learnerStatus: 'active' });
+      // The scope roster is sourced from LearnerProfile rows.  Assignment
+      // endpoints write the enrolment record, so always prefer the explicit
+      // bridge id; falling back to the profile id keeps old environments
+      // readable while they are being backfilled.
+      const learnerIds = roster.assignedLearners
+        .map(curriculumLearnerAssignmentId)
+        .filter(Boolean);
+      let ksbSource: DuplicateKsbSource | undefined;
+      if (!sameProgramme) {
+        const [allKsbSets, allStandards] = await Promise.all([
+          fetchCurriculumKsbSets(undefined, { all: true }),
+          fetchCurriculumStandards(),
+        ]);
+        ksbSource = duplicateTargetKsbSource(dialog.programme, allKsbSets, allStandards)
+          || { sourceType: '', sourceId: '', programmeId: curriculumProgrammeId(dialog.programme), programmeName: dialog.programme.name, entries: [] };
+      }
+      const duplicate = await duplicateModuleStructure(source, {
+        learnerRosterMode: 'inherited',
+        teamsCopyMode: dialog.teamsCopyMode,
+        keepDates: dialog.teamsCopyMode === 'shared',
+        startDate: dialog.startDate,
+        programmeId: curriculumProgrammeId(dialog.programme),
+        programmeName: dialog.programme.name,
+        cohortId: dialog.cohort.id,
+        cohortName: dialog.cohort.name,
+        groupId: dialog.group.id,
+        groupName: dialog.group.name,
+        ksbSource,
+        deliveryMetadata: dialog.teamsCopyMode === 'independent'
+          ? {
+              ...(source.deliveryMetadata || {}),
+              cohortId: dialog.cohort.id,
+              cohort: dialog.cohort.name,
+              groupId: dialog.group.id,
+              group: dialog.group.name,
+              weekDays: dialog.group.weekDays || source.deliveryMetadata?.weekDays || '',
+              startTime: dialog.group.startTime || source.deliveryMetadata?.startTime || '',
+              endTime: dialog.group.endTime || source.deliveryMetadata?.endTime || '',
+            }
+          : undefined,
+      });
+      const moduleTarget: LearnerAssignmentTarget = { scope: 'module', id: duplicate.catalogueId, name: duplicate.title };
+      const applyAssignments = async (ids: string[]) => applyCurriculumLearnerAssignments(moduleTarget, { add: ids, remove: [] });
+      const assignment = learnerIds.length
+        ? await applyAssignments(learnerIds)
+        : { added: [], removed: [], failed: [], failureMessage: null, abandoned: false, changedCount: 0, moduleCount: 1 };
+      const report = duplicate.ksbRemapReport as KsbRemapReport | null | undefined;
+      const ksbMessage = report && report.unmatched?.length
+        ? ` ${report.matchedCount} KSBs matched; ${report.unmatched.length} need review in the saved remap report.`
+        : '';
+      if (assignment.failed.length) {
+        const failed = [...assignment.failed];
+        const retryAssignments = async (failedIds: string[]) => {
+          // Re-read the Group before retrying.  This also upgrades failures
+          // from an older bundle that sent profile ids to the enrolment ids
+          // now accepted by the assignment endpoint.
+          const latestRoster = await fetchCurriculumScopeLearnerRoster(
+            'group', dialog.group.id, { learnerStatus: 'active' },
+          );
+          const wanted = new Set(failedIds.map(String));
+          const retryIds = latestRoster.assignedLearners
+            .filter(learner => wanted.has(String(learner.id)) || wanted.has(String(learner.enrolmentId)))
+            .map(curriculumLearnerAssignmentId);
+          if (!retryIds.length) {
+            throw new Error('No active learners from the selected Group are available to retry.');
+          }
+          return applyAssignments([...new Set(retryIds)]);
+        };
+        setActionMessage(`Module created, but ${failed.length} learner assignment${failed.length === 1 ? '' : 's'} failed.${assignment.failureMessage ? ` ${assignment.failureMessage}` : ''}`);
+        setActionMessageRetry(() => () => {
+          void retryAssignments(failed).then(retry => {
+            if (retry.failed.length) {
+              setActionMessage(`Retry completed with ${retry.failed.length} learner assignment failure${retry.failed.length === 1 ? '' : 's'}.`);
+              setActionMessageRetry(() => () => {
+                void retryAssignments(retry.failed).catch(error => setActionMessage(error instanceof Error ? error.message : 'Unable to retry learner assignments.'));
+              });
+            } else {
+              setActionMessage(null);
+              setActionMessageRetry(null);
+              void reload({ silent: true });
+            }
+          }).catch(error => setActionMessage(error instanceof Error ? error.message : 'Unable to retry learner assignments.'));
+        });
+      }
       setNoticeAlert({
         title: 'Module duplicated',
-        message: `${duplicate.title} was created as a draft with its authoring structure.`,
+        message: `${duplicate.title} was created in ${dialog.programme.name} / ${dialog.cohort.name} / ${dialog.group.name}. ${assignment.added.length} active Group learner${assignment.added.length === 1 ? '' : 's'} assigned.${ksbMessage}`,
       });
       reload();
       await finishLoadingProgress(setDuplicatingModuleComplete);
@@ -2118,6 +2496,17 @@ export default function ModuleBuilder() {
       setDuplicatingModule(null);
       setDuplicatingModuleComplete(false);
     }
+  };
+
+  const confirmDuplicateModule = async (module: ModuleCatalogueItem) => {
+    if (duplicatingModule) return;
+    const dialog = await showDuplicateModuleSwal(module, {
+      programmes: curriculumProgrammes,
+      cohorts: scopeCohorts,
+      groups: scopeGroups,
+    });
+    if (!dialog) return;
+    await duplicateModule(module, dialog);
   };
 
   const deleteModule = async (module: ModuleCatalogueItem) => {
@@ -2172,6 +2561,7 @@ export default function ModuleBuilder() {
     // Announced about the module being left. Carrying it into the next one
     // would report somebody else's write on a module it never happened to.
     setRemoteUpdate(null);
+    setArchivedItemNotice('');
     liveSyncReadAtRef.current = 0;
     setSaveFailure(null);
     setSavingSnapshot('');
@@ -2193,7 +2583,8 @@ export default function ModuleBuilder() {
     // with it: they only mean anything inside the module that owns them.
     setSearchParams(previous => {
       const params = new URLSearchParams(previous);
-      ['module', 'moduleId', 'catalogueId', 'moduleTitle', 'week', 'weekId', 'component', 'componentId', 'settings', 'focus']
+      ['module', 'moduleId', 'catalogueId', 'moduleTitle', 'week', 'weekId', 'component', 'componentId', 'settings', 'focus',
+        'archived', 'archivedName', 'archivedAt']
         .forEach(key => params.delete(key));
       return params;
     }, { replace: true });
@@ -2558,6 +2949,7 @@ export default function ModuleBuilder() {
   const workingModuleSessionPlan = weekSessionPlanState?.catalogueId === workingModuleCatalogueId
     ? weekSessionPlanState.plan
     : null;
+  sessionPlanRef.current = workingModuleSessionPlan;
   const [sessionPreviewOpen, setSessionPreviewOpen] = useState(false);
   useEffect(() => {
     if (!workingModuleCatalogueId || !workingModuleWeekCount) {
@@ -2712,6 +3104,24 @@ export default function ModuleBuilder() {
           </div>
           {sessionResultsOpen && <SessionResultsDialog moduleId={workingModule.catalogueId || workingModule.id} onClose={() => setSessionResultsOpen(false)} />}
           {aiMaterialOpen && <AiMaterialModal moduleCatalogueId={workingModule.catalogueId || workingModule.id} moduleTitle={workingModule.title} onClose={() => setAiMaterialOpen(false)} />}
+          {archivedItemNotice && (
+            <div
+              data-testid="module-builder-archived-item"
+              className="flex items-start justify-between gap-3 rounded-xl border border-amber-200/70 bg-amber-50 px-4 py-3 text-[12px] font-medium text-amber-800"
+            >
+              <span className="flex min-w-0 items-start gap-2">
+                <AppIcon className="ri-archive-line mt-0.5 shrink-0 text-base"></AppIcon>
+                <span className="min-w-0">{archivedItemNotice}</span>
+              </span>
+              <button
+                type="button"
+                onClick={() => setArchivedItemNotice('')}
+                className="shrink-0 rounded-lg border border-amber-200 bg-white px-3 py-1.5 font-bold text-amber-800 hover:bg-amber-100"
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
           {(saving || (actionMessage && !deletingModuleId)) && (
             <SaveStatusPanel
               saving={saving}
@@ -2720,6 +3130,15 @@ export default function ModuleBuilder() {
               module={workingModule}
             />
           )}
+          {workingModule.ksbRemapReport?.unmatched?.length ? (
+            <details data-testid="module-ksb-remap-report" className="rounded-xl border border-amber-200/70 bg-amber-50 px-4 py-3 text-[12px] text-amber-900">
+              <summary className="cursor-pointer font-bold">KSB remap review required ({workingModule.ksbRemapReport.unmatched.length} unmatched)</summary>
+              <p className="mt-2">This duplicate was created successfully, but the following source mappings were not found in the destination Programme:</p>
+              <ul className="mt-2 list-disc space-y-1 pl-5">
+                {workingModule.ksbRemapReport.unmatched.map((entry, index) => <li key={`${entry.path || entry.code}-${index}`}>{entry.code || 'Unknown code'} — {entry.reason || 'Review this mapping.'}</li>)}
+              </ul>
+            </details>
+          ) : null}
 
           {/* The receipt for a merge that has already happened -- their work is
               in the weeks on screen by the time this renders.
@@ -3016,11 +3435,13 @@ export default function ModuleBuilder() {
           <ComponentTypeModal
             description="Select one or more component types — use Select all for a blank set of everything. Each becomes an empty component to fill in; nothing is copied from a saved template."
             onClose={() => setLessonPickerWeekId(null)}
-            onAdd={types => {
+            onAdd={async types => {
               const week = workingModule.weekStructure.find(item => item.id === lessonPickerWeekId);
               if (!week) return;
               const components = createNamedComponents(week, types);
               if (!components.length) return;
+              const liveSessions = components.filter(component => component.type === 'live-session').length;
+              if (!(await confirmLiveSessionSlotOverflow(weekSlotOverflow(week.id, liveSessions)))) return;
               updateWorkingModule(module => ({
                 ...module,
                 weekStructure: module.weekStructure.map(item => item.id === week.id ? { ...item, components: [...item.components, ...components] } : item),
@@ -3273,7 +3694,7 @@ export default function ModuleBuilder() {
                     // returns to this list instead of the page that led here.
                     onBuild={() => openModule(module, false, 'push')}
                     onSettings={() => openPlacementForm(module)}
-                    onDuplicate={() => duplicateModule(module)}
+                    onDuplicate={() => void confirmDuplicateModule(module)}
                     onDelete={() => confirmDeleteModule(module)}
                   />
                 ))}
@@ -3394,6 +3815,25 @@ export default function ModuleBuilder() {
             onAssignMore={() => {
               setLearnerProgress(null);
               setLearnerAssignmentTarget(learnerProgress.target);
+            }}
+            onRemoveLearner={async learner => {
+              const learnerId = String(learner.id);
+              const result = await unassignCurriculumLearners(learnerProgress.target, [learnerId]);
+              const failedIds = new Set((result.failedIds || []).map(String));
+              if (failedIds.has(learnerId)) {
+                throw new Error(result.failureMessage || 'Unable to remove this learner from the module.');
+              }
+              setLearnerProgress(current => current
+                ? { ...current, assignedLearners: current.assignedLearners.filter(row => String(row.id) !== learnerId) }
+                : current);
+              const catalogueId = learnerAssignmentModuleIdRef.current;
+              if (catalogueId) {
+                setLearnerCountOverrides(previous => ({
+                  ...previous,
+                  [catalogueId]: Math.max(0, (previous[catalogueId] ?? learnerProgress.assignedLearners.length) - 1),
+                }));
+              }
+              void reload({ silent: true });
             }}
           />
         )}
@@ -3833,7 +4273,40 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
     });
   };
 
+  // The component-type filter. Empty is "All". A type that no longer exists in
+  // the module (its last component was deleted) reads as All rather than an
+  // empty rail. While filtering, every week holding a match is open; the
+  // author can still fold one away without touching the normal accordion.
+  const typeCounts = componentTypeCounts(module.weekStructure);
+  const [typeFilter, setTypeFilter] = useState('');
+  const activeTypeFilter = typeCounts.some(item => item.type === typeFilter) ? typeFilter : '';
+  const activeTypeLabel = typeCounts.find(item => item.type === activeTypeFilter)?.label || '';
+  const [filterFoldedWeekIds, setFilterFoldedWeekIds] = useState<Set<string>>(new Set());
+  const chooseTypeFilter = (type: string) => {
+    setTypeFilter(type);
+    setFilterFoldedWeekIds(new Set());
+  };
+  const shownComponentsOf = (week: ModuleWeek) => (activeTypeFilter
+    ? week.components.filter(component => component.type === activeTypeFilter)
+    : week.components);
+  // With a filter on, a month's heading moves to the first week of that month
+  // still shown, so hiding the month's opening week does not lose its label.
+  const filteredMonthHeadingWeekIds = new Map<string, string>();
+  if (activeTypeFilter) {
+    monthGroups.forEach(group => {
+      const first = group.weeks[0];
+      const shown = group.weeks.find(week => shownComponentsOf(week).length > 0);
+      if (first && shown) filteredMonthHeadingWeekIds.set(shown.id, first.id);
+    });
+  }
+
   const toggleExpanded = (weekId: string) => {
+    if (activeTypeFilter) {
+      const folded = new Set(filterFoldedWeekIds);
+      if (folded.has(weekId)) folded.delete(weekId); else folded.add(weekId);
+      setFilterFoldedWeekIds(folded);
+      return;
+    }
     const next = new Set(expandedWeekIds);
     if (next.has(weekId)) {
       next.delete(weekId);
@@ -3902,7 +4375,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
       window.removeEventListener('resize', updateStructureScrollbar);
       observer?.disconnect();
     };
-  }, [expandedWeekIds.size, module.weekStructure.length, updateStructureScrollbar]);
+  }, [expandedWeekIds.size, module.weekStructure.length, activeTypeFilter, filterFoldedWeekIds.size, updateStructureScrollbar]);
 
   useEffect(() => {
     if (!focusedComponentId) return;
@@ -3985,6 +4458,27 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
           <MiniStructureMetric label="OTJH" value={module.totalOtjh.toFixed(1)} />
           <MiniStructureMetric label="KSBs" value={String(module.ksbCount)} />
         </div>
+        {typeCounts.length > 1 && (
+          <div role="group" aria-label="Show components by type" className="mt-2.5 flex flex-wrap gap-1">
+            {[{ type: '', label: 'All', icon: 'ri-stack-line', count: totalComponents }, ...typeCounts].map(item => {
+              const pressed = activeTypeFilter === item.type;
+              return (
+                <button
+                  key={item.type || 'all'}
+                  type="button"
+                  aria-pressed={pressed}
+                  onClick={() => chooseTypeFilter(item.type)}
+                  title={item.type ? `Show only ${item.label} components, across every week` : 'Show every component'}
+                  className={`inline-flex h-7 items-center gap-1 rounded-full border px-2.5 text-[10px] font-bold transition-smooth ${pressed ? 'border-primary-500 bg-primary-500 text-white' : 'border-background-200 bg-background-50 text-foreground-600 hover:border-primary-200 hover:text-primary-700'}`}
+                >
+                  <AppIcon className={item.icon}></AppIcon>
+                  {item.label}
+                  <span className={`tabular-nums ${pressed ? 'text-white/80' : 'text-foreground-400'}`}>{item.count}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
       <div className="relative min-h-0 flex-1">
         {structureScrollbar.visible && (
@@ -4006,9 +4500,13 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
           const selectedChild = selection?.kind === 'component' && selection.weekId === week.id;
           const active = selected || selectedChild;
           const dragging = dragState?.type === 'week' && dragState.weekId === week.id;
-          const expanded = expandedWeekIds.has(week.id);
+          const shownComponents = shownComponentsOf(week);
+          if (activeTypeFilter && !shownComponents.length) return null;
+          const expanded = activeTypeFilter ? !filterFoldedWeekIds.has(week.id) : expandedWeekIds.has(week.id);
           const totalOtjh = weekExpectedOtjhTotal(week);
-          const monthHeading = monthHeadings.get(week.id);
+          const monthHeading = activeTypeFilter
+            ? monthHeadings.get(filteredMonthHeadingWeekIds.get(week.id) || '')
+            : monthHeadings.get(week.id);
           const monthId = monthGroupIdByWeekId.get(week.id);
           const monthCollapsed = Boolean(monthId && collapsedMonthIds.has(monthId));
           const weekHolidayNotices = holidayNoticesByWeekId.get(week.id) || [];
@@ -4083,7 +4581,7 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                 <button onClick={() => onSelectWeek(week.id)} className="min-w-0 flex-1 text-left">
                   <p onMouseEnter={showFullTextWhenTruncated} className="truncate text-[12px] font-bold text-foreground-900">{week.title || `Week ${week.weekNumber}`}</p>
                   <p className="mt-0.5 flex items-center gap-1.5 text-[10px] font-medium text-foreground-400">
-                    <span>{week.components.length} components</span>
+                    <span>{activeTypeFilter ? `${shownComponents.length} ${activeTypeLabel} of ${week.components.length}` : `${week.components.length} components`}</span>
                     <span className="h-1 w-1 rounded-full bg-foreground-300"></span>
                     <span>{totalOtjh.toFixed(1)}h</span>
                     {week.sessionDate && (
@@ -4168,11 +4666,13 @@ function CourseStructure({ module, selection, dragState, onDragState, onSelectWe
                       week and its Teams meeting. */}
                   <WeekComponentRail
                     weekId={week.id}
-                    components={week.components}
+                    components={shownComponents}
                     selectedId={selection?.kind === 'component' && selection.weekId === week.id ? selection.componentId : null}
                     focusedId={focusedComponentId}
                     onSelectId={componentId => { if (componentId) onSelectComponent(week.id, componentId); }}
-                    onChange={next => onComponentsChange(week.id, next)}
+                    onChange={next => onComponentsChange(week.id, activeTypeFilter
+                      ? mergeFilteredComponents(week.components, new Set(shownComponents.map(component => component.id)), next)
+                      : next)}
                     pointsByType={pointsByType}
                     variant="nested"
                     weekSessionDate={week.sessionDate}
@@ -4408,7 +4908,7 @@ function ComponentTypeChecklist({ selectedTypes, onToggle }: {
 
 function ComponentTypeModal({ onClose, onAdd, title = 'What do you want to add?', description = 'Select one or more component types. You can edit the details after.', submitLabel = 'Add', initialSelectedTypes = [] }: {
   onClose: () => void;
-  onAdd: (types: ModuleComponentType[]) => void;
+  onAdd: (types: ModuleComponentType[]) => void | Promise<void>;
   title?: string;
   description?: string;
   submitLabel?: string;
@@ -8628,6 +9128,43 @@ function moduleStructureIdentifier(module: ModuleCatalogueItem) {
   if (canonicalId) return canonicalId;
   const sourceId = String(module.sourceModule?.id || module.id || '');
   return sourceId.startsWith('training-module-') ? sourceId : module.catalogueId;
+}
+
+/**
+ * The sentence for an item a link says was archived out of this module, or ''
+ * when there is nothing to say: no such link, or the item is back on screen
+ * because it has been restored since.
+ */
+function archivedItemNoticeFor(module: ModuleCatalogueItem, params: URLSearchParams): string {
+  const kind = String(params.get('archived') || '').trim();
+  if (!['week', 'component', 'ksb_mapping'].includes(kind)) return '';
+  // Only about the module the link named, never one opened after it.
+  if (String(params.get('module') || '').trim() !== module.catalogueId) return '';
+  const name = String(params.get('archivedName') || '').trim();
+  const at = String(params.get('archivedAt') || '').trim();
+  const weekId = String(params.get('week') || '').trim();
+  const componentId = String(params.get('component') || '').trim();
+  const week = module.weekStructure.find(item => item.id === weekId);
+  const component = module.weekStructure
+    .flatMap(item => item.components)
+    .find(item => item.id === componentId);
+  const when = at ? ` on ${formatDateTimeLabel(at)}` : '';
+  if (kind === 'ksb_mapping') {
+    const named = name ? `The KSB mapping ${name}` : 'A KSB mapping';
+    return component
+      ? `${named} was archived from the component "${component.title}"${when}. The component is selected below.`
+      : `${named} was archived${when}. The component it belonged to is no longer in this module either.`;
+  }
+  if (kind === 'component') {
+    if (component) return '';
+    const named = name ? `The component "${name}"` : 'This component';
+    return week
+      ? `${named} was archived${when}, so it is no longer in this module. The week it was in is selected below.`
+      : `${named} was archived${when}, so it is no longer in this module.`;
+  }
+  if (week) return '';
+  const named = name ? `The week "${name}"` : 'This week';
+  return `${named} was archived${when}, so it is no longer in this module.`;
 }
 
 function moduleBuilderDeepLinkTarget(module: ModuleCatalogueItem, params: URLSearchParams): { selection: Selection | null; openSettings: boolean } {

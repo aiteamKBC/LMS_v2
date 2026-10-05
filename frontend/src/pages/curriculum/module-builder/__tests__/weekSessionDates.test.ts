@@ -4,7 +4,11 @@ import {
   createEmptyComponent,
   createEmptyWeek,
   createLocalModuleDraft,
+  liveSessionSlotOverflow,
+  liveSessionSlotOverflowNotice,
+  moduleDeliveryDaysPerWeek,
   moduleTeamsPlannedSessions,
+  weekDeliverySlotCapacity,
   moduleWeekSessionDates,
   moduleWeekIdBySessionNumber,
   moduleUsesSessionRows,
@@ -506,5 +510,112 @@ describe('moduleTeamsPlannedSessions pairs each live session with its own delive
       ['COMP-1', '2026-10-05'],
       ['COMP-2', '2026-10-09'],
     ]);
+  });
+});
+
+/**
+ * Adding more live sessions to a week than its group delivers days for.
+ *
+ * The extras are allowed — an unplanned live session is a legitimate thing to
+ * author — but they have no date to run on, so the builder asks before it
+ * happens rather than leaving the author to find "No date yet" afterwards.
+ * Same slot arithmetic as the date resolution above, so the warning and the
+ * behaviour can never disagree.
+ */
+describe('liveSessionSlotOverflow warns when a week runs out of delivery days', () => {
+  // `live` live sessions already in week 1, out of a two-week module.
+  const moduleWithWeekOne = (live: number): ModuleCatalogueItem => {
+    const draft = createLocalModuleDraft({
+      programme: 'Slot overflow',
+      title: 'Overflow',
+      description: '',
+      weeks: 2,
+      sessionsNumber: 2,
+      status: 'draft',
+      catalogueId: 'MOD-OVERFLOW',
+      startDate: '2026-10-05',
+    });
+    return {
+      ...draft,
+      weekStructure: draft.weekStructure.map((week, index) => (index === 0 ? {
+        ...week,
+        components: Array.from({ length: live }, (_unused, offset) => (
+          createEmptyComponent(week.id, 'live-session', offset + 1)
+        )),
+      } : week)),
+    } as ModuleCatalogueItem;
+  };
+  const oneDayAWeek = mondayWeekPlan([
+    { date: '2026-10-05', weekNumber: 1, day: 'Monday' },
+    { date: '2026-10-12', weekNumber: 2, day: 'Monday' },
+  ]);
+  const twoDaysAWeek = mondayWeekPlan([
+    { date: '2026-10-05', weekNumber: 1, day: 'Monday' },
+    { date: '2026-10-09', weekNumber: 1, day: 'Friday' },
+    { date: '2026-10-12', weekNumber: 2, day: 'Monday' },
+    { date: '2026-10-16', weekNumber: 2, day: 'Friday' },
+  ]);
+
+  it('says nothing while the week still has a delivery day free', () => {
+    expect(liveSessionSlotOverflow(moduleWithWeekOne(0), 0, 1, oneDayAWeek.sessions)).toBeNull();
+    expect(liveSessionSlotOverflow(moduleWithWeekOne(1), 0, 1, twoDaysAWeek.sessions)).toBeNull();
+  });
+
+  it('warns on the second live session of a one-delivery-day week', () => {
+    expect(liveSessionSlotOverflow(moduleWithWeekOne(1), 0, 1, oneDayAWeek.sessions)).toEqual({
+      weekNumber: 1, capacity: 1, existing: 1, adding: 1, beyond: 1,
+    });
+  });
+
+  it('warns only on the third live session of a two-delivery-day week', () => {
+    expect(liveSessionSlotOverflow(moduleWithWeekOne(2), 0, 1, twoDaysAWeek.sessions)).toEqual({
+      weekNumber: 1, capacity: 2, existing: 2, adding: 1, beyond: 1,
+    });
+  });
+
+  it('counts how many of a batch would be left without a date', () => {
+    // Adding three at once to an empty week a one-day group delivers: the
+    // first takes the Monday, the other two have nowhere to go.
+    expect(liveSessionSlotOverflow(moduleWithWeekOne(0), 0, 3, oneDayAWeek.sessions)).toMatchObject({
+      capacity: 1, existing: 0, adding: 3, beyond: 2,
+    });
+  });
+
+  it('warns about any live session in a week the group never delivers in', () => {
+    // Week 2 is paused: the plan gives it no delivery day at all, which is a
+    // real zero and not a plan that has yet to be read.
+    const paused = mondayWeekPlan([
+      { date: '2026-10-05', weekNumber: 1, day: 'Monday' },
+      { date: '2026-10-19', weekNumber: 3, day: 'Monday' },
+    ]);
+    expect(liveSessionSlotOverflow(moduleWithWeekOne(0), 1, 1, paused.sessions))
+      .toMatchObject({ weekNumber: 2, capacity: 0, beyond: 1 });
+  });
+
+  it('falls back to the delivery pattern for a week the plan has not reached', () => {
+    // A week just added in the builder, or a template copy appended a moment
+    // ago. Reading the plan's silence as "no delivery days" would call every
+    // live session in it unplanned.
+    const module = moduleWithWeekOne(0);
+    expect(weekDeliverySlotCapacity(module, 5, oneDayAWeek.sessions))
+      .toBe(moduleDeliveryDaysPerWeek(module));
+    expect(weekDeliverySlotCapacity(module, 0, oneDayAWeek.sessions)).toBe(1);
+  });
+
+  it('says what the group delivers and what it leaves undated', () => {
+    const one = liveSessionSlotOverflowNotice({
+      weekNumber: 3, capacity: 1, existing: 1, adding: 1, beyond: 1,
+    });
+    expect(one.title).toBe('This live session will have no date');
+    expect(one.text).toContain('delivers on one day a week');
+    expect(one.text).toContain('week 3 has one planned date');
+    expect(one.text).toContain('No date yet');
+    expect(one.text).toContain('Teams calendar');
+
+    const many = liveSessionSlotOverflowNotice({
+      weekNumber: 2, capacity: 2, existing: 2, adding: 2, beyond: 2,
+    });
+    expect(many.title).toBe('2 of these live sessions will have no date');
+    expect(many.text).toContain('delivers on 2 days a week');
   });
 });

@@ -1,7 +1,14 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { ModuleLearnerProgressDialog } from '../ModuleLearnerProgressDialog';
 import type { CurriculumScopeLearnerKsbImpactResponse } from '@/lib/curriculumApi';
+
+vi.mock('@/components/feature/CurriculumSweetAlert', () => ({
+  showCurriculumConfirm: vi.fn(async ({ onConfirm }: { onConfirm: () => void | Promise<void> }) => {
+    await onConfirm();
+    return true;
+  }),
+}));
 
 const impact = {
   assignedLearnerCount: 1,
@@ -55,7 +62,7 @@ const impact = {
 describe('ModuleLearnerProgressDialog', () => {
   it('shows assigned learners with OTJH and achieved KSB weight progress', () => {
     const assignMore = vi.fn();
-    render(<ModuleLearnerProgressDialog moduleName="Definition of Project Management" impact={impact} onClose={vi.fn()} onAssignMore={assignMore} />);
+    render(<ModuleLearnerProgressDialog moduleName="Definition of Project Management" impact={impact} onClose={vi.fn()} onAssignMore={assignMore} onRemoveLearner={vi.fn()} />);
 
     expect(screen.getByRole('dialog', { name: 'Definition of Project Management learner progress' })).toBeInTheDocument();
     expect(screen.getByText('A Learner')).toBeInTheDocument();
@@ -86,11 +93,28 @@ describe('ModuleLearnerProgressDialog', () => {
         ]}
         onClose={vi.fn()}
         onAssignMore={vi.fn()}
+        onRemoveLearner={vi.fn()}
       />,
     );
 
     expect(screen.getByText('2 learners assigned to this module')).toBeInTheDocument();
     expect(screen.getByText('Recently assigned learner')).toBeInTheDocument();
     expect(screen.getByText('0h / 0h')).toBeInTheDocument();
+  });
+
+  it('offers removal from each learner card and waits for the server result', async () => {
+    const remove = vi.fn().mockResolvedValue(undefined);
+    render(
+      <ModuleLearnerProgressDialog
+        moduleName="Definition of Project Management"
+        impact={impact}
+        onClose={vi.fn()}
+        onAssignMore={vi.fn()}
+        onRemoveLearner={remove}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(remove).toHaveBeenCalledWith(impact.assignedLearners[0]));
   });
 });

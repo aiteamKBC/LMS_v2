@@ -741,3 +741,123 @@ class CalendarMoveAuditTests(AuditHarness):
         # Everything the move did not name survives the merge.
         self.assertEqual(settings['contentStatus'], 'Draft')
         self.assertEqual(settings['teamsOccurrenceId'], 'OCC-1')
+
+
+class AuditTrailPaginationTests(AuditHarness):
+    """One page of a long feed, and the arithmetic that says which page it is.
+
+    The feed the Audit Trail opens on runs to tens of thousands of rows, so it
+    is read a page at a time. Every assertion here guards a failure that looks
+    like a working page: a second page that repeats the first, a total counted
+    over the fifty rows on screen rather than the window, a filter applied
+    after the page was cut -- each of them renders without an error and each of
+    them is a lie about the history being read.
+    """
+
+    def trail(self, query=''):
+        response = self.client.get(f'/curriculum_api/curriculum/quality/audit-trail/{query}')
+        self.assertEqual(response.status_code, 200, response.content)
+        return response.json()
+
+    def write(self, index, title=None):
+        self.committed(lambda: views.authoring_upsert(views.AUTHORING_COMPONENTS_TABLE, ['id'], {
+            'id': f'COMP-P{index:02d}', 'module_catalogue_id': 'MOD-PAGE', 'week_id': 'WEEK-1',
+            'type': 'quiz', 'title': title or f'Quiz {index:02d}', 'display_order': index,
+        }))
+
+    def setUp(self):
+        super().setUp()
+        self.sign_in()
+        for index in range(1, 8):
+            self.write(index)
+
+    def ids(self, payload):
+        return [event['entityId'] for event in payload['events']]
+
+    def test_a_page_is_cut_from_the_window_and_says_how_long_the_window_is(self):
+        payload = self.trail('?limit=3')
+        self.assertEqual(len(payload['events']), 3)
+        self.assertEqual(payload['page'], 1)
+        self.assertEqual(payload['pageSize'], 3)
+        # The window, not the page. The count beside the feed reads from this.
+        self.assertEqual(payload['total'], 7)
+        self.assertEqual(payload['pages'], 3)
+
+    def test_each_page_carries_different_rows(self):
+        """A page control that re-serves page one is the silent failure here."""
+        first = self.ids(self.trail('?limit=3&page=1'))
+        second = self.ids(self.trail('?limit=3&page=2'))
+        third = self.ids(self.trail('?limit=3&page=3'))
+        self.assertEqual(len(first), 3)
+        self.assertEqual(len(second), 3)
+        self.assertEqual(len(third), 1)
+        self.assertEqual(len(set(first + second + third)), 7)
+
+    def test_the_pages_in_order_are_the_whole_window_newest_first(self):
+        whole = self.ids(self.trail('?limit=50'))
+        paged = []
+        for page in (1, 2, 3):
+            paged.extend(self.ids(self.trail(f'?limit=3&page={page}')))
+        self.assertEqual(paged, whole)
+
+    def test_a_page_past_the_end_is_answered_with_the_last_one(self):
+        """Said in the response, so the control stops claiming page 900."""
+        payload = self.trail('?limit=3&page=900')
+        self.assertEqual(payload['page'], 3)
+        self.assertEqual(len(payload['events']), 1)
+
+    def test_a_filter_narrows_the_whole_window_not_just_the_page(self):
+        """Filtered after the cut, this would report 7 and show 2."""
+        self.write(3, title='Quiz 03 revised')
+        self.write(5, title='Quiz 05 revised')
+        payload = self.trail('?limit=3&action=updated')
+        self.assertEqual(payload['total'], 2)
+        self.assertEqual(payload['pages'], 1)
+        self.assertEqual(sorted(self.ids(payload)), ['COMP-P03', 'COMP-P05'])
+
+    def test_a_search_is_answered_over_the_window_not_over_the_page(self):
+        payload = self.trail('?limit=2&search=quiz 07')
+        self.assertEqual(payload['total'], 1)
+        self.assertEqual(self.ids(payload), ['COMP-P07'])
+
+    def test_the_headline_counts_describe_the_window_not_the_page(self):
+        """They must not change as somebody pages through the feed."""
+        first = self.trail('?limit=3&page=1')
+        last = self.trail('?limit=3&page=3')
+        self.assertEqual(first['actionCounts']['created'], 7)
+        self.assertEqual(first['actionCounts'], last['actionCounts'])
+        self.assertEqual(first['entityCounts'], last['entityCounts'])
+
+    def test_the_timestamp_fallback_pages_too(self):
+        """The reading used where there is no revision log pages the same way."""
+        with self.connection_cursor() as cursor:
+            cursor.execute(f'drop table {versioning.qualified(versioning.VERSIONS_TABLE)}')
+            cursor.execute(f'drop table {versioning.qualified(versioning.REVISIONS_TABLE)}')
+        versioning.reset_availability()
+        # Counted rather than asserted at 7: this reading reports a create and
+        # an edit per row, so the number of events is not the number of
+        # records. What matters is that the pages add back up to it.
+        total = self.trail('?limit=200')['total']
+        payload = self.trail('?limit=3')
+        self.assertEqual(payload['source'], 'timestamps')
+        self.assertEqual(payload['total'], total)
+        self.assertEqual(payload['pages'], -(-total // 3))
+        self.assertEqual(len(payload['events']), 3)
+        seen = []
+        for page in range(1, payload['pages'] + 1):
+            seen.extend(
+                (event['entityId'], event['action'])
+                for event in self.trail(f'?limit=3&page={page}')['events']
+            )
+        self.assertEqual(len(seen), total)
+        self.assertEqual(len(set(seen)), total)
+
+    def test_the_timestamp_fallback_names_the_workspaces_as_well(self):
+        """The page opens on Changes, so its filter and notice read from these."""
+        with self.connection_cursor() as cursor:
+            cursor.execute(f'drop table {versioning.qualified(versioning.VERSIONS_TABLE)}')
+            cursor.execute(f'drop table {versioning.qualified(versioning.REVISIONS_TABLE)}')
+        versioning.reset_availability()
+        payload = self.trail()
+        self.assertIn('curriculum', [option['value'] for option in payload['workspaces']])
+        self.assertEqual(payload['changeWorkspaces'], ['curriculum'])

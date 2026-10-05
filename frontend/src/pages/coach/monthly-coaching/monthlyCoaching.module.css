@@ -71,6 +71,19 @@
 .table col:nth-child(4) { width: 18%; }
 .table col:nth-child(5) { width: 16%; }
 .table col:nth-child(6) { width: 13%; }
+.mcmTable col:nth-child(1) { width: 22%; }
+.mcmTable col:nth-child(2) { width: 16%; }
+.mcmTable col:nth-child(3) { width: 10%; }
+.mcmTable col:nth-child(4) { width: 12%; }
+.mcmTable col:nth-child(5) { width: 16%; }
+.mcmTable col:nth-child(6) { width: 13%; }
+.mcmTable col:nth-child(7) { width: 11%; }
+.prTable col:nth-child(1) { width: 24%; }
+.prTable col:nth-child(2) { width: 18%; }
+.prTable col:nth-child(3) { width: 14%; }
+.prTable col:nth-child(4) { width: 17%; }
+.prTable col:nth-child(5) { width: 15%; }
+.prTable col:nth-child(6) { width: 12%; }
 .page.page .table.table th { background: var(--kbc-purple-wash, #f8f5ff) !important; color: var(--kbc-text, #231b35) !important; height: 3.5rem; padding: 1rem; text-align: left; font-size: .9375rem; letter-spacing: 0; white-space: nowrap; }
 .page.page .table.table td { padding: 1rem; text-align: left; border-bottom: 1px solid var(--kbc-border, #e6dff4); vertical-align: middle; overflow-wrap: normal; }
 .page.page .table.table tr { background: var(--kbc-surface, white) !important; border-radius: 0 !important; box-shadow: none !important; border: 0 !important; }
