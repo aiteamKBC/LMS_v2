@@ -1148,6 +1148,13 @@ def microsoft_graph_request(
     return json.loads(raw) if raw else {}
 
 
+def is_hidden_caseload_programme_status(raw_status: str | None) -> bool:
+    """Programme stages kept off the coach caseload; mirrors the frontend
+    isHiddenCaseloadProgrammeStatus (pages/coach/caseload/lib/format.ts)."""
+    normalized = re.sub(r"[^a-z0-9]+", "", (raw_status or "").lower())
+    return normalized.startswith("onboarding") or normalized in {"withdrawn", "completed", "enteredepa", "epa"}
+
+
 def normalize_program_status(raw_status: str | None) -> str:
     normalized = (raw_status or "").strip().lower().replace(" ", "")
     if normalized == "withdrawn":

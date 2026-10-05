@@ -69,9 +69,12 @@ export function normalizeCaseloadProgrammeStatus(value?: string | null): string 
 
 export function isHiddenCaseloadProgrammeStatus(value?: string | null): boolean {
   const normalized = normalizeCaseloadProgrammeStatus(value);
+  // Mirrored by coach_api.views.is_hidden_caseload_programme_status.
   return normalized.startsWith('onboarding')
     || normalized === 'enteredepa'
-    || normalized === 'withdrawn';
+    || normalized === 'epa'
+    || normalized === 'withdrawn'
+    || normalized === 'completed';
 }
 
 export function isVisibleCaseloadLearner(

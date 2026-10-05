@@ -76,6 +76,7 @@ describe('coach learners PDF', () => {
       { ...learner, id: 'epa', name: 'EPA Learner', rawProgramStatus: 'Entered-EPA' },
       { ...learner, id: 'withdrawn', name: 'Withdrawn Learner', rawProgramStatus: 'Withdrawn' },
       { ...learner, id: 'fallback-withdrawn', name: 'Fallback Withdrawn', rawProgramStatus: '--', enrollmentStatus: 'withdrawn' as const },
+      { ...learner, id: 'completed', name: 'Completed Learner', rawProgramStatus: 'Completed' },
     ];
     const content = pdfText(buildLearnersPdf(learners, 'Coach Example', logo));
 
@@ -84,6 +85,7 @@ describe('coach learners PDF', () => {
     expect(content).not.toContain('EPA Learner');
     expect(content).not.toContain('Withdrawn Learner');
     expect(content).not.toContain('Fallback Withdrawn');
+    expect(content).not.toContain('Completed Learner');
     expect(content).toContain('LEARNERS INCLUDED PREPARED BY 1 Coach Example');
   });
 });
