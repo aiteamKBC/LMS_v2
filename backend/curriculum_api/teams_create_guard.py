@@ -206,6 +206,10 @@ def teams_meeting_collection(request):
         # The calendar is saved either way; its claim must still be finished.
         logger.exception('The Teams create could not attach its schedule email result.')
     code, live_session_id = response_outcome(response)
+    if response.status_code == 201:
+        # The calendar exists, so the form it was drafted from is finished.
+        from .teams_create_drafts import clear_draft
+        clear_draft(key)
     try:
         claims.finish(key, token, 'done', response.status_code, code, live_session_id)
     except Exception:

@@ -78,6 +78,53 @@ def local_calendar_recurrence(targets, repeat, zone_name, graph_zone):
             'numberOfOccurrences': slots, 'recurrenceTimeZone': graph_zone}}
 
 
+def sessions_a_rewrite_would_drop(targets, recurring, rows, zone_name, now=None):
+    """Future tracked sessions a new recurrence would silently take off Teams.
+
+    Rewriting a series' recurrence regenerates its instances from the pattern:
+    a session outside the new range, or on a weekday the pattern no longer
+    fires on, simply stops existing, and Exchange tells everyone invited. That
+    is a cancellation nobody pressed Cancel for, so the caller refuses the
+    update and names these sessions instead.
+
+    ``rows`` are the calendar's stored occurrences. Only scheduled sessions that
+    have not started and are absent from ``targets`` count; a session that
+    already ran is history and is left alone either way.
+    """
+    now = now or datetime.now(timezone.utc)
+    zone = ZoneInfo(zone_name)
+    wanted = {target['start'] for target in targets}
+    local = [target['start'].astimezone(zone) for target in targets]
+    first, last = (min(local).date(), max(local).date()) if local else (None, None)
+    weekdays = {item.weekday() for item in local}
+    dropped = []
+    for row in rows or ():
+        if str(row.get('status') or 'scheduled') != 'scheduled':
+            continue
+        try:
+            start = utc_datetime(row.get('scheduled_start'))
+        except (CalendarMismatch, TypeError, ValueError):
+            continue
+        if start <= now or start in wanted:
+            continue
+        day = start.astimezone(zone)
+        covered = bool(recurring and first and first <= day.date() <= last and day.weekday() in weekdays)
+        if not covered:
+            dropped.append(row)
+    return dropped
+
+
+def dropped_sessions_sentence(rows, zone_name):
+    zone = ZoneInfo(zone_name)
+    named = ', '.join(
+        f"Session {row.get('session_number')} ({utc_datetime(row.get('scheduled_start')).astimezone(zone).strftime('%a %d %b %Y, %H:%M')})"
+        for row in rows
+    )
+    return (f'This update would take {named} off the Teams calendar, and Microsoft would email everyone invited '
+            'that it is cancelled. Nothing was sent. Cancel it by hand first with Cancel session, or keep it in '
+            'the module plan.')
+
+
 def safe_teams_join_url(value):
     try:
         parsed = urlparse(str(value or ''))
@@ -139,8 +186,19 @@ def verify_calendar(request, owner, event_id, targets, expected_join_url='', rec
         if match.get('hideAttendees') is False:
             raise CalendarMismatch(f"Session {target['session_number']} exposes its attendee list.")
         available.remove(match)
-    if available:
-        raise CalendarMismatch('Microsoft still contains extra sessions. Invitations were not updated.')
+    # A slot Microsoft holds that the plan does not -- weekly filler in a gap, a
+    # week handed to its own additional meeting, a session dropped from the
+    # plan -- is not a failure and is never removed here: removing it is a
+    # cancellation Exchange emails to everyone invited, and only the explicit
+    # Cancel may send one. It is reported so the screen can flag it.
+    unplanned = [item for item in available if item.get('isCancelled') is not True]
+    if unplanned:
+        event = {**event, 'unplannedInstances': [
+            {'eventId': item.get('id') or '', 'occurrenceId': item.get('occurrenceId') or '',
+             'startDateTimeUtc': event_instant(item, 'start').isoformat(),
+             'endDateTimeUtc': event_instant(item, 'end').isoformat()}
+            for item in unplanned
+        ]}
     return event
 
 

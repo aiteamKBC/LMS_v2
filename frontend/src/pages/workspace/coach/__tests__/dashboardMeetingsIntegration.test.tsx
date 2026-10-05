@@ -726,3 +726,35 @@ it('uses the same compact grouped layout for weekly progress reviews', () => {
   expect(screen.queryByText('Review 1')).not.toBeInTheDocument();
   expect(screen.queryByText('Progress Review')).not.toBeInTheDocument();
 });
+
+
+it('uses target-to-date for OTJH insights without comparing actuals to the whole plan', async () => {
+  useDashboardDate();
+  mocks.load.mockResolvedValue({ owner: { name: 'Example Coach' }, learners: [
+    { id: '1', name: 'Warning Learner', rawProgramStatus: 'active', otjhCompleted: 170,
+      otjhTarget: 576, otjhTargetAsOfToday: 200, otjhRagStatus: 'need-attention' },
+    { id: '2', name: 'Critical Learner', rawProgramStatus: 'active', otjhCompleted: 160,
+      otjhTarget: 576, otjhTargetAsOfToday: 200, otjhRagStatus: 'at-risk' },
+    { id: '3', name: 'Current Learner', rawProgramStatus: 'active', otjhCompleted: 195,
+      otjhTarget: 576, otjhTargetAsOfToday: 200, otjhRagStatus: 'on-track' },
+    { id: '4', name: 'Future Learner', rawProgramStatus: 'active', otjhCompleted: 0,
+      otjhTarget: 576, otjhTargetAsOfToday: 0, otjhRagStatus: 'on-track' },
+  ], meetings: { events: [] } });
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  await screen.findByRole('region', { name: 'Coach dashboard metrics' });
+  fireEvent.click(screen.getByRole('tab', { name: 'Risk Insights' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Expand OTJH Insights' }));
+  const table = within(screen.getByRole('region', { name: 'OTJH risk insights' }));
+  const warning = within(table.getByText('Warning Learner').closest('tr')!);
+  expect(warning.getByText('170h')).toBeVisible();
+  expect(warning.getByText('200h')).toBeVisible();
+  expect(warning.getByText('30h')).toBeVisible();
+  expect(warning.getByText('Warning')).toBeVisible();
+  const critical = within(table.getByText('Critical Learner').closest('tr')!);
+  expect(critical.getByText('200h')).toBeVisible();
+  expect(critical.getByText('40h')).toBeVisible();
+  expect(critical.getByText('Critical')).toBeVisible();
+  expect(table.queryByText('Current Learner')).not.toBeInTheDocument();
+  expect(table.queryByText('Future Learner')).not.toBeInTheDocument();
+  expect(table.queryByText('576h')).not.toBeInTheDocument();
+});

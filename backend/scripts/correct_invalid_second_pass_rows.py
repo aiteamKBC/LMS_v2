@@ -15,7 +15,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 ROOT = Path(__file__).resolve().parents[1]
-LABEL = "\u062a\u0642\u062f\u064a\u0631\u064a \u2014 \u064a\u062d\u062a\u0627\u062c \u0627\u0639\u062a\u0645\u0627\u062f"
+LABEL = "Estimated — approval required"
 EVIDENCE = {39817: 1303, 39888: 1132}
 RUN_KIND = "correct-invalid-second-pass-additions-v1"
 

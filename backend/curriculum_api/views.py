@@ -40,6 +40,7 @@ from .teams_weekly_calendar import calendar_groups, save_weekday_calendar, store
 from .session_overrides import apply_session_overrides, override_clock, session_overrides
 from .teams_calendar_checks import (CalendarMismatch, attendee_differences, attendees_already_match, calendar_targets, event_organizer_address,
                                     graph_calendar_time, local_calendar_recurrence, publish_attendees, safe_teams_join_url,
+                                    dropped_sessions_sentence, sessions_a_rewrite_would_drop,
                                     unconfirmed_attendee_detail, utc_datetime, verify_calendar)
 
 from learner_api.progress_rules import (
@@ -2299,49 +2300,41 @@ def tracked_occurrence_keys(existing_occurrences):
     }
 
 
-def execute_teams_occurrence_deletions(
-    graph_request, owner_key, deletions, *, live_session_id='', module_catalogue_id='', source='holiday_move_cleanup',
+def flag_teams_occurrence_leftovers(
+    deletions, *, live_session_id='', module_catalogue_id='', source='holiday_move_cleanup',
 ):
-    """Issue the Graph deletes a shift has PROVED, once nothing else can refuse.
+    """Report the Teams slots a save no longer wants. Never removes them.
 
-    Held back from `apply_teams_occurrence_shifts` and run by the caller on
-    purpose. A cancellation cannot be taken back and Exchange emails everyone on
-    the meeting, so it must not happen before a validation that may still fail:
-    an author whose update is rejected should not already have had the cohort
-    told a session was cancelled.
+    These used to be deleted here: the weekly filler a recurrence generates in a
+    gap, and the slot a session moved off. Exchange answers every organizer
+    delete with a "Canceled: <module>" email to everyone invited, so a week
+    handed to its own additional meeting, or a session added after a gap, had the
+    whole cohort told a session was cancelled that nobody had cancelled.
 
-    Every delete is logged with the identity that justified it -- which session,
-    where it was, where it went, why, and which action asked. There is no
-    anonymous cancellation on this calendar, and no reason that amounts to "the
-    date was not in the array".
+    No save, sync or background job cancels anything now. A slot that is no
+    longer part of the plan is left exactly where it is on Teams and returned
+    here, so the screen can say so; the only way it leaves Microsoft is the
+    explicit Cancel on that slot (``teams_calendar_actions`` scope 'leftover').
     """
-    warnings = []
+    leftovers = []
     for deletion in deletions or ():
         instance_id = clean_str((deletion or {}).get('instance_id'))
         if not instance_id:
             continue
         logger.info(
-            'Teams occurrence delete: live_session_id=%s module_catalogue_id=%s graph_event_id=%s '
+            'Teams occurrence left for manual review: live_session_id=%s module_catalogue_id=%s graph_event_id=%s '
             'session_number=%s previous_start=%s new_start=%s reason=%s source=%s',
             live_session_id, module_catalogue_id, instance_id,
             deletion.get('session_number'), deletion.get('previous_start'),
             deletion.get('new_start'), deletion.get('reason'), source,
         )
-        try:
-            graph_request(
-                'DELETE', f'users/{owner_key}/events/{urllib_parse.quote(instance_id, safe="")}',
-                extra_headers=GRAPH_SILENT_INVITE_HEADERS,
-            )
-        except RuntimeError as exc:
-            warnings.append({
-                'code': 'teams_stale_occurrence_not_removed',
-                'message': (
-                    'Microsoft Teams could not remove the slot this session moved off, so the calendar may still '
-                    'show it on its previous date.'
-                ),
-                'detail': str(exc),
-            })
-    return warnings
+        leftovers.append({
+            'eventId': instance_id,
+            'startDateTimeUtc': f"{clean_str(deletion.get('previous_start'))}:00Z" if clean_str(deletion.get('previous_start')) else '',
+            'sessionNumber': deletion.get('session_number') or None,
+            'reason': clean_str(deletion.get('reason')),
+        })
+    return leftovers
 
 
 def apply_teams_occurrence_shifts(
@@ -3368,6 +3361,7 @@ def curriculum_teams_meeting(request):
         'co_organizers': co_organizers,
     }
     recreated_details = []
+    leftover_slots = []
     # Graph has just built a plain weekly series. Move its occurrences onto the
     # wizard's holiday-shifted dates now, otherwise the calendar keeps sessions on
     # holidays the wizard already moved them off and the two disagree from day one.
@@ -3385,12 +3379,14 @@ def curriculum_teams_meeting(request):
             invited_people,
             meeting_options,
         )
-        shift_warnings.extend(execute_teams_occurrence_deletions(
-            microsoft_graph_request, owner_key, stale_deletions,
+        # Never deleted: the weekly filler a gap leaves behind is reported and
+        # left on Teams. See flag_teams_occurrence_leftovers.
+        leftover_slots = flag_teams_occurrence_leftovers(
+            stale_deletions,
             live_session_id=clean_str(payload.get('liveSessionId')),
             module_catalogue_id=clean_str(payload.get('moduleCatalogueId')),
             source='series_creation_cleanup',
-        ))
+        )
         for shift_warning in shift_warnings:
             message = clean_str(shift_warning.get('message'))
             detail = clean_str(shift_warning.get('detail'))
@@ -3508,6 +3504,9 @@ def curriculum_teams_meeting(request):
             'settingsApplied': settings_applied,
         },
         'warnings': warnings,
+        # Slots on Teams that are not module sessions. Kept apart from
+        # `warnings`, which hold back the creation emails: nothing failed.
+        'leftoverSlots': (event.get('unplannedInstances') or []) or leftover_slots,
     }, status=201)
 
 
@@ -3968,6 +3967,19 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
                     payload={'subject': title}, extra_headers=GRAPH_SILENT_INVITE_HEADERS,
                 )
         else:
+            # Rewriting the recurrence regenerates the series from its pattern,
+            # so a future session outside the new range simply stops existing --
+            # a cancellation Exchange emails to everyone, that nobody pressed
+            # Cancel for. Refuse and name it instead.
+            dropped = sessions_a_rewrite_would_drop(
+                targets, repeat != 'none', current_occurrences, graph_timezone_iana(graph_settings),
+            )
+            if dropped:
+                return json_error(
+                    dropped_sessions_sentence(dropped, graph_timezone_iana(graph_settings)),
+                    status=409, code='teams_update_would_drop_sessions',
+                    sessions=[row.get('session_number') for row in dropped],
+                )
             event = microsoft_graph_request(
                 'PATCH', f'users/{owner_key}/events/{event_key}', payload=event_patch,
                 extra_headers=GRAPH_SILENT_INVITE_HEADERS,
@@ -3986,7 +3998,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
         'presenters': presenters,
         'co_organizers': co_organizers,
     }
-    warnings, recreated_details, stale_deletions = [], [], []
+    warnings, recreated_details, stale_deletions, leftover_slots = [], [], [], []
     if repeat != 'none':
         # `current_occurrences` is what makes the cleanup provable: the LMS's own
         # occurrence rows, carrying each session's number and the date this
@@ -4024,20 +4036,16 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             # thing or why. The author is the person who has to act on it.
             raise RuntimeError(teams_warning_sentence(warnings)
                                or 'Microsoft did not accept every calendar or meeting option change.')
-        # Destructive writes last. The schedule is reconciled and the meeting
-        # options are accepted before a single slot is retired, so an update
-        # that is going to be refused cannot first have Exchange tell the cohort
-        # a session was cancelled. Previously the deletes ran inside the shift,
-        # several Graph calls before this check could reject the whole update.
-        delete_warnings = execute_teams_occurrence_deletions(
-            microsoft_graph_request, owner_key, stale_deletions,
+        # Nothing is retired. A slot this plan no longer wants -- weekly filler
+        # in a gap, the date a session moved off -- stays on Teams and is
+        # reported, because removing it is a cancellation Exchange emails to
+        # everyone invited. Only the explicit Cancel on that slot may do that.
+        leftover_slots = flag_teams_occurrence_leftovers(
+            stale_deletions,
             live_session_id=live_session_id,
             module_catalogue_id=clean_str(series.get('module_catalogue_id')),
-            source='holiday_move_cleanup',
+            source='update_reconcile',
         )
-        if delete_warnings:
-            warnings.extend(delete_warnings)
-            raise RuntimeError(teams_warning_sentence(delete_warnings))
         occurrence_details = recreated_details or current_occurrences
         if not notify_attendees:
             # An author who chose not to email still gets a structurally correct
@@ -4157,6 +4165,7 @@ def curriculum_teams_meeting_schedule(request, live_session_id):
             'coOrganizers': co_organizers,
         },
         'warnings': warnings,
+        'leftoverSlots': (event.get('unplannedInstances') or []) or leftover_slots,
     }), live_session_id, schedule_before)
 
 
@@ -4376,6 +4385,29 @@ def remove_artifact_from_wrong_occurrences(occurrences, target_occurrence, artif
 
 
 @csrf_exempt
+def stored_leftover_slots(live_session_id):
+    """Teams slots outside the module plan, as the last calendar status check found them.
+
+    Read from the status sweep's own snapshot, never from Microsoft here. Empty
+    when status sync is not provisioned or has not run: a missing reading is
+    not evidence of anything.
+    """
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT to_regclass('curriculum.teams_calendar_sync_state')")
+            if not cursor.fetchone()[0]:
+                return []
+            cursor.execute('SELECT snapshot FROM curriculum.teams_calendar_sync_state WHERE live_session_id = %s',
+                           [live_session_id])
+            row = cursor.fetchone()
+    except Exception:
+        logger.exception('Teams leftover slots could not be read.')
+        return []
+    snapshot = parse_json_value(row[0], {}) if row else {}
+    leftovers = (snapshot or {}).get('leftovers') if isinstance(snapshot, dict) else None
+    return leftovers if isinstance(leftovers, list) else []
+
+
 def curriculum_teams_meeting_artifacts(request, live_session_id):
     """Read the tracked lecture plan or pull completed artifacts from Graph."""
     from coach_api.views import has_graph_credentials, microsoft_graph_request, get_graph_settings
@@ -4425,6 +4457,7 @@ def curriculum_teams_meeting_artifacts(request, live_session_id):
         return JsonResponse({
             'series': {**stamp_live_session_instants(series), 'timeZoneIana': graph_timezone_iana(teams_schedule_settings({}, series=series))},
             'occurrences': [stamp_live_session_instants(occurrence) for occurrence in occurrences],
+            'leftoverSlots': stored_leftover_slots(live_session_id),
         })
     if request.method != 'POST':
         return json_error('Method not allowed.', status=405)

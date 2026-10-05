@@ -1201,8 +1201,9 @@ function RiskInsightsTables({ learners, unavailable }: { learners: CoachLearner[
     .sort((left, right) => right.missed - left.missed);
 
   const otjhRows = learners
-    .filter(learner => learner.otjhTarget > 0)
-    .map(learner => ({ learner, gap: Math.max(learner.otjhTarget - learner.otjhCompleted, 0) }))
+    .map(learner => ({ learner, target: otjhProgressAsOfToday(learner).targetHours }))
+    .filter((row): row is typeof row & { target: number } => row.target !== null && row.target > 0)
+    .map(row => ({ ...row, gap: Math.max(row.target - row.learner.otjhCompleted, 0) }))
     .map(row => ({ ...row, tone: riskTone(row.gap, 30, 40) }))
     .filter((row): row is typeof row & { tone: RiskInsightTone } => Boolean(row.tone))
     .sort((left, right) => right.gap - left.gap);
@@ -1236,8 +1237,8 @@ function RiskInsightsTables({ learners, unavailable }: { learners: CoachLearner[
       <div className={styles.tableScroll} tabIndex={0} role="region" aria-label="OTJH risk insights">
         <table className={`${styles.table} ${styles.riskInsightTable}`}>
           <thead><tr><th scope="col">Learner</th><th scope="col">Programme</th><th scope="col">Actual</th><th scope="col">Target</th><th scope="col">Behind</th><th scope="col">Status</th></tr></thead>
-          <tbody>{otjhRows.length ? otjhRows.map(({ learner, gap, tone }) => <tr key={learner.id} data-tone={tone}>
-            <td><RiskLearner learner={learner} /></td><td>{learner.programme}</td><td>{learner.otjhCompleted}h</td><td>{learner.otjhTarget}h</td><td><strong>{Math.round(gap * 10) / 10}h</strong></td><td><RiskStatus tone={tone} /></td>
+          <tbody>{otjhRows.length ? otjhRows.map(({ learner, target, gap, tone }) => <tr key={learner.id} data-tone={tone}>
+            <td><RiskLearner learner={learner} /></td><td>{learner.programme}</td><td>{learner.otjhCompleted}h</td><td>{target}h</td><td><strong>{Math.round(gap * 10) / 10}h</strong></td><td><RiskStatus tone={tone} /></td>
           </tr>) : <EmptyRiskRow columns={6} message={dataUnavailable || 'No OTJH warnings.'} />}</tbody>
         </table>
       </div>

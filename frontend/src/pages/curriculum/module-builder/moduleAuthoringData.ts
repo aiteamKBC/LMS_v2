@@ -3049,6 +3049,51 @@ export function fetchTeamsCreateStatus(moduleCatalogueId: string) {
 }
 
 /**
+ * A module's create form, saved without creating anything.
+ *
+ * Held on the server against the module, so whoever opens Create next starts
+ * from it. Saving one never reaches Microsoft and sends no email; a successful
+ * Create removes it. See `teams_create_drafts.py`.
+ */
+export interface TeamsCreateDraft {
+  form: Record<string, string>;
+  updatedAt: string;
+  updatedByEmail: string;
+  updatedByName: string;
+}
+
+const CREATE_DRAFT_PATH = '/curriculum/teams-meetings/create-draft/';
+
+/** Which form the draft belongs to: the module calendar, or the additional week meeting. */
+export type TeamsDraftKind = 'calendar' | 'week';
+
+function createDraftQuery(moduleCatalogueId: string, kind: TeamsDraftKind) {
+  return `${CREATE_DRAFT_PATH}?moduleCatalogueId=${encodeURIComponent(moduleCatalogueId)}&kind=${kind}`;
+}
+
+export function fetchTeamsCreateDraft(moduleCatalogueId: string, kind: TeamsDraftKind = 'calendar') {
+  return apiJson<{ draft: TeamsCreateDraft | null; available: boolean }>(
+    createDraftQuery(moduleCatalogueId, kind),
+    { timeoutMs: 15000 },
+  );
+}
+
+export function saveTeamsCreateDraft(moduleCatalogueId: string, form: Record<string, string>, kind: TeamsDraftKind = 'calendar') {
+  return apiJson<{ draft: TeamsCreateDraft | null; available: boolean }>(CREATE_DRAFT_PATH, {
+    method: 'PUT',
+    body: JSON.stringify({ moduleCatalogueId, form, kind }),
+    timeoutMs: 15000,
+  });
+}
+
+export function deleteTeamsCreateDraft(moduleCatalogueId: string, kind: TeamsDraftKind = 'calendar') {
+  return apiJson<{ draft: null; available: boolean }>(createDraftQuery(moduleCatalogueId, kind), {
+    method: 'DELETE',
+    timeoutMs: 15000,
+  });
+}
+
+/**
  * One extra Teams meeting on a single week, with its own host and guests.
  *
  * A different record from the module's calendar, not a variation of it: its own
@@ -3296,7 +3341,7 @@ export async function updateTeamsMeetingSchedule(liveSessionId: string, input: P
   // The review is complete. The caller can now replace its form with a
   // progress panel without showing it behind the confirmation dialog.
   options.onSubmitted?.();
-  return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting']; warnings?: Array<{ code?: string; message: string; detail?: string }>; changeNotice?: string }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
+  return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting']; warnings?: Array<{ code?: string; message: string; detail?: string }>; changeNotice?: string; leftoverSlots?: TeamsLeftoverSlot[] }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
     method: 'PATCH',
     body: JSON.stringify({ ...reviewed, notifyAttendees }),
     // One update is around ten SERIAL Microsoft Graph round trips -- read the
@@ -3306,7 +3351,8 @@ export async function updateTeamsMeetingSchedule(liveSessionId: string, input: P
     // past 45s on that path, and the browser abandoning it there did not stop
     // the server: it left the author staring at a timeout for an update that
     // was still being applied. The budget is the transport's, not Microsoft's.
-    timeoutMs: 120000,
+    // Four minutes: a slow Graph day pushed long series past two.
+    timeoutMs: 240000,
   }).then(result => {
     clearCurriculumGetCache();
     return { ...result, notifyAttendees };
@@ -3429,6 +3475,24 @@ export interface TeamsMeetingArtifactsResult {
     calendar_series?: Array<{ day: string; joinUrl: string; sessionNumbers: number[] }>;
   };
   occurrences: TeamsMeetingOccurrence[];
+  /** Slots on Teams that are not module sessions, as the last status check found them. */
+  leftoverSlots?: TeamsLeftoverSlot[];
+}
+
+/**
+ * A slot Microsoft holds that the module plan does not: weekly filler in a gap,
+ * a week handed to its own additional meeting, a dropped session, or a weekday
+ * series the plan stopped using. No save, sync or background job removes one;
+ * only its own Cancel does, because Microsoft emails everyone invited.
+ */
+export interface TeamsLeftoverSlot {
+  kind?: 'occurrence' | 'event' | 'series';
+  eventId: string;
+  rootId?: string;
+  startDateTimeUtc?: string;
+  endDateTimeUtc?: string;
+  day?: string;
+  reason?: string;
 }
 
 export function syncTeamsMeetingArtifacts(liveSessionId: string): Promise<TeamsArtifactSyncResult | { state: 'queued'; message: string }> {
@@ -3437,7 +3501,8 @@ export function syncTeamsMeetingArtifacts(liveSessionId: string): Promise<TeamsA
 
 export function loadTeamsMeetingArtifacts(liveSessionId: string) {
   return apiJson<TeamsMeetingArtifactsResult>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/`, {
-    timeoutMs: 30000,
+    // Read first by every Update Teams calendar, so it shares that save's patience.
+    timeoutMs: 60000,
   });
 }
 

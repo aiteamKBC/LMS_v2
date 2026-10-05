@@ -64,6 +64,74 @@ class CanonicalLearningTests(unittest.TestCase):
         }))
         self.assertFalse(self.scope['counts_as_completed']({'activity_status': 'not accepted'}))
 
+    def test_journal_date_corrects_an_import_timestamp_without_moving_hours(self):
+        entry = {'id': 1, 'source_system': 'journal', 'accepted': True,
+                 'actual_seconds': 2700, 'reporting_month': '2025-11', 'ksbs': [],
+                 'reporting_started_at': '2026-08-20T13:07:44+00:00',
+                 'reporting_timestamp_label': '13:07:44 - 13:52:44'}
+        route = {'source_system': 'journal', 'month': '2025-11', 'activity_date': '2025-11-06'}
+        self.query.side_effect = [[{'payload': entry, 'journal_routes': [route]}], []]
+        loaded = self.scope['entries_for'](self.owner)
+        result = self.scope['rows_for'](self.owner, loaded)[0]
+        self.assertEqual(result['activity_date'], '2025-11-06')
+        self.assertEqual(result['reporting_month'], '2025-11')
+        self.assertEqual(result['actual_hours'], 0.75)
+        self.assertTrue(result['accepted'])
+        self.assertEqual(result['timestamp_label'], entry['reporting_timestamp_label'])
+        self.assertEqual(loaded[0]['reporting_started_at'], entry['reporting_started_at'])
+        self.assertEqual(loaded[0]['journal_routes'], [route])
+        sql, params = self.query.call_args_list[0].args
+        self.assertIn("'activity_date',j.activity_date", sql)
+        self.assertIn('j.canonical_learner_id=p.learner_id', sql)
+        self.assertIn('s.learner_id=p.learner_id AND s.canonical_progress_id=p.id', sql)
+        self.assertEqual(params, [self.owner['id']])
+
+    def test_journal_date_does_not_guess_from_ambiguous_or_wrong_month_sources(self):
+        route = {'source_system': 'journal', 'month': '2025-11', 'activity_date': '2025-11-06'}
+        entry = {'id': 1, 'source_system': 'journal', 'accepted': True,
+                 'actual_seconds': 300, 'reporting_month': '2025-11', 'ksbs': [],
+                 'reporting_started_at': '2026-08-20T13:07:44+00:00'}
+        self.query.return_value = []
+        for routes in ([], [{**route, 'activity_date': None}],
+                       [{**route, 'activity_date': '2025-11-31'}],
+                       [{**route, 'month': '2026-08'}],
+                       [{**route, 'activity_date': '2026-08-20'}],
+                       [{**route, 'source_system': 'old_lms'}],
+                       [route, {**route, 'activity_date': '2025-11-07'}]):
+            with self.subTest(routes=routes):
+                result = self.scope['rows_for'](self.owner, [{**entry, 'journal_routes': routes}])[0]
+                self.assertEqual(result['activity_date'], '2026-08-20')
+                self.assertEqual(result['reporting_month'], '2025-11')
+        duplicate_routes = {**entry, 'journal_routes': [route, dict(route)]}
+        self.assertEqual(self.scope['rows_for'](self.owner, [duplicate_routes])[0]['activity_date'], '2025-11-06')
+
+    def test_journal_date_fills_a_missing_date_only_from_a_valid_link(self):
+        entry = {'id': 1, 'source_system': 'journal', 'accepted': True,
+                 'actual_seconds': 300, 'reporting_month': '2025-11', 'ksbs': [],
+                 'journal_routes': [{'source_system': 'journal', 'month': '2025-11',
+                                     'activity_date': '2025-11-06'}]}
+        self.query.return_value = []
+        result = self.scope['rows_for'](self.owner, [entry])[0]
+        self.assertEqual(result['activity_date'], '2025-11-06')
+        self.assertEqual(result['reporting_month'], '2025-11')
+        self.assertEqual(result['actual_hours'], 300 / 3600)
+        unlinked = {**entry, 'journal_routes': []}
+        self.assertFalse(self.scope['rows_for'](self.owner, [unlinked])[0]['activity_date'])
+
+    def test_journal_date_preserves_native_and_already_consistent_dates(self):
+        route = {'source_system': 'journal', 'month': '2025-11', 'activity_date': '2025-11-06'}
+        entry = {'id': 1, 'source_system': 'old_lms', 'accepted': True,
+                 'actual_seconds': 300, 'reporting_month': '2025-11', 'ksbs': [],
+                 'reporting_started_at': '2026-08-20T13:07:44+00:00', 'journal_routes': [route]}
+        self.query.return_value = []
+        self.assertEqual(self.scope['rows_for'](self.owner, [entry])[0]['activity_date'], '2026-08-20')
+        consistent = {**entry, 'source_system': 'journal', 'reporting_started_at': '2025-11-20T13:07:44+00:00'}
+        self.assertEqual(self.scope['rows_for'](self.owner, [consistent])[0]['activity_date'], '2025-11-20')
+        boundary = {**entry, 'source_system': 'journal', 'reporting_month': '2026-09',
+                    'reporting_started_at': '2026-08-31T23:30:00+00:00',
+                    'journal_routes': [{**route, 'month': '2026-09', 'activity_date': '2026-09-15'}]}
+        self.assertEqual(self.scope['rows_for'](self.owner, [boundary])[0]['activity_date'], '2026-09-01')
+
     def test_estimate_metadata_does_not_override_stored_hours_acceptance_or_month(self):
         entry = {'id': 1, 'accepted': True, 'actual_seconds': 3600,
                  'reporting_month': '2026-09', 'ksbs': [],

@@ -112,8 +112,8 @@ def _learner_information(learner):
     return {
         "name": _s(getattr(learner, "username", "")),
         "programmeName": _s(getattr(learner, "programme", "")),
-        "programmeStartDate": _s(getattr(learner, "start_date", "")),
-        "plannedEndDate": _s(getattr(learner, "end_date", "")),
+        "programmeStartDate": _s(getattr(learner, "learner_start_date", "")) or "--",
+        "plannedEndDate": _s(getattr(learner, "learner_end_date", "")) or "--",
         "programmeStatus": _s(getattr(learner, "programme_status", "")),
         "employer": _s(getattr(learner, "employer", "")),
         "manager": _s(getattr(learner, "line_manager", "")),
