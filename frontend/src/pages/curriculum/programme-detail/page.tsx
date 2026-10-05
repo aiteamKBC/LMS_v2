@@ -17,6 +17,7 @@ import {
   ScopeLearnerAchievementDetail,
   type KsbCredit,
 } from '@/pages/curriculum/shared/entities/scopeAchievement';
+import { KsbAchievementTab } from '@/pages/curriculum/shared/entities/KsbAchievementTab';
 // The same rule applies to reading: the record tables, filter bars and workspace
 // chrome here are the shared ones the Cohort, Group and Module workspaces use, so
 // a programme is a lens on those records rather than a second rendering of them.
@@ -65,6 +66,7 @@ import {
   type CurriculumLiveSessionOccurrence,
   fetchCurriculumProgrammes,
   fetchCurriculumProgrammeDetail,
+  fetchProgrammeKsbStats,
   fetchCurriculumProgrammeKsbCoverage,
   fetchCurriculumScopeLearnerRoster,
   fetchCurriculumKsbSets,
@@ -1001,6 +1003,7 @@ function useProgrammeDetailData(programmeId: string) {
       // would otherwise silently omit rows that exist in the database.
       const detail = await fetchCurriculumProgrammeDetail(programmeId, signal, {
         visibility: 'all',
+        deferStats: true,
         skipCache: options.skipCache,
         revalidate: options.revalidate,
       });
@@ -1013,6 +1016,24 @@ function useProgrammeDetailData(programmeId: string) {
       // additive and must not keep the refresh indicator running.
       setRefreshing(false);
 
+      // The detail tree is intentionally served without the expensive learner
+      // KSB aggregates. Hydrate those figures independently so a cold database
+      // read cannot hold the whole programme page hostage.
+      void fetchProgrammeKsbStats(programmeId, signal, { visibility: 'all' })
+        .then((stats) => {
+          if (signal?.aborted) return;
+          setData((current) => {
+            if (!current) return current;
+            const programmes = current.programmes.map((programme) =>
+              programmeReferenceMatches(programme, stats.programmeId)
+                ? { ...programme, ...stats }
+                : programme,
+            );
+            return { ...current, programmes };
+          });
+        })
+        .catch(() => undefined);
+
       void Promise.all([
         fetchCurriculumCoaches(signal).catch(() => []),
         fetchCurriculumTutors(signal).catch(() => []),
@@ -1021,7 +1042,17 @@ function useProgrammeDetailData(programmeId: string) {
         fetchCurriculumHolidays(signal).catch(() => []),
       ]).then(([coaches, tutors, programmes, ksbFrameworks, holidays]) => {
         if (signal?.aborted) return;
-        setData(programmeDetailToOverview(detail, { coaches, tutors }, { programmes, ksbFrameworks, holidays }));
+        const supplemental = programmeDetailToOverview(detail, { coaches, tutors }, { programmes, ksbFrameworks, holidays });
+        setData((current) => {
+          if (!current) return supplemental;
+          const hydratedProgramme = current.programmes[0];
+          const programmes = supplemental.programmes.map((programme) =>
+            hydratedProgramme && programmeReferenceMatches(hydratedProgramme, programme.sourceId || programme.id)
+              ? { ...programme, ...hydratedProgramme }
+              : programme,
+          );
+          return { ...current, ...supplemental, programmes };
+        });
       });
       return overview;
     } catch (err) {
@@ -4608,39 +4639,7 @@ export default function ProgrammeDetailPage() {
             Achievement — what the learners actually earned, at any level
         ═══════════════════════════════════════════════════════════════════ */}
         {tab === 'achievement' && (
-          <div className="space-y-4">
-            <div className="rounded-2xl border border-background-200 bg-background-100/70 p-3">
-              <ScopePicker
-                programme={PROGRAMME}
-                value={achievementScope}
-                onChange={setAchievementScope}
-              />
-            </div>
-
-            <ScopeAchievementPanel
-              key={`${achievementScope.scope}:${achievementScope.identifier}`}
-              scope={achievementScope.scope}
-              identifier={achievementScope.identifier}
-              title={`${achievementScope.label} — learner achievement`}
-              description={achievementScope.description}
-              learnerStatus="all"
-              active
-              onPreviewCredit={(credit: KsbCredit, ksbCode: string) => setPlacementPreview({
-                placement: {
-                  module: credit.module,
-                  moduleLabel: credit.module,
-                  scope: 'component',
-                  week: credit.week,
-                  component: credit.component,
-                  weight: credit.weight,
-                  cohortName: '',
-                  groupName: '',
-                },
-                ksb: ksbCode,
-                moduleKnownDeleted: credit.moduleStatus === 'deleted' || credit.moduleStatus === 'unknown',
-              })}
-            />
-          </div>
+          <KsbAchievementTab programmeId={String(PROGRAMME.sourceId || PROGRAMME.id)} />
         )}
 
         {tab === 'quality' && (

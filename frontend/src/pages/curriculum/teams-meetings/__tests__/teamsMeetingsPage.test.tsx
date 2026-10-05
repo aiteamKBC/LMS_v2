@@ -683,6 +683,8 @@ describe('Teams Meetings page', () => {
     const send = within(dialog).getByRole('button', { name: 'Update Teams calendar' });
     await waitFor(() => expect(send).not.toBeDisabled());
     await userEvent.click(send);
+    await userEvent.click(within(dialog).getByRole('checkbox', { name: 'Email existing invitees about this update' }));
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Confirm update and send emails' }));
 
     await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledTimes(1));
     const [liveSessionId, input] = updateTeamsMeetingSchedule.mock.calls[0] as unknown as [
@@ -723,6 +725,8 @@ describe('Teams Meetings page', () => {
     await userEvent.click(dialog.getByRole('combobox', { name: 'Recording' }));
     await userEvent.click(await screen.findByRole('option', { name: 'Record automatically' }));
     await userEvent.click(send);
+    await userEvent.click(dialog.getByRole('checkbox', { name: 'Email existing invitees about this update' }));
+    await userEvent.click(dialog.getByRole('button', { name: 'Confirm update and send emails' }));
 
     await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledTimes(1));
     const [, input] = updateTeamsMeetingSchedule.mock.calls[0] as unknown as [string, Record<string, unknown>];
@@ -747,6 +751,8 @@ describe('Teams Meetings page', () => {
     fireEvent.change(attendees, { target: { value: 'new.learner@example.com' } });
     fireEvent.keyDown(attendees, { key: 'Enter' });
     await userEvent.click(send);
+    await userEvent.click(dialog.getByRole('checkbox', { name: 'Email existing invitees about this update' }));
+    await userEvent.click(dialog.getByRole('button', { name: 'Confirm update and send emails' }));
 
     await waitFor(() => expect(updateTeamsMeetingSchedule).toHaveBeenCalledTimes(1));
     const [, input] = updateTeamsMeetingSchedule.mock.calls[0] as unknown as [string, Record<string, unknown>];

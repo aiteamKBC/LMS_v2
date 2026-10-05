@@ -7,6 +7,7 @@ The owner provisions the ledger using backend/sql/teams_schedule_emails.sql.
 import base64
 import logging
 import re
+from uuid import uuid4
 from datetime import timedelta
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -455,6 +456,44 @@ def schedule_email(request, live_session_id):
     except Exception:
         logger.error('Schedule email batch could not finish; durable delivery claims remain intact.')
         return JsonResponse({'error': 'Schedule email status could not be confirmed. Retry to check pending messages; accepted messages will not be sent again.',
+                             'code': 'schedule_email_status_unknown'}, status=502)
+
+
+@transaction.non_atomic_requests
+@require_role('admin', 'staff')
+@require_POST
+def forward_schedule_email(request, live_session_id):
+    """Forward the verified calendar summary to explicitly chosen recipients."""
+    from . import views as v
+    payload = v.json_body(request)
+    recipients = payload.get('recipients') if isinstance(payload, dict) else None
+    email_pattern = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+    if (not isinstance(payload, dict) or set(payload) != {'recipients'}
+            or not isinstance(recipients, list) or not (1 <= len(recipients) <= 100)
+            or not all(isinstance(value, str) and email_pattern.fullmatch(value.strip()) for value in recipients)):
+        return JsonResponse({'error': 'Enter between 1 and 100 valid email addresses.'}, status=400)
+    recipients = list(dict.fromkeys(value.strip().lower() for value in recipients))
+    try:
+        from login import email_azure
+        if not email_azure.is_configured():
+            return JsonResponse({'error': 'Schedule emails are not configured. Check the existing Azure mail settings.',
+                                 'code': 'schedule_email_not_configured'}, status=503)
+        _verified_recipients, message = verified_message(live_session_id)
+        # A forwarding press is its own durable batch and must not collide with
+        # the calendar's learner ledger.
+        key = f'forward-{uuid4().hex}'
+        ledger = DeliveryLedger(connection)
+        previous_queued = None
+        while True:
+            status = dispatch_batch(key, recipients, message, ledger, _send_message, parallel=True)
+            if not status['queued'] or (previous_queued is not None and status['queued'] >= previous_queued):
+                return JsonResponse(status)
+            previous_queued = status['queued']
+    except (ValueError, RuntimeError) as exc:
+        return JsonResponse({'error': str(exc), 'code': 'schedule_email_blocked'}, status=409)
+    except Exception:
+        logger.error('Forwarded schedule email could not finish; durable delivery claims remain intact.')
+        return JsonResponse({'error': 'Schedule email status could not be confirmed. Retry only if no message was accepted.',
                              'code': 'schedule_email_status_unknown'}, status=502)
 
 
