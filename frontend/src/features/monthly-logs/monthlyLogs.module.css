@@ -103,6 +103,162 @@
 .noResults button { min-height: 38px; padding: 8px 12px; border-radius: 7px; background: var(--log-soft); color: var(--log-purple); font-size: 12px; font-weight: 600; }
 .skeletonRow { display: flex; align-items: center; gap: 18px; padding: 18px 20px; border-top: 1px solid var(--log-border); }
 
+/* Coach monthly logs: one master-detail workspace matching the approved design. */
+.coachCanvas { width: 100%; max-width: 1560px; padding: 18px 24px 30px; }
+:global(.dashboard-theme[data-workspace-role="coach"] .workspace-main):has(.coachCanvas) { background: #f8f8ff !important; }
+.coachWorkspace { display: grid; gap: 18px; min-width: 0; color: #18162d; }
+.coachHero { position: relative; display: flex; align-items: center; justify-content: space-between; min-height: 118px; overflow: hidden; padding: 24px 30px; border: 1px solid #ebe5fb; border-radius: 15px; background: radial-gradient(circle at 72% 22%, rgb(255 255 255 / 82%), transparent 30%), linear-gradient(105deg, #f3efff 0%, #f8f5ff 54%, #eee6ff 100%); box-shadow: 0 8px 24px rgb(74 42 132 / 5%); }
+.coachHero::after { position: absolute; inset: 0; background: repeating-linear-gradient(132deg, transparent 0 76px, rgb(115 73 184 / 3%) 76px 77px); content: ''; pointer-events: none; }
+.coachHero > div { position: relative; z-index: 1; }
+.coachHero h1 { margin: 0; color: #161329; font-size: clamp(27px, 2.1vw, 36px); font-weight: 780; letter-spacing: -.8px; line-height: 1.1; }
+.coachHero p { margin-top: 8px; color: #6f6a85; font-size: 15px; }
+.coachHero img { position: absolute; z-index: 1; right: 34px; width: 132px; height: 132px; object-fit: contain; filter: drop-shadow(0 12px 13px rgb(64 30 125 / 18%)); transform: rotate(5deg); }
+.coachWorkspaceGrid { display: grid; grid-template-columns: minmax(280px, 350px) minmax(0, 1fr); align-items: start; gap: 14px; min-width: 0; }
+.coachLearnerPanel { min-width: 0; overflow: hidden; border: 1px solid #e2e3ec; border-radius: 14px; background: #fff; box-shadow: 0 7px 22px rgb(42 31 76 / 4%); }
+.coachLearnerPanelHeader { display: grid; gap: 14px; padding: 18px; border-bottom: 1px solid #ececf3; }
+.coachLearnerPanelHeader h2 { color: #201d34; font-size: 19px; font-weight: 750; }
+.coachLearnerSearch { display: flex; align-items: center; gap: 10px; height: 42px; padding: 0 13px; border: 1px solid #dfe1eb; border-radius: 10px; background: #fbfbfd; color: #8a8da0; }
+.coachLearnerSearch:focus-within { border-color: #7951cf; box-shadow: 0 0 0 3px rgb(121 81 207 / 10%); }
+.coachLearnerSearch svg { flex-shrink: 0; width: 18px; height: 18px; }
+.coachLearnerSearch input { min-width: 0; width: 100%; border: 0; outline: 0; background: transparent; color: #232037; font-size: 13px; }
+/* The workspace control theme adds its own input frame; the label already owns this search border. */
+:global(body .dashboard-theme[data-workspace-role="coach"] .workspace-main) .coachLearnerSearch input,
+:global(body .dashboard-theme[data-workspace-role="coach"] .workspace-main) .coachLearnerSearch input:focus {
+  min-height: 0;
+  height: auto;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0;
+  outline: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  font-size: 13px !important;
+  appearance: none;
+}
+.coachLearnerSearch input::placeholder { color: #9b9dab; }
+.coachLearnerList { display: grid; max-height: 622px; overflow-y: auto; }
+.coachLearnerLink { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 76px; padding: 12px 16px; border-bottom: 1px solid #eeeef3; color: #29263a; text-decoration: none; transition: background-color 150ms, color 150ms; }
+.coachLearnerLink:last-child { border-bottom: 0; }
+.coachLearnerLink:hover { background: #faf8ff; }
+.coachLearnerLink[aria-current="page"] { background: linear-gradient(100deg, #f4efff, #f9f6ff); color: #39206b; }
+.coachLearnerLink > svg { width: 18px; height: 18px; color: #79748b; }
+.coachLearnerLink[aria-current="page"] > svg { color: #5c2db6; }
+.coachLearnerAvatar, .coachProfileAvatar { display: grid; place-items: center; flex-shrink: 0; border-radius: 50%; background: #e9ddff; color: #5a2aa7; font-weight: 750; }
+.coachLearnerAvatar { width: 46px; height: 46px; font-size: 13px; }
+.coachLearnerLink[data-tone="1"] .coachLearnerAvatar { background: #e4f0ff; color: #315c96; }
+.coachLearnerLink[data-tone="2"] .coachLearnerAvatar { background: #e4f8ee; color: #31785a; }
+.coachLearnerLink[data-tone="3"] .coachLearnerAvatar { background: #ffe8ef; color: #9d4561; }
+.coachLearnerLink[data-tone="4"] .coachLearnerAvatar { background: #fff2d4; color: #886528; }
+.coachLearnerText { min-width: 0; }
+.coachLearnerText strong, .coachLearnerText small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.coachLearnerText strong { font-size: 14px; font-weight: 720; }
+.coachLearnerText small { margin-top: 5px; color: #74768a; font-size: 11px; }
+.coachLearnerEmpty { padding: 24px 14px; }
+.coachSelectedLearner { min-width: 0; }
+.coachLoadingHero { background: #f3efff; }
+.coachLoadingHero::after { display: none; }
+.coachLoadingHeading { display: grid; width: min(100%, 360px); gap: 12px; }
+.coachLoadingLearners { display: grid; }
+.coachLoadingLearners > div { display: flex; align-items: center; gap: 12px; min-height: 76px; padding: 12px 16px; border-bottom: 1px solid #eeeef3; }
+.coachLoadingLearners > div:last-child { border-bottom: 0; }
+.coachLoadingLearners > div > div { display: grid; flex: 1; gap: 8px; min-width: 0; }
+.coachLoadingCard { display: block; min-height: auto; padding: 22px; }
+.coachLogOverview { display: grid; gap: 14px; min-width: 0; }
+.coachProfileCard { display: grid; grid-template-columns: minmax(260px, 1.4fr) minmax(190px, .75fr) minmax(170px, .62fr); align-items: center; min-height: 124px; padding: 20px 26px; border: 1px solid #e3e4ed; border-radius: 14px; background: #fff; box-shadow: 0 7px 22px rgb(42 31 76 / 4%); }
+.coachProfileIdentity { display: flex; align-items: center; gap: 18px; min-width: 0; padding-right: 24px; }
+.coachProfileAvatar { width: 76px; height: 76px; background: linear-gradient(145deg, #eee5ff, #d7c0ff); font-size: 22px; }
+.coachProfileIdentity > div { min-width: 0; }
+.coachProfileIdentity h2 { overflow-wrap: anywhere; color: #17142c; font-size: 23px; font-weight: 750; letter-spacing: -.35px; }
+.coachProfileIdentity p { margin-top: 6px; color: #706493; font-size: 14px; }
+.coachProfileFact { align-self: stretch; display: flex; justify-content: center; flex-direction: column; min-width: 0; padding: 4px 28px; border-left: 1px solid #e7e7ee; }
+.coachProfileFact > span:first-child { color: #68697c; font-size: 12px; }
+.coachProfileFact strong { margin-top: 4px; color: #17142c; font-size: 24px; font-weight: 760; font-variant-numeric: tabular-nums; }
+.coachProfileFact strong small { color: #312d45; font-size: 18px; font-weight: 650; }
+.coachProfileFact p { margin-top: 4px; color: #918b9f; font-size: 11px; }
+.coachProfileFact .coachPlanValue { font-size: 15px; }
+.coachSummaryCard { overflow: hidden; border: 1px solid #e3e4ed; border-radius: 14px; background: #fff; box-shadow: 0 7px 22px rgb(42 31 76 / 4%); }
+.coachSummaryCard > h2 { padding: 16px 22px 8px; color: #211e34; font-size: 18px; font-weight: 750; }
+.coachSummaryGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 8px 22px 22px; }
+.coachSummaryGrid > div { display: flex; align-items: center; gap: 18px; min-width: 0; padding: 8px 24px 8px 6px; }
+.coachSummaryGrid > div + div { padding-left: 36px; border-left: 1px solid #e8e8ef; }
+.coachSummaryIcon { display: grid; width: 64px; height: 64px; flex-shrink: 0; place-items: center; border-radius: 50%; background: #f1efff; color: #5266e8; }
+.coachSummaryIcon svg { width: 30px; height: 30px; }
+.coachSummaryGrid p { color: #6c6e82; font-size: 13px; }
+.coachSummaryGrid strong { display: block; margin-top: 5px; color: #161329; font-size: 22px; font-weight: 750; font-variant-numeric: tabular-nums; }
+.coachWarning { padding: 11px 14px; border: 1px solid #f0d69a; border-radius: 9px; background: #fff9e9; color: #815f16; font-size: 12px; }
+.coachMonthsCard { min-width: 0; overflow: hidden; border: 1px solid #e3e4ed; border-radius: 14px; background: #fff; box-shadow: 0 7px 22px rgb(42 31 76 / 4%); }
+.coachMonthsToolbar { display: flex; align-items: center; justify-content: space-between; gap: 18px; min-height: 70px; padding: 11px 14px 0; border-bottom: 1px solid #ececf2; }
+.coachMonthTabs { display: flex; align-self: stretch; gap: 4px; }
+.coachMonthTabs button { position: relative; display: inline-flex; align-items: center; gap: 10px; min-height: 50px; padding: 10px 12px; border: 0; background: transparent; color: #66677a; font-size: 12px; font-weight: 650; cursor: pointer; }
+.coachMonthTabs button::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 3px; border-radius: 3px 3px 0 0; background: transparent; content: ''; }
+.coachMonthTabs button[aria-pressed="true"] { color: #5d2bc0; }
+.coachMonthTabs button[aria-pressed="true"]::after { background: #7442d1; }
+.coachMonthTabs button span { display: grid; min-width: 24px; height: 24px; place-items: center; border-radius: 999px; background: #e9e6f2; color: #66677a; font-size: 11px; }
+.coachMonthTabs button[aria-pressed="true"] span { background: #e8dcff; color: #5d2bc0; }
+.coachYearFilter { display: flex; align-items: center; gap: 12px; padding-bottom: 10px; color: #68697c; font-size: 11px; }
+.coachYearFilter select { min-width: 110px; height: 40px; padding: 0 34px 0 14px; border: 1px solid #dee0e9; border-radius: 9px; background-color: #fff; color: #29263a; font-size: 13px; font-weight: 650; }
+.coachTableScroll { max-width: 100%; overflow-x: auto; }
+.coachMonthTable { width: 100%; min-width: 900px; border-collapse: collapse; color: #363347; font-size: 12px; }
+.coachMonthTable th { height: 46px; padding: 10px 14px; background: #f7f6fc; color: #55566b; font-weight: 680; text-align: left; white-space: nowrap; }
+.coachMonthTable td { height: 60px; padding: 10px 14px; border-top: 1px solid #ececf2; white-space: nowrap; }
+.coachMonthTable td:first-child strong { color: #343044; font-weight: 700; }
+.coachSignatureState { display: inline-flex; align-items: center; justify-content: center; min-height: 30px; padding: 5px 12px; border-radius: 9px; font-size: 10px; font-weight: 650; }
+.coachSignatureState[data-tone="pending"] { background: #fff0cf; color: #93621b; }
+.coachSignatureState[data-tone="signed"] { background: #e6f7ed; color: #26724e; }
+.coachSignatureState[data-tone="progress"] { background: #edf0f7; color: #646b7a; }
+.coachReportButton { display: inline-flex; align-items: center; justify-content: center; min-width: 100px; min-height: 38px; padding: 8px 13px; border-radius: 8px; background: #5d16cf; color: #fff; font-size: 11px; font-weight: 680; text-decoration: none; box-shadow: 0 5px 11px rgb(93 22 207 / 18%); }
+.coachReportButton:hover { background: #4e10b1; }
+.coachHelperNote { display: flex; align-items: center; gap: 9px; margin: 10px; padding: 11px 14px; border: 1px solid #cfe0ff; border-radius: 9px; background: #f1f6ff; color: #74809a; font-size: 11px; }
+.coachHelperNote svg { flex-shrink: 0; color: #3978e8; }
+.coachNoMonths { display: grid; justify-items: center; gap: 8px; padding: 36px 20px; text-align: center; }
+.coachNoMonths > svg { color: #6731c4; font-size: 28px; }
+.coachNoMonths h3 { font-size: 16px; font-weight: 700; }
+.coachNoMonths p { color: #74768a; font-size: 12px; }
+.coachNoMonths button, .coachRetryButton { min-height: 38px; padding: 8px 14px; border: 1px solid #d8ccee; border-radius: 8px; background: #f6f1ff; color: #5d2bc0; font-size: 12px; font-weight: 650; }
+
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachWorkspace { color: #eee8fa; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) :is(.coachLearnerPanel, .coachProfileCard, .coachSummaryCard, .coachMonthsCard) { border-color: #443456; background: #241b35; box-shadow: none; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachHero { border-color: #46375d; background: linear-gradient(110deg, #302444, #3a2853); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) :is(.coachHero h1, .coachLearnerLink, .coachProfileIdentity h2, .coachProfileFact strong, .coachSummaryCard > h2, .coachSummaryGrid strong, .coachMonthTable, .coachMonthTable td:first-child strong) { color: #eee8fa; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) :is(.coachLearnerPanelHeader, .coachLearnerLink, .coachProfileFact, .coachSummaryGrid > div + div, .coachMonthsToolbar, .coachMonthTable td) { border-color: #443456; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachLearnerLink[aria-current="page"] { background: #332851; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachLearnerSearch { border-color: #443456; background: #2b213e; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachLearnerSearch input { color: #eee8fa; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachMonthTable th { background: #2f2442; color: #cbbfe6; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachYearFilter select { border-color: #564567; background-color: #2b213e; color: #eee8fa; }
+
+@media (max-width: 1120px) {
+  .coachCanvas { padding-inline: 16px; }
+  .coachWorkspaceGrid { grid-template-columns: 270px minmax(0, 1fr); }
+  .coachProfileCard { grid-template-columns: minmax(220px, 1fr) minmax(165px, .7fr); }
+  .coachProfileFact:last-child { grid-column: 1 / -1; min-height: 64px; border-top: 1px solid #e7e7ee; }
+}
+@media (max-width: 860px) {
+  .coachWorkspaceGrid { grid-template-columns: minmax(0, 1fr); }
+  .coachLearnerList { grid-template-columns: repeat(2, minmax(0, 1fr)); max-height: 310px; }
+  .coachLearnerLink:nth-child(odd) { border-right: 1px solid #eeeef3; }
+  .coachHero img { right: 18px; width: 110px; height: 110px; }
+}
+@media (max-width: 620px) {
+  .coachCanvas { padding: 10px 10px 22px; }
+  .coachHero { min-height: 105px; padding: 20px; }
+  .coachHero img { width: 92px; height: 92px; opacity: .74; }
+  .coachHero p { max-width: 220px; font-size: 13px; }
+  .coachLearnerList { grid-template-columns: minmax(0, 1fr); }
+  .coachLearnerLink:nth-child(odd) { border-right: 0; }
+  .coachProfileCard { grid-template-columns: minmax(0, 1fr); padding: 18px; }
+  .coachProfileIdentity { padding: 0 0 18px; }
+  .coachProfileFact { min-height: 70px; padding: 14px 0; border-top: 1px solid #e7e7ee; border-left: 0; }
+  .coachProfileFact:last-child { grid-column: auto; }
+  .coachSummaryGrid { grid-template-columns: minmax(0, 1fr); }
+  .coachSummaryGrid > div { padding: 10px 4px; }
+  .coachSummaryGrid > div + div { padding: 18px 4px 4px; border-top: 1px solid #e8e8ef; border-left: 0; }
+  .coachMonthsToolbar { align-items: stretch; flex-direction: column; padding-top: 8px; }
+  .coachMonthTabs { overflow-x: auto; }
+  .coachMonthTabs button { white-space: nowrap; }
+  .coachYearFilter { justify-content: space-between; }
+}
+
 /* Match the learner Attendance palette, including the index while it loads.
    The coach also uses this module, so keep these overrides inside its learner shell. */
 :global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="learner"]) .theme {

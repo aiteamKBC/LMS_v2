@@ -304,6 +304,11 @@ export function auditValueTitle(value: unknown): string {
   try { return JSON.stringify(value); } catch { return String(value); }
 }
 
+/** The record types the Curriculum archive lists as rows of their own. */
+const ARCHIVE_KINDS = new Set(['programme', 'cohort', 'group', 'module']);
+/** Authored inside a module, so a reader following one wants told it is gone. */
+const MODULE_CHILD_KINDS = new Set(['week', 'component', 'ksb_mapping']);
+
 /**
  * Opens authored components at their exact week in Module Builder. Revision
  * events carry the module and week ancestry; older timestamp events do not,
@@ -313,11 +318,36 @@ export function auditEventHref(event: CurriculumAuditEvent): string {
   const componentId = String(event.entity === 'component' ? event.entityId || '' : '').trim();
   const moduleId = String(event.moduleCatalogueId || (event.entity === 'module' ? event.entityId : '') || '').trim();
   const archived = event.action === 'archived' || String(event.contentStatus || '').toLowerCase() === 'archived';
-  // An archived module is not in the catalogue to open, and the Module Builder
-  // no longer carries an archive of its own: the Curriculum archive is where
-  // every archived record is read, so the link names the module it means there.
+  const parents = event.parents || {};
+  // An archived record is not in its live list to open, and the Curriculum
+  // archive is the one place every archived record is read. The link names the
+  // record it means there (`open`), so the archive opens its panel rather than
+  // leaving the reader to find it in a filtered list.
+  if (archived && ARCHIVE_KINDS.has(event.entity) && event.entityId) {
+    const params = new URLSearchParams({ type: event.entity, q: event.entityId, open: `${event.entity}:${event.entityId}` });
+    return `/curriculum/archive?${params.toString()}`;
+  }
+  // Something archived INSIDE a module -- a week, a component, a KSB mapping --
+  // has no row of its own in the archive. Whether its module is archived too is
+  // not something this event can know (the module may have been archived since),
+  // so the archive decides on arrival: it opens the archived module at this
+  // week, or, when the module is still live, sends the reader on to the Module
+  // Builder at the same place with a note that this item was archived.
   if (archived && moduleId) {
-    const params = new URLSearchParams({ type: 'module', q: moduleId });
+    const params = new URLSearchParams({ type: 'module', q: moduleId, open: `module:${moduleId}` });
+    const childWeekId = String(
+      event.entity === 'week' ? event.entityId : (parents.week_id || (event.entity === 'component' ? event.parentId : '')) || '',
+    ).trim();
+    const childComponentId = String(
+      event.entity === 'component' ? event.entityId : (parents.component_id || (event.entity === 'ksb_mapping' ? event.parentId : '')) || '',
+    ).trim();
+    if (childWeekId) params.set('week', childWeekId);
+    if (childComponentId) params.set('component', childComponentId);
+    if (MODULE_CHILD_KINDS.has(event.entity)) {
+      params.set('archived', event.entity);
+      if (event.title) params.set('archivedName', event.title);
+      if (event.at) params.set('archivedAt', event.at);
+    }
     return `/curriculum/archive?${params.toString()}`;
   }
   const weekId = String(event.parentId || '').trim();

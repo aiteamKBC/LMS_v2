@@ -16,6 +16,11 @@ RUN_AUDIT_COLUMNS = (
     'id', 'learner_kind', 'learner_id', 'review_number', 'review_date',
     'review_period_start', 'review_period_end', 'action_period_start', 'action_period_end',
     'generation_status', 'errors', 'source_warnings', 'generated_by', 'generated_at',
+    # Not snapshot columns -- the registration in `system_audit.records` lists
+    # its own. Read so the trail can tell a run this call created (both stamps
+    # from the insert's `now()`) from a pre-history run seen for the first time:
+    # every update below moves `updated_at`, so only a fresh insert matches.
+    'created_at', 'updated_at',
 )
 
 

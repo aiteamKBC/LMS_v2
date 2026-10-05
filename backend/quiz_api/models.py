@@ -55,6 +55,9 @@ class QuizQuestion(models.Model):
     explanation = models.TextField(blank=True)
     is_archived = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
+    # Nullable: rows from before the column existed have no honest value, and
+    # inventing one would tell the Audit Trail they were never edited.
+    updated_at = models.DateTimeField(auto_now=True, null=True)
 
     class Meta:
         managed = False
@@ -71,6 +74,8 @@ class QuizAnswer(models.Model):
     is_correct = models.BooleanField(default=False)
     sort_order = models.PositiveIntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
+    # See QuizQuestion.updated_at.
+    updated_at = models.DateTimeField(auto_now=True, null=True)
 
     class Meta:
         managed = False

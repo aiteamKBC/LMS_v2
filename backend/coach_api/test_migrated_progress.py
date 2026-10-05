@@ -307,6 +307,20 @@ class MigratedProgressReadTests(SimpleTestCase):
             self.assertEqual(views._imported_review_progress_snapshot(self.profile, {"source": "untouched"}, calculated_by=OWNER), expected)
             parser.assert_called_once_with({"source": "untouched"})
 
+    def test_completed_migrated_definition_offers_download_without_document_lookup(self):
+        saved = SimpleNamespace(learner_id=21, source_review_id=407, template_snapshot=self.definition_json,
+            migrated_template_id=None, answers={}, status="completed", completed_at=timezone.now(),
+            updated_at=timezone.now(), progress_snapshot=None,
+            migrated_signatures=SimpleNamespace(all=lambda: []), signature_requirements={"employer": False})
+        self.overlays.return_value.first.return_value = saved
+        with patch("coach_api.models.MigratedReviewDocument.objects.filter", side_effect=AssertionError("Availability depends on stored document")), \
+             patch.object(views, "_imported_review_progress_snapshot", side_effect=AssertionError("Live progress")):
+            for view_as in (False, True):
+                self.view_as.return_value = view_as
+                result = self._get()
+                self.assertTrue(result["migratedForm"])
+                self.assertEqual(result["pdf"], {"available": True, "reason": "", "source": "lms-migrated"})
+
 
 class MigratedProgressPdfPartyTests(SimpleTestCase):
     def test_pr_and_skills_radar_pdf_use_only_stored_progress_or_safe_placeholder(self):

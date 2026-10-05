@@ -100,7 +100,7 @@ SELECT_COLS = (
 AUDIT_COLS = SELECT_COLS + ', "Learner_kind", "Learner_id", "Learner_name"'
 
 
-def _record_document(row):
+def _record_document(row, *, inserted=False):
     """Record one document write in the Audit Trail. Never raises.
 
     Uploading, replacing and signing an enrolment document are the actions a
@@ -114,12 +114,22 @@ def _record_document(row):
     """
     if not row:
         return
+    # The creation stamps are offered only by the INSERT, which returns
+    # "Updated_at" after the usual columns. Replacing a file and signing do not
+    # move "Updated_at", so a re-read pair would make an untouched pre-history
+    # document's first replacement look freshly created. On the insert,
+    # "Generated_at" is the instant this statement wrote the row.
+    stamps = (
+        {'created_at': row[6], 'updated_at': row[16]}
+        if inserted and len(row) > 16 else {}
+    )
     try:
         from system_audit.writes import record_table_rows
 
         record_table_rows(
             'Enrolment_Documents',
             [{
+                **stamps,
                 'id': str(row[0]),
                 'doc_type': row[1],
                 'doc_name': row[2],
@@ -233,14 +243,14 @@ def documents(request, kind, learner_id):
                        "Doc_name", "Container", "Blob_name", "Doc_path", "Content_type",
                        "Size_bytes", "Signed", "Generated_at")
                     values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    returning ''' + AUDIT_COLS + '''
+                    returning ''' + AUDIT_COLS + ''', "Updated_at"
                     ''',
                     [str(doc_id), kind, int(learner_id),
                      (request.POST.get("learner_name") or "").strip() or None,
                      doc_type, f.name, container, blob_name, path,
                      f.content_type, f.size, signed, timezone.now()],
                 )
-                _record_document(cur.fetchone())
+                _record_document(cur.fetchone(), inserted=True)
         except DatabaseError as exc:
             logger.warning("Could not record enrolment document: %s", exc)
             return _error("Document stored but could not be recorded.", 502)

@@ -65,6 +65,15 @@ ENTITY_LABELS: dict[str, tuple[str, str]] = {}
 #: the directory, so the directory is the honest destination.
 RECORD_HREFS: dict[str, str] = {}
 
+#: entity_type -> (created attribute, updated attribute) on the model. Read into
+#: the row's ``created_at`` / ``updated_at`` keys, which is where
+#: ``versioning.looks_newly_created`` looks, and deliberately NOT into
+#: ``columns``: those are the snapshot, and a pair of stamps that moves on every
+#: save would turn each one into a reported change. Curriculum keeps the same
+#: separation by leaving timestamps out of ``SNAPSHOT_COLUMNS`` while its raw
+#: rows still carry them.
+TIMESTAMP_ATTRS: dict[str, tuple[str, str]] = {}
+
 #: Curriculum registered its own tables before this module existed, and its
 #: entity types all belong to one workspace.
 for _config in versioning.VERSIONED_TABLES.values():
@@ -277,8 +286,14 @@ def record_table_rows(table, rows, *, reason='', deleted=False, using=None, befo
 
 # ------------------------------------------------------------------- models
 
-def row_from_instance(instance, columns):
-    """The allowlisted columns of a model instance, as a plain row."""
+def row_from_instance(instance, columns, timestamps=()):
+    """The allowlisted columns of a model instance, as a plain row.
+
+    ``timestamps`` is a ``(created, updated)`` attribute pair. Their values ride
+    along under ``created_at`` / ``updated_at`` for the create-or-recorded
+    decision and never enter the snapshot, which is built from the registered
+    columns alone.
+    """
     row = {}
     for column in columns:
         try:
@@ -291,7 +306,30 @@ def row_from_instance(instance, columns):
         if isinstance(value, models.Model):
             value = getattr(value, 'pk', None)
         row[column] = value
+    if timestamps:
+        created_attr, updated_attr = timestamps
+        row['created_at'] = getattr(instance, created_attr, None)
+        row['updated_at'] = getattr(instance, updated_attr, None)
     return row
+
+
+def _timestamp_pair(model, entity_type, timestamps):
+    """Validate a ``timestamps=`` declaration against the model it names.
+
+    Refused loudly, like an uncollected title column: a pair naming a field the
+    model does not have would read as ``None`` on every save, and every create
+    would quietly go back to reading as "first recorded".
+    """
+    if not timestamps:
+        return ()
+    pair = tuple(timestamps)
+    if len(pair) != 2:
+        raise ValueError(f'{entity_type}: timestamps must be a (created, updated) pair, got {pair!r}')
+    fields = {field.name for field in model._meta.concrete_fields}
+    missing = [attr for attr in pair if attr not in fields]
+    if missing:
+        raise ValueError(f'{entity_type}: timestamp fields are not on {model.__name__}: {missing}')
+    return pair
 
 
 def register_model(
@@ -315,11 +353,19 @@ def register_model(
     label='',
     href='',
     record_href='',
+    timestamps=(),
 ):
     """Audit every ORM save and delete of this model.
 
     ``columns`` names model attributes, not database columns -- the instance is
     what is read, so the attribute names are what the snapshot is built from.
+
+    ``timestamps`` names the model's ``(created, updated)`` attribute pair, so a
+    save that inserted the row can be reported as a create rather than as
+    "first recorded". It is kept out of ``columns`` on purpose: the stamps are
+    evidence about the row, not content of it, and must not show up in diffs.
+    Only a pair the model genuinely stores belongs here -- never a stamp the
+    caller would have to invent.
 
     Connected with ``dispatch_uid`` so registering twice (a module imported
     under two names, a test reloading the app) connects one handler rather than
@@ -330,6 +376,7 @@ def register_model(
     fields = tuple(columns)
     if key not in fields:
         fields = (key,) + fields
+    stamps = _timestamp_pair(model, entity_type, timestamps)
 
     register(
         table,
@@ -351,6 +398,10 @@ def register_model(
         href=href,
         record_href=record_href,
     )
+    if stamps:
+        TIMESTAMP_ATTRS[entity_type] = stamps
+    else:
+        TIMESTAMP_ATTRS.pop(entity_type, None)
 
     uid = f'system_audit:{entity_type}'
 
@@ -375,7 +426,12 @@ def register_model(
             # unreliable account of what was actually persisted.
             saved = sender._base_manager.using(using or alias).get(pk=instance.pk)
             before = getattr(instance, '_audit_before_row', None)
-            record_table_rows(table, [row_from_instance(saved, fields)], using=using or alias,
+            # The stamps are offered only for an INSERT. They are evidence that
+            # has to agree with the insert, not a substitute for it: an UPDATE
+            # that leaves `updated_at` alone (`update_fields` without it) on a
+            # row never edited since creation would otherwise read as created.
+            record_table_rows(table, [row_from_instance(saved, fields, stamps if created else ())],
+                              using=using or alias,
                               before_rows=[before] if before is not None else None)
         except Exception:
             logger.warning('Could not record a %s save.', entity_type, exc_info=True)
@@ -495,7 +551,11 @@ class AuditedQuerySet(models.QuerySet):
 
     def bulk_create(self, objs, *args, **kwargs):
         created = super().bulk_create(objs, *args, **kwargs)
-        self._record_pks([obj.pk for obj in created if obj.pk is not None])
+        # A conflict-tolerant bulk_create may have updated or skipped rows that
+        # were already there, so it is no evidence of an insert and its rows
+        # carry no stamps -- they go down as edits or as "first recorded".
+        upsert = kwargs.get('ignore_conflicts') or kwargs.get('update_conflicts')
+        self._record_pks([obj.pk for obj in created if obj.pk is not None], inserted=not upsert)
         return created
 
     bulk_create.alters_data = True
@@ -525,15 +585,19 @@ class AuditedQuerySet(models.QuerySet):
     def _config(self):
         return versioning.VERSIONED_TABLES.get(self.model._meta.db_table)
 
-    def _record_instances(self, instances, deleted=False, before_rows=None):
+    def _record_instances(self, instances, deleted=False, before_rows=None, inserted=False):
         config = self._config()
         if not config or not instances:
             return
         columns = versioning.SNAPSHOT_COLUMNS.get(config['entity_type'], ())
+        # Stamps only for rows this call inserted. `update()` and
+        # `bulk_update()` do not touch an `auto_now` field, so a never-edited
+        # pre-history row would still hold a matching pair after them.
+        stamps = TIMESTAMP_ATTRS.get(config['entity_type'], ()) if inserted else ()
         try:
             record_table_rows(
                 self.model._meta.db_table,
-                [row_from_instance(instance, columns) for instance in instances],
+                [row_from_instance(instance, columns, stamps) for instance in instances],
                 reason='bulk-delete' if deleted else '',
                 deleted=deleted,
                 using=self.db,
@@ -542,12 +606,13 @@ class AuditedQuerySet(models.QuerySet):
         except Exception:
             logger.warning('Could not record a bulk write of %s.', self.model.__name__, exc_info=True)
 
-    def _record_pks(self, pks, before_rows=None):
+    def _record_pks(self, pks, before_rows=None, inserted=False):
         if not pks:
             return
         try:
             # A fresh queryset: `self` has already been consumed by the update
             # and its filters may no longer match the rows that were changed.
-            self._record_instances(list(self.model._base_manager.using(self.db).filter(pk__in=pks)), before_rows=before_rows)
+            self._record_instances(list(self.model._base_manager.using(self.db).filter(pk__in=pks)),
+                                   before_rows=before_rows, inserted=inserted)
         except Exception:
             logger.warning('Could not read back a bulk update of %s.', self.model.__name__, exc_info=True)

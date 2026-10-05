@@ -90,8 +90,6 @@ class CoachDashboardService:
         rows_by_id = {str(row.id): row for row in rows}
         for learner in payload.get("learners") or []:
             row = rows_by_id.get(str(learner.get("id")))
-            if row is None:
-                continue
             learner.setdefault("otjhProgrammeStartDate", learner.get("startDate", "--"))
             learner["startDate"] = domain.caseload_profile_start_date(row)
             learner["displayStartDate"] = learner["startDate"]

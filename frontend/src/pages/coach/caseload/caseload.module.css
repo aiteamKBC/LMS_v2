@@ -29,6 +29,11 @@
 .embedded .toolbar input[type="search"]:focus,
 .embedded .toolbar button[aria-haspopup="listbox"]:focus-visible { border-color: #9475d4; outline: 2px solid #eee5ff; outline-offset: 0; }
 .embedded .tableScroll { padding: 0; border: 1px solid #ebe8f2; border-radius: 10px; background: #fff; }
+:global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .embedded .tableScroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-gutter: auto !important;
+}
 .embedded .table { min-width: 1180px; border-spacing: 0; }
 .embedded .table th { padding: 11px 10px; border-color: rgb(255 255 255 / 12%); background: #4f2d7f; color: #fff; font-size: 11px; }
 .embedded .table .primaryHead th { border-bottom-color: rgb(255 255 255 / 16%); }
@@ -73,6 +78,7 @@
   letter-spacing: .015em;
   text-transform: uppercase;
 }
+:global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .embedded .table thead { background: #4f2d7f !important; }
 :global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .embedded .table .progressHead th {
   height: 34px;
   padding-block: 8px;
@@ -96,6 +102,28 @@
   font-size: 12px;
   line-height: 1.35;
 }
+
+/* Keep the table header continuous to the scroll container's edges in both themes. */
+:global([data-theme="dark"]) .embedded {
+  --ink: #eee8fa;
+  --muted: #c2b7d7;
+  --line: #4a3a65;
+  --violet: #c4b5fd;
+  --violet-soft: #392955;
+  border-color: #4a3a65;
+  background: #241b35;
+  box-shadow: none;
+}
+:global([data-theme="dark"]) .embedded .tableScroll { border-color: #4a3a65; background: #2a2140; }
+:global([data-theme="dark"]) :global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .embedded .table thead th {
+  border-bottom-color: rgb(255 255 255 / 14%) !important;
+  background: #3b1f61 !important;
+}
+:global([data-theme="dark"]) :global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .embedded .table thead { background: #3b1f61 !important; }
+:global([data-theme="dark"]) :global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .embedded .table tbody tr { background: #2a2140 !important; }
+:global([data-theme="dark"]) :global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .embedded .table tbody tr:nth-child(even) { background: #302647 !important; }
+:global([data-theme="dark"]) :global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .embedded .table tbody tr:hover { background: #3a2c59 !important; }
+:global([data-theme="dark"]) :global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .embedded .table tbody td { border-bottom-color: #4a3a65 !important; }
 
 .titleGroup { display: flex; align-items: center; gap: 14px; }
 .titleIcon { display: grid; place-items: center; width: 46px; height: 46px; flex: 0 0 46px; border-radius: 11px; background: #fff3dc; color: #8b5b2d; font-size: 23px; }
@@ -136,11 +164,14 @@
 .table tbody tr { box-shadow: 0 3px 12px rgb(46 35 90 / 3%); }
 .table tbody tr:hover td { background: #fbfaff; }
 .learner { display: flex; align-items: center; gap: 10px; min-width: 180px; }
+.learner > span:last-child { min-width: 0; text-align: left; }
 .avatar { display: grid; place-items: center; width: 38px; height: 38px; flex: 0 0 38px; border-radius: 50%; background: #eee9ff; color: #6641dc; font-size: 12px; font-weight: 800; }
 .table tbody tr:nth-child(3n + 2) .avatar { background: #fff0e2; color: #c76516; }
 .table tbody tr:nth-child(3n) .avatar { background: #e4f8ef; color: #149867; }
 .learner strong { display: block; overflow: hidden; color: #27213c; font-size: 13px; font-weight: 750; text-overflow: ellipsis; white-space: nowrap; }
 .learner small, .date small { display: block; margin-top: 3px; color: #817a9f; font-size: 10px; font-weight: 600; }
+.date small[data-tone="warning"] { color: #b77905; }
+.date small[data-tone="critical"] { color: #dc3545; }
 .progressCell { min-width: 100px; }
 .miniProgress { min-width: 0; }
 .miniLabel { color: #554e69; font-size: 11px; font-weight: 700; }

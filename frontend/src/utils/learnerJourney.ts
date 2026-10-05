@@ -394,6 +394,8 @@ export interface JourneyWeek {
   components: JourneyComponent[];
 }
 export interface JourneyModule {
+  /** Canonical My Learning subject identity, when provided by that source. */
+  id?: string;
   module: string;
   weeks: JourneyWeek[];
 }
