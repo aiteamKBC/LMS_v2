@@ -68,6 +68,32 @@ class MigratedTemplateManagementTests(TestCase):
         self.assertEqual(resolve_template("id:P1", "PR"), pr)
         self.assertIsNone(resolve_template("id:P1", "PR_SKILLS_RADAR"))
 
+    def test_mcm_custom_and_global_keep_distinct_questions_and_summary_bindings(self):
+        from .migrated_reviews import meeting_summary_field
+        from .migrated_templates import resolution_metadata
+        global_template = self.template(family="MCM")
+        global_template.name = "Synthetic Global MCM"
+        global_template.definition_json["sections"].append({"key": "summary-section", "title": "Meeting Summary", "fields": [
+            {"key": "summary", "title": "Meeting Summary", "aptemType": 13, "semanticKey": "meeting_summary"},
+        ]})
+        global_template.save()
+        custom = self.template("PROGRAMME", family="MCM", key="id:P1")
+        custom.name = "Synthetic Programme MCM"
+        custom.save()
+        for key, expected, section_count, has_binding in [
+            ("id:P1", custom, 1, False), ("id:P2", global_template, 2, True),
+        ]:
+            with self.subTest(programme_key=key):
+                resolved = resolve_template(key, "MCM")
+                self.assertEqual(resolved, expected)
+                self.assertEqual(resolution_metadata(resolved, "MCM")["resolved_scope"], expected.scope)
+                snapshot = snapshot_for(resolved)
+                self.assertEqual(snapshot["name"], expected.name)
+                self.assertEqual(len(snapshot["sections"]), section_count)
+                self.assertEqual(bool(meeting_summary_field(snapshot)), has_binding)
+        custom.refresh_from_db()
+        self.assertEqual(custom.definition_json, DEFINITION)
+
     def test_missing_programme_resolves_each_global_family_only(self):
         for family in ("MCM", "PR", "PR_SKILLS_RADAR"):
             with self.subTest(family=family):

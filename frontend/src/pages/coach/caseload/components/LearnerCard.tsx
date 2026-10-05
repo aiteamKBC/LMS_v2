@@ -21,6 +21,7 @@ import {
   formatRatio,
   hasValue,
   learnerProgramme,
+  otjhProgressAsOfToday,
 } from '../lib/format';
 import type { LearnerInsight } from '../lib/attention';
 import {
@@ -74,8 +75,16 @@ export const LearnerCard = memo(function LearnerCard({
 }) {
   const programme = learnerProgramme(learner);
   const attendance = attendanceNote(learner);
-  const otjh = otjhNote(insight);
-  const otjhProgress = learner.overallProgressAvailable ? learner.overallProgress : null;
+  const otjhNoteValue = otjhNote(insight);
+  const otjhProgressData = otjhProgressAsOfToday(learner);
+  const otjhProgress = otjhProgressData.percent;
+  const otjhBarTone = otjhProgressData.status === 'at-risk'
+    ? 'bg-red-500'
+    : otjhProgressData.status === 'need-attention'
+      ? 'bg-amber-500'
+      : otjhProgressData.status === 'on-track'
+        ? 'bg-emerald-500'
+        : undefined;
   const otjhProgrammeTarget = learner.otjhPlanned || learner.otjhMinimum || learner.otjhTarget;
   const componentsTargetProgress = learner.componentsTargetToDate && learner.componentsTargetToDate > 0
     ? clampPercent(((learner.componentsCompleted ?? 0) / learner.componentsTargetToDate) * 100)
@@ -147,10 +156,10 @@ export const LearnerCard = memo(function LearnerCard({
           <div className="mb-1 flex items-baseline justify-between gap-2">
             <SectionLabel>OTJH target progress</SectionLabel>
             <span className="text-[12px] font-bold tabular-nums text-foreground-900">
-              {otjhProgress === null ? EMPTY_VALUE : `${otjhProgress}% - ${formatHoursRatio(learner.otjhCompleted, learner.otjhTarget)}`}
+              {otjhProgress === null ? EMPTY_VALUE : `${Math.round(otjhProgress)}% - ${formatHoursRatio(learner.otjhCompleted, otjhProgressData.targetHours)}`}
             </span>
           </div>
-          <ProgressBar percent={otjhProgress} />
+          <ProgressBar percent={otjhProgress} tone={otjhBarTone} />
         </div>
         <div>
           <div className="mb-1 flex items-baseline justify-between gap-2">
@@ -168,8 +177,8 @@ export const LearnerCard = memo(function LearnerCard({
         <Metric
           label="OTJH"
           value={learner.overallProgressAvailable ? formatHoursRatio(learner.otjhCompleted, otjhProgrammeTarget) : EMPTY_VALUE}
-          note={otjh.note}
-          noteTone={otjh.tone}
+          note={otjhNoteValue.note}
+          noteTone={otjhNoteValue.tone}
         />
         <Metric
           label="Attendance"

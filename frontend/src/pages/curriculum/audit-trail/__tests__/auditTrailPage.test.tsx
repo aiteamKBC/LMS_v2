@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -119,9 +119,10 @@ function people(overrides: Partial<CurriculumActivityPeople> = {}): CurriculumAc
 }
 
 /**
- * The page opens on People, so a test about the change feed has to move to it
- * first. Kept in one helper so the tab is switched exactly the same way
- * everywhere rather than each test inventing its own route into the feed.
+ * The page opens on the change feed, so a test about it only has to render.
+ * People is the second tab and a test about it has to move there first. Kept
+ * in two helpers so the tab is reached exactly the same way everywhere rather
+ * than each test inventing its own route into one half.
  */
 async function renderChanges() {
   const result = render(
@@ -129,16 +130,18 @@ async function renderChanges() {
       <CurriculumAuditTrailPage />
     </MemoryRouter>,
   );
-  await userEvent.click(await screen.findByRole('button', { name: /Changes/ }));
+  await screen.findByRole('button', { name: /^Changes/ });
   return result;
 }
 
-function renderPeople() {
-  return render(
+async function renderPeople() {
+  const result = render(
     <MemoryRouter initialEntries={['/curriculum/audit-trail']}>
       <CurriculumAuditTrailPage />
     </MemoryRouter>,
   );
+  await userEvent.click(await screen.findByRole('button', { name: /^People/ }));
+  return result;
 }
 
 describe('Curriculum audit trail page', () => {
@@ -171,12 +174,33 @@ describe('Curriculum audit trail page', () => {
     );
   });
 
-  it('takes archived component changes to the archive instead of a missing builder', async () => {
+  it('takes archived component changes to the archive, naming the module, week and component to open', async () => {
     fetchCurriculumAuditTrail.mockResolvedValue(trail({ events: [event({ action: 'archived', actionLabel: 'Archived', contentStatus: 'archived' })] }));
     await renderChanges();
-    expect(await screen.findByRole('link', { name: 'Final Knowledge Check' })).toHaveAttribute(
+    const href = (await screen.findByRole('link', { name: 'Final Knowledge Check' })).getAttribute('href') || '';
+    const [path, query] = href.split('?');
+    expect(path).toBe('/curriculum/archive');
+    expect(Object.fromEntries(new URLSearchParams(query))).toEqual({
+      type: 'module',
+      q: 'MOD-1',
+      open: 'module:MOD-1',
+      week: 'WEEK-1',
+      component: 'COMP-1',
+      archived: 'component',
+      archivedName: 'Final Knowledge Check',
+      archivedAt: '2026-09-16T14:32:00Z',
+    });
+  });
+
+  it('opens an archived cohort at its own row in the archive', async () => {
+    fetchCurriculumAuditTrail.mockResolvedValue(trail({ events: [event({
+      action: 'archived', actionLabel: 'Archived', entity: 'cohort', entityLabel: 'Cohort',
+      entityId: 'COH-7', title: 'Feb 2026', moduleCatalogueId: '', parentId: 'PROG-1',
+    })] }));
+    await renderChanges();
+    expect(await screen.findByRole('link', { name: 'Feb 2026' })).toHaveAttribute(
       'href',
-      '/curriculum/archive?type=module&q=MOD-1',
+      '/curriculum/archive?type=cohort&q=COH-7&open=cohort%3ACOH-7',
     );
   });
 
@@ -263,6 +287,114 @@ describe('Curriculum audit trail page', () => {
     expect(screen.getByLabelText(/Made by/)).toBeInTheDocument();
   });
 
+  it('filters the feed by the action that happened', async () => {
+    await renderChanges();
+    await screen.findByText('Final Knowledge Check');
+
+    await userEvent.click(screen.getByRole('button', { name: 'Filter audit logs by Created' }));
+    expect(fetchCurriculumAuditTrail).toHaveBeenLastCalledWith(
+      expect.objectContaining({ action: 'created' }),
+    );
+
+    // Clicking the selected action again clears it, returning to all actions.
+    await userEvent.click(screen.getByRole('button', { name: 'Filter audit logs by Created' }));
+    expect(fetchCurriculumAuditTrail).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ action: 'created' }),
+    );
+  });
+
+  it('does not offer action or record types with no matching changes', async () => {
+    fetchCurriculumAuditTrail.mockResolvedValue(trail({
+      actionCounts: { updated: 1 } as CurriculumAuditTrail['actionCounts'],
+      entityTypes: [
+        { value: 'component', label: 'Components' },
+        { value: 'absence_report', label: 'Absence reports' },
+      ],
+      entityCounts: { component: 1, absence_report: 0 },
+    }));
+    await renderChanges();
+
+    await userEvent.click(screen.getByRole('combobox', { name: /Action/i }));
+    expect(screen.getByRole('option', { name: 'Edited' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'Deleted' })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /Action/i }));
+    await userEvent.click(screen.getByRole('combobox', { name: /Record type/i }));
+    expect(screen.getByRole('option', { name: 'Components' })).toBeInTheDocument();
+    expect(screen.queryByRole('option', { name: 'Absence reports' })).not.toBeInTheDocument();
+  });
+
+  it('offers Select all on grouped filters and clears the active action', async () => {
+    await renderChanges();
+
+    await userEvent.click(screen.getByRole('combobox', { name: /Action/i }));
+    expect(screen.getByRole('option', { name: 'Select all' })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('option', { name: 'Select all' }));
+    expect(fetchCurriculumAuditTrail).toHaveBeenLastCalledWith(
+      expect.not.objectContaining({ action: expect.any(String) }),
+    );
+
+    // The time window is a required context, so it intentionally has no
+    // unbounded "Select all" choice.
+    await userEvent.click(screen.getByRole('combobox', { name: /Period/i }));
+    expect(screen.queryByRole('option', { name: 'Select all' })).not.toBeInTheDocument();
+  });
+
+  it('makes a background audit refresh visibly loading while old rows remain readable', async () => {
+    let resolvePending!: (value: CurriculumAuditTrail) => void;
+    fetchCurriculumAuditTrail.mockReturnValue(new Promise<CurriculumAuditTrail>(resolve => {
+      resolvePending = resolve;
+    }));
+
+    await renderChanges();
+    expect(screen.getByRole('status', { name: /Reading audit records/i })).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: /Reading logs/i })).toBeInTheDocument();
+
+    resolvePending(trail());
+    await waitFor(() => expect(screen.queryByRole('status', { name: /Reading audit records/i })).not.toBeInTheDocument());
+  });
+
+  it('shows all module-drawer values across the linked module create records', async () => {
+    const moduleId = 'MOD-CREATE-1';
+    fetchCurriculumAuditTrail.mockResolvedValue(trail({
+      total: 4,
+      events: [
+        event({
+          id: 'rev:module', action: 'created', actionLabel: 'Created', entity: 'module', entityLabel: 'Module',
+          entityId: moduleId, moduleCatalogueId: moduleId, title: 'Digital Marketing', changes: [],
+          snapshot: { module_catalogue_id: moduleId, title: 'Digital Marketing', description: 'Build a campaign', weeks_number: 8 },
+        }),
+        event({
+          id: 'rev:details', action: 'created', actionLabel: 'Created', entity: 'module_details', entityLabel: 'Module detail',
+          entityId: moduleId, moduleCatalogueId: moduleId, title: moduleId, changes: [],
+          snapshot: { module_catalogue_id: moduleId, background: 'Applied learning', epa_requirements: ['EPA 1'] },
+        }),
+        event({
+          id: 'rev:completion', action: 'created', actionLabel: 'Created', entity: 'module_completion', entityLabel: 'Module completion rule',
+          entityId: moduleId, moduleCatalogueId: moduleId, title: moduleId, changes: [],
+          snapshot: { module_catalogue_id: moduleId, total_score_required: 100, total_score_required_enabled: true },
+        }),
+        event({
+          id: 'rev:module-edit', at: '2026-09-16T14:40:00Z', action: 'updated', actionLabel: 'Edited',
+          entity: 'module', entityLabel: 'Module', entityId: moduleId, moduleCatalogueId: moduleId,
+          title: 'Digital Marketing', changes: [{ field: 'description', label: 'Description', before: '', after: 'Build a campaign' }],
+        }),
+      ],
+    }));
+
+    await renderChanges();
+    const createdButtons = screen.getAllByRole('button', { name: 'What was created' });
+    expect(createdButtons).toHaveLength(1);
+    expect(screen.queryByText('Module completion rule')).not.toBeInTheDocument();
+    expect(screen.getByText('3 linked records · 1 module create')).toBeInTheDocument();
+    expect(screen.getByText('Edited the module')).toBeInTheDocument();
+    await userEvent.click(createdButtons[0]);
+    expect(screen.getByText('All module creation details')).toBeInTheDocument();
+    expect(screen.getAllByText('Digital Marketing').length).toBeGreaterThan(1);
+    expect(screen.getByText(/EPA 1/)).toBeInTheDocument();
+    expect(screen.getByText('100')).toBeInTheDocument();
+  });
+
   it('hides those filters when the audit metadata columns do not exist yet', async () => {
     // Before the Phase 2 SQL has run there is no column to filter on. A select
     // that silently matched nothing would imply the data is there.
@@ -301,7 +433,103 @@ describe('Curriculum audit trail page', () => {
       events: [event({ actorName: '', actorEmail: '', actorType: '', actorTypeLabel: '', source: '', sourceLabel: '' })],
     }));
     await renderChanges();
-    expect(await screen.findByText(/No author is recorded against these changes/)).toBeInTheDocument();
+    expect(await screen.findByText(/read from timestamps, so most name no author/)).toBeInTheDocument();
+    // The banner used to say this reading covered the curriculum only. It now
+    // reads every workspace with usable timestamps, and must not claim otherwise.
+    expect(screen.queryByText(/curriculum's authoring tables only/)).not.toBeInTheDocument();
+  });
+
+  // One feed over two kinds of evidence. A reader browses it as one, but an
+  // event recovered from a timestamp must never pass for one the log saw.
+  it('reads recovered history into the same feed and says where each event came from', async () => {
+    fetchCurriculumAuditTrail.mockResolvedValue(trail({
+      total: 2,
+      recoveredHistory: true,
+      provenanceCounts: { revision: 1, timestamps: 1 },
+      events: [
+        event({ provenance: 'revision', provenanceLabel: 'Revision history' }),
+        event({
+          id: 'curriculum.components:COMP-0:created:2026-09-01T10:00:00',
+          at: '2026-09-01T10:00:00Z',
+          action: 'created',
+          actionLabel: 'Created',
+          entityId: 'COMP-0',
+          title: 'Welcome video',
+          revisionNo: 0,
+          actorName: '',
+          actorEmail: '',
+          actorType: '',
+          actorTypeLabel: '',
+          source: '',
+          sourceLabel: '',
+          changes: [],
+          provenance: 'timestamps',
+          provenanceLabel: 'Recovered from timestamps',
+        }),
+      ],
+    }));
+    await renderChanges();
+
+    expect(await screen.findByText('Older changes here are recovered from timestamps.')).toBeInTheDocument();
+    expect(screen.getByText(/may not name who made them, and never show\s+what a field held before and after/)).toBeInTheDocument();
+    expect(screen.getByText('Welcome video')).toBeInTheDocument();
+    expect(screen.getByText('recovered from timestamps')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'How this was recovered' }));
+    expect(screen.getByText('Recovered from timestamps.')).toBeInTheDocument();
+    expect(screen.getByText(/never what it held before or\s+after/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: /1 changed field/ }));
+    expect(screen.getByText(/· Revision history/)).toBeInTheDocument();
+  });
+
+  it('explains a first-seen component instead of leaving First recorded without context', async () => {
+    fetchCurriculumAuditTrail.mockResolvedValue(trail({
+      recoveredHistory: true,
+      provenanceCounts: { revision: 0, timestamps: 1 },
+      events: [event({
+        id: 'curriculum.components:COMP-LIVE-1:recorded:2026-09-01T10:00:00',
+        at: '2026-09-01T10:00:00Z',
+        action: 'recorded',
+        actionLabel: 'First recorded',
+        entity: 'component',
+        entityLabel: 'Component',
+        entityId: 'COMP-LIVE-1',
+        title: 'Live Teams Session 1',
+        context: 'Curriculum Studio › Test-Logs › Week 1',
+        changes: [],
+        snapshot: null,
+        provenance: 'timestamps',
+        provenanceLabel: 'Recovered from timestamps',
+      })],
+    }));
+
+    await renderChanges();
+    expect(screen.getByText('First seen (timestamp)')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'How this was recovered' }));
+    expect(screen.getByText('What this first-seen event means')).toBeInTheDocument();
+    expect(screen.getAllByText(/Live Teams Session 1/).length).toBeGreaterThan(1);
+    expect(screen.getByText('COMP-LIVE-1')).toBeInTheDocument();
+    expect(screen.getByText('Not captured in this timestamp-based history')).toBeInTheDocument();
+  });
+
+  it('says nothing about recovered history when the window holds none', async () => {
+    fetchCurriculumAuditTrail.mockResolvedValue(trail({
+      recoveredHistory: true,
+      provenanceCounts: { revision: 1, timestamps: 0 },
+    }));
+    await renderChanges();
+    await screen.findByText('Final Knowledge Check');
+
+    expect(screen.queryByText('Older changes here are recovered from timestamps.')).not.toBeInTheDocument();
+    expect(screen.queryByText('recovered from timestamps')).not.toBeInTheDocument();
+  });
+
+  it('says when the history before the log could not be read', async () => {
+    fetchCurriculumAuditTrail.mockResolvedValue(trail({ recoveredHistory: false, recoveryFailed: true }));
+    await renderChanges();
+
+    expect(await screen.findByText(/could not be read this time, so only the revision log is shown/)).toBeInTheDocument();
   });
 });
 
@@ -318,19 +546,32 @@ describe('Curriculum audit trail: the People view', () => {
     fetchActivityPeople.mockResolvedValue(people());
   });
 
-  it('opens on the people who used the curriculum, not on the change feed', async () => {
-    renderPeople();
-    // The question the page is most often asked is "who has been in here", and
-    // the change feed cannot answer it: somebody who only read appears nowhere
-    // in it.
+  it('opens on the change feed, and reads only that half', async () => {
+    render(
+      <MemoryRouter initialEntries={['/curriculum/audit-trail']}>
+        <CurriculumAuditTrailPage />
+      </MemoryRouter>,
+    );
+    // Changes is the first tab and the one the page lands on. People is a
+    // click away, and is not read until it is asked for -- it sweeps a window
+    // of visits, and paying for it on arrival would slow down the half the
+    // reader is actually looking at.
+    expect(await screen.findByText('Final Knowledge Check')).toBeInTheDocument();
+    expect(fetchCurriculumAuditTrail).toHaveBeenCalled();
+    expect(fetchActivityPeople).not.toHaveBeenCalled();
+  });
+
+  it('shows the people who used the curriculum on the second tab', async () => {
+    await renderPeople();
+    // The change feed cannot answer "who has been in here": somebody who only
+    // read appears nowhere in it. That is what this half is for.
     expect(await screen.findByText('Ayman Badewi')).toBeInTheDocument();
     expect(screen.getByText('ayman@kentbusinesscollege.com')).toBeInTheDocument();
     expect(fetchActivityPeople).toHaveBeenCalled();
-    expect(fetchCurriculumAuditTrail).not.toHaveBeenCalled();
   });
 
   it('offers a named way into one person, not a bare clickable row', async () => {
-    renderPeople();
+    await renderPeople();
     await screen.findByText('Ayman Badewi');
     // An exact name, because the row itself is a button too and its accessible
     // name contains every cell -- including this button's own label.
@@ -338,7 +579,7 @@ describe('Curriculum audit trail: the People view', () => {
   });
 
   it('counts the three sources separately rather than summing them', async () => {
-    renderPeople();
+    await renderPeople();
     await screen.findByText('Ayman Badewi');
     // A page open, a save and a sign-in are three different claims. One
     // "activity" total would quietly merge somebody who read for an hour with
@@ -372,7 +613,7 @@ describe('Curriculum audit trail: the People view', () => {
         workspaces: [],
       }],
     }));
-    renderPeople();
+    await renderPeople();
     // The exact sentence in the notice. The hero says the same thing in its own
     // words, so a loose match would find both.
     expect(await screen.findByText('Page opens are not being recorded yet.')).toBeInTheDocument();
@@ -382,17 +623,16 @@ describe('Curriculum audit trail: the People view', () => {
     expect(row?.textContent).toContain('4');
   });
 
-  it('moves to the change feed only when asked, and loads it then', async () => {
-    renderPeople();
-    await screen.findByText('Ayman Badewi');
-    expect(fetchCurriculumAuditTrail).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole('button', { name: /Changes/ }));
-    expect(await screen.findByText('Final Knowledge Check')).toBeInTheDocument();
-    expect(fetchCurriculumAuditTrail).toHaveBeenCalled();
+  it('moves to the people list only when asked, and loads it then', async () => {
+    await renderChanges();
+    expect(fetchActivityPeople).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: /^People/ }));
+    expect(await screen.findByText('Ayman Badewi')).toBeInTheDocument();
+    expect(fetchActivityPeople).toHaveBeenCalled();
   });
 
   it('keeps the current people visible while Refresh revalidates in the background', async () => {
-    renderPeople();
+    await renderPeople();
     expect(await screen.findByText('Ayman Badewi')).toBeInTheDocument();
 
     let resolveRefresh: (value: CurriculumActivityPeople) => void = () => undefined;

@@ -43,6 +43,7 @@ from coach_api.views import (
     curriculum_monthly_target_hours_weeks,
     apply_attendance_summary,
     apply_aptem_variance_status,
+    apply_otjh_to_date_metrics,
     apply_audit_hour_totals,
     apply_canonical_learner_metrics,
     case_file_table_metrics_snapshot,
@@ -60,6 +61,7 @@ from coach_api.views import (
     dashboard_attendance_rows,
     dashboard_monthly_risk_history,
     dashboard_review_history,
+    attach_caseload_source_rows,
     fetch_caseload_learner_profiles,
     fetch_evidence_file_queue,
     fetch_source_schedule_rows,
@@ -722,6 +724,7 @@ class OtjhTargetContractTests(SimpleTestCase):
         self.assertNotIn("otjhVariance", result)
         self.assertNotIn("otjhStatus", result)
 
+
     def test_zero_target_leaves_existing_status_untouched(self):
         payload = {"otjhCompleted": 0, "otjhTarget": 0, "otjhPlanned": 576}
         result = apply_aptem_variance_status(payload, "4317")
@@ -762,6 +765,39 @@ class OtjhTargetContractTests(SimpleTestCase):
                 {},
             )
         connection.assert_not_called()
+
+
+class OtjhToDateContractTests(SimpleTestCase):
+    def test_api_emits_one_paced_target_and_rag_contract(self):
+        payload = {
+            "otjhCompleted": 40,
+            "otjhPlanned": 120,
+            "otjhTarget": 999,
+            "startDate": "01 Jun 2026",
+            "plannedEndDate": "01 Jul 2026",
+        }
+
+        result = apply_otjh_to_date_metrics(payload, today=date(2026, 6, 15))
+
+        self.assertEqual(result["otjhTargetAsOfToday"], 56.0)
+        self.assertEqual(result["otjhProgressAsOfToday"], 71.43)
+        self.assertEqual(result["otjhShortfallHours"], 16.0)
+        self.assertEqual(result["otjhDeltaHours"], -16.0)
+        self.assertEqual(result["otjhRagStatus"], "on-track")
+        self.assertEqual(result["otjhRagSource"], "ssot:programme-plan-window")
+
+    def test_missing_window_uses_explicit_api_target_fallback(self):
+        result = apply_otjh_to_date_metrics({
+            "otjhCompleted": 9,
+            "otjhPlanned": 0,
+            "otjhTarget": 50,
+            "startDate": "--",
+            "plannedEndDate": "--",
+        }, today=date(2026, 6, 15))
+
+        self.assertEqual(result["otjhTargetAsOfToday"], 50.0)
+        self.assertEqual(result["otjhRagStatus"], "at-risk")
+        self.assertEqual(result["otjhRagSource"], "ssot:api-target-fallback")
 
 
 class CanonicalCoachMetricsTests(SimpleTestCase):
@@ -1256,6 +1292,24 @@ class SourceProfileIdentityTests(SimpleTestCase):
         self.assertEqual(apprenticeship, {})
         manager.filter.assert_called_once_with(pk__in={19: 2})
 
+    @patch("coach_api.views.load_contracts_bulk")
+    @patch("coach_api.views.fetch_source_schedule_rows")
+    def test_source_attachment_adds_the_verified_contract_projection(self, fetch_sources, load_contracts):
+        source = SimpleNamespace(id=19, aptem_id="4321", learner_type="apprenticeship")
+        profile = SimpleNamespace(id=2, enrolment_id=19, programme="Apprenticeship")
+        fetch_sources.return_value = ({}, {2: source})
+        load_contracts.return_value = {4321: {
+            "training_plan_planned_hours": 576,
+            "program_start_date": "2026-08-26",
+            "planned_end_date": "2027-08-25",
+        }}
+
+        attach_caseload_source_rows([profile])
+
+        self.assertIs(profile._caseload_source, source)
+        self.assertEqual(profile._caseload_contract["training_plan_planned_hours"], 576)
+        load_contracts.assert_called_once_with([4321])
+
 
 class CoachKsbEvidenceTests(SimpleTestCase):
     def test_video_evidence_uses_authored_component_name_instead_of_media_type(self):
@@ -1627,6 +1681,58 @@ class SerializeCaseloadDashboardLearnerTests(SimpleTestCase):
         self.assertIsNone(payload["attendanceRate"])
         self.assertFalse(payload["attendanceRateAvailable"])
 
+    def test_dashboard_dto_uses_aptem_backed_source_schedule_when_profile_is_blank(self):
+        row = self._row(
+            planned_hours=None,
+            _caseload_source=SimpleNamespace(
+                planned_hours="576.00",
+                start_date=None,
+                end_date=None,
+                learner_start_date="2026-08-26",
+                learner_end_date="2027-08-25",
+            ),
+        )
+
+        payload = serialize_caseload_dashboard_learner(row)
+
+        self.assertEqual(payload["otjhPlanned"], 576.0)
+        self.assertEqual(payload["startDate"], "2026-08-26")
+        self.assertEqual(payload["otjhProgrammeStartDate"], "26 Aug 2026")
+        self.assertEqual(payload["plannedEndDate"], "25 Aug 2027")
+
+    def test_dashboard_dto_prefers_the_verified_contract_schedule(self):
+        row = self._row(
+            planned_hours=None,
+            _caseload_source=SimpleNamespace(
+                planned_hours="400.00",
+                learner_start_date="2026-01-01",
+                learner_end_date="2026-12-31",
+            ),
+            _caseload_contract={
+                "training_plan_planned_hours": Decimal("576.00"),
+                "program_start_date": "2026-08-26",
+                "planned_end_date": "2027-08-25",
+            },
+        )
+
+        payload = serialize_caseload_dashboard_learner(row)
+
+        self.assertEqual(payload["otjhPlanned"], 576.0)
+        self.assertEqual(payload["startDate"], "2026-01-01")
+        self.assertEqual(payload["otjhProgrammeStartDate"], "26 Aug 2026")
+        self.assertEqual(payload["plannedEndDate"], "25 Aug 2027")
+
+    def test_dashboard_table_date_uses_enrolment_without_changing_contract_dates(self):
+        row = self._row(
+            _caseload_source=SimpleNamespace(learner_start_date="2025-10-15", start_date="2020-01-01", end_date="2027-02-14"),
+            _caseload_contract={"program_start_date": "2025-10-01", "planned_end_date": "2027-02-01"},
+        )
+        payload = serialize_caseload_dashboard_learner(row)
+        self.assertEqual(payload["displayStartDate"], "15 Oct 2025")
+        self.assertEqual(payload["startDate"], "2025-10-15")
+        self.assertEqual(payload["otjhProgrammeStartDate"], "01 Oct 2025")
+        self.assertEqual(payload["plannedEndDate"], "01 Feb 2027")
+
     def test_dashboard_dto_drops_repeated_and_obsolete_coach_fields(self):
         """coachName/coachEmail (already on `owner`) and coachRag (removed
         from the coach caseload flow) must not leak into this DTO, even
@@ -1681,6 +1787,12 @@ class ApplyAttendanceSummaryTests(SimpleTestCase):
     },
 })
 class CoachDashboardViewTests(SimpleTestCase):
+    def setUp(self):
+        # Cached DTOs are normalized through the same bulk source read as snapshots.
+        source_reads = patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[])
+        source_reads.start()
+        self.addCleanup(source_reads.stop)
+
     @patch("coach_api.dashboard_service.CoachDashboardService.build")
     @patch("coach_api.views.collect_generated_timetable")
     @patch("coach_api.views.coach_caseload")
@@ -1806,7 +1918,9 @@ class CoachDashboardViewTests(SimpleTestCase):
     @patch("coach_api.dashboard_service.CoachDashboardService.build")
     def test_first_request_misses_and_second_request_hits_final_response_cache(self, build):
         cache.clear()
-        build.return_value = {"owner": {"email": "coach@example.com"}, "learners": [{"id": "1"}]}
+        build.return_value = {"owner": {"email": "coach@example.com"}, "learners": [
+            {"id": "1", "startDate": None, "displayStartDate": None, "otjhProgrammeStartDate": "--"},
+        ]}
         request = RequestFactory().get("/coach_api/coach/dashboard")
         request.coach_email = "coach@example.com"
 
@@ -1890,6 +2004,9 @@ class CoachDashboardBackgroundRefreshTests(SimpleTestCase):
         }, now=now))
         self.assertTrue(snapshot_needs_refresh({
             "readModel": {"refreshedAt": (now - timedelta(seconds=30)).isoformat()},
+        }, now=now))
+        self.assertTrue(snapshot_needs_refresh({
+            "readModel": {"version": 14, "refreshedAt": now.isoformat()},
         }, now=now))
 
     @patch("coach_api.dashboard_cache.cache_coach_dashboard")
@@ -1991,6 +2108,12 @@ class CoachDashboardBackgroundRefreshTests(SimpleTestCase):
 
 
 class CoachDashboardReadModelTests(SimpleTestCase):
+    def setUp(self):
+        # Snapshot date normalization performs separate read-only source reads.
+        source_reads = patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[])
+        source_reads.start()
+        self.addCleanup(source_reads.stop)
+
     def test_live_dashboard_uses_learner_overview_metrics_after_legacy_enrichment(self):
         from coach_api.dashboard_service import CoachDashboardService
 
@@ -2082,31 +2205,37 @@ class CoachDashboardReadModelTests(SimpleTestCase):
 
         payload = CoachDashboardService("coach@example.com").build()
 
-        self.assertEqual(payload["learners"], [{"id": "1"}])
+        self.assertEqual(payload["learners"], [{"id": "1", "startDate": None,
+                                             "displayStartDate": None, "otjhProgrammeStartDate": "--"}])
         self.assertIn("readModel", payload)
-        objects.filter.assert_called_once_with(owner_email="coach@example.com", schema_version=13)
+        objects.filter.assert_called_once_with(owner_email="coach@example.com", schema_version=18)
         objects.filter.return_value.only.assert_called_once_with("payload", "refreshed_at")
         objects.filter.return_value.only.return_value.first.assert_called_once_with()
         build_live.assert_not_called()
 
     @patch("coach_api.dashboard_service.CoachDashboardSnapshot.objects")
     @patch("coach_api.dashboard_service.CoachDashboardService.refresh_metric_projection")
-    def test_previous_metric_schema_snapshot_is_upgraded_without_full_rebuild(self, refresh_metrics, objects):
+    def test_previous_metric_schema_snapshot_is_served_until_background_refresh(self, refresh_metrics, objects):
         from coach_api.dashboard_service import CoachDashboardService
 
         objects.filter.return_value.only.return_value.first.return_value = None
-        previous = SimpleNamespace(payload={"learners": [{"id": "stale"}]})
-        objects.filter.return_value.only.return_value.first.side_effect = [None, previous]
-        refresh_metrics.return_value = {"learners": [{"id": "canonical"}]}
+        previous = SimpleNamespace(
+            payload={"learners": [{"id": "stale"}]},
+            refreshed_at=timezone.now(),
+            schema_version=13,
+        )
+        objects.filter.return_value.order_by.return_value.only.return_value.first.return_value = previous
 
         payload = CoachDashboardService("coach@example.com").build()
 
-        self.assertEqual(payload["learners"], [{"id": "canonical"}])
+        self.assertEqual(payload["learners"], [{"id": "stale", "startDate": None,
+                                             "displayStartDate": None, "otjhProgrammeStartDate": "--"}])
+        self.assertEqual(payload["readModel"]["version"], 13)
         self.assertEqual(objects.filter.call_args_list[0].kwargs,
-                         {"owner_email": "coach@example.com", "schema_version": 13})
+                         {"owner_email": "coach@example.com", "schema_version": 18})
         self.assertEqual(objects.filter.call_args_list[1].kwargs,
                          {"owner_email": "coach@example.com"})
-        refresh_metrics.assert_called_once_with(previous.payload)
+        refresh_metrics.assert_not_called()
 
     def test_previous_response_cache_namespace_cannot_serve_legacy_metrics(self):
         import hashlib
@@ -2117,7 +2246,7 @@ class CoachDashboardReadModelTests(SimpleTestCase):
         old_key = f"coach-dashboard-summary:v2:{old_hash}"
 
         self.assertNotEqual(coach_dashboard_cache_key(identity), old_key)
-        self.assertTrue(coach_dashboard_cache_key(identity).startswith("coach-dashboard-summary:v3:"))
+        self.assertTrue(coach_dashboard_cache_key(identity).startswith("coach-dashboard-summary:v4:"))
 
     @patch("coach_api.dashboard_service.CoachDashboardSnapshot.objects")
     def test_snapshot_metric_upgrade_uses_the_same_canonical_values_as_caseload(self, objects):
@@ -2186,7 +2315,7 @@ class CoachDashboardReadModelTests(SimpleTestCase):
         payload = CoachDashboardService("coach@example.com").refresh()
 
         self.assertEqual(payload["readModel"], {
-            "version": 13, "refreshedAt": refreshed_at.isoformat(),
+            "version": 18, "refreshedAt": refreshed_at.isoformat(),
         })
 
 
@@ -2220,7 +2349,7 @@ class CoachDashboardSnapshotPerformanceBaselineTests(TestCase):
             "marking": {"summary": {"pendingItems": 0}, "items": []}, "errors": {},
         }
         CoachDashboardSnapshot.objects.create(
-            owner_email="baseline@example.com", payload=self.payload, schema_version=3,
+            owner_email="baseline@example.com", payload=self.payload, schema_version=17,
         )
 
     def request(self):

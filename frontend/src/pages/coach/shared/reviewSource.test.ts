@@ -42,6 +42,13 @@ describe('resolved review stream dashboard helpers', () => {
     expect(reviewActionMatrix(native)).toMatchObject({ schedule: null, view: true, viewForm: true });
   });
 
+  it('preserves cancelled rows and never offers Schedule', () => {
+    const cancelled = event({ status: 'cancelled', scheduledDate: '2026-09-20', scheduledTime: '10:00' });
+
+    expect(normalizedReviewStatus(cancelled)).toBe('cancelled');
+    expect(reviewActionMatrix(cancelled)).toMatchObject({ schedule: null, view: true });
+  });
+
   it('keeps summary-only imported history visible without offering a form action', () => {
     const summaryOnly = event({
       id: 'imported-review:14010',

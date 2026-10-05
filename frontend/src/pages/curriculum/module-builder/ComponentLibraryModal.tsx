@@ -32,7 +32,7 @@ const SEARCH_DEBOUNCE_MS = 250;
 export function ComponentLibraryModal({ weekLabel, onClose, onAddMany }: {
   weekLabel: string;
   onClose: () => void;
-  onAddMany: (components: LibraryComponent[]) => void;
+  onAddMany: (components: LibraryComponent[]) => void | Promise<void>;
 }) {
   const [rows, setRows] = useState<LibraryComponent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -122,9 +122,15 @@ export function ComponentLibraryModal({ weekLabel, onClose, onAddMany }: {
       const picked = ids
         .map(id => byId.get(id) || selectedRows.current.get(id))
         .filter((row): row is LibraryComponent => Boolean(row));
-      if (picked.length) onAddMany(picked);
+      if (picked.length) await onAddMany(picked);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unable to load those components.');
+    } finally {
+      // Taking the copies normally closes this modal, and clearing state on a
+      // component already gone is a no-op. But the parent may also decline --
+      // an author who cancels the warning about a live session the week has no
+      // date for -- and then this is still on screen and must not be left
+      // showing "Adding..." with its button disabled.
       setAdding(false);
     }
   };

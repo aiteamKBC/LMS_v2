@@ -244,11 +244,13 @@ MERGE_WINDOW = timedelta(minutes=10)
 MERGEABLE_ACTIONS = frozenset({'updated'})
 
 #: What an older revision keeps once a newer one exists: where it sat, so the
-#: trail can still scope and label it. Created and deleted revisions keep their
-#: whole copy (the trail shows it), and so does any revision a named version
-#: points at, because comparing and restoring versions reads it.
+#: trail can still scope and label it. Created, recorded and deleted revisions
+#: keep their whole copy (the trail shows it), and so does any revision a named
+#: version points at, because comparing and restoring versions reads it. A
+#: recorded revision is the only account of what a pre-history record held when
+#: history first saw it; slimming it would leave the record with no origin at all.
 SLIM_SNAPSHOT_KEYS = ('_context', 'programme_id', 'cohort_id', 'group_id', 'module_catalogue_id', 'week_id')
-FULL_SNAPSHOT_ACTIONS = ('created', 'deleted')
+FULL_SNAPSHOT_ACTIONS = ('created', 'recorded', 'deleted')
 
 _local = threading.local()
 
@@ -1759,6 +1761,21 @@ def insert_revisions(pending):
     its revision rather than failing, which is the right trade — the winner's
     row already records that the content changed.
     """
+    # The single point every application revision passes through. An action
+    # outside ACTIONS has no label, no tone and no meaning on the trail -- the
+    # 2,599 `create` / `update` rows written straight into this table by one-off
+    # scripts render as "Create" beside a real "Created" -- so one is refused
+    # here, loudly, rather than stored as history nobody can read.
+    canonical = [item for item in pending if item.get('action') in ACTIONS]
+    for item in pending:
+        if item.get('action') not in ACTIONS:
+            logger.error(
+                'Refused a %s revision with non-canonical action %r.',
+                item.get('entity_type'), item.get('action'),
+            )
+    pending = canonical
+    if not pending:
+        return {}
     columns = REVISION_COLUMNS + (METADATA_COLUMNS if metadata_columns_available() else ())
     placeholder = f'({", ".join(["%s"] * len(columns))})'
     values = []

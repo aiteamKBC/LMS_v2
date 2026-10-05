@@ -1,4 +1,4 @@
-import { act, renderHook, waitFor } from '@testing-library/react';
+import { act, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const trace: string[] = [];
@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   fetchLearnerMetrics: vi.fn(),
   fetchLearnerAttendance: vi.fn(),
   fetchStudentActivity: vi.fn(),
+  subjectRequest: vi.fn(),
   coachFetch: vi.fn(),
 }));
 
@@ -22,6 +23,7 @@ vi.mock('@/api/learnerAttendance', () => ({
 }));
 vi.mock('@/api/studentActivity', () => ({
   fetchStudentActivity: mocks.fetchStudentActivity,
+  subjectRequest: mocks.subjectRequest,
 }));
 vi.mock('@/utils/learnerJourney', () => ({
   buildLearnerJourney: () => [],
@@ -43,6 +45,12 @@ vi.mock('@/pages/coach/shared/calendarEvents', () => ({
 }));
 
 import { useCoachLearnerCaseFileData } from './data';
+import { LearnerCaseFileHeader } from './components/LearnerCaseFileHeader';
+
+const headerProps = {
+  pageTitle: 'Learner', pageSubtitle: 'Programme', overall: '--', otjh: '--', ksb: '--',
+  attendance: '--', nextSession: '--', nextPr: '--', nextMcm: '--',
+};
 
 const metrics = {
   migrated: false,
@@ -84,7 +92,7 @@ function shell(overrides: Record<string, unknown> = {}) {
     profile: {
       name: 'Stable Learner', email: 'stable@example.test', programme: 'Test Programme', cohort: 'Cohort A',
       group: 'Group A', employer: 'Employer A', coachName: 'Coach A', coachEmail: 'coach@example.test',
-      status: 'Active', startDate: '03 Aug 2026', plannedEndDate: '02 Aug 2027', gatewayReviewDate: '04 May 2027', coachRag: null,
+      status: 'Active', startDate: '2026-06-01', plannedEndDate: '02 Aug 2027', gatewayReviewDate: '04 May 2027', coachRag: null,
       ...overrides,
     },
   };
@@ -109,6 +117,10 @@ describe('Learner Case File request characterization', () => {
     mocks.fetchStudentActivity.mockImplementation(async (kind: string, id: string) => {
       trace.push(`student-activity:${kind}:${id}`);
       return { activities: [], subjects: [], activity_sources: {}, activity_source_issues: {} };
+    });
+    mocks.subjectRequest.mockImplementation(async (url: string) => {
+      trace.push(url);
+      return { covers: {}, current_subjects: [], builder_subjects: {} };
     });
     mocks.coachFetch.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -142,7 +154,7 @@ describe('Learner Case File request characterization', () => {
     expect(trace).not.toContain('/coach_api/coach/caseload');
   });
 
-  it('adds only the Aptem activity request when the resolved learner is Aptem-backed', async () => {
+  it('reads the same activity and assigned-subject sources as My Learning for an Aptem learner', async () => {
     mocks.fetchLearnerDetail.mockImplementation(async (kind: string, id: string) => {
       trace.push(`learner-detail:${kind}:${id}`);
       return learnerDetail(true);
@@ -158,12 +170,44 @@ describe('Learner Case File request characterization', () => {
       'learner-detail:apprenticeship:5170',
       'metrics:apprenticeship:5170',
       'student-activity:apprenticeship:5170',
+      '/learner_api/subject-covers/5170/?refs=',
     ]);
     expect(new Set(trace).size).toBe(trace.length);
     expect(mocks.fetchLearnerAttendance).not.toHaveBeenCalled();
     expect(trace).not.toContain('/coach_api/coach/attendance');
     expect(trace).not.toContain('/coach_api/coach/timetable');
     expect(trace.some(item => item.startsWith('/coach_api/coach/marking-queue'))).toBe(false);
+  });
+
+  it('retains the canonical table activity counts separately from KSB progress', async () => {
+    mocks.fetchLearnerMetrics.mockResolvedValue({ ...metrics,
+      programme: { completed: 137, total: 157, percent: 87.26, status: 'ready' },
+      ksb: { ...metrics.ksb, percent: 85.27 },
+    });
+    const { result } = renderHook(() => useCoachLearnerCaseFileData({ learnerId: '316' }));
+    await waitFor(() => expect(result.current.data?.reviewsLoading).toBe(false));
+    expect(result.current.data).toMatchObject({
+      activitiesCompleted: 137, activitiesTotal: 157, overallProgress: 87.26, ksbProgress: 85.27,
+    });
+  });
+
+  it('uses the server-resolved Aptem identity even if activity availability is false', async () => {
+    mocks.coachFetch.mockImplementation(async () => response({ ...shell(), identity: {
+      learnerId: '316', enrolmentId: '5170', aptemId: '98765', kind: 'commercial', source: 'aptem', identityConflict: false,
+    } }));
+    const { result } = renderHook(() => useCoachLearnerCaseFileData({ learnerId: '316' }));
+    await waitFor(() => expect(result.current.data?.reviewsLoading).toBe(false));
+    expect(mocks.fetchStudentActivity).toHaveBeenCalledWith('commercial', '5170');
+    expect(mocks.subjectRequest).toHaveBeenCalledWith('/learner_api/subject-covers/5170/?refs=');
+  });
+
+  it('reports canonical source failures without substituting another module source', async () => {
+    mocks.fetchLearnerDetail.mockResolvedValue(learnerDetail(true));
+    mocks.subjectRequest.mockRejectedValue(new Error('Source unavailable'));
+    const { result } = renderHook(() => useCoachLearnerCaseFileData({ learnerId: '316' }));
+    await waitFor(() => expect(result.current.data?.reviewsLoading).toBe(false));
+    expect(result.current.error).toBe('Could not load the canonical Programme Journey. Please retry.');
+    expect(result.current.data?.journey).toEqual([]);
   });
 
   it('publishes the profile metrics without waiting for slow Aptem activity', async () => {
@@ -238,9 +282,23 @@ describe('Learner Case File request characterization', () => {
     expect(result.current.data?.overallProgress).toBe(75);
   });
 
+  it('uses only the shared canonical shell start date despite a different detail programme date', async () => {
+    mocks.fetchLearnerDetail.mockResolvedValue({ ...learnerDetail(false), programmeStartDate: '2025-10-15' });
+    const { result } = renderHook(() => useCoachLearnerCaseFileData({
+      learnerId: '316', kind: 'apprenticeship', enrolmentId: '5170',
+    }));
+    await waitFor(() => expect(result.current.data?.startDate).toBe('2026-06-01'));
+    await waitFor(() => expect(result.current.data?.detail?.programmeStartDate).toBe('2025-10-15'));
+    expect(result.current.data?.startDate).toBe('2026-06-01');
+    expect(result.current.data?.gatewayReviewDate).toBe('04 May 2027');
+    render(<LearnerCaseFileHeader {...headerProps} data={result.current.data} />);
+    expect(screen.getByText('Start Date').nextElementSibling).toHaveTextContent(/^2026-06-01$/);
+  });
+
   it('preserves shell profile fields and leaves missing values unavailable', async () => {
     mocks.fetchLearnerDetail.mockResolvedValue({
       ...learnerDetail(false), name: '', email: '', programme: '', cohort: '', group: '', employer: '', programmeStatus: '',
+      programmeStartDate: '2025-10-15',
     });
     mocks.coachFetch.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -260,6 +318,8 @@ describe('Learner Case File request characterization', () => {
       employer: '', startDate: '--', plannedEndDate: '--', gatewayReviewDate: '--',
     });
     expect(result.current.data?.evidenceCount).toBeNull();
+    render(<LearnerCaseFileHeader {...headerProps} data={result.current.data} />);
+    expect(screen.getByText('Start Date').nextElementSibling).toHaveTextContent(/^--$/);
   });
 
   it.skip('future boundary: opening the shell should not fetch coach-wide attendance, marking or timetable data', () => {});

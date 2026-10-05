@@ -7,3 +7,12 @@ export interface CatchUpRequestRow {
   booking: CoachCalendarEvent;
 }
 
+export interface CatchUpSchedulingCandidate {
+  id: string;
+  learnerId: string;
+  learner: string;
+  lecture: string;
+  lectureDate: string;
+  programme?: string;
+}
+

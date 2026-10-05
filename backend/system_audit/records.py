@@ -35,6 +35,13 @@ from .writes import attach_bulk_capture, register, register_model
 
 logger = logging.getLogger(__name__)
 
+#: The model attributes that say when a row was made and last saved. Passed as
+#: ``timestamps=`` rather than listed in ``columns``: they decide whether a save
+#: is reported as a create or as "first recorded", and must not show up as a
+#: changed field on every edit. Named only for models that genuinely store both
+#: -- a record type without the pair stays "first recorded" on its first sight.
+ROW_TIMESTAMPS = ('created_at', 'updated_at')
+
 
 def register_enrolment_records():
     """Learner, staff, employer and organisation records on the enrolment DB."""
@@ -538,6 +545,7 @@ def register_enrolment_journey_records():
         EnrolmentReview,
         workspace='admin',
         entity_type='enrolment_review',
+        timestamps=ROW_TIMESTAMPS,
         label='Enrolment review',
         href='/users',
         key='id',
@@ -588,6 +596,7 @@ def register_enrolment_journey_records():
         EligibilityReviewDetail,
         workspace='admin',
         entity_type='eligibility_review',
+        timestamps=ROW_TIMESTAMPS,
         label='Eligibility review sheet',
         href='/users',
         key='id',
@@ -619,6 +628,7 @@ def register_enrolment_journey_records():
         RplReviewDetail,
         workspace='admin',
         entity_type='rpl_review',
+        timestamps=ROW_TIMESTAMPS,
         label='RPL review sheet',
         href='/users',
         key='id',
@@ -646,6 +656,7 @@ def register_enrolment_journey_records():
         HealthSafetyReviewDetail,
         workspace='admin',
         entity_type='health_safety_review',
+        timestamps=ROW_TIMESTAMPS,
         label='Health & safety declaration',
         href='/users',
         key='id',
@@ -672,6 +683,7 @@ def register_enrolment_journey_records():
         ApprenticeshipAgreement,
         workspace='admin',
         entity_type='apprenticeship_agreement',
+        timestamps=ROW_TIMESTAMPS,
         label='Apprenticeship agreement',
         href='/users',
         key='id',
@@ -700,6 +712,7 @@ def register_enrolment_journey_records():
         IlrDocument,
         workspace='admin',
         entity_type='ilr_document',
+        timestamps=ROW_TIMESTAMPS,
         label='ILR document',
         href='/users',
         key='id',
@@ -721,6 +734,7 @@ def register_enrolment_journey_records():
         TrainingPlanDocument,
         workspace='admin',
         entity_type='training_plan_document',
+        timestamps=ROW_TIMESTAMPS,
         label='Training plan document',
         href='/users',
         key='id',
@@ -743,6 +757,7 @@ def register_enrolment_journey_records():
         WrittenAgreement,
         workspace='admin',
         entity_type='written_agreement',
+        timestamps=ROW_TIMESTAMPS,
         label='Written agreement',
         href='/users',
         key='id',
@@ -765,6 +780,7 @@ def register_enrolment_journey_records():
         LearnerProfile,
         workspace='admin',
         entity_type='learner_profile',
+        timestamps=ROW_TIMESTAMPS,
         label='Learner delivery profile',
         href='/users',
         record_href='/users/{id}',
@@ -852,6 +868,7 @@ def register_enrolment_wizard_records():
         ExtendedIlr,
         workspace='admin',
         entity_type='extended_ilr',
+        timestamps=ROW_TIMESTAMPS,
         label='Extended ILR',
         href='/users',
         key='id',
@@ -874,6 +891,7 @@ def register_enrolment_wizard_records():
         WizardPersonalDetails,
         workspace='admin',
         entity_type='wizard_personal_details',
+        timestamps=ROW_TIMESTAMPS,
         label='Enrolment: personal details',
         href='/users',
         key='id',
@@ -897,6 +915,7 @@ def register_enrolment_wizard_records():
         WizardSkillsRadar,
         workspace='admin',
         entity_type='wizard_skills_radar',
+        timestamps=ROW_TIMESTAMPS,
         label='Enrolment: skills radar',
         href='/users',
         key='id',
@@ -910,6 +929,7 @@ def register_enrolment_wizard_records():
         WizardKsbAssessment,
         workspace='admin',
         entity_type='wizard_ksb_assessment',
+        timestamps=ROW_TIMESTAMPS,
         label='Enrolment: KSB self-assessment',
         href='/users',
         key='id',
@@ -933,6 +953,7 @@ def register_enrolment_wizard_records():
         WizardPlr,
         workspace='admin',
         entity_type='wizard_plr',
+        timestamps=ROW_TIMESTAMPS,
         label='Enrolment: personal learning record',
         href='/users',
         key='id',
@@ -947,6 +968,7 @@ def register_enrolment_wizard_records():
         WizardPlrRecord,
         workspace='admin',
         entity_type='wizard_plr_record',
+        timestamps=ROW_TIMESTAMPS,
         label='Enrolment: prior qualification',
         href='/users',
         key='id',
@@ -972,6 +994,7 @@ def register_enrolment_wizard_records():
         WizardCvJob,
         workspace='admin',
         entity_type='wizard_cv_job',
+        timestamps=ROW_TIMESTAMPS,
         label='Enrolment: CV and job role',
         href='/users',
         key='id',
@@ -997,6 +1020,7 @@ def register_enrolment_wizard_records():
         WizardPolicyAck,
         workspace='admin',
         entity_type='wizard_policy_ack',
+        timestamps=ROW_TIMESTAMPS,
         label='Enrolment: policy acknowledgement',
         href='/users',
         key='id',
@@ -1293,6 +1317,7 @@ def register_engagement_records():
     register_model(
         Reward,
         workspace='engagement', entity_type='reward', label='Reward',
+        timestamps=ROW_TIMESTAMPS,
         href='/engagement/rewards', key='id',
         title='name', context=('category', 'points', 'active'), status='category',
         columns=(
@@ -1337,6 +1362,7 @@ def register_engagement_records():
     register_model(
         Event,
         workspace='engagement', entity_type='engagement_event', label='Event',
+        timestamps=ROW_TIMESTAMPS,
         href='/engagement/events', key='id',
         title='title', context=('date', 'location', 'status'), status='status',
         columns=(
@@ -1442,6 +1468,7 @@ def register_engagement_records():
     register_model(
         PointsRule,
         workspace='engagement', entity_type='points_rule', label='Points rule',
+        timestamps=ROW_TIMESTAMPS,
         href='/engagement/points', key='id',
         title='name', title_fallback='key',
         context=('category', 'points', 'active'), status='category',
@@ -1467,6 +1494,7 @@ def register_engagement_records():
     register_model(
         FlashCardDeck,
         workspace='engagement', entity_type='flash_card_deck', label='Flash card deck',
+        timestamps=ROW_TIMESTAMPS,
         href='/engagement/flash-cards', key='id',
         title='title',
         context=('programme', 'module', 'status'),
@@ -1480,6 +1508,7 @@ def register_engagement_records():
     register_model(
         FlashCard,
         workspace='engagement', entity_type='flash_card', label='Flash card',
+        timestamps=ROW_TIMESTAMPS,
         href='/engagement/flash-cards', key='id',
         title='question',
         context=('category', 'difficulty'),
@@ -1645,6 +1674,7 @@ def register_quiz_records():
     register_model(
         QuizPackage,
         workspace='curriculum', entity_type='quiz', label='Quiz',
+        timestamps=ROW_TIMESTAMPS,
         href='/curriculum/quizzes', key='id',
         title='title',
         context=('programme', 'module', 'status'),
@@ -1669,6 +1699,7 @@ def register_quiz_records():
     register_model(
         QuizQuestion,
         workspace='curriculum', entity_type='quiz_question', label='Quiz question',
+        timestamps=ROW_TIMESTAMPS,
         href='/curriculum/quizzes', key='id',
         title='question_text',
         context=('question_type', 'points', 'is_archived'),
@@ -1682,6 +1713,7 @@ def register_quiz_records():
     register_model(
         QuizAnswer,
         workspace='curriculum', entity_type='quiz_answer', label='Quiz answer',
+        timestamps=ROW_TIMESTAMPS,
         href='/curriculum/quizzes', key='id',
         title='answer_text',
         # Whether this is the right answer is the whole point of the record, so
@@ -1728,6 +1760,7 @@ def register_chat_records():
     register_model(
         Conversation,
         workspace='platform', entity_type='chat_conversation', label='Conversation',
+        timestamps=ROW_TIMESTAMPS,
         href='/messages', key='id',
         parents=('coach_id', 'learner_id'),
         columns=('id', 'coach_id', 'learner_id'),

@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django import forms
+from django.db import transaction
 
 from .migrated_reviews import validate_definition
 from .migrated_templates import validate_managed_definition, validate_slot
@@ -56,5 +57,11 @@ class MigratedReviewTemplateAdmin(admin.ModelAdmin):
 
     def has_delete_permission(self, request, obj=None):
         return False
+
+    def save_model(self, request, obj, form, change):
+        from .migrated_template_sync import lock_template_family
+        with transaction.atomic():
+            lock_template_family(obj.review_family)
+            super().save_model(request, obj, form, change)
 
 
