@@ -161,7 +161,9 @@ class MigratedSummaryActionTests(TestCase):
 
     def test_no_teams_association_does_not_block_upload_but_blocks_teams(self):
         self.calendar.delete()
-        response, ai = self.check()
+        with patch('learner_api.models.LearnerProfile.objects.filter') as profiles:
+            profiles.return_value.first.return_value = None
+            response, ai = self.check()
         self.assertEqual(response.status_code, 409)
         ai.assert_not_called()
         self.assertEqual(self.upload()[0].status_code, 200)

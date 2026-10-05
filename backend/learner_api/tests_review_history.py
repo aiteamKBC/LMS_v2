@@ -88,6 +88,10 @@ class ImportedReviewSerialisationTests(SimpleTestCase):
 class LocalMonthlyCoachingHistoryTests(SimpleTestCase):
     def setUp(self):
         self.source = SimpleNamespace(pk=101, email='learner@example.invalid', aptem_id=None)
+        self.profile = SimpleNamespace(id=248, enrolment_id=101, aptem_id=501)
+        profile_lookup = patch('learner_api.review_history.review_profile_for_source', return_value=self.profile)
+        self.profile_lookup = profile_lookup.start()
+        self.addCleanup(profile_lookup.stop)
         self.model = Mock()
         self.model.all_learners.only.return_value.filter.return_value.first.return_value = self.source
         self.cursor = MagicMock()
@@ -128,7 +132,7 @@ class LocalMonthlyCoachingHistoryTests(SimpleTestCase):
         self.cursor.fetchone.return_value = (248,)
         self.cursor.fetchall.side_effect = [[tuple(self.review.values())], []]
 
-    def test_local_mcm_remains_available_without_source_import_identity(self):
+    def test_local_mcm_uses_profile_aptem_identity_when_enrolment_identity_is_missing(self):
         for kind in ('commercial', 'apprenticeship'):
             for source_id in (None, '', 'legacy-missing'):
                 with self.subTest(kind=kind, source_id=source_id):
@@ -144,9 +148,9 @@ class LocalMonthlyCoachingHistoryTests(SimpleTestCase):
                     self.assertEqual(body['reviews'][0]['plannedDate'], '2026-11-04')
                     self.assertEqual(body['reviews'][0]['status'], 'not-scheduled')
                     calls = self.cursor.execute.call_args_list
-                    self.assertEqual(calls[0].args[1], [101, kind])
-                    self.assertEqual(calls[1].args[1], [248, list(review_history.REVIEW_TYPES['monthly-coaching'])])
-                    self.assertEqual(calls[2].args[1], [[62]])
+                    self.profile_lookup.assert_called_with(self.source)
+                    self.assertEqual(calls[0].args[1], [248, list(review_history.REVIEW_TYPES['monthly-coaching'])])
+                    self.assertEqual(calls[1].args[1], [[62]])
 
     def test_existing_import_identity_keeps_the_same_response(self):
         self.source.aptem_id = '501'
@@ -163,16 +167,13 @@ class LocalMonthlyCoachingHistoryTests(SimpleTestCase):
         })
 
     def test_missing_or_ambiguous_profile_does_not_read_reviews(self):
-        self.cursor.fetchone.return_value = None
-        for matches in ([], [(248,), (249,)]):
-            with self.subTest(matches=matches):
-                self.cursor.reset_mock()
-                self.cursor.fetchall.return_value = matches
-                response = self.load()
-                self.assertEqual(json.loads(response.content)['reviews'], [])
-                self.assertEqual(self.cursor.execute.call_count, 2)
-                self.assertTrue(all('FROM "Learner".learners' in call.args[0]
-                                    for call in self.cursor.execute.call_args_list))
+        self.profile_lookup.return_value = None
+        response = self.load()
+        self.assertEqual(json.loads(response.content)['reviews'], [])
+        self.connection.cursor.assert_not_called()
+        self.profile_lookup.side_effect = DatabaseError('Ambiguous source profile')
+        self.assertEqual(self.load().status_code, 503)
+        self.connection.cursor.assert_not_called()
 
     def test_another_learner_cannot_read_the_local_mcms(self):
         for kind in ('commercial', 'apprenticeship'):
@@ -208,8 +209,16 @@ class LocalMonthlyCoachingHistoryTests(SimpleTestCase):
         self.assertEqual(response.status_code, 503)
         self.assertEqual(json.loads(response.content)['error'], 'Could not load review history.')
 
-    def test_other_review_categories_keep_their_existing_eligibility(self):
-        for category in ('reviews', 'progress-review'):
+    def test_native_learner_does_not_read_imported_history_in_any_category(self):
+        # The agreed source separation also applies to monthly coaching:
+        # persisted rows alone must not reclassify a Native learner as Aptem.
+        self.profile.aptem_id = None
+        for category in ('reviews', 'progress-review', 'monthly-coaching'):
             with self.subTest(category=category):
                 self.assertEqual(json.loads(self.load(category=category).content)['reviews'], [])
+        self.connection.cursor.assert_not_called()
+
+    def test_conflicting_source_identities_do_not_read_imported_history(self):
+        self.source.aptem_id = '999'
+        self.assertEqual(json.loads(self.load().content)['reviews'], [])
         self.connection.cursor.assert_not_called()

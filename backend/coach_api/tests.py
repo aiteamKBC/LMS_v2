@@ -2208,7 +2208,7 @@ class CoachDashboardReadModelTests(SimpleTestCase):
         self.assertEqual(payload["learners"], [{"id": "1", "startDate": None,
                                              "displayStartDate": None, "otjhProgrammeStartDate": "--"}])
         self.assertIn("readModel", payload)
-        objects.filter.assert_called_once_with(owner_email="coach@example.com", schema_version=18)
+        objects.filter.assert_called_once_with(owner_email="coach@example.com", schema_version=19)
         objects.filter.return_value.only.assert_called_once_with("payload", "refreshed_at")
         objects.filter.return_value.only.return_value.first.assert_called_once_with()
         build_live.assert_not_called()
@@ -2232,7 +2232,7 @@ class CoachDashboardReadModelTests(SimpleTestCase):
                                              "displayStartDate": None, "otjhProgrammeStartDate": "--"}])
         self.assertEqual(payload["readModel"]["version"], 13)
         self.assertEqual(objects.filter.call_args_list[0].kwargs,
-                         {"owner_email": "coach@example.com", "schema_version": 18})
+                         {"owner_email": "coach@example.com", "schema_version": 19})
         self.assertEqual(objects.filter.call_args_list[1].kwargs,
                          {"owner_email": "coach@example.com"})
         refresh_metrics.assert_not_called()
@@ -2315,7 +2315,7 @@ class CoachDashboardReadModelTests(SimpleTestCase):
         payload = CoachDashboardService("coach@example.com").refresh()
 
         self.assertEqual(payload["readModel"], {
-            "version": 18, "refreshedAt": refreshed_at.isoformat(),
+            "version": 19, "refreshedAt": refreshed_at.isoformat(),
         })
 
 

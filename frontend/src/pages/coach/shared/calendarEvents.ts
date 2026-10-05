@@ -82,6 +82,14 @@ export interface CoachCalendarEvent {
   reviewCompletedAt?: string | null;
   reviewSource?: 'aptem' | 'curriculum' | string;
   aptemReviewId?: string | null;
+  reviewId?: string;
+  importedReviewType?: string;
+  rawStatus?: string;
+  sourceStatus?: string;
+  effectiveLmsStatus?: string;
+  calendarEventId?: string;
+  calendarEventKey?: string | null;
+  formEventKey?: string;
   reviewerName?: string | null;
   hasReviewForm?: boolean;
   hasTranscript?: boolean;

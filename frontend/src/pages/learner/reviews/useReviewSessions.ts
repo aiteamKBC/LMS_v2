@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { fetchLearnerDetail, type LearnerDetail } from '@/api/learnerDetail';
 import { fetchLearnerCalendarEvents, type BookingCalendarRules, type LearnerCalendarEvent } from '@/api/learnerCalendar';
-import { fetchReviewHistory, type ImportedReview } from '@/api/reviewHistory';
 import { useLinkedLearner } from '@/hooks/useMyLearner';
 import { useLiveRefresh } from '@/hooks/useRefreshOnReturn';
 
@@ -18,23 +17,15 @@ export function isReviewSession(event: LearnerCalendarEvent, source: ReviewSessi
   return event.reviewTypeCode ? event.reviewTypeCode === code : !event.reviewTemplateId && event.source === source;
 }
 
-/** Only Curriculum review changes can alter the review sessions on this page. */
+/** Refresh after either source's local Review lifecycle changes. */
 export function isReviewSessionWrite(path: string) {
-  return path.includes('/reviews/');
+  return path.includes('/reviews/') || path.includes('/migrated-reviews/');
 }
 
 /** The server identifies an LMS overlay by its owned calendar event. A source
  * history row can have the same key prefix but must keep its Aptem rendering. */
 export function isMigratedContinuationEvent(event: LearnerCalendarEvent | null): boolean {
   return Boolean(event?.migratedForm && event.eventKey.startsWith('imported-review:'));
-}
-
-/** Imported completed records remain history; Curriculum owns upcoming work. */
-export function mergeCompletedReviewHistory(events: LearnerCalendarEvent[], history: LearnerCalendarEvent[]) {
-  const linkedIds = new Set(events.map(event => event.reviewId).filter(Boolean));
-  const keys = new Set(events.map(event => event.eventKey));
-  return [...events, ...history.filter(event => event.status === 'completed'
-    && !keys.has(event.eventKey) && !linkedIds.has(event.importedReview?.id))];
 }
 
 /** Programme sessions remain usable if the learning summary is unavailable. */
@@ -47,7 +38,6 @@ export function useReviewSessions(source: ReviewSessionSource) {
   const [loading, setLoading] = useState(true);
   const [calendarError, setCalendarError] = useState('');
   const [detailError, setDetailError] = useState('');
-  const [usingImportedReviews, setUsingImportedReviews] = useState(false);
   const [revision, setRevision] = useState(0);
   const refresh = useCallback(() => setRevision(value => value + 1), []);
   useLiveRefresh(refresh, { match: isReviewSessionWrite });
@@ -57,7 +47,6 @@ export function useReviewSessions(source: ReviewSessionSource) {
     setCurrentCoach(null);
     setEvents([]);
     setBookingCalendar(null);
-    setUsingImportedReviews(false);
     setLoading(true);
   }, [myLearner.kind, myLearner.id, source]);
 
@@ -72,27 +61,15 @@ export function useReviewSessions(source: ReviewSessionSource) {
     void fetchLearnerDetail(myLearner.kind, myLearner.id, { revalidate: true })
       .then(detail => { if (!cancelled) setLearner(detail); })
       .catch(() => { if (!cancelled) setDetailError('Could not load the learner summary. Please try again.'); });
-    const historyPromise = source === 'review'
-      ? Promise.resolve([] as LearnerCalendarEvent[])
-      : fetchReviewHistory(myLearner.kind, myLearner.id,
-        source === 'mcr' ? 'monthly-coaching' : 'reviews')
-        .then(history => importedReviewsToEvents(history.reviews, source))
-        .catch(() => {
-          if (!cancelled) setDetailError('Could not load archived reviews. Please try again.');
-          return [];
-        });
+    // The server owns source selection and attaches local continuation state.
+    // Never add a second history stream or infer a Curriculum fallback here.
     void fetchLearnerCalendarEvents(myLearner.kind, myLearner.id, { revalidate: true })
-      .then(async calendar => {
+      .then(calendar => {
         if (cancelled) return;
         setBookingCalendar(calendar.bookingCalendar || null);
         setCurrentCoach(calendar.currentCoach || null);
         setEvents(calendar.events);
         setLoading(false);
-        const history = await historyPromise;
-        if (!cancelled) {
-          setEvents(current => mergeCompletedReviewHistory(current, history));
-          setUsingImportedReviews(history.some(event => event.status === 'completed'));
-        }
       })
       .catch(() => { if (!cancelled) setCalendarError('Could not load programme sessions. Please try again.'); })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -101,48 +78,6 @@ export function useReviewSessions(source: ReviewSessionSource) {
 
   const sessions = useMemo(() => events.filter(event => isReviewSession(event, source))
     .sort((a, b) => (a.date || a.targetDate || '').localeCompare(b.date || b.targetDate || '') || a.sequence - b.sequence || a.eventKey.localeCompare(b.eventKey)), [events, source]);
+  const usingImportedReviews = sessions.some(event => event.reviewSource === 'aptem' || event.importedReview);
   return { myLearner, learner, currentCoach, sessions, setEvents, bookingCalendar, loading, error: calendarError || detailError, refresh, usingImportedReviews };
-}
-
-/** Convert read-only imported review rows to the event shape used by the list.
- * The imported id is retained as the event id so a row can be opened without
- * inventing a calendar booking or exposing another learner's event key.
- */
-export function importedReviewsToEvents(
-  reviews: ImportedReview[],
-  source: 'mcr' | 'progress-review' = 'mcr',
-): LearnerCalendarEvent[] {
-  const chronological = [...reviews].sort((a, b) => {
-    const left = a.plannedDate || a.completedDate || '';
-    const right = b.plannedDate || b.completedDate || '';
-    return left.localeCompare(right) || a.id.localeCompare(b.id);
-  });
-  return chronological.map((review, index) => {
-    const date = review.plannedDate || review.completedDate || null;
-    const status = review.status || 'unknown';
-    return {
-      id: `imported-review:${review.id}`,
-      eventKey: `imported-review:${review.id}`,
-      title: review.name || (source === 'mcr' ? 'Monthly Coaching Meeting' : 'Review'),
-      source,
-      reviewTypeId: source === 'mcr' ? 'REVT-MCM' : 'REVT-PROGRESS_REVIEW',
-      reviewTypeCode: source === 'mcr' ? 'mcm' : 'progress_review',
-      reviewTypeName: source === 'mcr' ? 'Monthly Coaching Meeting' : 'Progress Review',
-      reviewTypeIsSystem: true,
-      type: source === 'mcr' ? 'coaching' : 'review',
-      sequence: index + 1,
-      status,
-      date,
-      targetDate: date,
-      scheduledDate: ['scheduled', 'in-progress', 'completed', 'awaiting-signature'].includes(status) ? date : null,
-      scheduledTime: review.plannedTime,
-      durationMinutes: 60,
-      coachName: review.reviewerName || '',
-      coachEmail: '',
-      meetingProvider: '',
-      meetingLink: '',
-      notes: '',
-      importedReview: review,
-    };
-  });
 }

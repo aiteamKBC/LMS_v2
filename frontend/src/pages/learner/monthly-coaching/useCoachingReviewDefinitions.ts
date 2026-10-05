@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { fetchLearnerEventReviewInstance, type LearnerCalendarEvent, type LearnerReviewDefinition } from '@/api/learnerCalendar';
+import { fetchLearnerEventReviewInstance, fetchMigratedReviewForParty, type LearnerCalendarEvent, type LearnerReviewDefinition } from '@/api/learnerCalendar';
 import type { LearnerKind } from '@/api/learnerDetail';
 import type { CoachingReviewDefinitions } from './coachingOverview';
 
@@ -14,8 +14,8 @@ const LOAD_ERROR = 'Some meeting signature details could not be loaded. Try agai
 
 /** Calendar statuses cannot identify which participant still needs to sign. */
 export function useCoachingReviewDefinitions(kind: LearnerKind, id: string, sessions: LearnerCalendarEvent[]): CoachingReviewDefinitionsState {
-  const candidates = useMemo(() => sessions.filter(session => !session.importedReview
-    && (session.reviewTemplateId || session.reviewInstanceId)
+  const candidates = useMemo(() => sessions.filter(session => (!session.importedReview || session.migratedForm)
+    && (session.migratedForm || session.reviewTemplateId || session.reviewInstanceId)
     && ['completed', 'awaiting-signature'].includes(session.status.trim().toLowerCase().replace(/[ _]+/g, '-'))), [sessions]);
   const identity = `${kind}:${id}`;
   const [revision, setRevision] = useState(0);
@@ -39,7 +39,9 @@ export function useCoachingReviewDefinitions(kind: LearnerKind, id: string, sess
     void Promise.all(candidates.map(async session => {
       const key = session.eventKey || session.id;
       try {
-        const definition = await fetchLearnerEventReviewInstance(kind, id, key, controller.signal);
+        const definition = session.migratedForm
+          ? await fetchMigratedReviewForParty(session.formEventKey || key, controller.signal)
+          : await fetchLearnerEventReviewInstance(kind, id, key, controller.signal);
         const hasSignatureDefinition = 'signatures' in definition;
         return {
           key,

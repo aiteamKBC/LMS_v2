@@ -121,7 +121,7 @@ class MigratedDefinitionTests(SimpleTestCase):
     ):
         calendar_rows.return_value.__getitem__.return_value = []
         profiles.return_value = [SimpleNamespace(
-            id=21, aptem_id=101, _caseload_source=SimpleNamespace(aptem_id=101),
+            id=21, enrolment_id=121, learner_type="commercial", aptem_id=101, _caseload_source=SimpleNamespace(aptem_id=101),
             programme_id="P-42", programme="Programme", username="Authoritative learner",
             email="learner@example.invalid",
         )]
@@ -185,7 +185,7 @@ class MigratedPreviewTests(SimpleTestCase):
     def setUp(self):
         self.definition_json = candidate_definition(SOURCE)
         self.profile = SimpleNamespace(
-            id=21, aptem_id=101, _caseload_source=SimpleNamespace(aptem_id=101),
+            id=21, enrolment_id=121, learner_type="commercial", aptem_id=101, _caseload_source=SimpleNamespace(aptem_id=101),
             programme_id="P-42", programme="Programme", username="Synthetic learner",
             email="synthetic@example.invalid",
         )
@@ -261,7 +261,8 @@ class MigratedPreviewTests(SimpleTestCase):
         self.templates.assert_called_once_with(
             "id:P-42", "MCM",
         )
-        self.overlays.return_value.first.assert_called_once()
+        # Read by existing event key, then by explicit source FK for legacy keys.
+        self.assertEqual(self.overlays.return_value.first.call_count, 2)
         self.assertEqual(self.cursor.execute.call_count, 1)
         self.assertTrue(self.cursor.execute.call_args.args[0].lstrip().startswith("SELECT"))
 
@@ -340,7 +341,7 @@ class MigratedPreviewTests(SimpleTestCase):
         self._patch("coach_api.views._imported_review_progress_snapshot", return_value=None)
         template = SimpleNamespace(pk=22, scope="GLOBAL", programme_key="",
             review_family="PR_SKILLS_RADAR", name="Global Skills Radar", definition_json=self.definition_json)
-        saved = SimpleNamespace(learner_id=21, source_review_id=407,
+        saved = SimpleNamespace(learner_id=21, source_review_id=407, owner_email="coach@example.invalid", event_key="imported-review:A-7",
             migrated_template=template, migrated_template_id=22,
             template_snapshot=snapshot_for(template), answers={}, status="not-scheduled", completed_at=None,
             progress_snapshot=None, updated_at=timezone.now(),
@@ -360,7 +361,7 @@ class MigratedPreviewTests(SimpleTestCase):
             graph_event_id="synthetic-graph", meeting_link="https://example.invalid/teams",
             scheduled_date=date(2026, 10, 30), scheduled_time=time(10), duration_minutes=60)
         with patch("coach_api.views.CoachCalendarEvent.objects.filter") as lookup:
-            lookup.return_value.__getitem__.return_value = [calendar]
+            lookup.return_value.__iter__.return_value = [calendar]
             result = self._get()
             self.assertTrue(result["booking"]["booked"])
             self.assertTrue(result["booking"]["canAttach"])
@@ -403,6 +404,17 @@ class MigratedPreviewTests(SimpleTestCase):
                     self.assertEqual(result["previewOnly"], preview)
                     self.overlays.return_value.get_or_create.assert_not_called()
 
+    def test_legacy_overlay_key_resolves_the_explicit_imported_id(self):
+        saved = SimpleNamespace(learner_id=21, source_review_id=407,
+            event_key="imported-review:407", owner_email="coach@example.invalid",
+            template_snapshot={}, answers={})
+        self.overlays.return_value.first.return_value = saved
+        result = views._imported_review_definition("coach@example.invalid", "imported-review:407", pdf_only=True)
+        self.assertEqual(self.cursor.execute.call_args.args[1], [[21], 407])
+        self.assertEqual(result["instance"]["id"], "imported-review:407")
+        self.assertEqual(result["historicalReview"]["aptemReviewId"], "A-7")
+        self.assertEqual(result["historicalReview"]["id"], "407")
+
     def test_missing_programme_and_global_keeps_safe_missing_state(self):
         self.profile.programme_id = None
         self.profile.programme = ""
@@ -427,6 +439,7 @@ class MigratedPreviewTests(SimpleTestCase):
 
     def test_view_as_initialized_review_uses_stored_snapshot_and_answers(self):
         self.overlays.return_value.first.return_value = SimpleNamespace(
+            event_key="imported-review:A-7", owner_email="coach@example.invalid",
             learner_id=21, source_review_id=407, template_snapshot=self.definition_json,
             progress_snapshot=None, updated_at=timezone.now(), migrated_template_id=None,
             answers={"section-0:comment": "Saved LMS answer"},
@@ -723,7 +736,7 @@ class MigratedBookingTests(TestCase):
             "migratedProgrammeKey": "id:P-42", "localStatus": "not-scheduled",
             "booking": {"conflict": False},
             "instance": {"id": self.overlay.event_key, "learnerId": 21, "targetDate": "2026-10-30"},
-            "historicalReview": {"id": "409", "type": "Progress Review"},
+            "historicalReview": {"id": "409", "aptemReviewId": "A-9", "type": "Progress Review", "status": "not-scheduled"},
         }
         self.slot = {"scheduledDate": (date.today() + timedelta(days=10)).isoformat(),
                      "scheduledTime": "10:00", "durationMinutes": 60}
@@ -747,7 +760,7 @@ class MigratedBookingTests(TestCase):
         with patch("coach_api.views.authenticated_coach_email", return_value="coach@example.invalid"), \
              patch("coach_api.views._imported_review_definition", return_value=self.definition if definition is None else definition), \
              patch("coach_api.views.find_generated_timetable_event", return_value=(self.base_event, "Coach")), \
-             patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[SimpleNamespace(id=21)]), \
+             patch("coach_api.views.fetch_caseload_dashboard_profiles", return_value=[SimpleNamespace(id=21, enrolment_id=101, learner_type="commercial")]), \
              patch("coach_api.views.coach_learner_personal_calendar_conflicts", return_value=False), \
              patch("coach_api.views.england_non_delivery_reason", return_value=None), \
              patch("coach_api.views.sync_calendar_event_to_graph", side_effect=graph_sync) as graph:
@@ -1066,3 +1079,79 @@ class MigratedBookingTests(TestCase):
         self.assertEqual(calendar.graph_event_id, "existing-graph-event")
         self.overlay.refresh_from_db()
         self.assertEqual(self.overlay.status, "scheduled")
+
+    def _legacy_progress_booking(self, **changes):
+        fields = dict(
+            event_key="legacy-progress-key", idempotency_key="learner-book:progress-review:commercial:101:2026-10:409",
+            owner_email=self.overlay.owner_email, learner_id=101, event_type="progress-review",
+            target_date=date(2026, 10, 30), scheduled_date=date.fromisoformat(self.slot["scheduledDate"]),
+            scheduled_time=time(10), duration_minutes=60, status="scheduled", sync_state="synced",
+            graph_event_id="existing-progress-meeting", meeting_link="https://example.invalid/teams/progress",
+            review_instance_id="legacy-native-link", review_template_id="legacy-template",
+        )
+        return CoachCalendarEvent.objects.create(**{**fields, **changes})
+
+    def test_legacy_progress_and_skills_booking_survives_start_completion_and_intelligence(self):
+        from .migrated_templates import snapshot_for
+        from .migrated_completion_views import _mirror_status, _pdf_context
+        from .migrated_intelligence_views import _association
+        for family, title in (("PR", "Progress Review"), ("PR_SKILLS_RADAR", "Progress Review (+ Skills Radar)")):
+            with self.subTest(family=family):
+                self.template.review_family = family
+                self.template.save(update_fields=["review_family"])
+                self.overlay.template_snapshot = snapshot_for(self.template)
+                self.overlay.status = "not-scheduled"
+                self.overlay.save(update_fields=["template_snapshot", "status"])
+                self.definition["historicalReview"]["type"] = title
+                self.definition["template"] = {"reviewTypeCode": "aptem_progress_review"}
+                record = self._legacy_progress_booking()
+                identity = (record.pk, record.event_key, record.operation_id, record.graph_event_id, record.review_instance_id)
+                # No booking key in the cached definition: linkage must be resolved again.
+                response, graph_calls = self.book()
+                self.assertEqual(response.status_code, 200, response.content)
+                self.assertEqual(graph_calls, 0)
+                with patch("learner_api.models.LearnerProfile.objects.filter") as profiles, \
+                     patch("coach_api.views.authenticated_coach_email", return_value=self.overlay.owner_email), \
+                     patch("coach_api.views._imported_review_definition", return_value=self.definition):
+                    profiles.return_value.first.return_value = SimpleNamespace(id=21, enrolment_id=101, learner_type="commercial")
+                    started = unwrap(views.coach_review_instance_local_status)(
+                        RequestFactory().post("/start", data=json.dumps({"status": "in-progress"}), content_type="application/json"),
+                        self.overlay.event_key)
+                    self.assertEqual(started.status_code, 200, started.content)
+                    self.overlay.refresh_from_db()
+                    self.assertEqual(self.overlay.status, "in-progress")
+                    request = RequestFactory().get("/")
+                    request.coach_email = self.overlay.owner_email
+                    self.assertEqual(_association(request, self.overlay.event_key)[1].pk, record.pk)
+                    self.overlay.status = "completed"
+                    self.overlay.completed_at = timezone.now()
+                    _mirror_status(self.overlay)
+                    self.assertEqual(_pdf_context(self.overlay, self.definition)["scheduled_date"], record.scheduled_date)
+                record.refresh_from_db()
+                self.assertEqual(record.status, "completed")
+                self.assertEqual((record.pk, record.event_key, record.operation_id, record.graph_event_id, record.review_instance_id), identity)
+                self.assertEqual(CoachCalendarEvent.objects.count(), 1)
+                record.delete()
+
+    def test_canonical_and_legacy_appointments_block_another_booking(self):
+        self.assertEqual(self.book()[0].status_code, 200)
+        self._legacy_progress_booking()
+        response, graph_calls = self.book()
+        self.assertEqual(response.status_code, 409, response.content)
+        self.assertEqual(json.loads(response.content)["error"], "BOOKING_CONFLICT")
+        self.assertEqual(graph_calls, 0)
+        self.assertEqual(CoachCalendarEvent.objects.count(), 2)
+
+    def test_former_coach_legacy_progress_booking_blocks_recreation(self):
+        self._legacy_progress_booking(owner_email="former-coach@example.invalid")
+        response, graph_calls = self.book()
+        self.assertEqual(response.status_code, 409, response.content)
+        self.assertEqual(graph_calls, 0)
+        self.assertEqual(CoachCalendarEvent.objects.count(), 1)
+
+    def test_canonical_native_link_cannot_be_reused_as_an_imported_booking(self):
+        self._legacy_progress_booking(event_key=self.overlay.event_key, learner_id=21)
+        response, graph_calls = self.book()
+        self.assertEqual(response.status_code, 409, response.content)
+        self.assertEqual(graph_calls, 0)
+        self.assertEqual(CoachCalendarEvent.objects.get().review_instance_id, "legacy-native-link")

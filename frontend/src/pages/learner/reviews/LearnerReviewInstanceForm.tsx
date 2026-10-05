@@ -1,3 +1,5 @@
+import { renderImportedSection } from './imported/renderImportedSection';
+import { ImportedValue } from './imported/ImportedReviewSection';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import {
@@ -377,6 +379,11 @@ export function LearnerReviewInstanceForm({
 
       <ReviewFormRenderer
         sections={definition.sections}
+        renderSectionContent={definition.source === 'aptem' && viewerRole === 'participant'
+          ? (section, renderFields) => renderImportedSection(section, answers, renderFields) : undefined}
+        renderFieldInput={definition.source === 'aptem' && viewerRole === 'participant'
+          ? (field, context) => context.readOnly ? <ImportedValue value={context.value} label={field.title} fieldType={field.fieldType} /> : undefined
+          : undefined}
         answers={answers}
         onAnswerChange={handleAnswerChange}
         readOnly

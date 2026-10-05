@@ -4,7 +4,6 @@ import logging
 import math
 from datetime import date, datetime, time, timedelta
 
-from django.db import connection
 from django.http import JsonResponse
 from django.middleware.csrf import get_token
 from django.utils import timezone
@@ -13,68 +12,26 @@ from django.views.decorators.http import require_GET, require_POST
 
 from login.permissions import learner_self_or_admin, learner_self_or_staff
 from .attendance_confirmation import read_confirmations, save_confirmation
-from .calendar import coaching_events_for_learner
-from .identity import learner_profile_for_source
+from .calendar import _calendar_profile, coaching_events_for_learner
 from .learner_detail import SOURCE_MODELS
-from .review_history import REVIEW_TYPES, _learner_profile_id, _review_rows, _serialize_review
-from .student_activity_access import student_activity_available
 
 log = logging.getLogger(__name__)
 MEETING_TYPES = {'mcr', 'progress-review'}
 
 
 def meeting_records(source, kind):
-    """Match the list pages' source precedence; never join records by title/date."""
-    mirror = learner_profile_for_source(source, source.pk, active_only=True)
+    """Consume the same occurrences as both calendars, retaining ledger IDs."""
+    mirror = _calendar_profile(source, source.pk)
     calendar = [item for item in coaching_events_for_learner(source, mirror) if item['source'] in MEETING_TYPES]
-    imported = {}
-    if student_activity_available(getattr(source, 'aptem_id', None)):
-        with connection.cursor() as cur:
-            profile_id = _learner_profile_id(cur, source, kind)
-            if profile_id:
-                for category, event_type in [('monthly-coaching', 'mcr'), ('reviews', 'progress-review')]:
-                    imported[event_type] = [_serialize_review(row, {}) for row in _review_rows(cur, profile_id, REVIEW_TYPES[category])]
     result = []
-    bookings_by_review = {}
-    if any(imported.values()):
-        from coach_api.models import CoachCalendarEvent
-        owned = {item['eventKey']: item for item in calendar}
-        # One lookup for all imported reviews, including rescheduled bookings.
-        for record in CoachCalendarEvent.objects.filter(event_key__in=list(owned)):
-            parts = (record.idempotency_key or '').split(':')
-            if len(parts) != 6 or parts[0] != 'learner-book' or parts[2:4] != [kind, str(source.pk)]:
-                continue
-            event_type = 'mcr' if parts[1] == 'mcm' else parts[1]
-            booking = owned[record.event_key]
-            if booking['source'] == event_type:
-                bookings_by_review.setdefault((event_type, parts[5]), []).append(booking)
-    for event_type in MEETING_TYPES:
-        rows = imported.get(event_type, [])
-        if not rows:
-            result.extend(item for item in calendar if item['source'] == event_type)
+    for item in calendar:
+        if item.get('reviewSource') != 'aptem':
+            result.append(item)
             continue
-        allowed_types = {name.casefold() for name in REVIEW_TYPES['monthly-coaching' if event_type == 'mcr' else 'progress-review']}
-        for review in rows:
-            if review['type'].strip().casefold() not in allowed_types:
-                continue
-            # An imported row does not contain duration or an online meeting URL.
-            # Only a durable review-id booking may supply those fields.
-            matches = [booking for booking in bookings_by_review.get((event_type, review['id']), [])
-                if booking['scheduledDate'] == review['plannedDate'] and booking['scheduledTime'] == review['plannedTime']]
-            booking = matches[0] if len(matches) == 1 else None
-            result.append({
-                'id': f"imported-review:{review['id']}", 'source': event_type,
-                'title': review['name'], 'status': review['status'],
-                'scheduledDate': review['plannedDate'] if review['status'] in {'scheduled', 'in-progress', 'completed', 'awaiting-signature'} else None,
-                'scheduledTime': review['plannedTime'], 'durationMinutes': booking['durationMinutes'] if booking else None,
-                'coachName': review['reviewerName'], 'meetingLink': booking['meetingLink'] if booking else '',
-                'meetingProvider': booking['meetingProvider'] if booking else '',
-                'bookingStatus': booking['status'] if booking else None,
-                'syncWarning': booking.get('syncWarning', '') if booking else '',
-                'invited': booking.get('invited') if booking else None,
-                'eventKey': booking['eventKey'] if booking else None,
-                'monthlyLogRef': f"meeting:{booking['eventKey']}" if booking else f"review-attendance:{review['id']}",
-            })
+        booking_key = item.get('calendarEventKey')
+        result.append({**item, 'id': f"imported-review:{item['reviewId']}",
+                       'eventKey': booking_key, 'actualBooking': bool(booking_key),
+                       'monthlyLogRef': f"meeting:{booking_key}" if booking_key else f"review-attendance:{item['reviewId']}"})
     return result
 
 
@@ -89,7 +46,8 @@ def report_key(source, meeting):
 
 
 def is_booked(meeting):
-    return (meeting.get('status') in {'scheduled', 'in-progress'}
+    return (meeting.get('actualBooking') is not False
+        and meeting.get('status') in {'scheduled', 'in-progress'}
         and meeting.get('bookingStatus') not in {'cancelled', 'deleted', 'superseded', 'failed'}
         and bool(meeting.get('scheduledDate') and meeting.get('scheduledTime')))
 
