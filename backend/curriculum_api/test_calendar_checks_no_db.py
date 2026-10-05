@@ -64,6 +64,8 @@ class CalendarChecksTests(unittest.TestCase):
                               attendees_already_match=checks.attendees_already_match,
                               event_organizer_address=checks.event_organizer_address,
                               unconfirmed_attendee_detail=checks.unconfirmed_attendee_detail,
+                              sessions_a_rewrite_would_drop=checks.sessions_a_rewrite_would_drop,
+                              dropped_sessions_sentence=checks.dropped_sessions_sentence,
                               teams_meeting_default_organizer=lambda: '', teams_new_meeting_organizer=lambda value: value,
                               json_body=lambda request: self.payload, ensure_live_sessions_table=lambda: None,
                               ensure_live_session_tracking_tables=lambda: None,
@@ -91,7 +93,7 @@ class CalendarChecksTests(unittest.TestCase):
                  'teams_standalone_occurrence_meeting',
                  'apply_teams_occurrence_shifts', 'curriculum_teams_meeting', 'curriculum_teams_meeting_schedule',
                  # The occurrence-deletion rule and the sentence a refusal is reported with.
-                 'parse_int', 'vacated_occurrence_keys', 'tracked_occurrence_keys', 'execute_teams_occurrence_deletions',
+                 'parse_int', 'vacated_occurrence_keys', 'tracked_occurrence_keys', 'flag_teams_occurrence_leftovers',
                  'teams_warning_sentence',
                  'verify_teams_calendar_with_standalones', 'publish_teams_calendar_attendees',
                  'teams_newly_invited', 'forward_teams_invitation',
@@ -262,13 +264,15 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertEqual(result.status_code, 201, result)
         self.assertEqual(self.events['event-1']['recurrence']['pattern']['daysOfWeek'], ['thursday'])
         self.assertEqual(self.events['event-1']['recurrence']['range']['numberOfOccurrences'], 13)
-        self.assertEqual(len(self.instances), 12)
+        # The recurrence's one spare weekly slot is no longer deleted: removing it
+        # is a cancellation Exchange emails to everyone invited, and only an
+        # explicit Cancel may send one. It stays on Teams and is reported.
+        self.assertEqual(len(self.instances), 13)
         self.assertEqual(len(self.tracked), 12)
-        deletes = [i for i, call in enumerate(self.calls) if call[0] == 'DELETE']
+        self.assertFalse([call for call in self.calls if call[0] == 'DELETE' or call[1].endswith('/cancel')])
+        self.assertEqual(len(result['leftoverSlots']), 1)
         invitations = [i for i, call in enumerate(self.calls) if call[0] == 'PATCH' and 'attendees' in call[2]]
-        self.assertEqual(len(deletes), 1)
         self.assertEqual(len(invitations), 1)
-        self.assertLess(max(deletes), invitations[0])
         self.assertTrue(self.events['event-1']['hideAttendees'])
 
     def test_noon_remains_noon_across_dst(self):
@@ -501,9 +505,11 @@ class CalendarChecksTests(unittest.TestCase):
                      'quote': urllib_parse.quote, 'urlencode': urllib_parse.urlencode, 'ZoneInfo': ZoneInfo, 'uuid': uuid,
                      'JsonResponse': Response, 'calendar_targets': checks.calendar_targets,
                      'verify_calendar': checks.verify_calendar, 'publish_attendees': checks.publish_attendees,
-                     'CalendarMismatch': checks.CalendarMismatch}
+                     'CalendarMismatch': checks.CalendarMismatch,
+                     'sessions_a_rewrite_would_drop': checks.sessions_a_rewrite_would_drop,
+                     'dropped_sessions_sentence': checks.dropped_sessions_sentence}
         tree = ast.parse((ROOT / 'teams_weekly_calendar.py').read_text(encoding='utf-8-sig'))
-        functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+        functions = [node for node in tree.body if isinstance(node, (ast.FunctionDef, ast.ClassDef))]
         exec(compile(ast.Module(body=functions, type_ignores=[]), 'weekday_calendar_functions', 'exec'), namespace)
         self.v.calendar_groups = namespace['calendar_groups']
         self.v.save_weekday_calendar = namespace['save_weekday_calendar']
@@ -525,7 +531,8 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertEqual(len(self.tracked), 4)
         invite_indexes = [i for i, call in enumerate(self.calls) if call[0] == 'PATCH' and 'attendees' in call[2]]
         self.assertEqual(len(invite_indexes), 2)
-        self.assertLess(max(i for i, call in enumerate(self.calls) if call[0] == 'DELETE'), min(invite_indexes))
+        # Spare weekly slots are reported, never deleted (see flag_teams_occurrence_leftovers).
+        self.assertFalse([call for call in self.calls if call[0] == 'DELETE' or call[1].endswith('/cancel')])
         self.assertTrue(all(event['hideAttendees'] for event in self.events.values()))
 
     def test_second_weekday_failure_does_not_send_first_weekday_invites(self):

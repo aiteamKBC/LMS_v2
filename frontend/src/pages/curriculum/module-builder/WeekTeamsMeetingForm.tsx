@@ -1,5 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { formatSystemTimestamp } from '@/lib/format';
 import { EntraPeopleInput } from '../teams-meetings/EntraPeopleInput';
 import {
   calendarLabel,
@@ -20,6 +21,10 @@ import {
 import {
   cancelWeekTeamsMeeting,
   createWeekTeamsMeeting,
+  deleteTeamsCreateDraft,
+  fetchTeamsCreateDraft,
+  saveTeamsCreateDraft,
+  type TeamsCreateDraft,
   updateWeekTeamsMeeting,
   type WeekTeamsMeetingResult,
   utcIsoToCalendarParts,
@@ -136,6 +141,23 @@ export function existingWeekMeeting(week: ModuleWeek | undefined): ComponentSett
 function peopleList(value: unknown): string[] {
   if (Array.isArray(value)) return value.map(item => cleanText(item)).filter(Boolean);
   return cleanText(value).split(/[\s,;]+/).map(item => item.trim()).filter(Boolean);
+}
+
+/**
+ * A saved draft laid over the form, keeping only the fields the form holds.
+ *
+ * A week the module no longer has is not restored; the form stays on the week
+ * it opened on, with that week's own day.
+ */
+function draftWeekFormValues(saved: Record<string, string>, current: WeekTeamsMeetingForm, weeks: ModuleWeek[]): WeekTeamsMeetingForm {
+  const next: WeekTeamsMeetingForm = { ...current };
+  const text = ['title', 'organizerEmail', 'date', 'startTime', 'durationMinutes', 'details', 'lobbyBypass',
+    'recording', 'spokenLanguage', 'presenters', 'coOrganizers', 'attendees'] as const;
+  for (const key of text) if (typeof saved[key] === 'string') next[key] = saved[key];
+  if (saved.scheduleTimeZone === 'Africa/Cairo' || saved.scheduleTimeZone === 'Europe/London') next.scheduleTimeZone = saved.scheduleTimeZone;
+  if (saved.weekId && weeks.some(item => item.id === saved.weekId)) next.weekId = saved.weekId;
+  else next.date = current.date;
+  return next;
 }
 
 /** The day a week runs, which is the date an additional meeting starts from. */
@@ -421,6 +443,47 @@ export function WeekTeamsMeetingPanel({
     setError('');
   };
 
+  // Save draft: the form kept on the server for this module, without booking
+  // anything. Nothing reaches Microsoft and nobody is emailed until Create.
+  const [savedForm, setSavedForm] = useState<WeekTeamsMeetingForm>(form);
+  const [draft, setDraft] = useState<TeamsCreateDraft | null>(null);
+  const [draftSaving, setDraftSaving] = useState(false);
+  const dirty = JSON.stringify(form) !== JSON.stringify(savedForm);
+  // Read by the draft's late-arriving load, which must not overwrite typing.
+  const untouched = useRef(true);
+  untouched.current = !dirty && !editing;
+  useEffect(() => {
+    let cancelled = false;
+    void fetchTeamsCreateDraft(module.catalogueId, 'week').then(({ draft: saved }) => {
+      if (cancelled || !saved || !untouched.current) return;
+      setForm(current => {
+        const next = draftWeekFormValues(saved.form, current, weeks);
+        setSavedForm(next);
+        return next;
+      });
+      setDraft(saved);
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+    // Once per module: the draft is a starting point, read when the tab opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [module.catalogueId]);
+
+  const saveDraft = async () => {
+    if (draftSaving || saving || editing) return;
+    const values = form;
+    setDraftSaving(true);
+    setError('');
+    try {
+      const result = await saveTeamsCreateDraft(module.catalogueId, { ...values }, 'week');
+      setDraft(result.draft);
+      setSavedForm(values);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'The draft could not be saved.');
+    } finally {
+      setDraftSaving(false);
+    }
+  };
+
   const week = weeks.find(item => item.id === form.weekId);
   const booked = existingWeekMeeting(week);
   const block = weekMeetingBlock(week);
@@ -543,6 +606,12 @@ export function WeekTeamsMeetingPanel({
         warnings: result.warnings || [],
         email: result.scheduleEmail,
       });
+      // The meeting exists, so the draft it was filled from is finished. Best
+      // effort: a draft left behind is only a prefill.
+      if (draft) {
+        setDraft(null);
+        void deleteTeamsCreateDraft(module.catalogueId, 'week').catch(() => undefined);
+      }
       onCreated?.(result.meeting.joinUrl);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'The additional Teams meeting could not be created.');
@@ -593,7 +662,12 @@ export function WeekTeamsMeetingPanel({
         ))}
         <button
           type="button"
-          onClick={() => { setCreated(null); setForm(emptyWeekTeamsMeetingForm(form.weekId)); }}
+          onClick={() => {
+            const next = emptyWeekTeamsMeetingForm(form.weekId);
+            setCreated(null);
+            setForm(next);
+            setSavedForm(next);
+          }}
           className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100"
         >
           <AppIcon className="ri-add-line text-sm"></AppIcon>
@@ -755,6 +829,26 @@ export function WeekTeamsMeetingPanel({
             className="inline-flex h-10 items-center rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100"
           >
             Discard changes
+          </button>
+        )}
+        {!editing && draft && !dirty && (
+          <span className="mr-auto text-[11px] font-semibold text-foreground-500">
+            Draft saved {formatSystemTimestamp(draft.updatedAt, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}
+            {draft.updatedByName ? ` by ${draft.updatedByName}` : ''}. Nothing is in Teams yet.
+          </span>
+        )}
+        {/* Booking a new meeting only: an edit to a booked one has to reach
+            Microsoft to mean anything, so it has no draft. */}
+        {!editing && (
+          <button
+            type="button"
+            onClick={() => void saveDraft()}
+            disabled={!dirty || draftSaving || saving}
+            title="Keep what you have filled in for this module without creating anything in Teams. Nobody is emailed."
+            className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-background-300 bg-white px-4 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <AppIcon className={draftSaving ? 'ri-loader-4-line animate-spin text-sm' : 'ri-save-3-line text-sm'}></AppIcon>
+            Save draft
           </button>
         )}
         <button
