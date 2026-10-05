@@ -120,6 +120,23 @@ describe('weekly live session attendance', () => {
     expect(screen.getByRole('link', { name: 'Join session' })).toHaveAttribute('href', 'https://teams.microsoft.com/l/meetup-join/example');
   });
 
+  it('keeps the coach read-only view free of learner actions', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-07T09:30:00Z'));
+    learnerDetail.real.components = [
+      { componentId: 'C1', moduleId: 'M1', weekId: 'W1', component: 'First reading', type: 'reading' },
+    ];
+
+    render(<MemoryRouter><WeeklyLearningPlan kind="commercial" learnerId="125"
+      schedule={sessionSchedule(null)} scheduleLoading={false} canOpenActivities={false} /></MemoryRouter>);
+
+    expect(screen.queryByRole('link', { name: 'Join session' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Join session' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('columnheader', { name: 'Action' })).not.toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Status' })).toBeVisible();
+    expect(screen.getByPlaceholderText('Search activities...')).toBeVisible();
+  });
+
   it('updates the indicator and join action as the session starts and ends', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-09-07T07:59:30Z'));

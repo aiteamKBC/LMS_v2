@@ -15,7 +15,7 @@ const learner: Learner = {
   otjhTargetAsOfToday: 80, otjhProgressAsOfToday: 87.5, otjhRagStatus: 'on-track',
   evidenceCount: 2, nextCoaching: '--', nextReview: '--', lastContact: '--', lastAttendanceDate: '--',
   lastActivity: '19 Sep 2026', lastProgressReview: '--', lastReview: '--', lastCoachingSession: '--', lastSubmittedEvidence: '--',
-  recentFlag: null, progressVariance: '--', startDate: '01 Jan 2026', gatewayReviewDate: '01 Jan 2027', plannedEndDate: '01 Feb 2027',
+  recentFlag: null, progressVariance: '--', startDate: '01 Jan 2026', displayStartDate: '01 Jan 2026', displayEndDate: '01 Feb 2027', gatewayReviewDate: '01 Jan 2027', plannedEndDate: '01 Feb 2027',
   rawProgramStatus: 'Delivery', programmeName: 'Project Manager Level 4', liveAttendanceRate: 88,
 };
 
@@ -76,6 +76,7 @@ describe('coach learners PDF', () => {
       { ...learner, id: 'epa', name: 'EPA Learner', rawProgramStatus: 'Entered-EPA' },
       { ...learner, id: 'withdrawn', name: 'Withdrawn Learner', rawProgramStatus: 'Withdrawn' },
       { ...learner, id: 'fallback-withdrawn', name: 'Fallback Withdrawn', rawProgramStatus: '--', enrollmentStatus: 'withdrawn' as const },
+      { ...learner, id: 'completed', name: 'Completed Learner', rawProgramStatus: 'Completed' },
     ];
     const content = pdfText(buildLearnersPdf(learners, 'Coach Example', logo));
 
@@ -84,6 +85,7 @@ describe('coach learners PDF', () => {
     expect(content).not.toContain('EPA Learner');
     expect(content).not.toContain('Withdrawn Learner');
     expect(content).not.toContain('Fallback Withdrawn');
+    expect(content).not.toContain('Completed Learner');
     expect(content).toContain('LEARNERS INCLUDED PREPARED BY 1 Coach Example');
   });
 });

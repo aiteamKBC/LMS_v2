@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import apply_sharon_remaining_evidence as impl
 
 
-LABEL = "\u062a\u0642\u062f\u064a\u0631\u064a \u2014 \u064a\u062d\u062a\u0627\u062c \u0627\u0639\u062a\u0645\u0627د"
+LABEL = "Estimated — approval required"
 
 # Sophie Graham (Aptem 4365); all three parents/sources are intentionally new.
 impl.PLAN = [

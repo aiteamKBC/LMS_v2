@@ -51,8 +51,12 @@ def _mirror_status(overlay):
     update = {"status": overlay.status}
     if overlay.status == ImportedReviewInstance.STATUS_COMPLETED:
         update["review_completed_at"] = overlay.completed_at
+    from coach_api.views import imported_review_calendar_rows
+    rows = imported_review_calendar_rows(overlay.owner_email, overlay.event_key, lock=True)
+    if len(rows) != 1:
+        return
     calendar = CoachCalendarEvent.objects.filter(
-        event_key=overlay.event_key, owner_email__iexact=overlay.owner_email,
+        pk=rows[0].pk, owner_email__iexact=overlay.owner_email,
         learner_id=overlay.learner_id,
     ).filter(
         Q(review_instance_id__isnull=True) | Q(review_instance_id=""),
@@ -179,13 +183,11 @@ def migrated_review_party_pdf(request, review_id):
     account = authenticate_request(request)
     if account is None:
         return JsonResponse({"detail": "Sign in to view this PDF."}, status=401)
-    overlay = _party_overlay(review_id, account)
-    if not overlay or overlay.status != ImportedReviewInstance.STATUS_COMPLETED:
-        return JsonResponse({"detail": "Completed review not found for this account."}, status=404)
-    document = MigratedReviewDocument.objects.filter(overlay=overlay).first()
-    if not document:
-        return JsonResponse({"detail": "The LMS PDF has not been generated yet."}, status=409)
-    return stored_pdf_response(overlay, document)
+    with transaction.atomic():
+        overlay = _party_overlay(review_id, account, lock=True)
+        if not overlay or overlay.status != ImportedReviewInstance.STATUS_COMPLETED:
+            return JsonResponse({"detail": "Completed review not found for this account."}, status=404)
+        return _completed_pdf_response(overlay)
 
 
 @require_POST
@@ -228,11 +230,33 @@ def migrated_review_complete(request, review_id):
     return _response(owner, review_id)
 
 
-def _pdf_context(overlay, definition):
-    calendar = CoachCalendarEvent.objects.filter(
-        event_key=overlay.event_key, owner_email__iexact=overlay.owner_email,
-        learner_id=overlay.learner_id,
-    ).first()
+def _pdf_context(overlay, definition=None):
+    if definition is None:
+        # Participants retain their own ownership gate; they need neither coach
+        # mutation permission nor membership of the original coach's caseload.
+        # Only persisted identity/date display context is read, never live form,
+        # template, learner progress or meeting intelligence services.
+        from coach_api.views import _review_learner_identity, get_learner_db_alias
+        profile = LearnerProfile.objects.filter(pk=overlay.learner_id).first()
+        with connections[get_learner_db_alias()].cursor() as cursor:
+            cursor.execute(
+                'SELECT planned_scheduled_date, review_type, status, completed_date '
+                'FROM "Learner".reviews WHERE id = %s AND learner_id = %s',
+                [overlay.source_review_id, overlay.learner_id],
+            )
+            source = cursor.fetchone()
+        if not profile or not source or str(source[2] or "").strip().casefold() == "completed" or source[3]:
+            raise ValueError("Migrated source association is unavailable.")
+        definition = {
+            **_review_learner_identity(profile),
+            "instance": {"targetDate": source[0]},
+            "historicalReview": {"type": source[1]},
+        }
+    from coach_api.views import imported_review_calendar_rows
+    rows = imported_review_calendar_rows(overlay.owner_email, overlay.event_key)
+    calendar = next((row for row in rows if len(rows) == 1
+                     and row.owner_email.casefold() == overlay.owner_email.casefold()
+                     and row.learner_id == overlay.learner_id), None)
     return {
         "learner_name": definition.get("learnerName") or "",
         "learner_email": definition.get("learnerEmail") or "",
@@ -241,6 +265,28 @@ def _pdf_context(overlay, definition):
         "coach_name": overlay.owner_email,
         "source_family": review_family((definition.get("historicalReview") or {}).get("type")),
     }
+
+
+def _final_document(overlay, definition=None):
+    """Caller holds the completed overlay lock, including during first render.
+
+    Recheck under that lock so simultaneous coach/participant downloads and the
+    compatibility endpoint all reuse the winner's immutable document. Existing
+    documents need no display context or rendering. The unique overlay FK is a
+    second persistence guard. Only local rendering occurs while holding the lock.
+    """
+    document = MigratedReviewDocument.objects.filter(overlay=overlay).first()
+    return document if document is not None else ensure_document(overlay, **_pdf_context(overlay, definition))
+
+
+def _completed_pdf_response(overlay, definition=None):
+    try:
+        document = _final_document(overlay, definition)
+    except Exception:
+        # ensure_document inserts only after rendering, inside a savepoint.
+        # A retry never needs to change completion, answers or signatures.
+        return JsonResponse({"detail": "Unable to prepare the signed PDF. Please try again."}, status=503)
+    return stored_pdf_response(overlay, document)
 
 
 @coach_access_required
@@ -254,7 +300,7 @@ def migrated_review_generate_pdf(request, review_id):
         if not overlay or overlay.status != ImportedReviewInstance.STATUS_COMPLETED:
             return JsonResponse({"detail": "Complete the review before generating its PDF."}, status=409)
         try:
-            document = ensure_document(overlay, **_pdf_context(overlay, definition))
+            document = _final_document(overlay, definition)
         except Exception:
             # The completed review stays intact; no incomplete document is stored.
             return JsonResponse({"detail": "The LMS PDF could not be generated. Retry this action."}, status=503)
@@ -263,10 +309,8 @@ def migrated_review_generate_pdf(request, review_id):
 
 def migrated_review_pdf_response(request, review_id, definition):
     owner = authenticated_coach_email(request).strip().casefold()
-    overlay = ImportedReviewInstance.objects.filter(owner_email__iexact=owner, event_key=review_id).first()
-    if not overlay or overlay.status != ImportedReviewInstance.STATUS_COMPLETED:
-        return JsonResponse({"detail": "The migrated review is not complete."}, status=409)
-    document = MigratedReviewDocument.objects.filter(overlay=overlay).first()
-    if not document:
-        return JsonResponse({"detail": "The LMS PDF has not been generated yet."}, status=409)
-    return stored_pdf_response(overlay, document)
+    with transaction.atomic():
+        overlay = _locked_overlay(owner, definition)
+        if not overlay or overlay.event_key != review_id or overlay.status != ImportedReviewInstance.STATUS_COMPLETED:
+            return JsonResponse({"detail": "The migrated review is not complete."}, status=409)
+        return _completed_pdf_response(overlay, definition)

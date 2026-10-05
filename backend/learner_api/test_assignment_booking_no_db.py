@@ -195,6 +195,7 @@ class AssignmentBookingTests(unittest.TestCase):
         self.manager.get_or_create.assert_not_called()
         kwargs = self.coach.reserve_coach_calendar_booking.call_args.kwargs
         self.assertEqual(kwargs['idempotency_key'], 'learner-book:mcm:commercial:101:2026-10:9840')
+        self.assertEqual(kwargs['local_mcm_review_id'], '9840')
         self.assertEqual((kwargs['learner_id'], kwargs['session_type'], kwargs['initial_status']), (248, 'mcr', 'scheduled'))
         self.coach.synchronize_reserved_calendar_event.assert_called_once()
         self.mark_imported.assert_called_once_with('9840', 248, date(2026, 10, 27), time(10, 0))

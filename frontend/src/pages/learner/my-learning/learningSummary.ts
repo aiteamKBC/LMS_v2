@@ -1,6 +1,6 @@
 import type { LearnerDetail } from '@/api/learnerDetail';
 import type { StudentActivityItem, StudentActivityResponse } from '@/api/studentActivity';
-import { completedComponentIds, isComponentComplete, type JourneyComponent } from '@/utils/learnerJourney';
+import { completedComponentIds, isComponentComplete, quizAttemptsFor, type JourneyComponent } from '@/utils/learnerJourney';
 
 export type Schedule = Pick<StudentActivityItem, 'date' | 'month' | 'week_start' | 'week_end' | 'date_needs_review' | 'date_source'> & { due_timing?: string };
 export type SubjectEntry = { id: string; title: string; category: string; completed: boolean; position: number; schedule: Schedule; week?: string; legacy?: StudentActivityItem; native?: JourneyComponent; bestScorePercent?: number | null };
@@ -82,12 +82,15 @@ export function subjectsFrom(data: StudentActivityResponse | null, real: Learner
     const key = currentKey(subject.id);
     if (!subjects.has(key)) subjects.set(key, { id: key, title: subject.title, source: 'current', activities: [] });
   }
-  for (const [index, item] of (real?.components || []).entries()) {
+  // Removed quizzes the learner passed follow the live plan, so they keep their
+  // module and count as completed work there.
+  const planEntries = [...(real?.components || []), ...(real?.retiredQuizComponents || [])];
+  for (const [index, item] of planEntries.entries()) {
     if (item.moduleId && historicalModules.has(item.moduleId)) continue;
     const key = item.moduleId ? currentKey(item.moduleId) : `unlinked:${item.module}`;
     const subject = subjects.get(key) || { id: key, title: item.module || 'Unnamed subject', source: 'current' as const, activities: [] };
     const component: JourneyComponent = { ...item, title: item.component,
-      quizAttempts: item.isQuiz && item.quizMeta ? (real?.quizAttempts || []).filter((attempt) => String(attempt.quizId) === String(item.quizMeta!.quizId)) : undefined };
+      quizAttempts: item.isQuiz && item.quizMeta ? quizAttemptsFor(item, real?.quizAttempts) : undefined };
     const id = item.componentId || `quiz:${item.quizMeta?.quizId ?? `${item.week}:${index}`}`;
     const isComplete = isComponentComplete(component, completed);
     const scores = (component.quizAttempts || []).map((attempt) => attempt.grade * 100).filter(Number.isFinite);

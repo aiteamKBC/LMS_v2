@@ -5,7 +5,7 @@ documents: 46439 (25h), 53571 (28h), and 55552 (30h).  Evidence 46439 already
 has an Aptem source attached to the existing estimated parent 705301, but the
 source has no counted seconds; its new segments are appended to that parent.
 The other two items receive new canonical parents.  All allocations remain
-``تقديري — يحتاج اعتماد`` and are excluded from authoritative Actual totals.
+``Estimated — approval required`` and are excluded from authoritative Actual totals.
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ import repair_sharon_evidence_allocations as base
 
 UK = ZoneInfo("Europe/London")
 CONTAINER = "fetch-aptem-evidences"
-LABEL = "\u062a\u0642\u062f\u064a\u0631\u064a \u2014 \u064a\u062d\u062a\u0627\u062c \u0627\u0639\u062a\u0645\u0627\u062f"
+LABEL = "Estimated — approval required"
 BASIS = "aptem:accepted-evidence-spent-minutes;estimated-reporting-allocation"
 RUN_KIND = "sharon-estimated-sophie-reviewed-v1"
 APTEM_ID = 4365
