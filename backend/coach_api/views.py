@@ -4139,11 +4139,13 @@ def caseload_progress_history(rows) -> dict[int, list[dict]]:
         LearnerProgressEntry.objects
         .filter(learner_id__in=learner_ids)
         .exclude(kind="activity_event")
+        # Must list every field progress_entry_history_record reads: a field
+        # left out is deferred and costs one extra query per progress entry.
         .only(
             "learner_id", "kind", "component_ref", "quiz_ref", "attempt",
             "module_title", "week_title", "component_title", "expected_otjh",
-            "reported_time", "submitted_at", "started_at", "claimed_seconds",
-            "verified_seconds", "time_tracking_source",
+            "reported_time", "submitted_at", "declared_completed_at", "started_at",
+            "claimed_seconds", "verified_seconds", "time_tracking_source",
         )
         .order_by("learner_id", "entry_order", "id")
     )
