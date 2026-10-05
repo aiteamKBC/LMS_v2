@@ -1,4 +1,4 @@
-"""Read-only PDF download for a coach-owned review instance or Aptem import."""
+"""Authorized final PDF download for a coach-owned review or Aptem import."""
 from django.views.decorators.http import require_GET
 from .auth import coach_access_required
 from curriculum_api.review_pdf import (
@@ -20,12 +20,10 @@ def coach_mcm_pdf(request, instance_id):
     from curriculum_api.review_instances import review_instance_form_definition
 
     if instance_id.startswith('imported-review:'):
-        definition = _imported_review_definition(authenticated_coach_email(request), instance_id)
+        definition = _imported_review_definition(authenticated_coach_email(request), instance_id, pdf_only=True)
         if not definition:
             return JsonResponse({'detail': 'Imported review not found for this coach.'}, status=404)
         if definition.get('migratedForm'):
-            if not (definition.get('pdf') or {}).get('available'):
-                return JsonResponse({'detail': (definition.get('pdf') or {}).get('reason') or 'The LMS-generated migrated PDF is not available yet.'}, status=409)
             from .migrated_completion_views import migrated_review_pdf_response
             return migrated_review_pdf_response(request, instance_id, definition)
         instance = definition['instance']
