@@ -36,7 +36,8 @@ def _association(request, review_id, *, lock=False):
     overlay = _owned_migrated_overlay(owner, definition)
     if not overlay:
         return None, None, None
-    query = CoachCalendarEvent.objects.filter(event_key=overlay.event_key)
+    booking_key = (definition.get("booking") or {}).get("eventKey") or overlay.event_key
+    query = CoachCalendarEvent.objects.filter(event_key=booking_key)
     if lock:
         query = query.select_for_update()
     rows = list(query[:2])
@@ -44,8 +45,8 @@ def _association(request, review_id, *, lock=False):
     family = definition["template"]["reviewTypeCode"]
     if family not in {"aptem_mcm", "aptem_progress_review"} or not record or (
         record.owner_email.casefold() != owner
-        or record.learner_id != overlay.learner_id
-        or record.review_instance_id or record.review_template_id
+        or (booking_key == overlay.event_key and (record.learner_id != overlay.learner_id
+            or record.review_instance_id or record.review_template_id))
         or record.event_type != ("mcr" if family == "aptem_mcm" else "progress-review")
         or not record.graph_event_id
         or record.sync_state != CoachCalendarEvent.SYNC_SYNCED

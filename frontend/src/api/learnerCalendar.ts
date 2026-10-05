@@ -57,6 +57,16 @@ export interface LearnerCalendarEvent {
   syncState?: 'pending' | 'syncing' | 'synced' | 'failed' | 'reconciliation' | 'cancelled';
   syncWarning?: string;
   reviewId?: string;
+  reviewSource?: 'aptem' | 'curriculum';
+  aptemReviewId?: string;
+  importedReviewType?: string;
+  sourceStatus?: string;
+  rawStatus?: string;
+  effectiveLmsStatus?: string;
+  localStatus?: string;
+  calendarEventId?: string;
+  calendarEventKey?: string | null;
+  formEventKey?: string;
   assignmentMonth?: string;
   programme?: string;
   cohort?: string;

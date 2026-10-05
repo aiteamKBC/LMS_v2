@@ -121,7 +121,7 @@ class MigratedDefinitionTests(SimpleTestCase):
     ):
         calendar_rows.return_value.__getitem__.return_value = []
         profiles.return_value = [SimpleNamespace(
-            id=21, aptem_id=101, _caseload_source=SimpleNamespace(aptem_id=101),
+            id=21, enrolment_id=121, learner_type="commercial", aptem_id=101, _caseload_source=SimpleNamespace(aptem_id=101),
             programme_id="P-42", programme="Programme", username="Authoritative learner",
             email="learner@example.invalid",
         )]
@@ -185,7 +185,7 @@ class MigratedPreviewTests(SimpleTestCase):
     def setUp(self):
         self.definition_json = candidate_definition(SOURCE)
         self.profile = SimpleNamespace(
-            id=21, aptem_id=101, _caseload_source=SimpleNamespace(aptem_id=101),
+            id=21, enrolment_id=121, learner_type="commercial", aptem_id=101, _caseload_source=SimpleNamespace(aptem_id=101),
             programme_id="P-42", programme="Programme", username="Synthetic learner",
             email="synthetic@example.invalid",
         )
@@ -261,7 +261,8 @@ class MigratedPreviewTests(SimpleTestCase):
         self.templates.assert_called_once_with(
             "id:P-42", "MCM",
         )
-        self.overlays.return_value.first.assert_called_once()
+        # Read by existing event key, then by explicit source FK for legacy keys.
+        self.assertEqual(self.overlays.return_value.first.call_count, 2)
         self.assertEqual(self.cursor.execute.call_count, 1)
         self.assertTrue(self.cursor.execute.call_args.args[0].lstrip().startswith("SELECT"))
 
@@ -340,7 +341,7 @@ class MigratedPreviewTests(SimpleTestCase):
         self._patch("coach_api.views._imported_review_progress_snapshot", return_value=None)
         template = SimpleNamespace(pk=22, scope="GLOBAL", programme_key="",
             review_family="PR_SKILLS_RADAR", name="Global Skills Radar", definition_json=self.definition_json)
-        saved = SimpleNamespace(learner_id=21, source_review_id=407,
+        saved = SimpleNamespace(learner_id=21, source_review_id=407, owner_email="coach@example.invalid", event_key="imported-review:A-7",
             migrated_template=template, migrated_template_id=22,
             template_snapshot=snapshot_for(template), answers={}, status="not-scheduled", completed_at=None,
             progress_snapshot=None, updated_at=timezone.now(),
@@ -360,7 +361,7 @@ class MigratedPreviewTests(SimpleTestCase):
             graph_event_id="synthetic-graph", meeting_link="https://example.invalid/teams",
             scheduled_date=date(2026, 10, 30), scheduled_time=time(10), duration_minutes=60)
         with patch("coach_api.views.CoachCalendarEvent.objects.filter") as lookup:
-            lookup.return_value.__getitem__.return_value = [calendar]
+            lookup.return_value.__iter__.return_value = [calendar]
             result = self._get()
             self.assertTrue(result["booking"]["booked"])
             self.assertTrue(result["booking"]["canAttach"])
@@ -402,6 +403,17 @@ class MigratedPreviewTests(SimpleTestCase):
                     self.assertTrue(result["readOnly"])
                     self.assertEqual(result["previewOnly"], preview)
                     self.overlays.return_value.get_or_create.assert_not_called()
+
+    def test_legacy_overlay_key_resolves_the_explicit_imported_id(self):
+        saved = SimpleNamespace(learner_id=21, source_review_id=407,
+            event_key="imported-review:407", owner_email="coach@example.invalid",
+            template_snapshot={}, answers={})
+        self.overlays.return_value.first.return_value = saved
+        result = views._imported_review_definition("coach@example.invalid", "imported-review:407", pdf_only=True)
+        self.assertEqual(self.cursor.execute.call_args.args[1], [[21], 407])
+        self.assertEqual(result["instance"]["id"], "imported-review:407")
+        self.assertEqual(result["historicalReview"]["aptemReviewId"], "A-7")
+        self.assertEqual(result["historicalReview"]["id"], "407")
 
     def test_missing_programme_and_global_keeps_safe_missing_state(self):
         self.profile.programme_id = None

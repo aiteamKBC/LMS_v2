@@ -1,24 +1,9 @@
-﻿"""Learner-facing calendar: coaching sessions from "Coach".coach_calendar_event.
+﻿"""Learner calendar: source-owned Reviews with local coaching bookings.
 
-    GET /learner_api/calendar/<kind>/<int:pk>/
-
-`kind` is 'commercial' or 'apprenticeship' (same vocabulary as learner-detail).
-The coach timetable stores events keyed by the "Learner"."Active_users" mirror
-id + email, so the learner is matched by email: directly against
-coach_calendar_event.learner_email, and via any Active_users mirror rows with
-the same email against coach_calendar_event.learner_id.
-
-Monthly coaching and progress reviews are *generated* from Curriculum
-review_templates rather than stored: the coach timetable resolves each
-learner's official occurrences every time it loads (see
-coach_api.views.collect_generated_timetable), and a row only exists once
-somebody schedules one. So a learner whose coach had not booked yet saw an
-empty calendar while their coach saw a column of "Not Scheduled" slots. This
-endpoint runs the same generator over the same window, then lays the stored
-rows on top by event key — the coach's own join — so both calendars name the
-same dates and the same statuses. A learner with no Curriculum programme
-mapping, or a programme with no configured review template, has zero
-generated occurrences here — there is no fixed-interval fallback.
+Native Reviews use Curriculum occurrences and native instances. Aptem Reviews
+use Learner.reviews with their existing calendar/form continuations. Stable
+enrolment and Aptem identities select the source; missing imported rows never
+generate Curriculum replacements. Other sessions retain their booking rules.
 """
 import json
 import logging
@@ -32,6 +17,7 @@ from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt
 
 from coach_api.models import CoachCalendarEvent, ImportedReviewInstance
+from coach_api.review_sources import review_profile_for_source, source_for_learner
 
 from .learner_detail import SOURCE_MODELS
 from .identity import learner_profile_for_source
@@ -53,6 +39,13 @@ from .session_recovery import learner_change
 from login.sessions import authenticate_request
 
 logger = logging.getLogger(__name__)
+
+
+def _calendar_profile(learner, pk):
+    if source_for_learner(learner, None).kind == "aptem":
+        profile = review_profile_for_source(learner)
+        return profile if profile is None or profile.lifecycle_status == "active" else None
+    return learner_profile_for_source(learner, pk, active_only=True)
 
 EVENT_TITLES = {
     "mcr": "Monthly Coaching",
@@ -317,7 +310,7 @@ def _generated_cycle_events(learner, mirror, stored_by_key):
     )
     from curriculum_api.review_instances import review_calendar_event_key
 
-    if mirror is None:
+    if mirror is None or source_for_learner(learner, mirror).kind != "curriculum":
         return []
 
     programme_id = resolve_curriculum_programme_id(
@@ -483,30 +476,40 @@ def _serialize_event(record, *, review_types_by_template=None, templates_by_id=N
     }
 
 
+def _booking_response_event(record, imported_event=None):
+    if not imported_event:
+        return _serialize_event(record)
+    from coach_api.review_sources import load_imported_links
+    from coach_api.views import overlay_calendar_record
+    _bookings, overlays = load_imported_links([imported_event], records=[record])
+    return overlay_calendar_record(imported_event, record, overlays.get(imported_event['eventKey']))
+
+
 def _mark_imported_review_scheduled(review_id, learner_profile_id, scheduled_date, scheduled_time):
-    """Keep the imported Reviews row in sync with a learner-booked review."""
+    """Validate legacy callers without rewriting the imported source evidence.
+
+    Effective booking state now comes from the linked calendar row. The Aptem
+    planned date/status must survive local booking and rescheduling unchanged.
+    """
     if not review_id:
         return
     try:
         review_pk = int(review_id)
     except (TypeError, ValueError):
         raise DatabaseError(f"Invalid imported review id {review_id!r}.")
-    scheduled_at = datetime.combine(scheduled_date, scheduled_time)
     with connection.cursor() as cursor:
         cursor.execute(
             '''
-            UPDATE "Learner".reviews
-               SET status = %s,
-                   planned_scheduled_date = %s
+            SELECT id FROM "Learner".reviews
              WHERE id = %s
                AND learner_id = %s
                AND LOWER(BTRIM(review_type)) IN (%s, %s, %s, %s, %s)
             ''',
-            ["scheduled", scheduled_at, review_pk, learner_profile_id,
+            [review_pk, learner_profile_id,
              "monthly coaching meeting", "monthly coaching", "mcm",
              "progress review", "progress review (+ skills radar)"],
         )
-        if cursor.rowcount == 0:
+        if cursor.fetchone() is None:
             raise DatabaseError(
                 f"Imported review {review_pk} was not found for learner profile {learner_profile_id} "
                 "or is not a schedulable review."
@@ -559,6 +562,9 @@ def _assignment_imported_mcm_month(profile_id, review_id):
 
 def coaching_events_for_learner(learner, mirror):
     """One source for the calendar and Training Plan coaching dates/statuses."""
+    if source_for_learner(learner, mirror).kind != "curriculum":
+        mirror = review_profile_for_source(learner, mirror)
+    review_source = source_for_learner(learner, mirror)
     emails = {_s(getattr(learner, 'email', '')).strip().casefold(),
               _s(getattr(mirror, 'email', '')).strip().casefold()} - {''}
     match = Q()
@@ -574,10 +580,20 @@ def coaching_events_for_learner(learner, mirror):
         # Created_users and learner profiles have different ID sequences.
         # A matching number must never override another learner's email.
         expected_id = learner.pk if _s(getattr(record, 'idempotency_key', '')).startswith('learner-book:') else getattr(mirror, 'id', None)
-        belongs = email in emails if email else expected_id is not None and str(record.learner_id) == str(expected_id)
+        imported_owned = (review_source.kind == "aptem" and mirror is not None
+                          and record.event_type in {"mcr", "progress-review"}
+                          and str(record.learner_id) in {str(mirror.id), str(learner.pk)})
+        belongs = imported_owned or (email in emails if email else expected_id is not None and str(record.learner_id) == str(expected_id))
         if belongs and _belongs_to_current_cycle(record, mirror):
             records.append(record)
     from curriculum_api import reviews, review_instances
+    if review_source.kind == "aptem":
+        from .imported_review_calendar import imported_events_for_learner
+        imported = imported_events_for_learner(learner, mirror, review_source.aptem_id, records)
+        # Persisted native rows must not become a second occurrence or fallback.
+        other = [_serialize_event(record) for record in records
+                 if record.event_type not in {"mcr", "progress-review", "review"}]
+        return [*imported, *other]
     generated = _generated_cycle_events(learner, mirror, set())
     matched = review_instances.reconcile_review_event_keys(generated, records)
     # Generated occurrences already carry the current template title and Review
@@ -894,13 +910,27 @@ def _learner_calendar_record(kind, pk, event_key):
     learner = model.all_learners.filter(pk=pk).first()
     if learner is None:
         return None
-    mirror = learner_profile_for_source(learner, pk, active_only=True)
+    mirror = _calendar_profile(learner, pk)
+    if source_for_learner(learner, mirror).kind != "curriculum":
+        mirror = review_profile_for_source(learner, mirror)
+        occurrences = coaching_events_for_learner(learner, mirror)
+        imported = [item for item in occurrences if item.get("reviewSource") == "aptem"
+                    and event_key in {item["eventKey"], item.get("calendarEventKey")}]
+        if imported:
+            key = imported[0].get("calendarEventKey")
+            record = CoachCalendarEvent.objects.filter(event_key=key).first() if key else None
+            if record:
+                record._imported_review_event = imported[0]
+            return record
+        if event_key.startswith(("imported-review:", "review:", "mcr:", "progress-review:")):
+            return None
     emails = {_s(learner.email).strip().casefold()}
     if mirror:
         emails.add(_s(mirror.email).strip().casefold())
     emails.discard("")
     record = CoachCalendarEvent.objects.filter(event_key=event_key).first()
-    if not record:
+    if not record or (source_for_learner(learner, mirror).kind == "aptem"
+                      and record.event_type in {"mcr", "progress-review", "review"}):
         return None
     owner_ids = _record_owner_ids(record, created_user_id=pk, profile_id=mirror.id if mirror else None)
     return record if (str(record.learner_id or "") in owner_ids or _s(record.learner_email).strip().casefold() in emails) else None
@@ -968,6 +998,8 @@ def learner_calendar_event_review(request, kind, pk, event_key):
         return _save_learner_review_answers(request, kind, pk, event_key)
     record = _learner_calendar_record(kind, pk, event_key)
     from curriculum_api import review_instances, reviews
+    if record and isinstance(getattr(record, '_imported_review_event', None), dict):
+        return _error("Open this imported Review through its migrated form.", 409)
     instance_id = _s(getattr(record, "review_instance_id", ""))
     if not instance_id:
         template_id = _s(getattr(record, 'review_template_id', ''))
@@ -977,7 +1009,7 @@ def learner_calendar_event_review(request, kind, pk, event_key):
             learner = model.all_learners.filter(pk=pk).first() if model else None
             if learner is None:
                 return _error('Calendar event not found for this learner.', 404)
-            mirror = learner_profile_for_source(learner, pk, active_only=True)
+            mirror = _calendar_profile(learner, pk)
             event = next((event for event in _generated_cycle_events(learner, mirror, set()) if event['eventKey'] == event_key), None)
             if event is None:
                 return _error('Calendar event not found for this learner.', 404)
@@ -996,7 +1028,7 @@ def learner_calendar_event_review(request, kind, pk, event_key):
         # else's profile id.
         model = SOURCE_MODELS.get(kind)
         learner = model.all_learners.filter(pk=pk).first() if model else None
-        mirror = learner_profile_for_source(learner, pk, active_only=True) if learner is not None else None
+        mirror = _calendar_profile(learner, pk) if learner is not None else None
         if mirror is not None:
             existing = review_instances.find_review_instance(template_id, str(mirror.pk), occurrence_number)
             if existing:
@@ -1040,6 +1072,8 @@ def _save_learner_review_answers(request, kind, pk, event_key):
     from curriculum_api import review_instances
 
     record = _learner_calendar_record(kind, pk, event_key)
+    if record and isinstance(getattr(record, '_imported_review_event', None), dict):
+        return _error("Open this imported Review through its migrated form.", 409)
     instance_id = _s(getattr(record, "review_instance_id", ""))
     if not instance_id:
         return _error("This review has not been booked yet.", 404)
@@ -1230,6 +1264,8 @@ def learner_progress_review_sign(request, kind, pk, event_key):
     record = _learner_calendar_record(kind, pk, event_key)
     if not record or record.event_type not in {"mcr", "progress-review", "review"}:
         return _error("Review not found for this learner.", 404)
+    if isinstance(getattr(record, '_imported_review_event', None), dict):
+        return _error("Sign this imported Review through its migrated form.", 409)
     if record.event_type == 'mcr':
         from .mcm_signoff import mcm_signoff_response
         return mcm_signoff_response(request, record, pk)
@@ -1436,7 +1472,7 @@ def learner_calendar(request, kind, pk):
         # The Active_users mirror carries the source row's id (see
         # active_users.sync_active_user), and coach events store that mirror's
         # id + email — so the mirror email is the authoritative one here.
-        mirror = learner_profile_for_source(learner, pk, active_only=True)
+        mirror = _calendar_profile(learner, pk)
     except DatabaseError as exc:
         logger.exception("learner_calendar: mirror lookup failed")
         return _error(f"Database error: {exc}", 502)
@@ -1595,7 +1631,7 @@ def learner_calendar_book(request, kind, pk):
     try:
         # all_learners: the default manager is scoped to apprenticeship rows.
         learner = model.all_learners.filter(pk=pk).first()
-        mirror = learner_profile_for_source(learner, pk, active_only=True)
+        mirror = _calendar_profile(learner, pk)
     except DatabaseError as exc:
         logger.exception("learner_calendar_book: learner lookup failed")
         return _error(f"Database error: {exc}", 502)
@@ -1718,6 +1754,8 @@ def learner_calendar_book(request, kind, pk):
     learner_email = _s(getattr(mirror, "email", "")) or _s(learner.email)
     assignment_month = _s(payload.get("assignmentMonth")) if session_type in {"mcr", "progress-review"} else ""
     imported_review_id = _s(payload.get("reviewId")) if assignment_month else ""
+    if payload.get("reviewId") and source_for_learner(learner, mirror).kind == "curriculum":
+        return _error("This learner uses Curriculum Review occurrences.", 409)
     # The assignment screen and imported reviews both send assignmentMonth.
     # An explicit context keeps their eligibility rules and identities separate.
     assignment_booking = _s(payload.get("bookingContext")) == "monthly-assignment"
@@ -1744,6 +1782,34 @@ def learner_calendar_book(request, kind, pk):
             message, status_code = review_error
             return _error(message, status_code)
         idempotency_month = review_month or assignment_month
+    aptem_target = None
+    if session_type in {"mcr", "progress-review"} and source_for_learner(learner, mirror).kind != "curriculum":
+        try:
+            mirror = review_profile_for_source(learner, mirror)
+            candidates = [item for item in coaching_events_for_learner(learner, mirror)
+                          if item.get("reviewSource") == "aptem" and item["source"] == session_type
+                          and ((payload.get("reviewId") and item["reviewId"] == str(payload["reviewId"]))
+                               or (payload.get("eventKey") and payload["eventKey"] in {
+                                   item["eventKey"], item.get("calendarEventKey")}))]
+        except DatabaseError:
+            return _error("The imported Review identity could not be resolved.", 409)
+        if len(candidates) != 1:
+            return _error("Choose an existing imported Review for this learner.", 409)
+        aptem_target = candidates[0]
+        if getattr(mirror, "lifecycle_status", "") != "active":
+            return _error("Only Active learners can schedule programme-cycle sessions.", 400)
+        if aptem_target["status"] not in {"not-scheduled", "scheduled"}:
+            return _error("A submitted or started imported Review cannot be scheduled again.", 409)
+        imported_review_id = aptem_target["reviewId"]
+        payload = {**payload, "reviewId": imported_review_id,
+                   "eventKey": aptem_target.get("calendarEventKey") or aptem_target["eventKey"]}
+        if aptem_target.get("calendarEventKey"):
+            owner_email = aptem_target["coachEmail"] or owner_email
+            existing = CoachCalendarEvent.objects.filter(event_key=aptem_target["calendarEventKey"]).first()
+            if existing and existing.sync_state == CoachCalendarEvent.SYNC_SYNCED:
+                if (existing.scheduled_date, existing.scheduled_time, existing.duration_minutes) != (scheduled_date, scheduled_time, duration_minutes):
+                    return _error("This imported Review already has an appointment. Use reschedule to move it.", 409)
+                return JsonResponse({"event": aptem_target, "warning": _friendly_sync_warning(existing.last_graph_sync_error)})
     # Generic MCM/PR requests still resolve to an official Curriculum
     # occurrence before they use the direct scheduling flow below.
     direct_cycle_request = session_type in {"mcr", "progress-review"} and not _s(payload.get("eventKey")) and not assignment_month
@@ -1820,7 +1886,10 @@ def learner_calendar_book(request, kind, pk):
         if mirror is None:
             return _error("Only Active learners can schedule programme-cycle sessions.", 400)
 
-        base_event, owner_name = find_generated_timetable_event(owner_email, event_key)
+        if aptem_target is not None:
+            base_event, owner_name = aptem_target, aptem_target.get("coachName") or owner_name
+        else:
+            base_event, owner_name = find_generated_timetable_event(owner_email, event_key)
         if (
             not base_event
             or _s(base_event.get("source")) != session_type
@@ -1873,6 +1942,17 @@ def learner_calendar_book(request, kind, pk):
                     "target_date": target_date,
                 },
             )
+            if aptem_target is not None and not created:
+                from coach_api.review_sources import linked_booking
+                if linked_booking(aptem_target, [record]) is None or record.owner_email.casefold() != owner_email.casefold():
+                    return _error("The imported Review booking identity is inconsistent.", 409)
+                if (record.scheduled_date, record.scheduled_time, record.duration_minutes) != (scheduled_date, scheduled_time, duration_minutes):
+                    return _error("This imported Review already has a different booking request. Use reschedule to move it.", 409)
+                # Replay the existing operation. Never reset a successful sync
+                # or replace an organizer/idempotency identity on a retry.
+                record, warning, _attempted = synchronize_reserved_calendar_event(record.pk, base_event)
+                return JsonResponse({"event": _booking_response_event(record, aptem_target),
+                                     "warning": _friendly_sync_warning(warning)})
             review_template_id = _s(base_event.get('reviewTemplateId'))
             # A review-driven event must not become scheduled unless canonical
             # linkage is guaranteed. Rescheduling an already-linked row never
@@ -1888,7 +1968,8 @@ def learner_calendar_book(request, kind, pk):
 
             record.owner_email = owner_email
             record.owner_name = owner_name or _s(mirror.coach_name) or record.owner_name or "Coach"
-            record.learner_id = int(mirror.id)
+            if aptem_target is None or created:
+                record.learner_id = int(mirror.id)
             record.learner_name = _s(base_event.get("learner")) or learner_name
             record.learner_email = _s(base_event.get("email")) or learner_email
             record.event_type = session_type
@@ -1899,11 +1980,12 @@ def learner_calendar_book(request, kind, pk):
             record.duration_minutes = duration_minutes
             record.status = CoachCalendarEvent.STATUS_SCHEDULED
             record.notes = notes
-            record.review_template_id = review_template_id
-            record.occurrence_number = (
-                None if base_event.get('occurrenceSource') == 'manual'
-                else int(base_event.get('occurrenceNumber') or base_event.get('sequence') or 1)
-            )
+            if aptem_target is None or created:
+                record.review_template_id = review_template_id
+                record.occurrence_number = (
+                    None if aptem_target is not None or base_event.get('occurrenceSource') == 'manual'
+                    else int(base_event.get('occurrenceNumber') or base_event.get('sequence') or 1)
+                )
 
             record = persist_calendar_sync_reservation(record, review_event=base_event)
             record, warning, _attempted = synchronize_reserved_calendar_event(record.pk, base_event)
@@ -1926,7 +2008,7 @@ def learner_calendar_book(request, kind, pk):
                 record.event_key, owner_email, warning,
             )
         return JsonResponse(
-            {"event": _serialize_event(record), "warning": _friendly_sync_warning(warning)},
+            {"event": _booking_response_event(record, aptem_target), "warning": _friendly_sync_warning(warning)},
             status=201 if created else 200,
         )
 
@@ -2219,12 +2301,14 @@ def learner_calendar_reschedule(request, kind, pk):
             and record.duration_minutes == duration_minutes
             and record.sync_state == CoachCalendarEvent.SYNC_SYNCED
         ):
-            if getattr(record, 'review_instance_id', ''):
+            imported_event = getattr(record, '_imported_review_event', None)
+            if getattr(record, 'review_instance_id', '') and not imported_event:
                 record = sync_scheduled_review_instance(record)
             _mark_imported_review_scheduled(
-                payload.get("reviewId"), record.learner_id, scheduled_date, scheduled_time,
+                imported_event.get("reviewId") if imported_event else payload.get("reviewId"),
+                int(imported_event["learnerId"]) if imported_event else record.learner_id, scheduled_date, scheduled_time,
             )
-            return JsonResponse({"event": _serialize_event(record), "warning": ""})
+            return JsonResponse({"event": _booking_response_event(record, imported_event), "warning": ""})
 
         from .calendar_connections import booking_conflicts
         if booking_conflicts(
@@ -2246,12 +2330,14 @@ def learner_calendar_reschedule(request, kind, pk):
         record.scheduled_date = scheduled_date
         record.scheduled_time = scheduled_time
         record.duration_minutes = duration_minutes
-        record = persist_calendar_sync_reservation(record)
+        imported_event = getattr(record, '_imported_review_event', None)
+        record = persist_calendar_sync_reservation(record, **({"review_event": imported_event} if imported_event else {}))
         record, warning, _attempted = synchronize_reserved_calendar_event(
-            record.pk, build_booked_calendar_event(record)
+            record.pk, imported_event or build_booked_calendar_event(record)
         )
         _mark_imported_review_scheduled(
-            payload.get("reviewId"), record.learner_id, scheduled_date, scheduled_time,
+            imported_event.get("reviewId") if imported_event else payload.get("reviewId"),
+            int(imported_event["learnerId"]) if imported_event else record.learner_id, scheduled_date, scheduled_time,
         )
         _follow_first_session_start_date(kind, pk, record, scheduled_date)
     except LearnerCalendarConflict as exc:
@@ -2264,7 +2350,7 @@ def learner_calendar_reschedule(request, kind, pk):
 
     _record_enrolment_review(record, kind=kind, learner_kind_id=pk, coach_id=None)
     return JsonResponse(
-        {"event": _serialize_event(record), "warning": _friendly_sync_warning(warning)}
+        {"event": _booking_response_event(record, imported_event), "warning": _friendly_sync_warning(warning)}
     )
 
 

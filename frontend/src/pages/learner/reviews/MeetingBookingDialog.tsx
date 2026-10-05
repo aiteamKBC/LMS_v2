@@ -142,12 +142,12 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
       if (session.importedReview && !allowedTypes.includes(session.importedReview.type.trim().toLowerCase())) {
         throw new Error('Choose a Monthly Coaching Meeting or Progress Review to schedule.');
       }
-      const durableKey = attendance?.calendarEventKey || session.eventKey;
+      const durableKey = session.calendarEventKey || attendance?.calendarEventKey || session.eventKey;
       // Resolve only this learner's exact booking. Dates are not identities.
       const saved = calendar.events.find(event => event.source === session.source && (
-        event.eventKey === durableKey || Boolean(reviewId && event.reviewId === reviewId)
+        event.eventKey === durableKey || event.calendarEventKey === durableKey || Boolean(reviewId && event.reviewId === reviewId)
       ));
-      if (!saved && !reviewId) throw new Error('This meeting is no longer available. Close this window and refresh the page.');
+      if (!saved) throw new Error('This meeting is no longer available. Close this window and refresh the page.');
       if (saved && !['scheduled', 'not-scheduled'].includes(saved.status)) {
         throw new Error('This meeting can no longer be scheduled. Close this window and refresh the page.');
       }
@@ -221,10 +221,10 @@ function MeetingBookingForm({ session, title, learner, rules, attendance, onClos
     setError('');
     try {
       const reviewId = session.importedReview?.id || target.reviewId;
-      const eventKey = target.eventKey.startsWith('imported-review:') ? attendance?.calendarEventKey || target.eventKey : target.eventKey;
+      const eventKey = target.calendarEventKey || attendance?.calendarEventKey || target.eventKey;
       // An imported review may have a scheduled date before its first LMS
       // booking. Only a durable calendar key can be sent to reschedule.
-      const update = rescheduling && !eventKey.startsWith('imported-review:');
+      const update = rescheduling && (Boolean(target.calendarEventKey) || !eventKey.startsWith('imported-review:'));
       const input = {
         scheduledDate: date,
         scheduledTime: time,

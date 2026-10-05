@@ -181,49 +181,41 @@ class MeetingAttendanceTests(SimpleTestCase):
 
 
 class MeetingSourceTests(SimpleTestCase):
-    def test_imported_meeting_uses_only_its_own_durable_booking(self):
+    def test_imported_meeting_consumes_shared_linkage_and_retains_ledger_identity(self):
         source = SimpleNamespace(pk=12, aptem_id='123')
-        review = {'id': '9', 'type': 'Progress Review', 'name': 'Review', 'status': 'scheduled', 'plannedDate': '2026-09-14', 'plannedTime': '10:00', 'reviewerName': 'Coach'}
-        booking = {'id': 'booked', 'eventKey': 'booked', 'source': 'progress-review', 'status': 'scheduled', 'scheduledDate': '2026-09-14',
-            'scheduledTime': '10:00', 'durationMinutes': 75, 'meetingLink': 'https://teams.microsoft.com/meeting', 'meetingProvider': 'Teams',
+        booking = {'id': 'imported-review:A-9', 'eventKey': 'imported-review:A-9',
+            'reviewSource': 'aptem', 'reviewId': '9', 'calendarEventKey': 'booked',
+            'source': 'progress-review', 'title': 'Review', 'status': 'scheduled', 'scheduledDate': '2026-09-14',
+            'scheduledTime': '10:00', 'durationMinutes': 75, 'meetingLink': 'https://example.invalid/meeting',
             'invited': False, 'syncWarning': 'Calendar sync pending'}
-        with patch.object(meetings, 'learner_profile_for_source'), patch.object(meetings, 'coaching_events_for_learner', return_value=[booking]), \
-            patch.object(meetings, 'connection'), patch.object(meetings, '_learner_profile_id', return_value=55), \
-            patch.object(meetings, '_review_rows', side_effect=[[], [review], [], [review]]), patch.object(meetings, '_serialize_review', side_effect=lambda row, _: row), \
-            patch('coach_api.models.CoachCalendarEvent') as model:
-            record = SimpleNamespace(event_key='booked', idempotency_key='learner-book:progress-review:apprenticeship:12:2026-09:9')
-            model.objects.filter.return_value = [record]
+        with patch.object(meetings, '_calendar_profile'), patch.object(meetings, 'coaching_events_for_learner', return_value=[booking]):
             result = meetings.meeting_records(source, 'apprenticeship')
-            record.idempotency_key = 'learner-book:progress-review:apprenticeship:99:2026-09:9'
-            unrelated = meetings.meeting_records(source, 'apprenticeship')
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]['id'], 'imported-review:9')
         self.assertEqual(result[0]['durationMinutes'], 75)
         self.assertEqual(result[0]['meetingLink'], booking['meetingLink'])
         context = meetings.attendance_context(source, result[0], {}, set())
         self.assertEqual(context['calendarEventKey'], 'booked')
         self.assertEqual(context['syncWarning'], 'Calendar sync pending')
         self.assertFalse(context['invited'])
-        self.assertIsNone(unrelated[0]['durationMinutes'])
 
-    def test_calendar_source_is_used_when_no_imported_history_exists(self):
+    def test_native_calendar_source_is_preserved(self):
         source = SimpleNamespace(pk=12, aptem_id='')
         mirror = SimpleNamespace(id=55)
         calendar = [{'id': 'own', 'source': 'mcr'}, {'id': 'lecture', 'source': 'live-session'}]
-        with patch.object(meetings, 'learner_profile_for_source', return_value=mirror), patch.object(meetings, 'coaching_events_for_learner', return_value=calendar) as read:
+        with patch.object(meetings, '_calendar_profile', return_value=mirror), patch.object(meetings, 'coaching_events_for_learner', return_value=calendar) as read:
             self.assertEqual(meetings.meeting_records(source, 'apprenticeship'), [calendar[0]])
         read.assert_called_once_with(source, mirror)
 
-    def test_imported_reviews_do_not_inherit_unrelated_same_date_bookings(self):
+    def test_unbooked_imported_review_does_not_create_an_absence(self):
         source = SimpleNamespace(pk=12, aptem_id='123')
-        review = {'id': '9', 'type': 'Progress Review', 'name': 'Review', 'status': 'scheduled', 'plannedDate': '2026-09-14', 'plannedTime': '10:00', 'reviewerName': 'Coach'}
-        with patch.object(meetings, 'learner_profile_for_source'), patch.object(meetings, 'coaching_events_for_learner', return_value=[{
-            'id': 'unrelated', 'eventKey': 'unrelated', 'source': 'progress-review', 'scheduledDate': '2026-09-14', 'scheduledTime': '10:00'}]), \
-            patch.object(meetings, 'connection'), patch.object(meetings, '_learner_profile_id', return_value=55), \
-            patch.object(meetings, '_review_rows', side_effect=[[], [review]]), patch.object(meetings, '_serialize_review', side_effect=lambda row, _: row), \
-            patch('coach_api.models.CoachCalendarEvent') as model:
-            model.objects.filter.return_value = []
+        review = {'id': 'imported-review:A-9', 'eventKey': 'imported-review:A-9',
+            'reviewSource': 'aptem', 'reviewId': '9', 'calendarEventKey': None,
+            'source': 'progress-review', 'status': 'scheduled', 'title': 'Review',
+            'scheduledDate': '2026-09-14', 'scheduledTime': '10:00'}
+        with patch.object(meetings, '_calendar_profile'), patch.object(meetings, 'coaching_events_for_learner', return_value=[review]):
             result = meetings.meeting_records(source, 'apprenticeship')
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0]['id'], 'imported-review:9')
-        self.assertIsNone(result[0]['durationMinutes'])
-        self.assertEqual(result[0]['meetingLink'], '')
-        self.assertEqual(model.objects.filter.call_args.kwargs['event_key__in'], ['unrelated'])
+        self.assertFalse(meetings.is_booked(result[0]))
+        self.assertIsNone(result[0]['eventKey'])

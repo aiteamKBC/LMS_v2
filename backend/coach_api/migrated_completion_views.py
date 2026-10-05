@@ -2,7 +2,6 @@
 import json
 
 from django.db import connections, transaction
-from django.db.models import Q
 from django.http import JsonResponse
 from django.middleware.csrf import get_token
 from django.views.decorators.csrf import ensure_csrf_cookie
@@ -16,6 +15,7 @@ from coach_api.models import CoachCalendarEvent, ImportedReviewInstance, Migrate
 from coach_api.migrated_summary_binding import AnswerConflict, check_answer_version, record_answer_edit
 from coach_api.migrated_template_sync import TemplateSyncConflict, active_answers, synchronize_definition_locked
 from learner_api.models import EnrolmentUser, LearnerProfile
+from .review_sources import booking_for_overlay
 from login.permissions import authenticate_request
 
 
@@ -51,14 +51,9 @@ def _mirror_status(overlay):
     update = {"status": overlay.status}
     if overlay.status == ImportedReviewInstance.STATUS_COMPLETED:
         update["review_completed_at"] = overlay.completed_at
-    calendar = CoachCalendarEvent.objects.filter(
-        event_key=overlay.event_key, owner_email__iexact=overlay.owner_email,
-        learner_id=overlay.learner_id,
-    ).filter(
-        Q(review_instance_id__isnull=True) | Q(review_instance_id=""),
-        Q(review_template_id__isnull=True) | Q(review_template_id=""),
-    )
-    calendar.update(**update)
+    calendar = booking_for_overlay(overlay)
+    if calendar:
+        CoachCalendarEvent.objects.filter(pk=calendar.pk).update(**update)
 
 
 @coach_access_required
@@ -128,7 +123,8 @@ def _party_overlay(review_id, account, *, lock=False):
     if not overlay or not overlay.template_snapshot.get("sections"):
         return None
     profile = LearnerProfile.objects.filter(pk=overlay.learner_id).first()
-    learner = EnrolmentUser.all_learners.filter(pk=profile.enrolment_id).first() if profile and profile.enrolment_id else None
+    from .review_sources import enrolment_for_review_profile
+    learner = enrolment_for_review_profile(profile)
     if not learner:
         return None
     if account.role == "learner" and account.subject_id != learner.pk:
@@ -137,7 +133,7 @@ def _party_overlay(review_id, account, *, lock=False):
         return None
     from coach_api.views import get_learner_db_alias
     with connections[get_learner_db_alias()].cursor() as cursor:
-        cursor.execute('SELECT status, completed_date FROM "Learner".reviews WHERE id = %s', [overlay.source_review_id])
+        cursor.execute('SELECT status, completed_date FROM "Learner".reviews WHERE id = %s AND learner_id = %s', [overlay.source_review_id, overlay.learner_id])
         source = cursor.fetchone()
     if not source or str(source[0] or "").strip().casefold() == "completed" or source[1]:
         return None
@@ -248,10 +244,7 @@ def _pdf_context(overlay, definition=None):
             "instance": {"targetDate": source[0]},
             "historicalReview": {"type": source[1]},
         }
-    calendar = CoachCalendarEvent.objects.filter(
-        event_key=overlay.event_key, owner_email__iexact=overlay.owner_email,
-        learner_id=overlay.learner_id,
-    ).first()
+    calendar = booking_for_overlay(overlay)
     return {
         "learner_name": definition.get("learnerName") or "",
         "learner_email": definition.get("learnerEmail") or "",

@@ -2740,6 +2740,8 @@ def resolve_effective_aptem_ids(rows) -> tuple[dict[int, int], set[int]]:
     is returned in the conflict set and belongs to neither review source until
     the identity is corrected.
     """
+    from .review_sources import resolve_review_source
+
     rows = list(rows or [])
     unresolved = [row for row in rows if getattr(row, "_caseload_source", None) is None]
     fetched = fetch_caseload_aptem_ids(unresolved) if unresolved else {}
@@ -2753,14 +2755,12 @@ def resolve_effective_aptem_ids(rows) -> tuple[dict[int, int], set[int]]:
         source_row = getattr(row, "_caseload_source", None)
         source_raw = getattr(source_row, "aptem_id", None) if source_row is not None else fetched.get(profile_id)
         profile_raw = getattr(row, "aptem_id", None)
-        source_id = int(str(source_raw).strip()) if student_activity_available(source_raw) else None
-        profile_aptem_id = int(str(profile_raw).strip()) if student_activity_available(profile_raw) else None
-        if source_id and profile_aptem_id and source_id != profile_aptem_id:
+        source = resolve_review_source(source_raw, profile_raw)
+        if source.kind == "conflict":
             conflicts.add(profile_id)
             continue
-        effective = source_id or profile_aptem_id
-        if effective:
-            aptem_by_profile[profile_id] = effective
+        if source.kind == "aptem":
+            aptem_by_profile[profile_id] = source.aptem_id
     return aptem_by_profile, conflicts
 
 
@@ -6399,7 +6399,7 @@ def event_note_lines(base_event: dict, record: CoachCalendarEvent | None) -> lis
     return lines
 
 
-def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None) -> dict:
+def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None, imported_overlay=None) -> dict:
     event = dict(base_event)
     # Aptem's status remains provenance. A verified LMS meeting controls the
     # calendar display status, while sourceStatus keeps the imported value.
@@ -6494,6 +6494,12 @@ def overlay_calendar_record(base_event: dict, record: CoachCalendarEvent | None)
             "syncAttemptCount": record.sync_attempt_count if record else 0,
         }
     )
+    if aptem_review:
+        from .review_sources import apply_imported_state
+        event = apply_imported_state(event, record, imported_overlay)
+        event["priority"] = generated_event_priority(event["status"], target_date, display_date)
+        event["platform"] = event.get("meetingProvider") or ("Microsoft Teams" if event.get("meetingLink") else "--")
+        event["location"] = "Online" if event.get("meetingLink") else "--"
     return event
 
 
@@ -9721,6 +9727,7 @@ def fetch_aptem_review_events(
     end_date: date | None = None,
 ) -> tuple[list[dict], set[int]]:
     """Shape verified Aptem rows as the common coach calendar event contract."""
+    from .review_sources import imported_identity, imported_learner_identity, number_imported_events
     if not aptem_by_profile:
         return [], set()
 
@@ -9741,15 +9748,9 @@ def fetch_aptem_review_events(
         return [], set()
 
     profile_ids = sorted(int(row.id) for row in profiles_by_aptem.values())
-    date_filters = []
+    source_identities = {row.id: imported_learner_identity(row) for row in profiles_by_aptem.values()}
     query_params: list = [profile_ids]
-    if start_date:
-        date_filters.append("COALESCE(lr.completed_date, lr.planned_scheduled_date) >= %s")
-        query_params.append(start_date)
-    if end_date:
-        date_filters.append("COALESCE(lr.completed_date, lr.planned_scheduled_date) <= %s")
-        query_params.append(end_date)
-    date_sql = "" if not date_filters else " AND " + " AND ".join(date_filters)
+    # Number the complete imported plan before applying a role's display window.
     query = f"""
         SELECT lr.learner_id, lr.id, lr.aptem_review_id, lr.review_name,
                lr.review_type, lr.reviewer_name, lr.learner_name,
@@ -9794,7 +9795,6 @@ def fetch_aptem_review_events(
         WHERE lr.learner_id = ANY(%s)
           AND NULLIF(BTRIM(lr.aptem_review_id), '') IS NOT NULL
           AND NULLIF(BTRIM(lr.review_type), '') IS NOT NULL
-          {date_sql}
         ORDER BY COALESCE(lr.completed_date, lr.planned_scheduled_date), lr.id
     """
     connection = connections[get_learner_db_alias()]
@@ -9830,10 +9830,6 @@ def fetch_aptem_review_events(
         display_date = completed_date or planned_date
         if display_date is None:
             continue
-        if start_date and display_date < start_date:
-            continue
-        if end_date and display_date > end_date:
-            continue
         seen_review_ids.add(aptem_review_id)
         contributing_profiles.add(profile_id)
         review_type = clean_text(review.get("type"))
@@ -9860,12 +9856,13 @@ def fetch_aptem_review_events(
             hour, minute = (int(part) for part in planned_time.split(":"))
             start_hour = hour + (minute / 60)
         events.append({
+            **imported_identity(review, profile_id),
             "eventKey": event_key,
             "id": event_key,
             "ownerEmail": owner_email,
             "ownerName": owner_name,
             "learnerId": str(profile_id),
-            **learner_detail_identity(learner),
+            **source_identities[profile_id],
             "learner": clean_text(getattr(learner, "username", None)) or clean_text(row.get("learner_name")) or "Unknown learner",
             "email": clean_text(getattr(learner, "email", None)) or None,
             "programme": clean_text(getattr(learner, "programme", None)) or "--",
@@ -9896,7 +9893,7 @@ def fetch_aptem_review_events(
             "isTimeEstimated": not bool(planned_time),
             "priority": generated_event_priority(status, target_date, display_date),
             "status": status,
-            "sourceStatus": schedule_status_label(status),
+            "sourceStatus": review.get("status"),
             "rawPlanned": planned_date.isoformat() if planned_date else None,
             "rawStatus": clean_text(row.get("status")),
             "notes": f"Reviewer: {clean_text(review.get('reviewerName'))}" if clean_text(review.get("reviewerName")) else "",
@@ -9908,7 +9905,10 @@ def fetch_aptem_review_events(
             "platform": "--",
             "location": "--",
         })
-    return events, contributing_profiles
+    numbered = number_imported_events(events)
+    return [event for event in numbered
+            if (not start_date or event["date"] >= start_date.isoformat())
+            and (not end_date or event["date"] <= end_date.isoformat())], contributing_profiles
 
 
 def fetch_aptem_mcm_profile_ids(aptem_by_profile: dict[int, int]) -> set[int]:
@@ -9958,8 +9958,9 @@ def resolve_coach_review_events(
             aptem_by_profile,
             owner_email=owner_email,
             owner_name=owner_name,
-            start_date=start_date,
-            end_date=end_date,
+            # Window filtering follows local booking enrichment in the timetable.
+            start_date=None,
+            end_date=None,
         )
     except DatabaseError as exc:
         # Imported reviews are one source in a mixed timetable. A slow or
@@ -10156,14 +10157,9 @@ def collect_generated_timetable(
     # Reconcile legacy keys with generated items so a booked event appears once.
     generated_keys = {event["eventKey"] for event in generated_events}
     aptem_profile_ids = resolved_reviews["aptemProfileIds"]
-    persisted_standalone_records = [
-        record for record in fetch_standalone_event_records(owner_email)
-        if record.event_key not in generated_keys
-        and not (
-            record.learner_id in aptem_profile_ids
-            and clean_text(record.event_type).lower() in {"mcr", "progress-review"}
-        )
-    ]
+    from .review_sources import standalone_review_records
+    persisted_standalone_records = standalone_review_records(
+        fetch_standalone_event_records(owner_email), review_rows, aptem_profile_ids, linked_keys=generated_keys)
     curriculum_events = [event for event in generated_events if event.get("reviewSource") == "curriculum"]
     aptem_events = [event for event in generated_events if event.get("reviewSource") == "aptem"]
     legacy_keys = [
@@ -10224,10 +10220,11 @@ def collect_generated_timetable(
     curriculum_keys = [event["eventKey"] for event in curriculum_events]
     if curriculum_keys:
         record_map.update(fetch_calendar_event_records(owner_email, curriculum_keys))
-    aptem_keys = [event["eventKey"] for event in aptem_events]
-    aptem_record_map = fetch_calendar_event_records(owner_email, aptem_keys) if aptem_keys else {}
+    from .review_sources import load_imported_links
+    aptem_record_map, aptem_overlay_map = load_imported_links(aptem_events)
     events = [overlay_calendar_record(event, record_map.get(event["eventKey"])) for event in curriculum_events]
-    events.extend(overlay_calendar_record(event, aptem_record_map.get(event["eventKey"])) for event in aptem_events)
+    events.extend(overlay_calendar_record(event, aptem_record_map.get(event["eventKey"]),
+                                         aptem_overlay_map.get(event["eventKey"])) for event in aptem_events)
     events.extend(persisted_standalone_events)
     events.extend(live_session_events)
 
@@ -10763,6 +10760,8 @@ def persist_calendar_sync_reservation(
             setattr(record, field, getattr(candidate, field))
         record.sync_state = CoachCalendarEvent.SYNC_PENDING
         record.save(update_fields=[*mutable_fields, "sync_state", "updated_at"])
+        if review_event is not None and review_event.get("reviewSource") == "aptem":
+            return record
         if review_event is not None and record.review_template_id and not record.review_instance_id:
             ensure_review_instance_for_calendar_record(record, review_event)
         return sync_scheduled_review_instance(record)
@@ -11913,6 +11912,10 @@ def dashboard_latest_completed_review_dates(
                 for event in curriculum_events
             }
             events = [overlaid.get(event.get("eventKey"), event) for event in events]
+        from .review_sources import enrich_imported_events
+        aptem_events = [event for event in events if event.get("reviewSource") == "aptem"]
+        enriched = {event["eventKey"]: event for event in enrich_imported_events(aptem_events)}
+        events = [enriched.get(event.get("eventKey"), event) for event in events]
         return latest_completed_review_dates_from_events(rows, events)
     except Exception as exc:
         logger.warning("Could not resolve latest completed review dates: %s", exc)
@@ -12559,14 +12562,10 @@ def _case_file_review_events(owner_email, profile):
     curriculum_events = [event for event in events if event.get("reviewSource") == "curriculum"]
     aptem_events = [event for event in events if event.get("reviewSource") == "aptem"]
     generated_keys = {event["eventKey"] for event in events}
-    standalone_records = [
-        record for record in fetch_standalone_event_records(owner_email, learner_id=int(profile.id))
-        if record.event_key not in generated_keys
-        and not (
-            int(profile.id) in resolved["aptemProfileIds"]
-            and clean_text(record.event_type).lower() in {"mcr", "progress-review"}
-        )
-    ]
+    from .review_sources import standalone_review_records
+    standalone_records = standalone_review_records(
+        fetch_standalone_event_records(owner_email, learner_id=int(profile.id)), [profile],
+        resolved["aptemProfileIds"], linked_keys=generated_keys)
     legacy_keys = [
         build_timetable_event_key(
             int(event["learnerId"]), event["source"], event["sequence"], parse_schedule_date(event["targetDate"]),
@@ -12580,10 +12579,9 @@ def _case_file_review_events(owner_email, profile):
     curriculum_keys = [event["eventKey"] for event in curriculum_events]
     if curriculum_keys:
         curriculum_records.update(fetch_calendar_event_records(owner_email, curriculum_keys))
-    aptem_keys = [event["eventKey"] for event in aptem_events]
-    aptem_records = fetch_calendar_event_records(owner_email, aptem_keys) if aptem_keys else {}
+    from .review_sources import enrich_imported_events
     shaped = [overlay_calendar_record(event, curriculum_records.get(event["eventKey"])) for event in curriculum_events]
-    shaped.extend(overlay_calendar_record(event, aptem_records.get(event["eventKey"])) for event in aptem_events)
+    shaped.extend(enrich_imported_events(aptem_events))
     review_type_fields = review_type_fields_by_template(getattr(record, "review_template_id", "") for record in standalone_records)
     shaped.extend(
         event for event in (
@@ -14436,18 +14434,25 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
     if not eligible_ids:
         return None
 
-    query = '''
+    requested_overlay = ImportedReviewInstance.objects.filter(
+        owner_email__iexact=owner_email.strip().casefold(), event_key=event_key,
+    ).first()
+    linked_source_id = getattr(requested_overlay, "source_review_id", None)
+    use_internal_id = isinstance(linked_source_id, int) and linked_source_id > 0
+    identity_column = "id" if use_internal_id else "aptem_review_id"
+    identity_value = linked_source_id if use_internal_id else aptem_review_id
+    query = f'''
         SELECT id, learner_id, aptem_review_id, review_name, review_type,
                reviewer_name, learner_name, planned_scheduled_date,
                completed_date, status, review_data, extraction_status, last_error
         FROM "Learner".reviews
-        WHERE learner_id = ANY(%s) AND aptem_review_id = %s
+        WHERE learner_id = ANY(%s) AND {identity_column} = %s
         ORDER BY id
         LIMIT 2
     '''
     connection = connections[get_learner_db_alias()]
     with connection.cursor() as cursor:
-        cursor.execute(query, [eligible_ids, aptem_review_id])
+        cursor.execute(query, [eligible_ids, identity_value])
         columns = [column[0] for column in cursor.description]
         rows = [dict(zip(columns, row)) for row in cursor.fetchall()]
         if len(rows) != 1:
@@ -14472,11 +14477,13 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         has_normalized_sections=bool(normalized_sections),
     )
     historical_completed = migrated_source_is_completed(review)
-    canonical_event_key = f"{prefix}{aptem_review_id}"
+    canonical_event_key = f"{prefix}{review['aptemReviewId']}"
     canonical_owner = owner_email.strip().casefold()
-    saved_instance = ImportedReviewInstance.objects.filter(
-        owner_email__iexact=canonical_owner, event_key=canonical_event_key,
-    ).first()
+    saved_instance = requested_overlay
+    if not saved_instance:
+        saved_instance = ImportedReviewInstance.objects.filter(
+            owner_email__iexact=canonical_owner, learner_id=profile_id, source_review_id=row["id"],
+        ).first()
     source_review_id = getattr(saved_instance, "source_review_id", None)
     overlay_learner_id = getattr(saved_instance, "learner_id", None)
     if saved_instance and isinstance(source_review_id, int):
@@ -14484,6 +14491,8 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
             return None
     if saved_instance and isinstance(overlay_learner_id, int) and overlay_learner_id != profile_id:
         return None
+    if saved_instance and isinstance(getattr(saved_instance, "event_key", None), str):
+        canonical_event_key = saved_instance.event_key
     snapshot = getattr(saved_instance, "template_snapshot", None)
     migrated_form = not historical_completed and isinstance(snapshot, dict) and bool(snapshot.get("sections"))
     if migrated_form and not getattr(saved_instance, "source_review_id", None):
@@ -14725,13 +14734,12 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
         "source": "aptem",
         }
     if not historical_completed and (migrated_form or can_initialize or is_template_preview):
-        calendar_rows = list(CoachCalendarEvent.objects.filter(event_key=canonical_event_key)[:2])
-        calendar = calendar_rows[0] if calendar_rows else None
+        from .review_sources import booking_for_imported_review
+        calendar = booking_for_imported_review(learner, review, saved_instance)
         booking_template = getattr(saved_instance, "migrated_template", None) if saved_instance else None
         association_valid = bool(
             calendar and calendar.owner_email.casefold() == canonical_owner
-            and calendar.learner_id == profile_id
-            and not calendar.review_instance_id and not calendar.review_template_id
+            and (calendar.event_key != canonical_event_key or (not calendar.review_instance_id and not calendar.review_template_id))
             and calendar.event_type == migrated_booking_event_type(family)
         )
         booked = bool(
@@ -14756,7 +14764,7 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
                     ImportedReviewInstance.STATUS_SCHEDULED,
                 } and not booked and not preview_only and (not calendar or association_valid)
             ),
-            "eventKey": canonical_event_key if association_valid else None,
+            "eventKey": calendar.event_key if association_valid else None,
             "scheduledDate": calendar.scheduled_date.isoformat() if association_valid and calendar.scheduled_date else None,
             "scheduledTime": format_time_value(calendar.scheduled_time) if association_valid and calendar.scheduled_time else None,
             "durationMinutes": calendar.duration_minutes if association_valid else None,
@@ -14864,8 +14872,9 @@ def coach_review_instance_local_status(request, instance_id):
             synchronize_definition_locked(overlay, definition)
         except TemplateSyncConflict as exc:
             return JsonResponse({"detail": str(exc), "templateSync": exc.response()}, status=409)
-        calendar = CoachCalendarEvent.objects.select_for_update().filter(event_key=instance_id).first()
-        if not calendar or calendar.owner_email.casefold() != owner_email or calendar.learner_id != overlay.learner_id or calendar.review_instance_id or calendar.review_template_id or calendar.sync_state != CoachCalendarEvent.SYNC_SYNCED or not calendar.graph_event_id or not calendar_record_has_launch_url(calendar):
+        booking_key = (definition.get("booking") or {}).get("eventKey") or instance_id
+        calendar = CoachCalendarEvent.objects.select_for_update().filter(event_key=booking_key).first()
+        if not calendar or calendar.owner_email.casefold() != owner_email or (booking_key == instance_id and calendar.learner_id != overlay.learner_id) or calendar.sync_state != CoachCalendarEvent.SYNC_SYNCED or not calendar.graph_event_id or not calendar_record_has_launch_url(calendar):
             return coach_error(request, code="BOOKING_CONFLICT", message="Book and confirm the Teams meeting before starting this review.", status=409)
         overlay.status = ImportedReviewInstance.STATUS_IN_PROGRESS
         overlay.save(update_fields=["status", "updated_at"])
@@ -14912,7 +14921,9 @@ def coach_review_instance_book(request, instance_id):
         validator.check()
     except ValidationError as exc:
         return validation_error_response(exc)
-    base_event, owner_name = find_generated_timetable_event(owner_email, instance_id)
+    source_review = definition.get("historicalReview") or {}
+    occurrence_key = f"imported-review:{source_review['aptemReviewId']}" if source_review.get("aptemReviewId") else instance_id
+    base_event, owner_name = find_generated_timetable_event(owner_email, occurrence_key)
     learner_id = definition["instance"]["learnerId"]
     event_type = migrated_booking_event_type(family)
     if not event_type or not base_event or base_event.get("reviewSource") != "aptem" or int(base_event.get("learnerId") or 0) != learner_id or base_event.get("source") != event_type:
@@ -14928,10 +14939,13 @@ def coach_review_instance_book(request, instance_id):
     try:
         with transaction.atomic():
             lock_learner_calendar(learner_id)
-            record = CoachCalendarEvent.objects.select_for_update().filter(event_key=instance_id).first()
+            booking_key = (definition.get("booking") or {}).get("eventKey") or instance_id
+            record = CoachCalendarEvent.objects.select_for_update().filter(event_key=booking_key).first()
             if record:
-                if (record.owner_email.casefold() != owner_email or record.learner_id != learner_id
-                    or record.event_type != event_type or record.review_instance_id or record.review_template_id):
+                if (record.owner_email.casefold() != owner_email
+                    or (booking_key == instance_id and record.learner_id != learner_id)
+                    or record.event_type != event_type
+                    or (booking_key == instance_id and (record.review_instance_id or record.review_template_id))):
                     return coach_error(request, code="BOOKING_CONFLICT", message="This imported review has an inconsistent calendar link.", status=409)
                 if record.status != CoachCalendarEvent.STATUS_SCHEDULED:
                     return coach_error(request, code="BOOKING_CONFLICT", message="This booking is no longer in a schedulable state.", status=409)

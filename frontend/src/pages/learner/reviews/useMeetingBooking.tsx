@@ -19,13 +19,15 @@ export function useMeetingBooking({ learner, rules, attendance, titleOf, setEven
   const [warning, setWarning] = useState('');
   const dialog = session && <BookingErrorBoundary resetKey={session.id} onClose={() => setSession(null)}>
     <MeetingBookingDialog key={session.id} session={session} title={titleOf(session)} learner={learner}
-    rules={rules} attendance={attendance.find(item => item.id === session.id)} onClose={() => setSession(null)}
+    rules={rules} attendance={attendance.find(item => item.id === session.id || (session.reviewId && item.id === `imported-review:${session.reviewId}`))} onClose={() => setSession(null)}
     onBooked={response => {
       const saved = response.event;
-      const importedReview = session.importedReview && { ...session.importedReview, status: saved.status,
-        plannedDate: saved.scheduledDate, plannedTime: saved.scheduledTime };
       setEvents(current => [...current.filter(item => item.id !== session.id && item.eventKey !== saved.eventKey),
-        { ...saved, ...(importedReview ? { id: session.id, sequence: session.sequence, importedReview } : {}) }]);
+        session.reviewSource === 'aptem' || session.importedReview
+          ? { ...session, ...saved, id: session.id, eventKey: session.eventKey, calendarEventKey: saved.calendarEventKey || saved.eventKey,
+              reviewSource: 'aptem', reviewId: session.reviewId, aptemReviewId: session.aptemReviewId,
+              sequence: session.sequence, importedReview: session.importedReview }
+          : saved]);
       setWarning(meetingBookingWarning(saved, response.warning));
       setNotice(response.approvalRequired ? 'Your booking request has been sent for approval.' : 'Your meeting time has been saved.');
       setSession(null);
