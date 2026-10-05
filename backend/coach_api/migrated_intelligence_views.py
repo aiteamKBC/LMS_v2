@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 
 def _association(request, review_id, *, lock=False):
-    from coach_api.views import _owned_migrated_overlay
+    from coach_api.views import _owned_migrated_overlay, imported_review_calendar_rows
 
     owner, definition = _coach_review(request, review_id)
     if not definition:
@@ -36,10 +36,7 @@ def _association(request, review_id, *, lock=False):
     overlay = _owned_migrated_overlay(owner, definition)
     if not overlay:
         return None, None, None
-    query = CoachCalendarEvent.objects.filter(event_key=overlay.event_key)
-    if lock:
-        query = query.select_for_update()
-    rows = list(query[:2])
+    rows = imported_review_calendar_rows(owner, overlay.event_key, lock=lock)
     record = rows[0] if len(rows) == 1 else None
     family = definition["template"]["reviewTypeCode"]
     if family not in {"aptem_mcm", "aptem_progress_review"} or not record or (

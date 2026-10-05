@@ -1035,3 +1035,34 @@ class MigratedBookingTests(TestCase):
         self.definition["historicalReview"]["id"] = "410"
         self.assertEqual(self.book()[0].status_code, 409)
         self.assertEqual(CoachCalendarEvent.objects.count(), 0)
+
+
+    def test_coach_reuses_learner_mcm_booking_and_its_graph_identity(self):
+        from .migrated_templates import snapshot_for
+        self.template.review_family = "MCM"
+        self.template.save(update_fields=["review_family"])
+        self.overlay.template_snapshot = snapshot_for(self.template)
+        self.overlay.save(update_fields=["template_snapshot"])
+        self.definition["historicalReview"]["type"] = "Monthly Coaching Meeting"
+        self.base_event["source"] = "mcr"
+        calendar = CoachCalendarEvent.objects.create(
+            event_key="mcr:21:1:2026-10-30",
+            idempotency_key="learner-book:mcm:commercial:101:2026-10:409",
+            owner_email=self.overlay.owner_email, learner_id=21, event_type="mcr",
+            target_date=date(2026, 10, 30),
+            scheduled_date=date.fromisoformat(self.slot["scheduledDate"]),
+            scheduled_time=time(10), duration_minutes=60, status="scheduled",
+            sync_state="synced", graph_event_id="existing-graph-event",
+            meeting_link="https://example.invalid/teams/existing",
+        )
+        with patch("coach_api.local_mcm_bookings._review_rows",
+                   return_value=[(409, 21, "A-9", 101, "commercial", None)]):
+            response, calls = self.book()
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(calls, 0)
+        self.assertEqual(CoachCalendarEvent.objects.count(), 1)
+        calendar.refresh_from_db()
+        self.assertEqual(calendar.event_key, "mcr:21:1:2026-10-30")
+        self.assertEqual(calendar.graph_event_id, "existing-graph-event")
+        self.overlay.refresh_from_db()
+        self.assertEqual(self.overlay.status, "scheduled")

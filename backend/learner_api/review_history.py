@@ -260,10 +260,12 @@ def learner_review_history(request, kind, pk):
         source = model.all_learners.only("id", "email", "aptem_id").filter(pk=pk).first()
         if source is None:
             return _error("Learner not found.", 404)
-        # Imported Aptem reviews are intentionally isolated from the live
-        # programme-cycle data. A learner without a valid Aptem id has no rows
-        # in this source and must continue through the normal calendar path.
-        if not student_activity_available(getattr(source, "aptem_id", None)):
+        # MCMs already stored in the LMS are owned through the learner profile,
+        # even when the enrolment row has lost its legacy import identifier.
+        # Hiding those rows makes the assignment picker offer a Curriculum
+        # slot that the coach timetable cannot book. Resolve the local profile
+        # below; keep the existing eligibility for other review categories.
+        if category != "monthly-coaching" and not student_activity_available(getattr(source, "aptem_id", None)):
             return JsonResponse({"learnerId": None, "category": category, "reviews": []})
         with connection.cursor() as cursor:
             learner_id = _learner_profile_id(cursor, source, kind)

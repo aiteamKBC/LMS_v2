@@ -51,8 +51,12 @@ def _mirror_status(overlay):
     update = {"status": overlay.status}
     if overlay.status == ImportedReviewInstance.STATUS_COMPLETED:
         update["review_completed_at"] = overlay.completed_at
+    from coach_api.views import imported_review_calendar_rows
+    rows = imported_review_calendar_rows(overlay.owner_email, overlay.event_key, lock=True)
+    if len(rows) != 1:
+        return
     calendar = CoachCalendarEvent.objects.filter(
-        event_key=overlay.event_key, owner_email__iexact=overlay.owner_email,
+        pk=rows[0].pk, owner_email__iexact=overlay.owner_email,
         learner_id=overlay.learner_id,
     ).filter(
         Q(review_instance_id__isnull=True) | Q(review_instance_id=""),
@@ -229,10 +233,11 @@ def migrated_review_complete(request, review_id):
 
 
 def _pdf_context(overlay, definition):
-    calendar = CoachCalendarEvent.objects.filter(
-        event_key=overlay.event_key, owner_email__iexact=overlay.owner_email,
-        learner_id=overlay.learner_id,
-    ).first()
+    from coach_api.views import imported_review_calendar_rows
+    rows = imported_review_calendar_rows(overlay.owner_email, overlay.event_key)
+    calendar = next((row for row in rows if len(rows) == 1
+                     and row.owner_email.casefold() == overlay.owner_email.casefold()
+                     and row.learner_id == overlay.learner_id), None)
     return {
         "learner_name": definition.get("learnerName") or "",
         "learner_email": definition.get("learnerEmail") or "",

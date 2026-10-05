@@ -183,7 +183,7 @@ def repair_one(eid: int, expected_database: str, expected_fingerprint: str | Non
                         f"evidence:{eid}", f"evidence:{eid}", f"aptem:{owner['aptem_id']}:evidence:{eid}",
                         sum(int(s["seconds"]) for s in segments), BASIS,
                         datetime.fromisoformat(segments[0]["start"]), datetime.fromisoformat(segments[-1]["end"]),
-                        segments[0]["month"], "تقديري — يحتاج اعتماد", Jsonb(parent_payload), run_id, parent_id,
+                        segments[0]["month"], "Estimated — approval required", Jsonb(parent_payload), run_id, parent_id,
                     ]
                 )
             else:
@@ -198,7 +198,7 @@ def repair_one(eid: int, expected_database: str, expected_fingerprint: str | Non
                     "canonical_activity_key": f"aptem:{owner['aptem_id']}:evidence:{eid}", "activity_status": "Accepted", "accepted": True,
                     "actual_seconds": sum(int(s["seconds"]) for s in segments), "actual_basis": BASIS,
                     "reporting_started_at": datetime.fromisoformat(segments[0]["start"]), "reporting_ended_at": datetime.fromisoformat(segments[-1]["end"]),
-                    "reporting_month": segments[0]["month"], "reporting_timestamp_label": "تقديري — يحتاج اعتماد",
+                    "reporting_month": segments[0]["month"], "reporting_timestamp_label": "Estimated — approval required",
                     "source_payload": Jsonb(parent_payload), "sync_run_id": run_id,
                 })
                 parent_payload = evidence_payload(evidence, segments, parent_id, old_parent_id)

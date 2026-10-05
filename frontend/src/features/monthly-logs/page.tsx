@@ -131,7 +131,13 @@ export function MonthlyLog({ id, month, summary, base, perspective, workflow, em
   const data = query.data;
   // Training-plan values come only from the canonical monthly-log response;
   // this view must not overwrite them from a second frontend contract.
-  const displayData = data;
+  // Sort a presentation copy so the saved report and signing digest stay intact.
+  const displayData = { ...data, rows: [...data.rows].sort((left, right) =>
+    Number(!left.activity_date) - Number(!right.activity_date)
+    || (left.activity_date || '').localeCompare(right.activity_date || '')
+    || Number(!left.activity_time) - Number(!right.activity_time)
+    || (left.activity_time || '').localeCompare(right.activity_time || '')
+    || left.id - right.id) };
   // The MCM is the learner's signing surface for this linked month. Keep the
   // log available for review first, but do not allow a separate log signature
   // to diverge from the MCM signature that will be mirrored here.
@@ -158,7 +164,7 @@ export function MonthlyLog({ id, month, summary, base, perspective, workflow, em
     <LearnerInformation summary={summary} data={displayData} actions={!embedded ? <JournalDownloads summary={summary} month={month} disabled={signing.isPending || (data.source === 'lms' && !(data.student_signature && data.coach_signature))} loadMonth={(selected, signal) => mcmWorkflow ? getLogMonth(id, selected, signal, perspective, false, workflowKey) : getLogMonth(id, selected, signal, perspective)} /> : undefined} />
     {displayData.target_warning && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Target hours: Unavailable. {displayData.target_warning}</p>}
     <MonthlyHours data={displayData} />
-    <ActivityLog key={sourceRef ?? 'all'} data={data} initialSourceRef={sourceRef}
+    <ActivityLog key={sourceRef ?? 'all'} data={displayData} initialSourceRef={sourceRef}
       contentScope={`monthly-logs:${perspective}:${id}`} loadContent={rowId => mcmWorkflow ? getLogContent(id, month, rowId, perspective, workflowKey) : getLogContent(id, month, rowId, perspective)} />
     <section className={`${journal.card} ${journal.signoff}`} aria-label={embedded ? 'Learner monthly sign-off' : 'Monthly sign-off'}>
       <div className={journal.sectionHeading}><div><h2 className="font-heading">{embedded ? 'Learner sign-off' : 'Report sign-off'}</h2><p>{data.is_open ? 'This month is still updating. Signatures become available after month-end.' : embedded ? 'The learner signature is captured on the Monthly Coaching Meeting.' : 'Your learner and coach signatures for this month’s record.'}</p></div></div>
