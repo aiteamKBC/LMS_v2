@@ -116,3 +116,82 @@
   .page.page.page .tabs button { padding: .5rem .75rem; }
 }
 @media (max-width: 380px) { .banner { flex-direction: column; } .banner img { align-self: flex-end; } }
+
+/* Page CSS is code-split, so its dark treatment must live after the light
+   declarations in this module rather than relying only on the app stylesheet. */
+:global(html[data-theme="dark"]) .page.page {
+  background: var(--coach-dark-page);
+  color: var(--coach-dark-text);
+}
+
+:global(html[data-theme="dark"]) .banner {
+  --banner-dot: rgb(191 163 238 / 13%);
+  --banner-glow: rgb(111 82 162 / 30%);
+  border-color: var(--coach-dark-border);
+  background: linear-gradient(90deg, var(--coach-dark-surface), var(--coach-dark-soft) 50%, var(--coach-dark-hover));
+}
+
+:global(html[data-theme="dark"]) .banner p,
+:global(html[data-theme="dark"]) .listMeta p,
+:global(html[data-theme="dark"]) .learnerEmail,
+:global(html[data-theme="dark"]) .footer { color: var(--coach-dark-muted); }
+
+:global(html[data-theme="dark"]) .page.page.page .learnerEmail { color: #cbd7e5 !important; }
+:global(html[data-theme="dark"]) .page.page :is(.monthNav span, .control, .group > button, .listMeta h3) { color: var(--coach-dark-text); }
+
+:global(html[data-theme="dark"]) .controlsCard {
+  border-color: var(--coach-dark-border);
+  background: var(--coach-dark-surface);
+  box-shadow: none;
+}
+
+:global(html[data-theme="dark"]) :is(.monthNav, .control, .tableScroll, .menuTrigger, .menu) {
+  border-color: var(--coach-dark-border);
+  background: var(--coach-dark-soft);
+  color: var(--coach-dark-text);
+}
+
+:global(html[data-theme="dark"]) .page :is(.toolbar input, .group > button) {
+  border-color: var(--coach-dark-border);
+  background: var(--coach-dark-page);
+  color: var(--coach-dark-text);
+}
+
+:global(html[data-theme="dark"]) .page.page.page .tabs button:nth-child(1),
+:global(html[data-theme="dark"]) .status[data-status="awaiting-signature"] { --status-bg: #3a3154; --status-fg: #e0d1fa; --status-count: #4a3d69; }
+:global(html[data-theme="dark"]) .page.page.page .tabs button:nth-child(2),
+:global(html[data-theme="dark"]) .status[data-status="not-scheduled"] { --status-bg: #273b53; --status-fg: #d7e0ea; --status-count: #344b66; }
+:global(html[data-theme="dark"]) .page.page.page .tabs button:nth-child(3),
+:global(html[data-theme="dark"]) .status[data-status="scheduled"] { --status-bg: #213f63; --status-fg: #b8d8ff; --status-count: #2c527d; }
+:global(html[data-theme="dark"]) .page.page.page .tabs button:nth-child(4),
+:global(html[data-theme="dark"]) .status[data-status="in-progress"] { --status-bg: #49391f; --status-fg: #ffdd9f; --status-count: #5c4928; }
+:global(html[data-theme="dark"]) .page.page.page .tabs button:nth-child(5) { --status-bg: #3a3154; --status-fg: #e0d1fa; --status-count: #4a3d69; }
+:global(html[data-theme="dark"]) .page.page.page .tabs button:nth-child(6),
+:global(html[data-theme="dark"]) .status[data-status="completed"] { --status-bg: #20483d; --status-fg: #b9ead9; --status-count: #2b5c4f; }
+
+:global(html[data-theme="dark"]) .page.page.page .tabs button {
+  border-color: var(--status-bg) !important;
+  background: var(--status-bg) !important;
+  color: var(--status-fg) !important;
+}
+:global(html[data-theme="dark"]) .page.page.page .tabs button[aria-pressed="true"] {
+  border-color: var(--coach-dark-accent) !important;
+  box-shadow: inset 0 0 0 1px var(--coach-dark-accent), 0 5px 14px rgb(0 0 0 / 18%);
+}
+:global(html[data-theme="dark"]) .page.page.page .tabs button > span:last-child {
+  background: var(--status-count) !important;
+  color: inherit !important;
+}
+
+:global(html[data-theme="dark"]) .page.page .table.table th {
+  border-color: var(--coach-dark-border) !important;
+  background: var(--coach-dark-hover) !important;
+  color: var(--coach-dark-text) !important;
+}
+
+:global(html[data-theme="dark"]) .page.page .table.table tr { background: var(--coach-dark-surface) !important; }
+:global(html[data-theme="dark"]) .page.page .table.table tbody tr:nth-child(even) { background: var(--coach-dark-soft) !important; }
+:global(html[data-theme="dark"]) .page.page .table.table tbody tr:hover { background: var(--coach-dark-hover) !important; }
+:global(html[data-theme="dark"]) .page.page .table.table td { border-color: var(--coach-dark-border); color: var(--coach-dark-text); }
+:global(html[data-theme="dark"]) .menu button:hover,
+:global(html[data-theme="dark"]) .menu button:focus { background: var(--coach-dark-hover); }

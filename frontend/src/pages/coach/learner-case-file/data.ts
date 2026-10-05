@@ -710,6 +710,14 @@ function buildCaseFileData(args: {
   const canonicalPlanned = args.learnerMetrics?.planned ?? null;
   const metricsAvailable = Boolean(args.learnerMetrics);
   const overallProgress = metricsAvailable ? args.learnerMetrics?.programmeProgress ?? null : null;
+  const learnerEndDate = args.detail?.learnerEndDate;
+  const formattedLearnerEndDate = learnerEndDate && /^\d{4}-\d{2}-\d{2}(?:T|$)/.test(learnerEndDate)
+    ? formatCalendarDateLabel(learnerEndDate)
+    : learnerEndDate;
+  const plannedEndDate = args.detail?.programmeEndDate
+    || args.shell.profile.plannedEndDate
+    || formattedLearnerEndDate
+    || '--';
 
   return {
     learnerId: args.learnerId,
@@ -761,7 +769,7 @@ function buildCaseFileData(args: {
     evidenceCount: args.snapshot?.evidenceCount ?? args.evidence?.totalEvidence ?? null,
     startDate: args.shell.profile.startDate || '--',
     gatewayReviewDate: args.shell.profile.gatewayReviewDate || '--',
-    plannedEndDate: args.detail?.programmeEndDate || args.shell.profile.plannedEndDate || '--',
+    plannedEndDate,
     totalExpectedOtjh: metricsAvailable ? canonicalPlanned ?? 0 : 0,
     touchedKsbCodes,
     activityItems: buildActivityItems(args.snapshot, args.detail, args.evidence),

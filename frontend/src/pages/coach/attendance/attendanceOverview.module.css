@@ -159,3 +159,19 @@
 .page .tableScroll tbody tr:last-child td { border-bottom: 0; }
 .page .tableScroll tbody tr:hover { background: #f3eefc !important; }
 .page .tableScroll tbody tr[data-selected=true]:hover { background: #eae0f9 !important; }
+
+:global(html[data-theme="dark"]) .page { background: var(--coach-dark-page); color: var(--coach-dark-text); }
+:global(html[data-theme="dark"]) .card { border-color: var(--coach-dark-border); background: var(--coach-dark-surface); box-shadow: none; }
+:global(html[data-theme="dark"]) :is(.heading p, .formRow label, .studentsHeader > label, .pagination) { color: var(--coach-dark-muted); }
+:global(html[data-theme="dark"]) .page :is(select, input[type=date]) { border-color: var(--coach-dark-border); background: var(--coach-dark-page); color: var(--coach-dark-text); }
+:global(html[data-theme="dark"]) :is(.selectActions button, .pagination button) { border-color: var(--coach-dark-border); background: var(--coach-dark-soft); color: #d8c5f6; }
+:global(html[data-theme="dark"]) .dayList > span { background: var(--coach-dark-hover); color: var(--coach-dark-text); }
+:global(html[data-theme="dark"]) .editFooter { border-color: var(--coach-dark-border); }
+:global(html[data-theme="dark"]) :global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .page .tableScroll th { border-color: var(--coach-dark-border); background: var(--coach-dark-hover) !important; color: var(--coach-dark-text) !important; }
+:global(html[data-theme="dark"]) :global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .page .tableScroll td { border-color: var(--coach-dark-border) !important; color: var(--coach-dark-text); }
+:global(html[data-theme="dark"]) :global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .page .tableScroll tbody tr { background: var(--coach-dark-surface) !important; }
+:global(html[data-theme="dark"]) :global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .page .tableScroll tbody tr:nth-child(even) { background: var(--coach-dark-soft) !important; }
+:global(html[data-theme="dark"]) :global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .page .tableScroll tbody tr:is(:hover, [data-selected=true]) { background: var(--coach-dark-hover) !important; }
+:global(html[data-theme="dark"]) .tableScroll :is(td strong, td.studentName) { color: var(--coach-dark-text); }
+:global(html[data-theme="dark"]) .page .tableScroll .linkButton { border-color: #6b5a89; background: var(--coach-dark-soft); color: #d8c5f6; }
+:global(html[data-theme="dark"]) .studentSkeleton { background: linear-gradient(90deg, #263f59 25%, #3a5572 50%, #263f59 75%); background-size: 200% 100%; }

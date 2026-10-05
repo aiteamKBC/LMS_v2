@@ -52,6 +52,7 @@ describe('Coach caseload loading', () => {
     expect(destination.pathname).toBe('/coach/learner-case-file');
     expect(destination.state).toMatchObject({ learnerId: '42',
       activitySnapshot: { learnerId: '42', completed: 137, total: 157, percent: 87.26 },
+      otjhSnapshot: { learnerId: '42', completed: 70, target: 90, planned: null, percent: 77.77777777777779 },
     });
   });
 
