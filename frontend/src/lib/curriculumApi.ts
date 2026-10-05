@@ -1017,6 +1017,68 @@ export interface CurriculumProgrammeAssignedLearner {
   reflectionCount?: number;
 }
 
+export interface CurriculumKsbAchievementFilters {
+  cohortId?: string;
+  groupId?: string;
+  moduleId?: string;
+  learnerId?: string;
+  componentId?: string;
+  ksbType?: string;
+  ksbId?: string;
+  search?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  page?: number;
+  pageSize?: number;
+  ksbPage?: number;
+  ksbPageSize?: number;
+}
+
+export interface CurriculumKsbAchievementItem {
+  ksbDefinitionId: string;
+  code: string;
+  type: string;
+  description: string;
+  sourceType: string;
+  sourceId: string;
+  learnerCount: number;
+  consumptionCount: number;
+  componentCount: number;
+  firstConsumedAt?: string | null;
+  lastConsumedAt?: string | null;
+}
+
+export interface CurriculumKsbConsumption {
+  effectiveConsumptionId: string;
+  learner: { id: string | number; name: string };
+  cohort: { id: string; name: string };
+  group: { id: string; name: string };
+  module: { id: string; title: string };
+  week: { id: string; title: string };
+  component: { id: string; title: string; type: string };
+  ksb: CurriculumKsbAchievementItem;
+  consumedAt: string;
+  weight: number;
+}
+
+export interface CurriculumKsbAchievementResponse {
+  scope: { programmeId: string; cohortId: string | null; groupId: string | null; moduleId: string | null };
+  appliedSource: { type: string; id: string; label: string; definitionCount: number };
+  summary: { appliedKsbCount: number; consumedKsbCount: number; learnerCount: number; consumptionCount: number };
+  items: CurriculumKsbAchievementItem[];
+  ksbPagination: { page: number; pageSize: number; total: number; hasNext: boolean };
+  consumptionLog: { items: CurriculumKsbConsumption[]; page: number; pageSize: number; total: number; hasNext: boolean };
+}
+
+export interface CurriculumKsbAchievementConsumptionResponse {
+  ksb: CurriculumKsbAchievementItem | null;
+  items: CurriculumKsbConsumption[];
+  page: number;
+  pageSize: number;
+  total: number;
+  hasNext: boolean;
+}
+
 /** The identifier accepted by curriculum learner-assignment writes. */
 export function curriculumLearnerAssignmentId(
   learner: Pick<CurriculumProgrammeAssignedLearner, 'id' | 'enrolmentId'>,
@@ -3396,7 +3458,7 @@ export function fetchCurriculumKsbCoverage(params: { sourceType?: string; source
   if (params.sourceType) query.set('source_type', params.sourceType);
   if (params.sourceId) query.set('source_id', params.sourceId);
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/ksb-coverage/${suffix}`, { signal });
+  return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/ksb-coverage/${suffix}`, { signal, timeoutMs: 60000 });
 }
 
 export function fetchCurriculumProgrammeKsbCoverage(programmeId: string, params: { sourceType?: string; sourceId?: string; actualMappings?: boolean } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageResponse> {
@@ -3405,7 +3467,7 @@ export function fetchCurriculumProgrammeKsbCoverage(programmeId: string, params:
   if (params.sourceId) query.set('source_id', params.sourceId);
   if (params.actualMappings) query.set('actual_mappings', '1');
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/ksb-coverage/${suffix}`, { signal });
+  return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/ksb-coverage/${suffix}`, { signal, timeoutMs: 60000 });
 }
 
 // Kept as named entry points because the Programme workspace reads them by
@@ -3472,7 +3534,7 @@ export function fetchCurriculumScopeLearnerRoster(
   if (params.learnerStatus) query.set('learnerStatus', params.learnerStatus);
   return fetchJson<CurriculumScopeLearnerRosterResponse>(
     scopePath(SCOPE_ROSTER_PATHS, '/curriculum/learner-roster/', scope, identifier, query),
-    { signal },
+    { signal, timeoutMs: 60000 },
   );
 }
 
@@ -3497,6 +3559,26 @@ export function fetchCurriculumScopeLearnerKsbImpact(
     scopePath(SCOPE_IMPACT_PATHS, '/curriculum/learner-ksb-impact/', scope, identifier, query),
     { signal },
   );
+}
+
+function ksbAchievementQuery(params: CurriculumKsbAchievementFilters = {}) {
+  const query = new URLSearchParams();
+  const values: Array<[string, string | number | undefined]> = [
+    ['cohort_id', params.cohortId], ['group_id', params.groupId], ['module_id', params.moduleId],
+    ['learner_id', params.learnerId], ['component_id', params.componentId], ['ksb_type', params.ksbType],
+    ['ksb_id', params.ksbId], ['search', params.search], ['date_from', params.dateFrom], ['date_to', params.dateTo],
+    ['page', params.page], ['page_size', params.pageSize], ['ksb_page', params.ksbPage], ['ksb_page_size', params.ksbPageSize],
+  ];
+  values.forEach(([key, value]) => { if (value !== undefined && value !== '') query.set(key, String(value)); });
+  return query.toString() ? `?${query.toString()}` : '';
+}
+
+export function fetchCurriculumKsbAchievement(programmeId: string, params: CurriculumKsbAchievementFilters = {}, signal?: AbortSignal) {
+  return fetchJson<CurriculumKsbAchievementResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/ksb-achievement/${ksbAchievementQuery(params)}`, { signal });
+}
+
+export function fetchCurriculumKsbAchievementConsumptions(programmeId: string, ksbDefinitionId: string, params: CurriculumKsbAchievementFilters = {}, signal?: AbortSignal) {
+  return fetchJson<CurriculumKsbAchievementConsumptionResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/ksb-achievement/${encodeURIComponent(ksbDefinitionId)}/consumptions/${ksbAchievementQuery(params)}`, { signal });
 }
 
 export function fetchCurriculumGroupKsbCoverage(groupId: string, params: { sourceType?: string; sourceId?: string } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageResponse> {
@@ -3699,11 +3781,12 @@ export function fetchCurriculumOverview(signal?: AbortSignal, options: { compact
   return fetchJson<CurriculumOverview>(`/curriculum/overview/${options.compact ? '?compact=true' : ''}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 30000 });
 }
 
-export function fetchCurriculumProgrammeDetail(id: string, signal?: AbortSignal, options: { visibility?: 'all' | 'operational'; skipCache?: boolean; revalidate?: boolean } = {}): Promise<CurriculumProgrammeDetail> {
+export function fetchCurriculumProgrammeDetail(id: string, signal?: AbortSignal, options: { visibility?: 'all' | 'operational'; deferStats?: boolean; skipCache?: boolean; revalidate?: boolean; timeoutMs?: number } = {}): Promise<CurriculumProgrammeDetail> {
   const query = new URLSearchParams();
   if (options.visibility === 'all') query.set('visibility', 'all');
+  if (options.deferStats) query.set('defer_stats', '1');
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchJson<CurriculumProgrammeDetail>(`/curriculum/programmes/${encodeURIComponent(id)}/detail/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate });
+  return fetchJson<CurriculumProgrammeDetail>(`/curriculum/programmes/${encodeURIComponent(id)}/detail/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 60000 });
 }
 
 export { fetchCurriculumOverview as fetchCurriculumOverviewBundle };
