@@ -3,7 +3,7 @@
 The plan is deliberately explicit.  It only touches the reviewed Sharon
 historical learners and the evidence IDs listed below.  Reporting dates are
 an estimated allocation (nearest valid weekday, order preserved) and are
-labelled ``تقديري — يحتاج اعتماد``; estimated rows are intentionally excluded
+labelled ``Estimated — approval required``; estimated rows are intentionally excluded
 from authoritative Actual totals until approved by the normal review flow.
 
 Preview is read-only.  Apply requires the database name and preview
@@ -28,12 +28,12 @@ from psycopg.types.json import Jsonb
 
 UK = ZoneInfo("Europe/London")
 CONTAINER = "fetch-aptem-evidences"
-LABEL = "تقديري — يحتاج اعتماد"
+LABEL = "Estimated — approval required"
 BASIS = "aptem:accepted-evidence-spent-minutes;estimated-reporting-allocation"
 RUN_KIND = "sharon-estimated-evidence-repair-v1"
 # Keep the persisted label UTF-8 even when this source file is opened through a
 # legacy Windows console.
-LABEL = "\u062a\u0642\u062f\u064a\u0631\u064a \u2014 \u064a\u062d\u062a\u0627\u062c \u0627\u0639\u062a\u0645\u0627\u062f"
+LABEL = "Estimated — approval required"
 
 # Parent IDs already created by the Aptem source reconciliation.  A None
 # parent means that the selected evidence has no canonical source and must get

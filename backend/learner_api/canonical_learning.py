@@ -164,7 +164,8 @@ def entries_for(owner):
         GROUP BY s.canonical_progress_id
     ), journal_routes AS (
         SELECT j.progress_id,jsonb_agg(jsonb_build_object(
-            'group_id',j.group_id,'activity_id',j.activity_id,'source_ref',j.source_ref) ORDER BY j.id) AS payload,
+            'group_id',j.group_id,'activity_id',j.activity_id,'source_ref',j.source_ref,
+            'source_system',s.source_system,'month',j.month,'activity_date',j.activity_date) ORDER BY j.id) AS payload,
             sum(j.planned_hours) AS planned
         FROM "Learner".learner_journal_rows j
         JOIN canonical p ON j.progress_id=p.id AND j.canonical_learner_id=p.learner_id
@@ -254,6 +255,26 @@ def activity_rows(learner_id):
     return rows_for(owner)
 
 
+def journal_activity_date(entry):
+    """Use an unambiguous original journal date within the progress reporting month."""
+    if entry.get('source_system') != 'journal':
+        return None
+    month = entry.get('reporting_month')
+    dates = set()
+    for route in entry.get('journal_routes') or []:
+        if not isinstance(route, dict) or route.get('source_system') != 'journal' or route.get('month') != month:
+            continue
+        value = str(route.get('activity_date') or '')
+        if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value) or value[:7] != month:
+            continue
+        try:
+            datetime.strptime(value, '%Y-%m-%d')
+        except ValueError:
+            continue
+        dates.add(value)
+    return next(iter(dates)) if len(dates) == 1 else None
+
+
 def rows_for(owner, records=None):
     result = []
     for entry in (part for record in (records if records is not None else entries_for(owner)) for part in allocations(record)):
@@ -268,13 +289,21 @@ def rows_for(owner, records=None):
                    planned=entry.get('expected_otjh') if entry.get('expected_otjh') is not None else source.get('planned_hours'),
                    note=source.get('completion_note') or entry.get('feedback'),
                    group=entry.get('module_title') or entry.get('group_title'), ksbs=entry['ksbs'])
+        # A backfill timestamp may describe a later import/edit, not the original
+        # activity. Correct only that display date; hours and month stay on progress.
+        if not at or at.strftime('%Y-%m') != entry.get('reporting_month'):
+            item['activity_date'] = journal_activity_date(entry) or item['activity_date']
+        timestamp_label = entry.get('reporting_timestamp_label') or source.get('timestamp_label') or ''
+        # Translate the historical system label for display without rewriting the ledger.
+        if timestamp_label == '\u062a\u0642\u062f\u064a\u0631\u064a \u2014 \u064a\u062d\u062a\u0627\u062c \u0627\u0639\u062a\u0645\u0627\u062f':
+            timestamp_label = 'Estimated — approval required'
         item.update(accepted=entry.get('accepted') is True,
                     source_system=entry.get('source_system'),
                     reporting_month=entry.get('reporting_month'),
-                    timestamp_label=entry.get('reporting_timestamp_label') or source.get('timestamp_label') or '',
+                    timestamp_label=timestamp_label,
                     actual_hours_recorded=entry.get('actual_seconds') is not None,
                     actual_estimated=is_time_estimated(entry),
-                    actual_status_label='تقديري — يحتاج اعتماد' if is_time_estimated(entry)
+                    actual_status_label='Estimated — approval required' if is_time_estimated(entry)
                     else ('Accepted' if entry.get('accepted') is True else 'Not accepted'),
                     progress_id=entry['id'])
         result.append(item)
