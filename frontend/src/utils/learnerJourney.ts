@@ -40,6 +40,20 @@ export interface JourneyComponent {
   isQuiz?: boolean;
   quizMeta?: { quizId: number; questions: number | null; duration: number | null; timeUnit: string | null };
   quizAttempts?: LearnerQuizAttempt[];
+  retired?: boolean;
+}
+
+/** The attempts that belong to a quiz component: those on the quiz it links
+ * now, plus earlier ones the server traced to this same component after an
+ * author re-pointed it at a different quiz. Quiz ids compare as strings
+ * because progress rows store quiz_ref as text. */
+export function quizAttemptsFor(
+  component: Pick<JourneyComponent, 'componentId' | 'quizMeta'>,
+  attempts: LearnerQuizAttempt[] | undefined,
+): LearnerQuizAttempt[] {
+  const quizId = component.quizMeta?.quizId;
+  return (attempts || []).filter((attempt) => (quizId != null && String(attempt.quizId) === String(quizId))
+    || (!!component.componentId && attempt.componentId === component.componentId));
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -647,7 +661,7 @@ export function buildLearnerJourney(real: LearnerDetail | null): JourneyModule[]
               // curriculum API exposes quiz ids as numbers. Compare their
               // canonical string values so saved attempts still decorate the
               // learner-facing quiz card with its Passed/Attempted status.
-              ? real.quizAttempts.filter((a) => String(a.quizId) === String(c.quizMeta!.quizId))
+              ? quizAttemptsFor(c, real.quizAttempts)
               : undefined,
           }));
         return {
