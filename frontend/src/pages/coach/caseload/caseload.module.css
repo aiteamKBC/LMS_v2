@@ -105,25 +105,25 @@
 
 /* Keep the table header continuous to the scroll container's edges in both themes. */
 :global([data-theme="dark"]) .embedded {
-  --ink: #eee8fa;
-  --muted: #c2b7d7;
-  --line: #4a3a65;
-  --violet: #c4b5fd;
-  --violet-soft: #392955;
-  border-color: #4a3a65;
-  background: #241b35;
+  --ink: var(--coach-dark-text);
+  --muted: var(--coach-dark-muted);
+  --line: var(--coach-dark-border);
+  --violet: var(--coach-dark-accent);
+  --violet-soft: var(--coach-dark-hover);
+  border-color: var(--coach-dark-border);
+  background: var(--coach-dark-page);
   box-shadow: none;
 }
-:global([data-theme="dark"]) .embedded .tableScroll { border-color: #4a3a65; background: #2a2140; }
+:global([data-theme="dark"]) .embedded .tableScroll { border-color: var(--coach-dark-border); background: var(--coach-dark-surface); }
 :global([data-theme="dark"]) :global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .embedded .table thead th {
   border-bottom-color: rgb(255 255 255 / 14%) !important;
-  background: #3b1f61 !important;
+  background: var(--coach-dark-hover) !important;
 }
-:global([data-theme="dark"]) :global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .embedded .table thead { background: #3b1f61 !important; }
-:global([data-theme="dark"]) :global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .embedded .table tbody tr { background: #2a2140 !important; }
-:global([data-theme="dark"]) :global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .embedded .table tbody tr:nth-child(even) { background: #302647 !important; }
-:global([data-theme="dark"]) :global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .embedded .table tbody tr:hover { background: #3a2c59 !important; }
-:global([data-theme="dark"]) :global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .embedded .table tbody td { border-bottom-color: #4a3a65 !important; }
+:global([data-theme="dark"]) :global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .embedded .table thead { background: var(--coach-dark-hover) !important; }
+:global([data-theme="dark"]) :global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .embedded .table tbody tr { background: var(--coach-dark-surface) !important; }
+:global([data-theme="dark"]) :global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .embedded .table tbody tr:nth-child(even) { background: var(--coach-dark-soft) !important; }
+:global([data-theme="dark"]) :global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .embedded .table tbody tr:hover { background: var(--coach-dark-hover) !important; }
+:global([data-theme="dark"]) :global(.dashboard-theme[data-workspace-role="coach"]) :global(.workspace-main) .embedded .table tbody td { border-bottom-color: var(--coach-dark-border) !important; }
 
 .titleGroup { display: flex; align-items: center; gap: 14px; }
 .titleIcon { display: grid; place-items: center; width: 46px; height: 46px; flex: 0 0 46px; border-radius: 11px; background: #fff3dc; color: #8b5b2d; font-size: 23px; }
@@ -234,3 +234,46 @@
 @container coach-content (max-width: 480px) {
   .summary { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* This module is lazy-loaded after the workspace theme. Keep its dark
+   surfaces and typography beside the light rules so the page cannot fall
+   back to white cards or dark-on-dark table text. */
+:global(html[data-theme="dark"]) :is(.page, .embedded) {
+  --ink: var(--coach-dark-text);
+  --muted: var(--coach-dark-muted);
+  --line: var(--coach-dark-border);
+  --violet: var(--coach-dark-accent);
+  --violet-soft: var(--coach-dark-hover);
+  color: var(--coach-dark-text);
+}
+
+:global(html[data-theme="dark"]) .page { background: var(--coach-dark-page); }
+:global(html[data-theme="dark"]) .embedded { background: var(--coach-dark-surface); }
+
+:global(html[data-theme="dark"]) :is(.summaryCard, .panel, .tableScroll, .contactCard, .timelineItem, .quickAction) {
+  border-color: var(--coach-dark-border);
+  background: var(--coach-dark-surface);
+  box-shadow: none;
+}
+
+:global(html[data-theme="dark"]) :is(.summaryValue, .panelTitle, .learner strong, .miniLabel b, .date strong, .activity strong, .emptyChart strong) {
+  color: var(--coach-dark-text);
+}
+
+:global(html[data-theme="dark"]) :is(.summaryLabel, .summaryNote, .learner small, .date small, .miniLabel, .miniRatio, .footerNote, .activity span, .activity time) {
+  color: var(--coach-dark-muted);
+}
+
+:global(html[data-theme="dark"]) .table { color: var(--coach-dark-text); }
+:global(html[data-theme="dark"]) .table th,
+:global(html[data-theme="dark"]) .table .progressHead th { border-color: var(--coach-dark-border); background: var(--coach-dark-hover); color: var(--coach-dark-text); }
+:global(html[data-theme="dark"]) .table td { border-color: var(--coach-dark-border); background: var(--coach-dark-surface); color: var(--coach-dark-text); }
+:global(html[data-theme="dark"]) .table tbody tr:nth-child(even) td { background: var(--coach-dark-soft); }
+:global(html[data-theme="dark"]) .table tbody tr:hover td { background: var(--coach-dark-hover); }
+:global(html[data-theme="dark"]) .track { background: #e9edf3; }
+:global(html[data-theme="dark"]) .profileButton { border-color: #8f74bd; color: #d8c5f6; }
+:global(html[data-theme="dark"]) .profileButton:hover { background: var(--action-primary-hover); color: #fff; }
+:global(html[data-theme="dark"]) .iconButton { color: var(--coach-dark-muted); }
+:global(html[data-theme="dark"]) .iconButton:hover { background: var(--coach-dark-hover); color: var(--coach-dark-accent); }
+:global(html[data-theme="dark"]) .selection { border-color: var(--coach-dark-border); background: var(--coach-dark-soft); color: #d8c5f6; }
+:global(html[data-theme="dark"]) .emptyChart { border-color: var(--coach-dark-border); background: var(--coach-dark-soft); color: var(--coach-dark-muted); }

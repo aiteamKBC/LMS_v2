@@ -721,6 +721,14 @@ function buildCaseFileData(args: {
   const canonicalTarget = targetToDate === null ? null : Number(targetToDate.toFixed(2));
   const metricsAvailable = Boolean(args.learnerMetrics);
   const overallProgress = metricsAvailable ? args.learnerMetrics?.programmeProgress ?? null : null;
+  const learnerEndDate = args.detail?.learnerEndDate;
+  const formattedLearnerEndDate = learnerEndDate && /^\d{4}-\d{2}-\d{2}(?:T|$)/.test(learnerEndDate)
+    ? formatCalendarDateLabel(learnerEndDate)
+    : learnerEndDate;
+  const plannedEndDate = args.detail?.programmeEndDate
+    || args.shell.profile.plannedEndDate
+    || formattedLearnerEndDate
+    || '--';
 
   return {
     learnerId: args.learnerId,

@@ -216,16 +216,42 @@
 .coachNoMonths p { color: #74768a; font-size: 12px; }
 .coachNoMonths button, .coachRetryButton { min-height: 38px; padding: 8px 14px; border: 1px solid #d8ccee; border-radius: 8px; background: #f6f1ff; color: #5d2bc0; font-size: 12px; font-weight: 650; }
 
-:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachWorkspace { color: #eee8fa; }
-:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) :is(.coachLearnerPanel, .coachProfileCard, .coachSummaryCard, .coachMonthsCard) { border-color: #443456; background: #241b35; box-shadow: none; }
-:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachHero { border-color: #46375d; background: linear-gradient(110deg, #302444, #3a2853); }
-:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) :is(.coachHero h1, .coachLearnerLink, .coachProfileIdentity h2, .coachProfileFact strong, .coachSummaryCard > h2, .coachSummaryGrid strong, .coachMonthTable, .coachMonthTable td:first-child strong) { color: #eee8fa; }
-:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) :is(.coachLearnerPanelHeader, .coachLearnerLink, .coachProfileFact, .coachSummaryGrid > div + div, .coachMonthsToolbar, .coachMonthTable td) { border-color: #443456; }
-:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachLearnerLink[aria-current="page"] { background: #332851; }
-:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachLearnerSearch { border-color: #443456; background: #2b213e; }
-:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachLearnerSearch input { color: #eee8fa; }
-:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachMonthTable th { background: #2f2442; color: #cbbfe6; }
-:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachYearFilter select { border-color: #564567; background-color: #2b213e; color: #eee8fa; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"] .workspace-main):has(.coachCanvas) { background: var(--coach-dark-page) !important; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachWorkspace { color: var(--coach-dark-text); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) :is(.coachLearnerPanel, .coachProfileCard, .coachSummaryCard, .coachMonthsCard) { border-color: var(--coach-dark-border); background: var(--coach-dark-surface); box-shadow: none; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachHero { border-color: var(--coach-dark-border); background: linear-gradient(110deg, var(--coach-dark-soft), #302a4e); box-shadow: none; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) :is(.coachHero h1, .coachLearnerLink, .coachProfileIdentity h2, .coachProfileFact strong, .coachSummaryCard > h2, .coachSummaryGrid strong, .coachMonthTable, .coachMonthTable td:first-child strong, .coachLearnerPanelHeader h2) { color: var(--coach-dark-text); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachProfileFact strong small { color: #d9e3ef; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) :is(.coachHero p, .coachLearnerText small, .coachProfileIdentity p, .coachProfileFact > span:first-child, .coachProfileFact p, .coachSummaryGrid p, .coachYearFilter, .coachNoMonths p) { color: var(--coach-dark-muted); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) :is(.coachLearnerPanelHeader, .coachLearnerLink, .coachProfileFact, .coachSummaryGrid > div + div, .coachMonthsToolbar, .coachMonthTable td, .coachLoadingLearners > div) { border-color: var(--coach-dark-border); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachLearnerLink:hover { background: var(--coach-dark-hover); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachLearnerLink[aria-current="page"] { background: var(--coach-dark-active); color: var(--coach-dark-text); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachLearnerSearch { border-color: var(--coach-dark-border); background: var(--coach-dark-page); color: var(--coach-dark-muted); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachLearnerSearch input { color: var(--coach-dark-text); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachLearnerSearch input::placeholder { color: var(--coach-dark-muted); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachLoadingHero { background: linear-gradient(110deg, var(--coach-dark-surface), var(--coach-dark-soft)); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachSummaryIcon { background: var(--coach-dark-hover); color: #b7c9ff; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachMonthTable th { background: var(--coach-dark-hover); color: var(--coach-dark-text); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachMonthTable tbody tr { background: var(--coach-dark-surface) !important; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachMonthTable tbody tr:nth-child(even) { background: var(--coach-dark-soft) !important; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachMonthTable tbody tr:hover { background: var(--coach-dark-hover) !important; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachYearFilter select { border-color: var(--coach-dark-border); background-color: var(--coach-dark-page); color: var(--coach-dark-text); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachMonthTabs button { color: var(--coach-dark-muted); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachMonthTabs button[aria-pressed="true"] { color: #d9c7f7; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachMonthTabs button span { background: var(--coach-dark-hover); color: var(--coach-dark-muted); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachMonthTabs button[aria-pressed="true"] span { background: #493c67; color: #eadfff; }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachHelperNote { border-color: #365a7e; background: #172f4a; color: #c5d6e8; }
+
+/* The selected learner summary has its own async skeleton. These light index
+   surfaces otherwise flash white after the outer coach learner list loads. */
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachSelectedLearner :is(.indexHeader, .yearGroup) {
+  border-color: var(--coach-dark-border);
+  background: var(--coach-dark-surface);
+  background-image: none;
+  box-shadow: none;
+}
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachSelectedLearner .yearHeading { border-color: var(--coach-dark-border); background: var(--coach-dark-soft); }
+:global(html[data-theme="dark"] .dashboard-theme[data-workspace-role="coach"]) .coachSelectedLearner .skeletonRow { border-color: var(--coach-dark-border); }
 
 @media (max-width: 1120px) {
   .coachCanvas { padding-inline: 16px; }

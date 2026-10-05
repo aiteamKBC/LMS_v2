@@ -36,6 +36,7 @@ type Props = {
   monthlyOnly?: boolean;
   trainingOnly?: boolean;
   overviewOnly?: boolean;
+  showOtjChart?: boolean;
   programmeSnapshot?: ProgrammeProgressSnapshot;
 };
 
@@ -72,7 +73,8 @@ function catchupAction(row: AttendanceLecture): string | null {
 /** Weekly learning and monthly coaching share the dashboard above the linked module panels. */
 export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh, refreshing = false,
   onRetryContract, initialSubjectId = '', initialMonth = '', canOpenActivities = true, weeklyFocus, programmeStartDate, programmeEndDate,
-  activityOverviewOnly = false, timelineOnly = false, monthlyOnly = false, trainingOnly = false, overviewOnly = false, programmeSnapshot }: Props) {
+  activityOverviewOnly = false, timelineOnly = false, monthlyOnly = false, trainingOnly = false, overviewOnly = false,
+  showOtjChart = true, programmeSnapshot }: Props) {
   const modules = useMemo(() => buildPlanModules(subjects, data), [subjects, data]);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -239,9 +241,9 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
             <span className={board.reviewDate}>{dateLabel(reviewDate(review))}</span>
             <span className={board.reviewTime}>{timeNote || '—'}</span>
             <span className={board.reviewTitle}>{review.title}</span>
-            <span className={board.reviewState}>{reviewFormHref(review) && <Link className={board.outlineAction} to={reviewFormHref(review)!}>View form</Link>}{needsBooking ? <button type="button" className={board.pillAction} onClick={() => setBookingReview(review)}>Schedule</button>
+            <span className={board.reviewState}>{canOpenActivities ? <>{reviewFormHref(review) && <Link className={board.outlineAction} to={reviewFormHref(review)!}>View form</Link>}{needsBooking ? <button type="button" className={board.pillAction} onClick={() => setBookingReview(review)}>Schedule</button>
               : meetingLink ? <a className={board.pillAction} href={meetingLink} target="_blank" rel="noopener noreferrer">Attend</a>
-                : <State value={reviewStatus(review)} />}</span>
+                : <State value={reviewStatus(review)} />}</> : <State value={reviewStatus(review)} />}</span>
           </article>;
         }) : <p className={board.empty}>No reviews planned for this month.</p>}</div>
       </section>
@@ -267,7 +269,7 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
       </div>
       {attendance.error && !attendance.data && <p role="alert" className={board.hint}>Absence actions could not load. <button type="button" className={board.retry} onClick={attendance.refresh}>Retry</button></p>}
       {monthSessions.length ? <div className={board.tableScroll}><table className={board.table}>
-        <thead><tr><th scope="col">Date</th><th scope="col">Time</th><th scope="col">Session</th><th scope="col">Tutor</th><th scope="col">Duration</th><th scope="col"><span className={board.srOnly}>Join</span></th></tr></thead>
+        <thead><tr><th scope="col">Date</th><th scope="col">Time</th><th scope="col">Session</th><th scope="col">Tutor</th><th scope="col">Duration</th>{canOpenActivities && <th scope="col"><span className={board.srOnly}>Join</span></th>}</tr></thead>
         <tbody>{monthSessions.slice(0, 3).map(session => {
           const { displayTitle, tutor, isAvailable, attendLink } = lectureDetails(session);
           const attendanceRow = attendanceForSession(session);
@@ -278,18 +280,18 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
             <td>{displayTitle}</td>
             <td>{tutor}</td>
             <td>{session.minutes} min</td>
-            <td><div className={board.lectureActions}>
+            {canOpenActivities && <td><div className={board.lectureActions}>
               {attendLink ? <a className={`${board.pillAction} ${board.attendAction}`} href={attendLink} target="_blank" rel="noopener noreferrer">Attend</a> : isAvailable ? <State value="Link pending" /> : null}
               {catchupLabel && attendanceRow ? <button type="button" className={`${board.pillAction} ${board.catchupAction}`} onClick={() => openCatchup(attendanceRow)}>{catchupLabel}</button>
                 : attendanceRow?.status !== 'absent' && attendanceRow?.canReportAbsence && <button type="button" className={`${board.pillAction} ${board.absenceAction}`} onClick={() => setAbsenceLecture(attendanceRow)}>Report absence</button>}
-            </div></td>
+            </div></td>}
           </tr>;
         })}</tbody>
       </table></div> : <p className={board.empty}>No lectures scheduled for this month.</p>}
     </section>
   </section>;
   const progressCharts = <ProgressCharts modules={modules} selected={selected} data={data} onModuleSelect={module => setSelectedId(module.id)}
-    programmeStartMonth={minMonth} programmeEndMonth={maxMonth} programmeSnapshot={programmeSnapshot} />;
+    programmeStartMonth={minMonth} programmeEndMonth={maxMonth} programmeSnapshot={programmeSnapshot} showOtjChart={showOtjChart} />;
   // Off-the-job hours summary for the sidebar beside Monthly focus. Values come
   // from the same month-by-month source the OTJH chart below uses, so the card
   // agrees with it. Minimum required and Forecast are not carried by the learner
@@ -349,9 +351,9 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
                 <strong>{dateLabel(reviewDate(review))}<small>{review.scheduledTime ? `${review.scheduledTime.slice(0, 5)} · UK time` : review.durationMinutes ? `${review.durationMinutes} min` : ''}</small></strong>
                 <span>{review.coachName || data.coach.name || 'Coach'}</span>
                 <span>{review.title}</span>
-                {needsBooking ? <button type="button" className={layout.rowAction} onClick={() => setBookingReview(review)}>Schedule</button>
+                {canOpenActivities ? needsBooking ? <button type="button" className={layout.rowAction} onClick={() => setBookingReview(review)}>Schedule</button>
                   : meetingLink ? <a className={layout.attendAction} href={meetingLink} target="_blank" rel="noopener noreferrer">Attend</a>
-                    : <State value={reviewStatus(review)} />}
+                    : <State value={reviewStatus(review)} /> : <State value={reviewStatus(review)} />}
               </article>;
             }) : <p className={styles.empty}>No reviews planned for this month.</p>}</div>
           </section>
@@ -382,8 +384,8 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
                 <strong>{sessionTime(session.start)}<small>{session.minutes} min</small></strong>
                 <strong>{displayTitle}<small>{tutor}</small></strong>
                 <div className={`${layout.ksbMini} ${layout.rowKsbs}`}>{lecture?.ksbCodes.length ? lecture.ksbCodes.slice(0, 3).map(code => <span key={code}>{code}</span>) : <em>—</em>}</div>
-                {attendLink ? <a className={layout.lectureAttendAction} href={attendLink} target="_blank" rel="noopener noreferrer">Attend</a>
-                  : isAvailable ? <State value="Link pending" /> : <span className={layout.lectureUnavailable}>—</span>}
+                {canOpenActivities && (attendLink ? <a className={layout.lectureAttendAction} href={attendLink} target="_blank" rel="noopener noreferrer">Attend</a>
+                  : isAvailable ? <State value="Link pending" /> : <span className={layout.lectureUnavailable}>—</span>)}
               </article>;
             }) : <p className={styles.empty}>No lectures scheduled for this month.</p>}</div>
           </section>
@@ -413,7 +415,7 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
         href={selected ? subjectHref(selected.id) : ""} canOpenActivities={canOpenActivities} showSchedule={!trainingOnly} />}
     </div>
     </section>}
-    {bookingReview && <MeetingBookingDialog
+    {canOpenActivities && bookingReview && <MeetingBookingDialog
       session={bookingEvent(bookingReview)}
       title={bookingReview.title}
       learner={{ kind, id: learnerId }}
@@ -421,13 +423,13 @@ export function TrainingPlanDetails({ data, subjects, kind, learnerId, onRefresh
       onClose={() => setBookingReview(null)}
       onBooked={() => { setBookingReview(null); onRefresh(); }}
     />}
-    {absenceLecture && <AbsenceReportDialog onClose={() => setAbsenceLecture(null)}>
+    {canOpenActivities && absenceLecture && <AbsenceReportDialog onClose={() => setAbsenceLecture(null)}>
       <AbsenceReportForm key={absenceLecture.id}
         preselectMatch={{ id: absenceLecture.id, dateIso: absenceLecture.date, title: absenceLecture.title }}
         onSubmitted={attendance.refresh} onCancel={() => setAbsenceLecture(null)}
         showGuidance={false} showHistory compact />
     </AbsenceReportDialog>}
-    {catchupLecture && <AbsenceReportDialog title="Book Catchup Session" onClose={closeCatchup}>
+    {canOpenActivities && catchupLecture && <AbsenceReportDialog title="Book Catchup Session" onClose={closeCatchup}>
       {catchupLecture.absenceReport ? <>
         <p className={attendanceStyles.catchupLectureTitle}>{catchupLecture.title} · {catchupLecture.date}</p>
         <CatchupBooking key={catchupLecture.id} lecture={{ ...catchupLecture, status: 'absent', dateIso: catchupLecture.date,

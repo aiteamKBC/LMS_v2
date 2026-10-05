@@ -348,6 +348,29 @@ describe('Learner Case File request characterization', () => {
     expect(screen.getByText('Start Date').nextElementSibling).toHaveTextContent(/^2026-06-01$/);
   });
 
+  it('restores the recorded learner end date when the programme and shell end dates are missing', async () => {
+    mocks.fetchLearnerDetail.mockResolvedValue({
+      ...learnerDetail(false),
+      learnerEndDate: '2027-08-02',
+      programmeEndDate: '',
+    });
+    mocks.coachFetch.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      trace.push(url);
+      if (url === '/coach_api/coach/learners/316/case-file') return response(shell({ plannedEndDate: null }));
+      if (url.startsWith('/coach_api/coach/marking-queue')) return response({ items: [] });
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    const { result } = renderHook(() => useCoachLearnerCaseFileData({
+      learnerId: '316', kind: 'apprenticeship', enrolmentId: '5170',
+    }));
+
+    await waitFor(() => expect(result.current.data?.plannedEndDate).toBe('2027-08-02'));
+    render(<LearnerCaseFileHeader {...headerProps} data={result.current.data} />);
+    expect(screen.getByText('Planned End Date').nextElementSibling).toHaveTextContent(/^2027-08-02$/);
+    expect(screen.queryByText('Gateway Due')).not.toBeInTheDocument();
+  });
+
   it('preserves shell profile fields and leaves missing values unavailable', async () => {
     mocks.fetchLearnerDetail.mockResolvedValue({
       ...learnerDetail(false), name: '', email: '', programme: '', cohort: '', group: '', employer: '', programmeStatus: '',
