@@ -22454,6 +22454,10 @@ def curriculum_programme_ksb_stats(request, programme_id):
 def curriculum_programme_tree_detail(request, identifier):
     visibility = curriculum_visibility(request)
     programme_id = clean_str(identifier)
+    # The KSB learner-progress aggregates are comparatively expensive on a cold
+    # read. Keep the detail document responsive and let the client hydrate these
+    # optional figures through the dedicated ksb-stats endpoint.
+    defer_stats = truthy(request.GET.get('defer_stats') or request.GET.get('deferStats'))
     # Read-only endpoint: repair runs with allow_writes=False (a no-op), so nothing
     # here mutates curriculum data. Invalidating the shared cache from this GET
     # wiped every cached payload on each wizard open, forcing the programmes list
@@ -22462,10 +22466,12 @@ def curriculum_programme_tree_detail(request, identifier):
     repair_curriculum_parent_links(programme_id, allow_writes=False)
 
     def build_detail_payload():
-        return build_curriculum_programme_tree_detail_payload(identifier, visibility)
+        return build_curriculum_programme_tree_detail_payload(
+            identifier, visibility, include_stats=not defer_stats
+        )
 
     payload = cached_curriculum_value(
-        f'programme-detail:{visibility}:{clean_str(identifier)}',
+        f'programme-detail:{visibility}:{clean_str(identifier)}:{"nostats" if defer_stats else "stats"}',
         build_detail_payload,
     )
     if not payload:
@@ -22473,17 +22479,17 @@ def curriculum_programme_tree_detail(request, identifier):
     return JsonResponse(payload)
 
 
-def build_curriculum_programme_tree_detail_payload(identifier, visibility):
+def build_curriculum_programme_tree_detail_payload(identifier, visibility, include_stats=True):
     # Same reason build_curriculum_payload() opens a read scope: build_programmes()
     # re-reads authoring modules, programmes, cohorts, groups and ksb_profiles in
     # full once per programme, so without the scope this detail build issued ~250
     # round trips to Neon (~18-30s) instead of ~40 (~3s). The scope is read-only
     # and reentrant, so a caller that already opened one keeps its own lifetime.
     with curriculum_read_scope():
-        return _build_curriculum_programme_tree_detail_payload(identifier, visibility)
+        return _build_curriculum_programme_tree_detail_payload(identifier, visibility, include_stats)
 
 
-def _build_curriculum_programme_tree_detail_payload(identifier, visibility):
+def _build_curriculum_programme_tree_detail_payload(identifier, visibility, include_stats=True):
     curriculum_rows = get_curriculum_rows(compact=True)
     training_rows = curriculum_rows['training'] if visibility == 'all' else [
         row for row in curriculum_rows['training']
@@ -22514,7 +22520,9 @@ def _build_curriculum_programme_tree_detail_payload(identifier, visibility):
         curriculum_rows['program_configs'],
         ksb_profiles,
         include_config_only=visibility == 'all',
-        only_stats_for_ids={clean_str(resolved_programme.get('sourceId'))},
+        only_stats_for_ids=(
+            {clean_str(resolved_programme.get('sourceId'))} if include_stats else frozenset()
+        ),
     )
     programme = find_programme({'programmes': programmes}, identifier)
     if not programme:
@@ -25452,7 +25460,7 @@ def required_ksbs_for_request(request, module_rows, scope='', identifier=''):
     )
 
 
-def coverage_response(request, scope='', identifier=''):
+def _coverage_response_uncached(request, scope='', identifier=''):
     module_rows, week_rows, component_rows, mapping_rows = authoring_scope_data(scope, identifier)
     if identifier and scope == 'group' and not module_rows:
         # A group that exists but carries no modules yet is empty, not missing.
@@ -25487,6 +25495,32 @@ def coverage_response(request, scope='', identifier=''):
         ),
         **coverage,
     })
+
+
+def coverage_response(request, scope='', identifier=''):
+    """Serve coverage from the epoch-aware curriculum cache.
+
+    Coverage is read-only and rebuilt from authoring rows, so caching the
+    successful JSON payload prevents simultaneous programme-page requests from
+    each scanning the same modules, weeks, components and mappings. Writes bump
+    the shared curriculum epoch and invalidate this value automatically.
+    """
+    source_type = clean_str(request.GET.get('source_type') or request.GET.get('sourceType')).lower()
+    source_id = clean_str(request.GET.get('source_id') or request.GET.get('sourceId'))
+    actual = '1' if truthy(request.GET.get('actual_mappings') or request.GET.get('actualMappings')) else '0'
+    key = f'ksb-coverage:{scope or "all"}:{clean_str(identifier)}:{source_type}:{source_id}:{actual}'
+
+    def build():
+        response = _coverage_response_uncached(request, scope, identifier)
+        if response.status_code != 200:
+            return {'error': response.content.decode('utf-8', errors='replace'), 'status': response.status_code}
+        return {'payload': json.loads(response.content)}
+
+    cached = cached_curriculum_value(key, build, ttl=60)
+    if cached.get('status'):
+        payload = json.loads(cached['error'])
+        return JsonResponse(payload, status=cached['status'])
+    return JsonResponse(cached['payload'])
 
 
 @scoped_curriculum_read
@@ -27695,7 +27729,7 @@ def _scope_learner_ksb_impact_payload(request, scope, identifier):
     return payload, None
 
 
-def scope_learner_roster_payload(request, scope, identifier):
+def _scope_learner_roster_payload_uncached(request, scope, identifier):
     """Who enrolment placed inside a curriculum scope, and how they split up.
 
     Curriculum never writes learner placements: ``Learner.learners`` is owned by
@@ -27744,6 +27778,25 @@ def scope_learner_roster_payload(request, scope, identifier):
         'countsByCohort': dict(by_cohort),
         'countsByGroup': dict(by_group),
     }
+
+
+def scope_learner_roster_payload(request, scope, identifier):
+    """Cached roster projection keyed by every narrowing filter.
+
+    Learner placement writes invalidate the curriculum epoch, so this avoids
+    repeating the schema probes and placement joins while preserving freshness.
+    """
+    scope = clean_str(scope) or 'programme'
+    identifier = clean_str(identifier)
+    learner_status = clean_str(request.GET.get('learnerStatus') or request.GET.get('status')).lower()
+    cohort = normalise(clean_str(request.GET.get('cohort')))
+    group = normalise(clean_str(request.GET.get('group')))
+    key = f'learner-roster:{scope}:{identifier}:{learner_status}:{cohort}:{group}'
+    return cached_curriculum_value(
+        key,
+        lambda: _scope_learner_roster_payload_uncached(request, scope, identifier),
+        ttl=30,
+    )
 
 
 @require_GET
@@ -27858,6 +27911,210 @@ def curriculum_week_learner_roster(request, week_id):
 def curriculum_programme_learner_ksb_impact(request, programme_id):
     payload, error = scope_learner_ksb_impact_payload(request, 'programme', programme_id)
     return error or JsonResponse(payload)
+
+
+# ---------------------------------------------------------------------------
+# KSB Achievement read model
+#
+# This boundary deliberately exposes effective learner consumption only.  The
+# legacy impact payload remains available to the other curriculum views, while
+# Achievement receives a compact, source-safe projection with server filters
+# and pagination.  KSB identity is the applied-source composite
+# ``source_type:source_id:code``; code alone is never used as a row identity.
+# ---------------------------------------------------------------------------
+
+def _achievement_query(request, name, *aliases):
+    for key in (name, *aliases):
+        value = clean_str(request.GET.get(key))
+        if value:
+            return value
+    return ''
+
+
+def _achievement_projection(request, programme_id):
+    payload, error = scope_learner_ksb_impact_payload(request, 'programme', programme_id)
+    if error:
+        return None, error
+    if not payload:
+        return None, json_error('Programme not found.', status=404)
+
+    source_type, source_id = programme_row_ksb_source(programme_id)
+    source_type, source_id = split_ksb_source(source_type, source_id)
+    coverage = payload.get('coverage') or {}
+    definitions = []
+    definition_by_identity = {}
+    for item in coverage.get('items') or []:
+        code = coverage_normalise_code(item.get('code'))
+        item_source_type, item_source_id = split_ksb_source(
+            item.get('source_type') or item.get('sourceType') or source_type,
+            item.get('source_id') or item.get('sourceId') or source_id,
+        )
+        # A definition is valid only when it belongs to the currently applied
+        # source. Mapping rows from an old source remain visible nowhere here.
+        if not code or not source_type or not source_id:
+            continue
+        if (item_source_type, item_source_id) != (source_type, source_id):
+            continue
+        identity = f'{item_source_type}:{item_source_id}:{code}'
+        definition = {
+            'ksbDefinitionId': identity,
+            'code': code,
+            'type': ksb_type_family(item.get('ksb_type') or item.get('ksbType'), code),
+            'description': clean_str(item.get('description') or item.get('title')) or code,
+            'sourceType': item_source_type,
+            'sourceId': item_source_id,
+        }
+        if identity not in definition_by_identity:
+            definition_by_identity[identity] = definition
+            definitions.append(definition)
+
+    learners_by_id = {str(row.get('id')): row for row in payload.get('assignedLearners') or []}
+    component_rows = payload.get('coverage', {}).get('components') or []
+    component_by_id = {clean_str(row.get('id')): row for row in component_rows if clean_str(row.get('id'))}
+    module_by_id = {clean_str(row.get('module_catalogue_id') or row.get('id')): row for row in (payload.get('coverage', {}).get('modules') or [])}
+    requested_cohort = _achievement_query(request, 'cohort_id', 'cohort')
+    requested_group = _achievement_query(request, 'group_id', 'group')
+    requested_module = _achievement_query(request, 'module_id', 'module')
+    requested_learner = _achievement_query(request, 'learner_id', 'learner')
+    requested_component = _achievement_query(request, 'component_id', 'component')
+    requested_type = _achievement_query(request, 'ksb_type', 'type').lower()
+    requested_ksb = _achievement_query(request, 'ksb_id', 'ksb')
+    search = _achievement_query(request, 'search').lower()
+    date_from = _achievement_query(request, 'date_from')
+    date_to = _achievement_query(request, 'date_to')
+    valid_types = {'knowledge', 'skill', 'behaviour', 'behavior'}
+    if requested_type and requested_type not in valid_types:
+        requested_type = ''
+
+    rows = []
+    for raw in (payload.get('consumptionSources') or {}).get('progress') or []:
+        code = coverage_normalise_code(raw.get('code'))
+        identity = f'{source_type}:{source_id}:{code}' if code else ''
+        definition = definition_by_identity.get(identity)
+        if not definition or not raw.get('countsTowardAchievement') or raw.get('scopeStatus') != 'in_scope':
+            continue
+        learner = learners_by_id.get(str(raw.get('learnerId')), {})
+        component_id = clean_str(raw.get('componentId'))
+        component = component_by_id.get(component_id, {})
+        module_id = clean_str(raw.get('moduleRef') or component.get('module_catalogue_id'))
+        learner_cohort_id = clean_str(learner.get('cohortId'))
+        learner_group_id = clean_str(learner.get('groupId'))
+        consumed_at = clean_str(raw.get('submittedAt'))
+        if requested_cohort and requested_cohort not in {learner_cohort_id, clean_str(learner.get('cohort'))}:
+            continue
+        if requested_group and requested_group not in {learner_group_id, clean_str(learner.get('group'))}:
+            continue
+        if requested_module and requested_module != module_id:
+            continue
+        if requested_learner and requested_learner != str(raw.get('learnerId')):
+            continue
+        if requested_component and requested_component != component_id:
+            continue
+        if requested_ksb and requested_ksb != identity and requested_ksb != code:
+            continue
+        if requested_type and requested_type not in {definition['type'], 'behavior' if definition['type'] == 'behaviour' else definition['type']}:
+            continue
+        if search and search not in f"{code} {definition['description']}".lower():
+            continue
+        if date_from and consumed_at and consumed_at[:10] < date_from:
+            continue
+        if date_to and consumed_at and consumed_at[:10] > date_to:
+            continue
+        rows.append({
+            'effectiveConsumptionId': f"{raw.get('learnerId')}:{component_id or raw.get('progressId')}:{identity}",
+            'learner': {'id': raw.get('learnerId'), 'name': clean_str(learner.get('name')) or f"Learner {raw.get('learnerId')}"},
+            'cohort': {'id': learner_cohort_id, 'name': clean_str(learner.get('cohort'))},
+            'group': {'id': learner_group_id, 'name': clean_str(learner.get('group'))},
+            'module': {'id': module_id, 'title': clean_str(raw.get('module'))},
+            'week': {'id': clean_str(raw.get('weekRef')), 'title': clean_str(raw.get('week'))},
+            'component': {'id': component_id, 'title': clean_str(raw.get('componentTitle')), 'type': clean_str(raw.get('componentType'))},
+            'ksb': definition,
+            'consumedAt': consumed_at,
+            'weight': float_weight(raw.get('weight') or 0),
+        })
+
+    grouped = {definition['ksbDefinitionId']: [] for definition in definitions}
+    for row in rows:
+        grouped[row['ksb']['ksbDefinitionId']].append(row)
+    items = []
+    for definition in definitions:
+        matches = grouped.get(definition['ksbDefinitionId'], [])
+        timestamps = [row['consumedAt'] for row in matches if row['consumedAt']]
+        items.append({
+            **definition,
+            'learnerCount': len({str(row['learner']['id']) for row in matches}),
+            'consumptionCount': len(matches),
+            'componentCount': len({row['component']['id'] for row in matches if row['component']['id']}),
+            'firstConsumedAt': min(timestamps) if timestamps else None,
+            'lastConsumedAt': max(timestamps) if timestamps else None,
+        })
+    # Both tables are paged at the API boundary.  The effective rows are
+    # already deduplicated by the canonical progress reader; slicing here keeps
+    # the response bounded while preserving stable summary totals.
+    ksb_page = max(1, int(request.GET.get('ksb_page') or 1))
+    ksb_page_size = min(100, max(1, int(request.GET.get('ksb_page_size') or 25)))
+    ksb_start = (ksb_page - 1) * ksb_page_size
+    paged_items = items[ksb_start:ksb_start + ksb_page_size]
+    return {
+        'scope': {'programmeId': programme_id, 'cohortId': requested_cohort or None, 'groupId': requested_group or None, 'moduleId': requested_module or None},
+        'appliedSource': {'type': source_type, 'id': source_id, 'label': coverage.get('sourceLabel') or source_id, 'definitionCount': len(definitions)},
+        'summary': {
+            'appliedKsbCount': len(definitions),
+            'consumedKsbCount': len({row['ksb']['ksbDefinitionId'] for row in rows}),
+            'learnerCount': len({str(row['learner']['id']) for row in rows}),
+            'consumptionCount': len(rows),
+        },
+        'items': paged_items,
+        '_allItems': items,
+        'ksbPagination': {
+            'page': ksb_page,
+            'pageSize': ksb_page_size,
+            'total': len(items),
+            'hasNext': ksb_start + ksb_page_size < len(items),
+        },
+        'consumptions': rows,
+    }, None
+
+
+@require_GET
+def curriculum_programme_ksb_achievement(request, programme_id):
+    projection, error = _achievement_projection(request, programme_id)
+    if error:
+        return error
+    page = max(1, int(request.GET.get('page') or 1))
+    page_size = min(100, max(1, int(request.GET.get('page_size') or 50)))
+    consumptions = projection['consumptions']
+    start = (page - 1) * page_size
+    projection['consumptionLog'] = {
+        'items': consumptions[start:start + page_size],
+        'page': page,
+        'pageSize': page_size,
+        'total': len(consumptions),
+        'hasNext': start + page_size < len(consumptions),
+    }
+    projection.pop('_allItems', None)
+    projection.pop('consumptions', None)
+    return JsonResponse(projection)
+
+
+@require_GET
+def curriculum_programme_ksb_achievement_consumptions(request, programme_id, ksb_definition_id):
+    request.GET = request.GET.copy()
+    request.GET['ksb_id'] = ksb_definition_id
+    projection, error = _achievement_projection(request, programme_id)
+    if error:
+        return error
+    page = max(1, int(request.GET.get('page') or 1))
+    page_size = min(100, max(1, int(request.GET.get('page_size') or 50)))
+    rows = projection['consumptions']
+    start = (page - 1) * page_size
+    # The selected definition may be on another KSB page; recover it from the
+    # filtered projection's complete identity set without loading consumptions
+    # into the drawer until the user opens it.
+    ksb = next((item for item in projection.get('_allItems', []) if item['ksbDefinitionId'] == ksb_definition_id), None)
+    if ksb is None:
+        ksb = next((item for item in projection['items'] if item['ksbDefinitionId'] == ksb_definition_id), None)
+    return JsonResponse({'ksb': ksb, 'items': rows[start:start + page_size], 'page': page, 'pageSize': page_size, 'total': len(rows), 'hasNext': start + page_size < len(rows)})
 
 
 @require_GET

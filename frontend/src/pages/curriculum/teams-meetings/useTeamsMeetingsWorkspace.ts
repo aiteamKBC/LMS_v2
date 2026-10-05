@@ -1216,7 +1216,10 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
     const summary = row.summary;
     if (blockedReason || !summary || !row.sessions.length) return;
     setBusy(`${row.catalogueId}:dates`);
-    setNotice(null);
+    setNotice({
+      tone: 'warning',
+      text: 'Heads up: updating the schedule sends an update email to the invited people because the session dates changed.',
+    });
     // Only what the author changed in the invitation fields is sent: an
     // untouched field keeps what the calendar has saved.
     const update = invitationEdits(row);
@@ -1234,8 +1237,15 @@ export function useTeamsMeetingsWorkspace(options: TeamsMeetingsWorkspaceOptions
       if (!planned.length) throw new Error('This module has no planned session dates to send.');
       const firstStart = planned[0].startTime || row.groupPattern?.startTime || '09:00';
       const fallbackDuration = Math.max(15, row.groupPattern?.durationMinutes || summary.durationMinutes || DEFAULT_DURATION_MINUTES);
+      // Some planner responses number sessions per week, so two different
+      // weeks can both arrive as "session 1". The Teams calendar contract
+      // requires one unique occurrence number for the whole module. Preserve
+      // the planner numbers when they are already unique; otherwise use the
+      // ordered module sequence without changing the dates or durations.
+      const plannedNumbers = planned.map(session => session.sessionNumber).filter((value): value is number => Number.isInteger(value) && value > 0);
+      const plannerNumbersRepeat = new Set(plannedNumbers).size !== plannedNumbers.length || plannedNumbers.length !== planned.length;
       const occurrences = planned.map((session, index) => ({
-        sessionNumber: session.sessionNumber || index + 1,
+        sessionNumber: plannerNumbersRepeat ? index + 1 : (session.sessionNumber || index + 1),
         startDateTimeUtc: zonedNaiveToUtcIso(`${session.date}T${session.startTime || firstStart}`, summary.timeZone),
         durationMinutes: session.durationMinutes || Math.max(15, minutesBetween(session.startTime || firstStart, session.endTime || '') || fallbackDuration),
       }));

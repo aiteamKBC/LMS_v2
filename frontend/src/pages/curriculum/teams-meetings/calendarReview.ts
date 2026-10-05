@@ -61,10 +61,19 @@ export function calendarReviewHtml(input: ReviewedCalendar, zone: string): strin
   let previousEnd = -Infinity;
   for (const session of ordered) {
     const start = Date.parse(session.startDateTimeUtc);
-    if (!Number.isFinite(start) || !/(Z|[+-]\d{2}:\d{2})$/i.test(session.startDateTimeUtc)
-      || !Number.isInteger(session.sessionNumber) || session.sessionNumber < 1 || numbers.has(session.sessionNumber)
-      || !Number.isFinite(session.durationMinutes) || session.durationMinutes < 15 || session.durationMinutes > 1440
-      || start < previousEnd) throw new Error('Check session numbers, dates and durations. Sessions must not overlap.');
+    const label = `Session ${session.sessionNumber || '?'}`;
+    if (!Number.isFinite(start) || !/(Z|[+-]\d{2}:\d{2})$/i.test(session.startDateTimeUtc)) {
+      throw new Error(`Check session numbers, dates and durations. ${label} has an invalid date.`);
+    }
+    if (!Number.isInteger(session.sessionNumber) || session.sessionNumber < 1 || numbers.has(session.sessionNumber)) {
+      throw new Error(`Check session numbers, dates and durations. ${label} has a duplicate or invalid session number.`);
+    }
+    if (!Number.isFinite(session.durationMinutes) || session.durationMinutes < 15 || session.durationMinutes > 1440) {
+      throw new Error(`Check session numbers, dates and durations. ${label} has an invalid duration (${session.durationMinutes} minutes).`);
+    }
+    if (start < previousEnd) {
+      throw new Error(`Check session numbers, dates and durations. ${label} overlaps the previous session. Please open Edit session dates and choose a different date and time for this session before updating Teams.`);
+    }
     numbers.add(session.sessionNumber);
     previousEnd = start + session.durationMinutes * 60000;
   }
