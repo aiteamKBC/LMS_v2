@@ -147,6 +147,7 @@ interface CoachLearner {
   recentFlag: string | null;
   email?: string | null;
   rawProgramStatus?: string | null;
+  enrollmentStatus?: string | null;
   mcmReviews: ImportedReview[];
   reviews: ImportedReview[];
 }
@@ -335,6 +336,17 @@ function normalizedProgramStatus(learner: CoachLearner): string {
   return displayValue(learner.rawProgramStatus).toLowerCase().replace(/[\s_-]+/g, '');
 }
 
+function isRiskInsightsLearner(learner: CoachLearner): boolean {
+  if (!isActiveLearner(learner)) return false;
+  const programmeStages = [learner.rawProgramStatus, learner.enrollmentStatus]
+    .map(value => displayValue(value).toLowerCase().replace(/[^a-z0-9]+/g, ''));
+  return !programmeStages.some(status => (
+    status.startsWith('onboarding')
+    || status.startsWith('withdrawn')
+    || status.startsWith('enteredepa')
+  ));
+}
+
 function isOnBreakLearner(learner: CoachLearner): boolean {
   return normalizedProgramStatus(learner).includes('break');
 }
@@ -440,6 +452,7 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     recentFlag,
     email: learner.email || null,
     rawProgramStatus: learner.rawProgramStatus || null,
+    enrollmentStatus: learner.enrollmentStatus || null,
     mcmReviews: [],
     reviews: [],
   };
@@ -1246,75 +1259,6 @@ function RiskInsightsTables({ learners, unavailable }: { learners: CoachLearner[
   </section>;
 }
 
-function MeetingsSkeleton() {
-  return <Panel className={styles.panel}>
-    <SectionHeader icon="ri-calendar-schedule-line" title="Upcoming Meetings"
-      description={`Your scheduled meetings and live sessions · next work week (${formatUpcomingRangeLabel()})`}
-      actions={<>
-        <LoadingBlock className="h-11 w-11" />
-        <LoadingBlock className="h-11 w-[118px]" />
-        <LoadingBlock className="h-11 w-[172px]" />
-      </>} />
-    <div className={styles.tableScroll}>
-      <table className={`${styles.table} ${styles.meetingsTable}`}>
-        <tbody>
-          <tr><th colSpan={9}><LoadingBlock className="h-3.5 w-32" /></th></tr>
-          {Array.from({ length: 3 }, (_, index) => <tr key={index} data-skeleton="meeting">
-            <td><LoadingBlock className={styles.meetingDateSkeleton} /></td>
-            <td><LoadingBlock className="h-3.5 w-16" /></td>
-            <td><div className={styles.identity}>
-              <LoadingBlock className="h-9 w-9 shrink-0 rounded-full" />
-              <span className="flex-1"><LoadingBlock className="h-3.5 w-36" /><LoadingBlock className="mt-2 h-3 w-20" /></span>
-            </div></td>
-            <td><div className={styles.meetingType}><LoadingBlock className="h-[30px] w-[30px] shrink-0" /><LoadingBlock className="h-3.5 w-28" /></div></td>
-            <td><LoadingBlock className="h-6 w-20 rounded-full" /></td>
-            {Array.from({ length: 4 }, (_, action) => <td key={action}><LoadingBlock className="h-11 w-28" /></td>)}
-          </tr>)}
-        </tbody>
-      </table>
-    </div>
-  </Panel>;
-}
-
-const MONTHLY_BAR_SKELETON_HEIGHTS = ['46%', '64%', '38%', '78%', '52%', '30%'];
-
-function ChartSkeleton({ variant }: { variant: 'distribution' | 'monthly' }) {
-  if (variant === 'distribution') {
-    return <Panel className={styles.panel}>
-      <SectionHeader title="Risk Distribution" icon="ri-bar-chart-line" actions={<span className={styles.chartScope}>By OTJH status</span>} />
-      <div className={styles.distribution}>
-        <div className={`${styles.donut} ${styles.donutSkeleton} animate-pulse`}><div className={styles.donutCenter} /></div>
-        <ul className={styles.legend}>
-          {Array.from({ length: 4 }, (_, index) => <li key={index}>
-            <LoadingBlock className={`${styles.legendDot} rounded-full`} />
-            <LoadingBlock className="h-3.5 w-24" />
-            <LoadingBlock className="h-3.5 w-12" />
-          </li>)}
-        </ul>
-      </div>
-    </Panel>;
-  }
-  return <Panel className={styles.panel}>
-    <SectionHeader title="Monthly Learners at Risk" icon="ri-bar-chart-line" actions={<span className={styles.chartPeriod}>Last 6 months</span>} />
-    <div className={styles.monthlyRisk}>
-      <div className={styles.monthlyRiskChart}>
-        <ol className={styles.monthlyBars}>
-          {MONTHLY_BAR_SKELETON_HEIGHTS.map((height, index) => <li key={index}>
-            <LoadingBlock className="h-3 w-4" />
-            <span className={styles.monthlyBarTrack}><LoadingBlock className={styles.monthlyBarSkeleton} style={{ height }} /></span>
-            <LoadingBlock className="h-2.5 w-6" />
-          </li>)}
-        </ol>
-      </div>
-      <div className={styles.currentRisk}>
-        <LoadingBlock className="h-8 w-10" />
-        <LoadingBlock className="h-3.5 w-16" />
-        <LoadingBlock className="mt-1 h-3 w-20" />
-      </div>
-    </div>
-  </Panel>;
-}
-
 export default function CoachDashboard() {
   const navigate = useNavigate();
   const { auth, isInitialized } = useAuth();
@@ -1574,6 +1518,10 @@ export default function CoachDashboard() {
     [enrichedLearners],
   );
   const activeLearners = useMemo(() => visibleLearners.filter(isActiveLearner), [visibleLearners]);
+  const riskInsightsLearners = useMemo(
+    () => activeLearners.filter(isRiskInsightsLearner),
+    [activeLearners],
+  );
   const atRiskLearners = useMemo(
     () => activeLearners.filter(learner => canonicalOtjhStatus(learner) === 'at-risk'),
     [activeLearners],
@@ -1799,7 +1747,7 @@ export default function CoachDashboard() {
         </Panel>
         </>}
 
-        {activeDashboardTab === 'risk' && <RiskInsightsTables learners={activeLearners} unavailable={loading || Boolean(loadWarning)} />}
+        {activeDashboardTab === 'risk' && <RiskInsightsTables learners={riskInsightsLearners} unavailable={loading || Boolean(loadWarning)} />}
           </div>
         </section>
 
@@ -1833,9 +1781,18 @@ function DashboardLoadingSkeleton() {
       <span className="sr-only">Loading coach dashboard data</span>
       <div className={styles.loadingDashboard} aria-hidden="true">
         <section className={styles.metrics}>{Array.from({ length: 6 }, (_, index) => <MetricCardSkeleton key={index} />)}</section>
-        <LearnerTableSkeleton />
-        <MeetingsSkeleton />
-        <section className={styles.charts}><ChartSkeleton variant="distribution" /><ChartSkeleton variant="monthly" /></section>
+        <section className={styles.dashboardTabs}>
+          <div className={styles.dashboardTabList}>
+            {COACH_DASHBOARD_TABS.map(tab => (
+              <span key={tab.id} className={styles.dashboardTab} aria-current={tab.id === 'learners' ? 'page' : undefined}>
+                {tab.label}
+              </span>
+            ))}
+          </div>
+          <div className={styles.dashboardTabPanel}>
+            <LearnerTableSkeleton />
+          </div>
+        </section>
       </div>
     </div>
   );

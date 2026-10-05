@@ -65,8 +65,11 @@ function expectStructuredSkeleton() {
   const skeleton = screen.getByRole('status', { name: 'Loading coach dashboard' });
   expect(skeleton).toBeVisible();
   expect(skeleton.querySelectorAll('[data-skeleton="metric"]')).toHaveLength(6);
-  for (const heading of ['All Learners', 'Upcoming Meetings', 'Risk Distribution', 'Monthly Learners at Risk']) {
-    expect(within(skeleton).getByRole('heading', { name: heading, hidden: true })).toBeInTheDocument();
+  expect(within(skeleton).getByRole('heading', { name: 'All Learners', hidden: true })).toBeInTheDocument();
+  expect(within(skeleton).queryByRole('heading', { name: 'Upcoming Meetings', hidden: true })).not.toBeInTheDocument();
+  expect(within(skeleton).queryByText('Risk Distribution')).not.toBeInTheDocument();
+  for (const tabLabel of ['All Learners', 'Upcoming Meetings', 'Risk Insights']) {
+    expect(within(skeleton).getAllByText(tabLabel).length).toBeGreaterThan(0);
   }
   const learnerTable = within(skeleton).getByRole('table', { name: 'Learners are loading', hidden: true });
   for (const column of ['Learner', 'Status', 'Progress', 'OTJH', 'Activities', 'Attendance', 'Start Date', 'Last Activity', 'Last PR', 'Last MCM', 'Actions']) {
@@ -74,7 +77,7 @@ function expectStructuredSkeleton() {
   }
   // Two header rows plus seven learner rows.
   expect(within(learnerTable).getAllByRole('row', { hidden: true })).toHaveLength(9);
-  expect(skeleton.querySelectorAll('[data-skeleton="meeting"]')).toHaveLength(3);
+  expect(skeleton.querySelectorAll('[data-skeleton="meeting"]')).toHaveLength(0);
   for (const emptyState of ['No learners assigned to you yet', 'Data not available', 'History not available', 'No learner meetings scheduled']) {
     expect(screen.queryByText(emptyState)).not.toBeInTheDocument();
   }
@@ -592,19 +595,23 @@ it('shows review cards as unavailable when generation failed without usable revi
   expect(within(metrics).getByRole('button', { name: 'Open MCM this week details' })).toHaveTextContent('--');
 });
 
-it('counts active and delivery learners while excluding hidden caseload stages', async () => {
+it('excludes onboarding, withdrawn and entered EPA stages from every risk insight table', async () => {
   useDashboardDate();
+  const riskSignals = {
+    otjhStatus: 'at-risk', otjhCompleted: 0, otjhTarget: 100,
+    attendanceConsecutiveMissed: 3, lastPr: '1 Jan 2026', lastMcm: '1 Jan 2026',
+  };
   mocks.load.mockImplementation((url: string) => Promise.resolve(
     url.includes('/marking-queue')
       ? { summary: { pendingItems: 0 } }
       : {
           owner: { name: 'Example Coach' },
           learners: [
-            { id: '1', name: 'Active Learner', rawProgramStatus: 'active', otjhStatus: 'on-track' },
-            { id: '2', name: 'Delivery Learner', rawProgramStatus: 'delivery', otjhStatus: 'on-track' },
-            { id: '3', name: 'Onboarding Learner', rawProgramStatus: 'Onboarding Stage', otjhStatus: 'at-risk' },
-            { id: '4', name: 'EPA Learner', rawProgramStatus: 'Entered EPA', otjhStatus: 'at-risk' },
-            { id: '5', name: 'Withdrawn Learner', rawProgramStatus: 'withdrawn', otjhStatus: 'at-risk' },
+            { id: '1', name: 'Active Learner', rawProgramStatus: 'active', ...riskSignals },
+            { id: '2', name: 'Delivery Learner', rawProgramStatus: 'delivery', ...riskSignals },
+            { id: '3', name: 'Onboarding Learner', rawProgramStatus: 'active', enrollmentStatus: 'On Boarding', ...riskSignals },
+            { id: '4', name: 'EPA Learner', rawProgramStatus: 'delivery', enrollmentStatus: 'Entered EPA', ...riskSignals },
+            { id: '5', name: 'Withdrawn Learner', rawProgramStatus: 'active', enrollmentStatus: 'Withdrawn', ...riskSignals },
           ],
           meetings: { events: [] },
         },
@@ -613,11 +620,23 @@ it('counts active and delivery learners while excluding hidden caseload stages',
   render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
   const metrics = await screen.findByRole('region', { name: 'Coach dashboard metrics' });
   const totalLearners = within(metrics).getByRole('button', { name: 'Open Total learners details' });
-  expect(totalLearners.querySelector('[class*="metricValue"]')).toHaveTextContent('2');
+  expect(totalLearners.querySelector('[class*="metricValue"]')).toHaveTextContent('5');
   fireEvent.click(screen.getByRole('tab', { name: 'Risk Insights' }));
-  expect(screen.getByText('2 active learners grouped by their current OTJH status.')).toBeVisible();
+  for (const title of ['Attendance Insights', 'OTJH Insights', 'Review Insights']) {
+    fireEvent.click(screen.getByRole('button', { name: `Expand ${title}` }));
+  }
+  const attendanceInsights = screen.getByRole('region', { name: 'Attendance risk insights' });
+  const otjhInsights = screen.getByRole('region', { name: 'OTJH risk insights' });
+  const reviewInsights = screen.getByRole('region', { name: 'Review risk insights' });
+  for (const name of ['Active Learner', 'Delivery Learner']) {
+    expect(within(attendanceInsights).getByText(name)).toBeVisible();
+    expect(within(otjhInsights).getByText(name)).toBeVisible();
+    expect(within(reviewInsights).getByText(name)).toBeVisible();
+  }
   for (const name of ['Onboarding Learner', 'EPA Learner', 'Withdrawn Learner']) {
-    expect(screen.queryByText(name)).not.toBeInTheDocument();
+    expect(within(attendanceInsights).queryByText(name)).not.toBeInTheDocument();
+    expect(within(otjhInsights).queryByText(name)).not.toBeInTheDocument();
+    expect(within(reviewInsights).queryByText(name)).not.toBeInTheDocument();
   }
 });
 
