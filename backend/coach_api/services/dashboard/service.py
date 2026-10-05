@@ -100,6 +100,7 @@ class CoachDashboardService:
             learner.setdefault("otjhProgrammeStartDate", learner.get("startDate", "--"))
             learner["startDate"] = domain.caseload_profile_start_date(row)
             learner["displayStartDate"] = learner["startDate"]
+            learner["displayEndDate"] = domain.format_date(getattr(getattr(row, "_caseload_source", None), "learner_end_date", None))
             learners.append(learner)
         if "learners" in payload:
             payload["learners"] = learners
@@ -141,6 +142,7 @@ class CoachDashboardService:
             )
             learner["startDate"] = domain.caseload_profile_start_date(rows_by_id[profile_id])
             learner["displayStartDate"] = learner["startDate"]
+            learner["displayEndDate"] = domain.format_date(getattr(getattr(rows_by_id[profile_id], "_caseload_source", None), "learner_end_date", None))
             learner["otjhProgrammeStartDate"] = domain.format_date(schedule_start)
             if schedule_planned not in (None, ""):
                 learner["otjhPlanned"] = domain.to_number(schedule_planned)

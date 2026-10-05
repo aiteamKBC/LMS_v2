@@ -201,15 +201,11 @@ export const LearnerCard = memo(function LearnerCard({
       {/* Footer */}
       <footer className="mt-auto flex items-end justify-between gap-3 border-t border-foreground-100 bg-background-50/60 px-3.5 py-2.5">
         <div className="grid min-w-0 flex-1 grid-cols-2 gap-4 sm:grid-cols-3">
-          {hasValue(learner.startDate) ? (
-            <DateStatus label="Start date" date={learner.startDate} daysAway={null} />
-          ) : null}
+          <DateStatus label="Start date" date={learner.displayStartDate || '--'} daysAway={null} />
           {insight.gatewayDate ? (
             <DateStatus label="Gateway" date={learner.gatewayReviewDate} daysAway={insight.gatewayDaysAway} />
           ) : null}
-          {hasValue(learner.plannedEndDate) ? (
-            <DateStatus label="End date" date={learner.plannedEndDate} daysAway={null} />
-          ) : null}
+          <DateStatus label="End date" date={learner.displayEndDate || '--'} daysAway={null} />
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">

@@ -334,6 +334,8 @@ export function normalizeLearner(
     lastSubmittedEvidence: displayValue(learner.lastSubmittedEvidence),
     progressVariance: displayValue(learner.progressVariance),
     startDate,
+    displayStartDate: startDate,
+    displayEndDate: displayValue(learner.displayEndDate),
     gatewayReviewDate,
     plannedEndDate,
     coachName: displayValue(learner.coachName),

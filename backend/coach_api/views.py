@@ -2145,7 +2145,7 @@ def fetch_case_file_shell(owner_email: str, learner_id: int):
             .only(
                 "id", "aptem_id", "learner_type", "username", "email", "programme",
                 "programme_status", "cohort", "group", "employer", "coach_name",
-                "coach_email", "start_date", "learner_start_date", "end_date",
+                "coach_email", "start_date", "learner_start_date", "learner_end_date", "end_date",
             )
             .first()
         )
@@ -2154,7 +2154,7 @@ def fetch_case_file_shell(owner_email: str, learner_id: int):
 
 def serialize_case_file_shell(profile, source) -> dict:
     from .serializers.learner_profile import serialize_learner_profile_shell
-    return serialize_learner_profile_shell(
+    payload = serialize_learner_profile_shell(
         profile,
         source,
         canonical_start_date=caseload_profile_start_date(SimpleNamespace(_caseload_source=source)),
@@ -2163,6 +2163,24 @@ def serialize_case_file_shell(profile, source) -> dict:
         student_activity_available=student_activity_available,
         format_coach_rag_value=format_coach_rag_value,
     )
+    # Use the same contract/source window as the dashboard, independently of
+    # the recorded learner dates displayed in the profile header.
+    aptem_id = payload["identity"]["aptemId"]
+    try:
+        contracts = load_contracts_bulk([int(aptem_id)]) if aptem_id else {}
+    except (DatabaseError, TypeError, ValueError) as exc:
+        logger.warning("Could not load case-file training-plan contract: %s", exc)
+        contracts = {}
+    schedule_row = SimpleNamespace(
+        _caseload_source=source,
+        _caseload_contract=contracts.get(int(aptem_id)) if aptem_id else None,
+        start_date=getattr(profile, "start_date", None),
+        end_date=getattr(profile, "end_date", None),
+    )
+    _, schedule_start, schedule_end = caseload_schedule_values(schedule_row)
+    payload["profile"]["otjhProgrammeStartDate"] = format_date(schedule_start) if schedule_start else None
+    payload["profile"]["otjhProgrammeEndDate"] = format_date(schedule_end) if schedule_end else None
+    return payload
 
 
 def fetch_attendance_caseload_rows(owner_email: str, *, learner_id: str | None = None) -> list[LearnerProfile]:
@@ -3599,6 +3617,7 @@ def serialize_caseload_learner(
         "progressVariance": progress_variance or "--",
         "startDate": profile_start,
         "displayStartDate": format_date(profile_start),
+        "displayEndDate": format_date(getattr(getattr(row, "_caseload_source", None), "learner_end_date", None)),
         "otjhProgrammeStartDate": format_date(schedule_start),
         "gatewayReviewDate": format_date(getattr(row, "gateway_review_date", None)),
         "plannedEndDate": format_date(schedule_end),
@@ -3708,6 +3727,7 @@ def serialize_caseload_dashboard_learner(row: LearnerProfile | SimpleNamespace) 
         "progressVariance": progress_variance or "--",
         "startDate": profile_start,
         "displayStartDate": format_date(profile_start),
+        "displayEndDate": format_date(getattr(getattr(row, "_caseload_source", None), "learner_end_date", None)),
         "otjhProgrammeStartDate": format_date(schedule_start),
         "gatewayReviewDate": format_date(getattr(row, "gateway_review_date", None)),
         "plannedEndDate": format_date(schedule_end),
@@ -12416,6 +12436,8 @@ def coach_attendance_details(request):
                 "programStatus": learner.get("rawProgramStatus"),
                 "learnerType": learner.get("learnerType"),
                 "enrolmentId": learner.get("enrolmentId"),
+                "learnerStartDate": clean_text(getattr(getattr(profile_row, "_caseload_source", None), "learner_start_date", None)) or None,
+                "learnerEndDate": clean_text(getattr(getattr(profile_row, "_caseload_source", None), "learner_end_date", None)) or None,
                 "programmeStartDate": format_date(getattr(profile_row, "start_date", None)),
                 "programmeEndDate": format_date(getattr(profile_row, "end_date", None)),
                 "coachName": learner.get("coachName"),

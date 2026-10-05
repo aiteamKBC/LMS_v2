@@ -161,7 +161,7 @@ function OverviewTab({ learner, insight }: { learner: Learner; insight: LearnerI
       <div>
         <SectionLabel>Dates</SectionLabel>
         <div className="mt-1">
-          {hasValue(learner.startDate) ? <DataRow label="Start date" value={displayValue(learner.startDate)} /> : null}
+          <DataRow label="Start date" value={displayValue(learner.displayStartDate)} />
           <DataRow
             label="Gateway review"
             value={
@@ -179,7 +179,7 @@ function OverviewTab({ learner, insight }: { learner: Learner; insight: LearnerI
                     : 'default'
             }
           />
-          {hasValue(learner.plannedEndDate) ? <DataRow label="Planned end" value={displayValue(learner.plannedEndDate)} /> : null}
+          <DataRow label="Planned end" value={displayValue(learner.displayEndDate)} />
         </div>
       </div>
 

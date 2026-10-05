@@ -39,6 +39,8 @@ def serialize_learner_profile_shell(
             "coachName": clean_text(getattr(profile, "coach_name", None) or getattr(source, "coach_name", None)) or None,
             "coachEmail": clean_text(getattr(profile, "coach_email", None) or getattr(source, "coach_email", None)) or None,
             "status": clean_text(getattr(profile, "programme_status", None) or getattr(source, "programme_status", None)) or None,
+            "learnerStartDate": clean_text(getattr(source, "learner_start_date", None)) or None,
+            "learnerEndDate": clean_text(getattr(source, "learner_end_date", None)) or None,
             "startDate": canonical_start_date,
             "plannedEndDate": optional_date(getattr(profile, "end_date", None) or getattr(source, "end_date", None)),
             "gatewayReviewDate": optional_date(getattr(profile, "gateway_review_date", None)),
