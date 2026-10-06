@@ -115,6 +115,7 @@ export const coachNavItems: SidebarNavItem[] = [
     matchPaths: ['/coach/monthly-cycle'],
   },
   { id: 'coach-inclusion', label: 'Inclusion Ticket System', icon: 'ri-heart-pulse-line', href: inclusionLoginHref, external: true },
+  { id: 'coach-support-tickets', label: 'Support Tickets', icon: 'ri-lifebuoy-line', href: '/coach/support-tickets' },
 ];
 
 // ============================================================================
