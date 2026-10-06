@@ -229,10 +229,10 @@ def calendar_time_zone(v, series, graph_settings):
 
 
 def verified_message(live_id):
-    """The learners and the schedule email of a new calendar.
+    """The invited participants and the schedule email of a new calendar.
 
     Rendered from the saved occurrences only after Microsoft confirms those
-    dates, links and learner invitations.
+    dates, links and participant invitations.
     """
     from coach_api.views import get_graph_settings
     from . import views as v
@@ -289,7 +289,7 @@ def send_creation_emails(live_id, ledger=None, send=None):
 
 
 def verify_saved_calendar(v, series, rows, recipients):
-    """Microsoft holds exactly these rows, on these links, with every learner invited."""
+    """Microsoft holds exactly these rows, on these links, with every participant invited."""
     from coach_api.views import microsoft_graph_request
     manifest = v.stored_calendar_series(series)
     if not manifest:
@@ -319,17 +319,17 @@ def verify_saved_calendar(v, series, rows, recipients):
         invited = {str((attendee.get('emailAddress') or {}).get('address') or '').strip().lower()
                    for attendee in checked.get('attendees', [])}
         if not set(recipients).issubset(invited):
-            raise ValueError('Microsoft has not confirmed every learner invitation yet.')
+            raise ValueError('Microsoft has not confirmed every participant invitation yet.')
         covered.update(row['session_number'] for row in group)
     if len(covered) != len(rows):
         raise ValueError('Some saved sessions do not have a verified meeting.')
 
 
 def verified_change_message(live_id, notice):
-    """The learners and the email of one signed schedule change.
+    """The invited participants and the email of one signed schedule change.
 
     Recipients and dates come only from the stored calendar and the server-signed
-    notice. Each learner gets a copy with the shared schedule and nothing else.
+    notice. Each invited participant gets a copy with the shared schedule and nothing else.
     """
     from coach_api.views import get_graph_settings
     from . import views as v
@@ -364,10 +364,10 @@ def verified_change_message(live_id, notice):
 
 
 def added_only(recipients, added):
-    """Narrow the learners to the ones an update just added.
+    """Narrow the invited participants to the ones an update just added.
 
     ``added`` comes from the browser, so it only ever removes people: an address
-    the stored calendar does not invite as a learner is dropped, never emailed.
+    the stored calendar does not invite is dropped, never emailed.
     The ledger's calendar key still skips anyone already sent this schedule.
     """
     wanted = {str(value).strip().lower() for value in added}
@@ -375,7 +375,7 @@ def added_only(recipients, added):
 
 
 def dispatch_change(live_id, token, ledger, retry_failed=False, send=None, parallel=False):
-    """Email one signed schedule change: each learner their own copy."""
+    """Email one signed schedule change: each invited participant gets their own copy."""
     from .teams_schedule_notice import read_change_notice
     send = send or _send_message
     notice = read_change_notice(token, live_id)
@@ -445,7 +445,7 @@ def schedule_email(request, live_session_id):
             # Learners an update added: the same full schedule a creation sends,
             # under the calendar's own key, to them alone.
             recipients = added_only(recipients, added)
-        # A resend is the creation email again, to every learner the saved
+        # A resend is the creation email again, to every participant the saved
         # calendar invites -- including the ones it already reached. Only the
         # ledger key changes: the message and the recipients are still the
         # verified ones read back from the stored calendar, never anything sent here.

@@ -275,6 +275,42 @@ class CalendarChecksTests(unittest.TestCase):
         self.assertEqual(len(invitations), 1)
         self.assertTrue(self.events['event-1']['hideAttendees'])
 
+    def test_an_additional_middle_week_is_left_on_teams_without_a_cancellation(self):
+        """Routing week 2 to its own event never cancels the module's old slot."""
+        self.assertEqual(self.create().status_code, 201)
+        # A module series can already have three tracked occurrences while the
+        # author routes the middle week to an independent event. The module
+        # update sends weeks 1 and 3 only; the old week-2 slot is a leftover,
+        # not a request to cancel it or mail everyone invited.
+        first_three = self.instances_by_master['event-1'][:3]
+        self.instances_by_master['event-1'] = first_three
+        existing = [
+            {'id': f'OCC-{index + 1}', 'session_number': index + 1,
+             'scheduled_start': item['start']['dateTime']}
+            for index, item in enumerate(first_three)
+        ]
+        starts = [checks.event_instant(item, 'start') for item in first_three]
+        targets = [
+            {'session_number': 1, 'start': starts[0], 'end': starts[0] + timedelta(minutes=120)},
+            {'session_number': 3, 'start': starts[2], 'end': starts[2] + timedelta(minutes=120)},
+        ]
+        self.calls.clear()
+        warnings, _recreated, leftovers = self.v.apply_teams_occurrence_shifts(
+            'organizer%40example.invalid', 'event-1', 'Synthetic', targets,
+            [{'emailAddress': {'address': 'learner@example.invalid'}, 'type': 'required'}],
+            {'organizer': 'organizer@example.invalid'}, existing,
+        )
+
+        self.assertEqual(warnings, [])
+        # The middle slot is tracked by the module and remains on Teams. It is
+        # neither deleted nor turned into a cancellation notification.
+        self.assertEqual(leftovers, [])
+        self.assertFalse([call for call in self.calls if call[0] == 'DELETE' or call[1].endswith('/cancel')])
+        self.assertEqual(
+            {checks.event_instant(item, 'start') for item in self.instances_by_master['event-1']},
+            set(starts),
+        )
+
     def test_noon_remains_noon_across_dst(self):
         self.payload = self.make_payload(12)
         self.assertEqual(self.create().status_code, 201)
