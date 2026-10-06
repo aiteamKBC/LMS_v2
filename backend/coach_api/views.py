@@ -14321,22 +14321,28 @@ def _coach_review_instance_definition(instance_row):
     return definition
 
 
-def _imported_review_field(field, *, section_id, index):
+def _imported_review_field(field, *, section_id, index, historical=False):
     label = clean_text(field.get("label")) or f"Imported field {index + 1}"
     configuration = {"imported": True}
     description = clean_text(field.get("description"))
     if description:
         configuration["description"] = description
+    if historical and field.get("preserveEmpty"):
+        configuration["preserveEmpty"] = True
+    historical_id = field.get("sourceFieldKey") if historical and field.get("historicalSupplement") else None
+    field_index = index
+    if historical:
+        field_index = f"source:{historical_id}" if historical_id else field.get("historicalIndex", index)
     return {
-        "id": f"aptem-field:{section_id}:{index}",
+        "id": f"aptem-field:{section_id}:{field_index}",
         "title": label,
-        "fieldType": "text_multiline",
+        "fieldType": "title_description" if historical_id and field.get("fieldType") == "title_description" else "text_multiline",
         "required": False,
         "displayOrder": index,
         "configuration": configuration,
         "parentFieldId": None,
         "conditionValue": None,
-        "answer": field.get("value"),
+        "answer": field.get("displayValue", field.get("value")) if historical else field.get("value"),
         "answeredBy": None,
         "answeredAt": None,
         "yesFields": [],
@@ -14553,7 +14559,7 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
             return None
         sections = _sections_by_review(cursor, [row["id"]])
 
-    review = _serialize_review(row, sections)
+    review = _serialize_review(row, sections, historical_presentation=not pdf_only)
     learner = next((item for item in learners if int(item.id) == profile_id), None)
     if learner is None:
         return None
@@ -14641,7 +14647,7 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
     for section_index, section in enumerate((review.get("sections") or []) if form_available else []):
         section_id = str(section.get("id") or f"{row['id']}:{section_index}")
         fields = [
-            _imported_review_field(field, section_id=section_id, index=index)
+            _imported_review_field(field, section_id=section_id, index=index, historical=historical_completed)
             for index, field in enumerate(section.get("fields") or [])
             if isinstance(field, dict)
         ]
@@ -14694,6 +14700,8 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
             "displayOrder": section.get("order") if section.get("order") is not None else section_index,
             "enabled": True,
             "fields": fields,
+            **({"historicalPresentation": True} if historical_completed else {}),
+            **({"preserveRawText": True} if historical_completed and section.get("preserveRawText") else {}),
         })
     field_warnings = []
     if migrated_form:
@@ -14705,7 +14713,7 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
     elif is_template_preview:
         adapted_sections, field_warnings = preview_sections, preview_warnings
 
-    if is_mcm and adapted_sections and not migrated_form and not is_template_preview:
+    if is_mcm and adapted_sections and not historical_completed and not migrated_form and not is_template_preview:
         def _mcm_sort_key(item):
             index, section = item
             rank = _imported_mcm_section_rank(section["title"])
@@ -14744,6 +14752,7 @@ def _imported_review_definition(owner_email: str, event_key: str, *, preview_onl
     )
     definition = {
         **_review_learner_identity(learner),
+        **({"programme": review["historicalProgramme"]} if historical_completed and review.get("historicalProgramme") else {}),
         "readOnly": preview_only or summary_only or historical_completed or (
             migrated_form and saved_instance.status not in MIGRATED_EDITABLE_STATUSES
         ),

@@ -3,12 +3,15 @@ import { StrictMode } from 'react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReviewInstanceModal } from './ReviewInstanceModal';
-import { progressExample, skillsExample } from '@/pages/learner/reviews/imported/presentationFixtures';
+import { metricParityExample, progressExample, skillsExample } from '@/pages/learner/reviews/imported/presentationFixtures';
+import { ImportedReviewSection } from '@/pages/learner/reviews/imported/ImportedReviewSection';
+import { LearnerReviewInstanceForm } from '@/pages/learner/reviews/LearnerReviewInstanceForm';
 import { calculateMigratedReviewProgress } from '@/api/reviewInstances';
 import { bookMigratedReview, calculateReviewInstanceProgress, completeMigratedReview, completeReviewInstance, downloadReviewInstancePdf, fetchPreviousReviewSession, fetchReviewInstanceForm, generateMigratedReviewPdf, generateReviewMeetingSummary, initializeMigratedReview, reopenReviewInstance, saveReviewInstanceAnswers, signMigratedReviewAsCoach, signReviewInstance, startMigratedReview, submitMigratedReview, type ReviewInstanceFormDefinition, type ReviewProgressSnapshot } from '@/api/reviewInstances';
 
 const account = vi.hoisted(() => ({ name: 'Sam Coach' }));
 const coachMode = vi.hoisted(() => ({ email: 'coach@example.invalid', isInitialized: true, isViewingAsCoach: false }));
+vi.mock('@/features/monthly-logs/page', () => ({ LearnerLogs: () => null }));
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ auth: { user: { fullName: account.name } } }) }));
 vi.mock('@/hooks/useCoachIdentity', () => ({ useCoachIdentity: () => coachMode }));
 vi.mock('@/api/reviewInstances', async (importOriginal) => ({
@@ -131,7 +134,7 @@ describe('imported Coach content presentation', () => {
       historicalReview: { id: '901', aptemReviewId: 'example-42', type },
       template: { ...base.template, name: type, reviewTypeCode: type === 'Monthly Coaching Meeting' ? 'aptem_mcm' : 'aptem_progress_review' },
       signatures: { advisor: { required: false, signed: false }, participant: { required: false, signed: false }, employer: { required: false, signed: false }, referrer: { required: false, signed: false } },
-      sections: [{ id: 'progress', title: 'Learning progress', enabled: true, displayOrder: 0, estimatedMinutes: 0, fields: [
+      sections: [{ id: 'progress', title: 'Learning progress', historicalPresentation: true, enabled: true, displayOrder: 0, estimatedMinutes: 0, fields: [
         importedField('helper', 'hasPrevProgress', 'No'),
         importedField('progress-data', 'progress', JSON.stringify(progressExample), 1),
         importedField('event', 'eventKey', 'imported-review:example-42', 2),
@@ -148,8 +151,8 @@ describe('imported Coach content presentation', () => {
     const before = JSON.stringify(data);
     open(data);
     const step = (await screen.findByRole('heading', { name: 'Learning progress' })).closest('section')!;
-    expect(within(step).getByRole('img', { name: '107 completed of 169 activities' })).toBeVisible();
-    [/Learning plan activities/i, /Standard \/ Programme Progress/i, /Programme timeline/i, /Off-the-job hours/i].forEach(name => {
+    expect(within(step).getByRole('img', { name: '107 of 169 activities completed' })).toBeVisible();
+    [/Learning Plan Activities/i, /^Progress$/, /Programme timeline/i, /Off-the-job hours/i].forEach(name => {
       expect(within(step).getByRole('heading', { name })).toBeVisible();
     });
     ['62', '117', 'Behind', '110%', '837h', '867h', '957h', '1,302h', '17/04/2028'].forEach(value => {
@@ -167,6 +170,47 @@ describe('imported Coach content presentation', () => {
     expect(initializeMigratedReview).not.toHaveBeenCalled();
     expect(saveReviewInstanceAnswers).not.toHaveBeenCalled();
   });
+
+  it.each(['Progress Review', 'Progress Review (+ Skills Radar)', 'Monthly Coaching Meeting'])(
+    'uses identical source metrics for Coach and Learner without a PDF (%s)', async type => {
+      const data: ReviewInstanceFormDefinition = historical(type);
+      data.progressSnapshot = null;
+      data.pdf = { available: false, reason: 'Original not available.', source: 'aptem' };
+      data.sections[0].historicalPresentation = true;
+      data.sections[0].fields = [importedField('progress-data', 'progress', JSON.stringify(metricParityExample))];
+      const before = JSON.stringify(data);
+      const metrics = () => {
+        const cards = screen.getByRole('heading', { name: 'Learning Plan Activities' }).closest('article')!.parentElement!;
+        return Array.from(cards.querySelectorAll('article')).map(article => ({
+          text: article.textContent,
+          bars: Array.from(article.querySelectorAll('[role="img"]')).map(bar => ({
+            label: bar.getAttribute('aria-label'), fill: bar.firstElementChild?.getAttribute('style'), target: bar.querySelector('i')?.getAttribute('style'), ring: bar.querySelector('[pathLength]')?.getAttribute('stroke-dasharray'),
+          })),
+        }));
+      };
+      const coach = open(data);
+      await screen.findByRole('heading', { name: 'Learning Plan Activities' });
+      const coachMetrics = metrics();
+      expect(screen.getByRole('img', { name: '29 of 87 activities completed' })).toBeVisible();
+      expect(screen.getByText('79%')).toBeVisible();
+      expect(screen.getByText('Behind')).toBeVisible();
+      expect(screen.queryByRole('heading', { name: 'Programme progress' })).not.toBeInTheDocument();
+      expect(screen.queryByText(/Below|Above/)).not.toBeInTheDocument();
+      coach.unmount();
+      const learner = render(<LearnerReviewInstanceForm definition={data} />);
+      await screen.findByRole('heading', { name: 'Learning Plan Activities' });
+      expect(metrics()).toEqual(coachMetrics);
+      learner.unmount();
+      render(<ImportedReviewSection section={{ id: 'progress', name: 'Learning progress', order: 0, historicalPresentation: true,
+        fields: [{ label: 'progress', value: data.sections[0].fields[0].answer }], tables: [], rawText: '' }} />);
+      expect(metrics()).toEqual(coachMetrics);
+      expect(JSON.stringify(data)).toBe(before);
+      expect(downloadReviewInstancePdf).not.toHaveBeenCalled();
+      expect(calculateReviewInstanceProgress).not.toHaveBeenCalled();
+      expect(calculateMigratedReviewProgress).not.toHaveBeenCalled();
+      expect(saveReviewInstanceAnswers).not.toHaveBeenCalled();
+    },
+  );
 
   it('uses the existing sanitizer for historical MCM HTML and readable Q&A', async () => {
     const data = historical('Monthly Coaching Meeting');
@@ -188,6 +232,38 @@ describe('imported Coach content presentation', () => {
     expect(within(step).getByText('Confident application of learning.')).toBeVisible();
     expect(step.textContent).not.toMatch(/<p>|<li>|alert\(1\)|WORKPLACE_TRAINING/);
     expect(within(step).queryByRole('textbox')).not.toBeInTheDocument();
+  });
+
+  it.each(['completed', 'awaiting-signature'])('keeps historically completed progress without the empty local panel (%s source status)', async status => {
+    const data: ReviewInstanceFormDefinition = historical();
+    data.instance.status = status;
+    data.progressSnapshot = null;
+    data.sections[0].historicalPresentation = true;
+    data.programme = 'Historic programme - June cohort';
+    open(data);
+    expect(await screen.findByRole('img', { name: '107 of 169 activities completed' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Progress' })).toBeVisible();
+    expect(within(screen.getByRole('heading', { name: 'Learning Plan Activities' }).closest('article')!).getByText('Completed')).toBeVisible();
+    expect(screen.getByText('Historic programme - June cohort')).toBeVisible();
+    expect(screen.queryByText('No progress snapshot calculated yet.')).not.toBeInTheDocument();
+    expect(screen.queryByText('No progress was calculated for this review.')).not.toBeInTheDocument();
+    expect(calculateReviewInstanceProgress).not.toHaveBeenCalled();
+    expect(calculateMigratedReviewProgress).not.toHaveBeenCalled();
+  });
+
+  it.each([null, '{broken', [], [{ progressType: 2 }]])('retains the existing empty panel when imported progress is unusable: %j', async answer => {
+    const data = historical();
+    data.sections[0].fields[1].answer = answer;
+    open(data);
+    expect(await screen.findByText('No progress snapshot calculated yet.')).toBeVisible();
+  });
+
+  it('retains the existing frozen snapshot presentation when one is available', async () => {
+    const data = { ...historical(), progressSnapshot: snapshotFixture() };
+    open(data);
+    expect(await screen.findByText(/Calculated from/)).toBeVisible();
+    expect(screen.queryByText('No progress snapshot calculated yet.')).not.toBeInTheDocument();
+    expect(calculateReviewInstanceProgress).not.toHaveBeenCalled();
   });
 
   it('retains competency levels, notes, actions and expandable source scales', async () => {

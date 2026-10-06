@@ -19,7 +19,7 @@ export function renderImportedSection(
 ) {
   const groups: { controls: boolean; fields: ReviewFieldDefinition[] }[] = [];
   const hasStructuredFields = section.fields.some(field => !field.id.startsWith('aptem-text:'));
-  section.fields.filter(field => !hasStructuredFields || !field.id.startsWith('aptem-text:'))
+  section.fields.filter(field => section.preserveRawText || !hasStructuredFields || !field.id.startsWith('aptem-text:'))
     .slice().sort((a, b) => a.displayOrder - b.displayOrder).forEach(field => {
     const controls = field.fieldType === 'action_button' || field.fieldType === 'boolean_case_block'
       || keepControl(field);
