@@ -29,6 +29,15 @@ LEARNER_TYPE_CHOICES = [
     "commercial",
 ]
 
+# Whether a learner's sessions are recorded, asked on the create/edit learner
+# form and stored on enrolment."Created_users"."Attendance_type". Optional, so
+# blank is allowed; a CHECK constraint on the column holds the same two values
+# (see apply_created_users_attendance_type).
+ATTENDANCE_TYPE_CHOICES = [
+    "Recorded",
+    "Not recorded",
+]
+
 # Staff positions, asked for at the foot of the "Create admin" form and stored on
 # enrolment."Staff_users"."Position". Validated in the API rather than by a DB
 # check constraint, so this list can grow without DDL.
