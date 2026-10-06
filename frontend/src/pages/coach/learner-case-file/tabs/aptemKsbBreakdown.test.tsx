@@ -30,6 +30,24 @@ function Harness() {
 }
 beforeEach(() => { read.mockReset(); });
 describe('Progress KSB detailed breakdown', () => {
+  it.each([
+    [null, '--', '--'],
+    [138.99, '138h 59m', '52%'],
+  ] as const)('preserves canonical target %s despite a full monthly plan', async (target, targetLabel, progressLabel) => {
+    read.mockResolvedValue({ rows });
+    const plan = { data: {
+      months: { '2026-08': { label: 'August 2026', topics: [], planned: 850, source: 'ssot' } },
+      monthlyLogOtjh: { '2026-08': { target: 850, submitted: 0, completed: 72.0581 } },
+      requiredOtjh: 850, actual: [], actualAvailable: true, modules: [], moduleLinks: {}, sessions: [], reviews: [],
+      coach: { name: 'Coach', bookingUrl: null }, contractStatus: 'ready', generatedAt: '2026-10-06T00:00:00Z',
+    }, otjh: { actual: 72.0581, planned: 850 } } as unknown as DashboardPlanState;
+    render(<ProgressTab data={{ ...data, metricsAvailable: true,
+      otjhCompleted: 72.0581, otjhTarget: target, otjhPlanned: 850 }} plan={plan} onViewEvidence={vi.fn()} />);
+    await screen.findByRole('table');
+    expect(screen.getByText('Target Hours').parentElement).toHaveTextContent(targetLabel);
+    expect(screen.getByText('Planned').parentElement).toHaveTextContent('850h');
+    expect(screen.getByText('OTJH Progress').parentElement).toHaveTextContent(progressLabel);
+  });
   it('uses mapped unique codes despite unrelated metric totals; partial component completion achieves the KSB', async () => {
     read.mockResolvedValue({ rows });
     render(<Harness />);
@@ -108,9 +126,9 @@ describe('Progress KSB detailed breakdown', () => {
     render(<ProgressTab data={{ ...data, otjhCompleted: 5.65, otjhTarget: null, otjhPlanned: null }} plan={plan} onViewEvidence={vi.fn()} />);
 
     expect(screen.getByText('Actual').parentElement).toHaveTextContent('17h 18m');
-    expect(screen.getByText('Target Hours').parentElement).toHaveTextContent('150h');
+    expect(screen.getByText('Target Hours').parentElement).toHaveTextContent('--');
     expect(screen.getByText('Planned').parentElement).toHaveTextContent('500h');
-    expect(screen.getByText('Hours Remaining').parentElement).toHaveTextContent('132h 42m');
+    expect(screen.getByText('Hours Remaining').parentElement).toHaveTextContent('--');
     const summary = screen.getByRole('heading', { name: 'Off-the-Job Hours (OTJH)' }).closest('section')!;
     const chart = screen.getByRole('region', { name: 'Off-the-job hours by month' });
     expect(summary.compareDocumentPosition(chart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

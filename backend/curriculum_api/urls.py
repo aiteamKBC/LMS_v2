@@ -124,6 +124,7 @@ urlpatterns = [
     path('curriculum/modules/<str:module_catalogue_id>/session-plan/', views.curriculum_module_session_plan, name='curriculum-module-session-plan'),
     path('curriculum/modules/<str:module_catalogue_id>/ai-material/', views.curriculum_module_ai_material, name='curriculum-module-ai-material'),
     path('curriculum/modules/<str:module_catalogue_id>/teams-meetings/restore/', views.curriculum_module_teams_meeting_restore, name='curriculum-module-teams-meeting-restore'),
+    path('curriculum/modules/<str:module_catalogue_id>/teams-links/', views.curriculum_module_teams_links_replace, name='curriculum-module-teams-links-replace'),
     # A one-off meeting on a single week, with its own organiser and guests.
     # Separate from the module's calendar above in both directions -- see
     # teams_week_meeting.py.

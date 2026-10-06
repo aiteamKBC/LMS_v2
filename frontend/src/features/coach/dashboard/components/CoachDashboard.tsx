@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useMemo, useCallback, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
+import { Fragment, useState, useEffect, useMemo, useCallback, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -17,6 +17,8 @@ import { ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format'
 import { toneStyle, type StatusTone } from '@/lib/statusTone';
 import { isVisibleCaseloadLearner, otjhProgressAsOfToday, parseDisplayDate } from '@/pages/coach/caseload/lib/format';
 import styles from '@/pages/workspace/coach/dashboard.module.css';
+import modalStyles from './LearnerCaseloadModal.module.css';
+import markingStyles from './PendingMarkingModal.module.css';
 import { CoachCaseloadContent } from '@/pages/coach/caseload/page';
 import { CaseloadLoading } from '@/pages/coach/caseload/components/CaseloadStates';
 import caseloadStyles from '@/pages/coach/caseload/caseload.module.css';
@@ -37,17 +39,16 @@ import {
   formatTimeLabel as calendarTimeLabel,
   formatTimeRangeLabel,
   isAtRiskEvent,
-  getCurrentWorkWeekRange,
-  getNextWorkWeekRange,
   isCompletedEvent,
-  isEventThisWeek,
   needsScheduling,
   parseLocalDate,
   sortEvents,
   startOfDay,
   statusLabel,
 } from '@/pages/coach/shared/calendarEvents';
-import { fetchCoachDashboard } from '../api/dashboardApi';
+import { clearDashboardLearnerPageCache, fetchCoachDashboard, fetchDashboardSection } from '../api/dashboardApi';
+import { selectAtRiskPopupLearners, type DashboardPopupLearner } from '../api/dashboardSummary';
+import { getCurrentWorkWeekRange, getNextWorkWeekRange, isEventThisWeek, useDashboardBusinessDate } from '../api/dashboardWeek';
 
 const coachNav = roleNavMap.coach;
 
@@ -96,6 +97,7 @@ interface CoachLearner {
   group: string;
   employer: string;
   avatar: string;
+  /** Legacy composite learner performance, not OTJH. See otjhRagStatus. */
   status: PerformanceStatus;
   riskFlags: string[];
   overallProgress: number;
@@ -185,7 +187,22 @@ interface CoachAssignedGroup {
   endDate?: string;
 }
 
+interface WeeklyCounts { progressReviews: number; monthlyCoaching: number; catchUps: number; reviewsAvailable: boolean }
+interface DashboardTotals {
+  totalLearners: number;
+  otjhAtRisk: number;
+  needAttention: number;
+  pendingMarking: number | null;
+  prThisWeek: number | null;
+  mcmThisWeek: number | null;
+  catchUpsThisWeek: number;
+}
+
 interface CoachDashboardApiResponse extends CaseloadApiResponse {
+  popupLearners?: DashboardPopupLearner[];
+  popupWeekEvents?: CoachCalendarEvent[];
+  totals?: DashboardTotals;
+  weeklyCounts?: WeeklyCounts;
   monthlyRisk?: MonthlyRiskPoint[] | null;
   // Attendance is not a separate dataset: the backend overlays the one
   // canonical figure directly onto each learners[] entry
@@ -204,6 +221,10 @@ interface CoachDashboardApiResponse extends CaseloadApiResponse {
 }
 
 interface CachedCoachDashboard {
+  popupLearners?: DashboardPopupLearner[];
+  popupWeekEvents?: CoachCalendarEvent[];
+  totals?: DashboardTotals;
+  weeklyCounts?: WeeklyCounts;
   ownerName: string;
   learners: CoachLearner[];
   monthlyRisk: MonthlyRiskPoint[] | null;
@@ -220,13 +241,16 @@ interface CachedCoachDashboard {
 // Route changes unmount this page, so component state alone would otherwise
 // replace useful data with the full-page skeleton every time the coach returns.
 const dashboardSessionCache = new Map<string, CachedCoachDashboard>();
+const dashboardSectionSessionCache = new Map<string, CoachDashboardApiResponse>();
 
-function dashboardCacheKey(accountEmail: string, coachEmail: string) {
-  return `${accountEmail.trim().toLowerCase()}::${coachEmail.trim().toLowerCase()}`;
+function dashboardCacheKey(accountEmail: string, coachEmail: string, day: string) {
+  return `${accountEmail.trim().toLowerCase()}::${coachEmail.trim().toLowerCase()}::${day}`;
 }
 
 export function clearCoachDashboardSessionCache() {
   dashboardSessionCache.clear();
+  dashboardSectionSessionCache.clear();
+  clearDashboardLearnerPageCache();
 }
 
 interface ReviewHistoryApiLearner {
@@ -593,7 +617,7 @@ function normalizeEvidenceQueueLearner(item: Partial<EvidenceQueueLearner>, inde
     email: item.email || null,
     programme: displayValue(item.programme),
     group: displayValue(item.group),
-    pendingEvidence: toNumber(item.pendingEvidence) || 1,
+    pendingEvidence: item.pendingEvidence == null ? 1 : toNumber(item.pendingEvidence),
     acceptedEvidence: toNumber(item.acceptedEvidence),
     referredEvidence: toNumber(item.referredEvidence),
     totalEvidence: toNumber(item.totalEvidence),
@@ -617,8 +641,8 @@ function groupPendingMarkingByLearner(items: EvidenceQueueLearner[]): EvidenceQu
     const key = normalizeIdentity(item.learnerId);
     if (!key) continue;
     const existing = grouped.get(key);
-    if (!existing) { grouped.set(key, { ...item, pendingEvidence: 1 }); continue; }
-    existing.pendingEvidence += 1;
+    if (!existing) { grouped.set(key, { ...item }); continue; }
+    existing.pendingEvidence += item.pendingEvidence;
     const dates = [existing.oldestPendingDate, item.oldestPendingDate].filter(Boolean).sort();
     existing.oldestPendingDate = dates[0] || null;
     existing.latestPendingDate = dates[dates.length - 1] || null;
@@ -1269,10 +1293,22 @@ export default function CoachDashboard() {
   const authenticatedCoachEmail = coach.email;
   const authenticatedCoachName = coach.name;
   const adminEmail = auth.account?.email || '';
-  const cacheKey = dashboardCacheKey(adminEmail, authenticatedCoachEmail);
+  const businessDate = useDashboardBusinessDate();
+  const cacheKey = dashboardCacheKey(adminEmail, authenticatedCoachEmail, businessDate);
   const initialDashboard = dashboardSessionCache.get(cacheKey);
   // KPI cards open a quick drill-down first. The modal can still apply the
   // same filter to the caseload list when the coach wants to keep working there.
+  const [summaryReload, setSummaryReload] = useState(0);
+  const [sectionReload, setSectionReload] = useState(0);
+  const [weeklyCounts, setWeeklyCounts] = useState<WeeklyCounts | undefined>(() => initialDashboard?.weeklyCounts);
+  const [totals, setTotals] = useState<DashboardTotals | undefined>(() => initialDashboard?.totals);
+  const [popupWeekEvents, setPopupWeekEvents] = useState<CoachCalendarEvent[] | undefined>(() => initialDashboard?.popupWeekEvents);
+  const [popupLearners, setPopupLearners] = useState<DashboardPopupLearner[]>(() => initialDashboard?.popupLearners || []);
+  const [meetingsLoadedKey, setMeetingsLoadedKey] = useState<string | null>(null);
+  const [riskLoadedKey, setRiskLoadedKey] = useState<string | null>(null);
+  const [riskLearners, setRiskLearners] = useState<CoachLearner[]>([]);
+  const [riskError, setRiskError] = useState<string | null>(null);
+  const [riskLoading, setRiskLoading] = useState(false);
   const [kpiFilter, setKpiFilter] = useState<DashboardKpi | null>(null);
   const [selectedKpi, setSelectedKpi] = useState<DashboardKpi | null>(null);
   const [ownerName, setOwnerName] = useState(() => initialDashboard?.ownerName || 'Coach');
@@ -1356,151 +1392,143 @@ export default function CoachDashboard() {
   useEffect(() => {
     if (!isInitialized) return;
     const controller = new AbortController();
+    const cached = dashboardSessionCache.get(cacheKey);
+    setLoadWarning(null);
+    setLoading(!cached);
+    setLoadedCoachEmail(cached ? authenticatedCoachEmail : null);
+    setOwnerName(cached?.ownerName || authenticatedCoachName);
+    setLearners(cached?.learners || []);
+    setMonthlyRisk(cached?.monthlyRisk || null);
+    setWeeklyCounts(cached?.weeklyCounts);
+    setTotals(cached?.totals);
+    setPopupWeekEvents(cached?.popupWeekEvents);
+    setPopupLearners(cached?.popupLearners || []);
+    setEvidenceQueue(cached?.evidenceQueue || []);
+    setMarkingThisWeek(cached?.markingThisWeek);
+    setReviewGenerationAvailable(cached?.reviewGenerationAvailable ?? true);
+    setCalendarEvents(cached?.calendarEvents || []);
+    setCalendarPreviewEvents(cached?.calendarPreviewEvents || []);
+    setLiveSessionEvents(cached?.liveSessionEvents || []);
+    setCalendarError(null);
+    setMeetingsLoadedKey(null);
+    setRiskLoadedKey(null);
+    setRiskLearners([]);
+    setRiskError(null);
 
-    async function loadDashboard() {
-      const cachedDashboard = dashboardSessionCache.get(cacheKey);
-      if (cachedDashboard) {
-        setOwnerName(cachedDashboard.ownerName);
-        setLearners(cachedDashboard.learners);
-        setMonthlyRisk(cachedDashboard.monthlyRisk);
-        setCalendarEvents(cachedDashboard.calendarEvents);
-        setCalendarPreviewEvents(cachedDashboard.calendarPreviewEvents);
-        setLiveSessionEvents(cachedDashboard.liveSessionEvents);
-        setEvidenceQueue(cachedDashboard.evidenceQueue);
-        setMarkingThisWeek(cachedDashboard.markingThisWeek);
-        setReviewGenerationAvailable(cachedDashboard.reviewGenerationAvailable);
-        setCalendarError(cachedDashboard.calendarError);
-        setCalendarLoading(false);
-        setLiveSessionsLoading(false);
-        setLoading(false);
-        setLoadedCoachEmail(authenticatedCoachEmail);
-      } else {
-        setLoading(true);
-        setCalendarLoading(true);
-        setLiveSessionsLoading(true);
-      }
-      setLoadWarning(null);
-      if (!cachedDashboard) setCalendarError(null);
+    if (!authenticatedCoachEmail) {
+      setLoadWarning(coach.canChooseCoach ? null : 'Coach access is required to load this dashboard.');
+      setLoading(false);
+      setLoadedCoachEmail(authenticatedCoachEmail);
+      return () => controller.abort();
+    }
 
-      if (!authenticatedCoachEmail) {
-        setOwnerName(authenticatedCoachName);
-        setLearners([]);
-        setMonthlyRisk(null);
-        setCalendarEvents([]);
-        setCalendarPreviewEvents([]);
-        setLiveSessionEvents([]);
-        setEvidenceQueue([]);
-        setMarkingThisWeek(undefined);
-        // An admin has no caseload of their own, so there is nothing missing to
-        // report — the picker below is the whole page for them.
-        setLoadWarning(coach.canChooseCoach ? null : 'Coach access is required to load this dashboard.');
-        setCalendarError('Coach access is required.');
-        setCalendarLoading(false);
-        setLiveSessionsLoading(false);
-        setLoading(false);
-        setLoadedCoachEmail(authenticatedCoachEmail);
-        return;
-      }
-
+    async function loadSummary() {
       try {
-        // Data ownership: this page makes one domain request. Detailed
-        // timetable, caseload and marking endpoints belong to their dedicated
-        // routes and must never be fetched to assemble dashboard cards.
         const dashboard = await fetchCoachDashboard<CoachDashboardApiResponse>(controller.signal);
         if (controller.signal.aborted) return;
-
-        const markingQueue = dashboard.marking;
-
         const seenSubmissionIds = new Set<string>();
-        const queueItems = groupPendingMarkingByLearner(
-          (markingQueue?.items || [])
-            .filter(item => {
-              const id = String(item.id || '');
-              if (!id || seenSubmissionIds.has(id)) return false;
-              seenSubmissionIds.add(id);
-              return true;
-            })
-            .map(normalizeEvidenceQueueLearner),
+        const queueItems = groupPendingMarkingByLearner((dashboard.marking?.items || [])
+          .filter(item => {
+            const id = String(item.id || '');
+            if (!id || seenSubmissionIds.has(id)) return false;
+            seenSubmissionIds.add(id);
+            return true;
+          }).map(normalizeEvidenceQueueLearner));
+        const nextLearners = mergeEvidenceQueueIntoLearners((dashboard.learners || []).map(normalizeLearner), queueItems);
+        const nextOwnerName = optionalDisplayValue(dashboard.owner?.name) || authenticatedCoachName;
+        const nextMarking = dashboard.marking?.summary?.pendingItems === undefined
+          ? undefined : toNumber(dashboard.marking.summary.pendingItems);
+        const previous = dashboardSessionCache.get(cacheKey);
+        const available = dashboard.weeklyCounts?.reviewsAvailable ?? reviewScheduleAvailable(
+          dashboard.meetings?.summary, dashboard.meetings?.events || [], dashboard.meetings?.reviewGenerationIssues || [],
         );
-        const normalizedLearners = (dashboard.learners || []).map(normalizeLearner);
-        const reviewHistoryLearners = dashboard.reviewHistory?.learners || [];
-        const events = sortEvents(dashboard.meetings?.events || []);
-        const completedHistoryEvents = events;
-        const nonLiveEvents = events.filter(event => event.source !== 'live-session');
-
-        const nextOwnerName = displayValue(dashboard.owner?.name) === EMPTY_VALUE ? authenticatedCoachName : String(dashboard.owner?.name);
-        const nextLearners = mergeEvidenceQueueIntoLearners(
-          mergeReviewHistory(
-            mergeAttendanceRates(normalizedLearners, completedHistoryEvents),
-            reviewHistoryLearners,
-          ),
-          queueItems,
-        );
-        const nextMonthlyRisk = normalizeMonthlyRisk(dashboard.monthlyRisk);
-        const nextMarkingThisWeek = (
-          markingQueue?.summary?.pendingItems === undefined
-            ? undefined
-            : toNumber(markingQueue.summary.pendingItems)
-        );
-        const reviewSummary = dashboard.meetings?.summary;
-        // Review-source failures are per learner. A native learner with an
-        // unavailable Curriculum schedule must not hide valid Aptem reviews
-        // belonging to the rest of the caseload.
-        const nextReviewGenerationAvailable = reviewScheduleAvailable(
-          reviewSummary,
-          nonLiveEvents,
-          dashboard.meetings?.reviewGenerationIssues || [],
-        );
-        const nextCalendarError = dashboard.errors?.meetings || null;
         dashboardSessionCache.set(cacheKey, {
-          ownerName: nextOwnerName,
-          learners: nextLearners,
-          monthlyRisk: nextMonthlyRisk,
-          calendarEvents: nonLiveEvents,
-          calendarPreviewEvents: nonLiveEvents.filter(isWithinNextWorkWeek),
-          liveSessionEvents: events.filter(event => event.source === 'live-session'),
-          evidenceQueue: queueItems,
-          markingThisWeek: nextMarkingThisWeek,
-          reviewGenerationAvailable: nextReviewGenerationAvailable,
-          calendarError: nextCalendarError,
+          ownerName: nextOwnerName, learners: nextLearners, monthlyRisk: null,
+          popupLearners: dashboard.popupLearners,
+          weeklyCounts: dashboard.weeklyCounts, totals: dashboard.totals, popupWeekEvents: dashboard.popupWeekEvents,
+          calendarEvents: previous?.calendarEvents || [], calendarPreviewEvents: previous?.calendarPreviewEvents || [],
+          liveSessionEvents: previous?.liveSessionEvents || [], evidenceQueue: queueItems,
+          markingThisWeek: nextMarking, reviewGenerationAvailable: available, calendarError: previous?.calendarError || null,
         });
         setOwnerName(nextOwnerName);
         setLearners(nextLearners);
-        setMonthlyRisk(nextMonthlyRisk);
+        setWeeklyCounts(dashboard.weeklyCounts);
+        setTotals(dashboard.totals);
+        setPopupWeekEvents(dashboard.popupWeekEvents);
+        setPopupLearners(dashboard.popupLearners || []);
         setEvidenceQueue(queueItems);
-        setMarkingThisWeek(nextMarkingThisWeek);
-        setReviewGenerationAvailable(nextReviewGenerationAvailable);
-        setCalendarEvents(nonLiveEvents);
-        setCalendarPreviewEvents(nonLiveEvents.filter(isWithinNextWorkWeek));
-        setLiveSessionEvents(events.filter(event => event.source === 'live-session'));
-        setCalendarError(nextCalendarError);
-        setCalendarLoading(false);
-        setLiveSessionsLoading(false);
-        setLoading(false);
-        setLoadedCoachEmail(authenticatedCoachEmail);
+        setMarkingThisWeek(nextMarking);
+        setReviewGenerationAvailable(available);
       } catch (error) {
         if (controller.signal.aborted) return;
-        if (cachedDashboard) return;
-        setLearners([]);
-        setMonthlyRisk(null);
-        setCalendarEvents([]);
-        setCalendarPreviewEvents([]);
-        setLiveSessionEvents([]);
-        setMarkingThisWeek(undefined);
-        setLoadWarning(error instanceof Error ? error.message : 'Unable to load coach dashboard data right now.');
-        setCalendarError('Calendar unavailable right now.');
-        setCalendarLoading(false);
-        setLiveSessionsLoading(false);
-        setLoading(false);
-        setLoadedCoachEmail(authenticatedCoachEmail);
+        setLoadWarning(error instanceof Error ? error.message : 'Unable to load coach dashboard summary.');
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoading(false);
+          setLoadedCoachEmail(authenticatedCoachEmail);
+        }
       }
     }
+    void loadSummary();
+    return () => controller.abort();
+  }, [authenticatedCoachEmail, authenticatedCoachName, cacheKey, coach.canChooseCoach, isInitialized, summaryReload]);
 
-    loadDashboard();
-    return () => {
-      controller.abort();
+  const meetingKpiSelected = selectedKpi === 'pr-week' || selectedKpi === 'mcm-week' || selectedKpi === 'catch-ups-week' || selectedKpi === 'reviews';
+  const needsMeetings = activeDashboardTab === 'meetings' || (meetingKpiSelected && popupWeekEvents === undefined);
+
+  useEffect(() => {
+    if (!isInitialized || !authenticatedCoachEmail || !needsMeetings || meetingsLoadedKey === cacheKey) return;
+    const controller = new AbortController();
+    const sectionKey = `${cacheKey}:meetings`;
+    const cached = dashboardSectionSessionCache.get(sectionKey);
+    const applyMeetings = (dashboard: CoachDashboardApiResponse) => {
+      const events = sortEvents(dashboard.meetings?.events || []);
+      const nonLive = events.filter(event => event.source !== 'live-session');
+      setCalendarEvents(nonLive);
+      setCalendarPreviewEvents(nonLive.filter(isWithinNextWorkWeek));
+      setLiveSessionEvents(events.filter(event => event.source === 'live-session'));
+      setCalendarError(dashboard.errors?.meetings || null);
     };
-  }, [authenticatedCoachEmail, authenticatedCoachName, cacheKey, coach.canChooseCoach, isInitialized]);
+    if (cached) applyMeetings(cached);
+    setCalendarLoading(!cached);
+    setLiveSessionsLoading(!cached);
+    setCalendarError(null);
+    void fetchDashboardSection<CoachDashboardApiResponse>('meetings', controller.signal).then(dashboard => {
+      if (controller.signal.aborted) return;
+      dashboardSectionSessionCache.set(sectionKey, dashboard);
+      applyMeetings(dashboard);
+      setMeetingsLoadedKey(cacheKey);
+    }).catch(error => {
+      if (!controller.signal.aborted) setCalendarError(error instanceof Error ? error.message : 'Unable to load meetings.');
+    }).finally(() => {
+      if (!controller.signal.aborted) {
+        setCalendarLoading(false);
+        setLiveSessionsLoading(false);
+      }
+    });
+    return () => controller.abort();
+  }, [authenticatedCoachEmail, cacheKey, isInitialized, meetingsLoadedKey, needsMeetings, sectionReload]);
+
+  useEffect(() => {
+    if (!isInitialized || !authenticatedCoachEmail || activeDashboardTab !== 'risk' || riskLoadedKey === cacheKey) return;
+    const controller = new AbortController();
+    const sectionKey = `${cacheKey}:risk`;
+    const cached = dashboardSectionSessionCache.get(sectionKey);
+    if (cached) setRiskLearners((cached.learners || []).map(normalizeLearner));
+    setRiskLoading(!cached);
+    setRiskError(null);
+    void fetchDashboardSection<CoachDashboardApiResponse>('risk', controller.signal).then(dashboard => {
+      if (controller.signal.aborted) return;
+      dashboardSectionSessionCache.set(sectionKey, dashboard);
+      setRiskLearners((dashboard.learners || []).map(normalizeLearner));
+      setRiskLoadedKey(cacheKey);
+    }).catch(error => {
+      if (!controller.signal.aborted) setRiskError(error instanceof Error ? error.message : 'Unable to load risk insights.');
+    }).finally(() => {
+      if (!controller.signal.aborted) setRiskLoading(false);
+    });
+    return () => controller.abort();
+  }, [activeDashboardTab, authenticatedCoachEmail, cacheKey, isInitialized, riskLoadedKey, sectionReload]);
 
   useEffect(() => {
     if (!selectedKpi) return;
@@ -1520,12 +1548,12 @@ export default function CoachDashboard() {
   );
   const activeLearners = useMemo(() => visibleLearners.filter(isActiveLearner), [visibleLearners]);
   const riskInsightsLearners = useMemo(
-    () => activeLearners.filter(isRiskInsightsLearner),
-    [activeLearners],
+    () => riskLearners.filter(isVisibleCaseloadLearner).filter(isRiskInsightsLearner),
+    [riskLearners],
   );
   const atRiskLearners = useMemo(
-    () => activeLearners.filter(learner => canonicalOtjhStatus(learner) === 'at-risk'),
-    [activeLearners],
+    () => selectAtRiskPopupLearners(popupLearners),
+    [popupLearners],
   );
   const needAttentionLearners = useMemo(
     () => activeLearners.filter(learner => canonicalOtjhStatus(learner) === 'need-attention'),
@@ -1537,8 +1565,8 @@ export default function CoachDashboard() {
       .sort((a, b) => b.pendingEvidence - a.pendingEvidence || a.learner.localeCompare(b.learner)),
     [evidenceQueue],
   );
-  const atRiskCount = atRiskLearners.length;
-  const totalCaseload = visibleLearners.length;
+  const atRiskCount = totals ? atRiskLearners.length : undefined;
+  const totalCaseload = totals?.totalLearners;
   const pendingEvidence = useMemo(
     () => evidenceLearners.reduce((total, learner) => total + learner.pendingEvidence, 0),
     [evidenceLearners],
@@ -1590,9 +1618,9 @@ export default function CoachDashboard() {
       .filter(event => event.status !== 'cancelled' && isEventThisWeek(event)),
     [activeCalendarEvents, liveSessionEvents],
   );
-  const progressReviewsThisWeek = weekEvents.filter(event => event.source === 'progress-review').length;
-  const monthlyCoachingThisWeek = weekEvents.filter(event => event.source === 'mcr').length;
-  const catchUpsThisWeek = weekEvents.filter(event => event.source === 'catch-up').length;
+  const progressReviewsThisWeek = popupWeekEvents === undefined && meetingsLoadedKey === cacheKey ? weekEvents.filter(event => event.source === 'progress-review').length : totals?.prThisWeek ?? undefined;
+  const monthlyCoachingThisWeek = popupWeekEvents === undefined && meetingsLoadedKey === cacheKey ? weekEvents.filter(event => event.source === 'mcr').length : totals?.mcmThisWeek ?? undefined;
+  const catchUpsThisWeek = popupWeekEvents === undefined && meetingsLoadedKey === cacheKey ? weekEvents.filter(event => event.source === 'catch-up').length : totals?.catchUpsThisWeek;
 
   /* ── Learners Requiring Attention (Risk Alert + At Risk Learners, merged) ── */
   const schedulePanelLoading = (calendarLoading || liveSessionsLoading) && !upcomingScheduleEvents.length;
@@ -1651,23 +1679,23 @@ export default function CoachDashboard() {
       userName={ownerName} userRole="Progress Coach"
     >
       <div className={styles.dashboard}>
-        {dashboardLoading ? (
-          <DashboardLoadingSkeleton />
-        ) : loadWarning ? (
-          <Panel className={styles.panel}>
-            <EmptyState icon="ri-error-warning-line" title="Unable to load coach dashboard" description={loadWarning} />
-          </Panel>
-        ) : (
-          <>
-
+        {loadWarning && <Panel className={styles.panel}>
+          <EmptyState icon="ri-error-warning-line" title="Unable to load coach dashboard summary" description={loadWarning} />
+          <button type="button" className={styles.textButton} onClick={() => setSummaryReload(value => value + 1)}>Retry summary</button>
+        </Panel>}
+        {dashboardLoading ? <div role="status" aria-label="Loading coach dashboard">
+          <span className="sr-only">Loading coach dashboard summary</span>
+          <section className={styles.metrics} aria-hidden="true">{Array.from({ length: 6 }, (_, index) => <MetricCardSkeleton key={index} />)}</section>
+        </div> : <>
         <section className={styles.metrics} aria-label="Coach dashboard metrics">
           <DashboardMetric kind="caseload" label="Total learners" value={loading || loadWarning ? undefined : totalCaseload} icon="ri-group-line" onClick={() => setSelectedKpi('caseload')} />
-          <DashboardMetric kind="risk" label="OTJH at risk" value={loading || loadWarning ? undefined : atRiskCount} note={loading || loadWarning ? undefined : `${needAttentionLearners.length} need attention`} icon="ri-alarm-warning-line" tone="critical" onClick={() => setSelectedKpi('at-risk')} />
-          <DashboardMetric kind="marking" label="Pending marking" value={loading || loadWarning ? undefined : markingThisWeek} note="Pending submissions" icon="ri-file-list-3-line" onClick={() => setSelectedKpi('pending-marking')} />
+          <DashboardMetric kind="risk" label="OTJH at risk" value={loading || loadWarning ? undefined : atRiskCount} note={loading || loadWarning || totals?.needAttention === undefined ? undefined : `${totals.needAttention} need attention`} icon="ri-alarm-warning-line" tone="critical" onClick={() => setSelectedKpi('at-risk')} />
+          <DashboardMetric kind="marking" label="Pending marking" value={loading || loadWarning ? undefined : totals?.pendingMarking ?? undefined} note="Pending submissions" icon="ri-file-list-3-line" onClick={() => setSelectedKpi('pending-marking')} />
           <DashboardMetric kind="pr" label="PR this week" value={loading || loadWarning ? undefined : reviewGenerationAvailable ? progressReviewsThisWeek : EMPTY_VALUE} note={reviewGenerationAvailable ? `Progress reviews · ${formatWeekRangeLabel()}` : 'Review schedule data unavailable'} icon="ri-focus-3-line" tone="caution" onClick={() => setSelectedKpi('pr-week')} />
           <DashboardMetric kind="mcm" label="MCM this week" value={loading || loadWarning ? undefined : reviewGenerationAvailable ? monthlyCoachingThisWeek : EMPTY_VALUE} note={reviewGenerationAvailable ? `Monthly coaching · ${formatWeekRangeLabel()}` : 'Review schedule data unavailable'} icon="ri-history-line" tone="caution" onClick={() => setSelectedKpi('mcm-week')} />
           <DashboardMetric kind="catchup" label="Catch-ups this week" value={loading || loadWarning ? undefined : catchUpsThisWeek} note={`Catch-up sessions · ${formatWeekRangeLabel()}`} icon="ri-calendar-event-line" tone="caution" onClick={() => setSelectedKpi('catch-ups-week')} />
         </section>
+        </>}
 
         <section className={styles.dashboardTabs} aria-label="Coach dashboard sections">
           <div className={styles.dashboardTabList} role="tablist" aria-label="Dashboard tabs">
@@ -1680,7 +1708,7 @@ export default function CoachDashboard() {
 
           <div id={`coach-dashboard-panel-${activeDashboardTab}`} role="tabpanel" aria-labelledby={`coach-dashboard-tab-${activeDashboardTab}`} className={styles.dashboardTabPanel}>
           {activeDashboardTab === 'learners' && <div id="learner-caseload" className={styles.fullWidthCaseload}>
-            <CoachCaseloadContent embedded embeddedLearners={visibleLearners} />
+            <CoachCaseloadContent key={cacheKey} embedded dashboard />
           </div>}
 
           {activeDashboardTab === 'meetings' && <>
@@ -1740,7 +1768,8 @@ export default function CoachDashboard() {
                   </table>
                 </div>
               )}
-              {!schedulePanelLoading && !upcomingScheduleGroups.length && (
+              {calendarError && <div role="alert"><p>{calendarError}</p><button type="button" className={styles.textButton} onClick={() => { setMeetingsLoadedKey(null); setSectionReload(value => value + 1); }}>Retry meetings</button></div>}
+              {!schedulePanelLoading && !calendarError && !upcomingScheduleGroups.length && (
                 <EmptyState size="sm" icon="ri-calendar-check-line" title="No learner meetings scheduled" description={calendarError || 'No learner meetings scheduled in the next work week.'} />
               )}
             </div>
@@ -1748,21 +1777,26 @@ export default function CoachDashboard() {
         </Panel>
         </>}
 
-        {activeDashboardTab === 'risk' && <RiskInsightsTables learners={riskInsightsLearners} unavailable={loading || Boolean(loadWarning)} />}
+        {activeDashboardTab === 'risk' && <>
+          {riskLoading ? <div role="status" aria-label="Loading risk insights"><ScheduleSkeleton /></div>
+            : <RiskInsightsTables learners={riskInsightsLearners} unavailable={Boolean(riskError)} />}
+          {riskError && <div role="alert"><p>{riskError}</p><button type="button" className={styles.textButton} onClick={() => { setRiskLoadedKey(null); setSectionReload(value => value + 1); }}>Retry risk insights</button></div>}
+        </>}
           </div>
         </section>
-
-          </>
-        )}
 
       </div>
 
       {selectedKpi && (
         <KpiDetailModal
           type={selectedKpi}
+          loading={meetingKpiSelected && popupWeekEvents === undefined && meetingsLoadedKey !== cacheKey && !calendarError}
+          error={meetingKpiSelected && popupWeekEvents === undefined ? calendarError : null}
+          onRetry={() => { setMeetingsLoadedKey(null); setSectionReload(value => value + 1); }}
           learners={visibleLearners}
+          popupLearners={popupLearners}
           calendarEvents={activeCalendarEvents}
-          weekEvents={weekEvents}
+          weekEvents={popupWeekEvents ?? weekEvents}
           evidenceQueue={evidenceLearners}
           pendingEvidence={pendingEvidence}
           onClose={() => setSelectedKpi(null)}
@@ -1900,9 +1934,13 @@ function OtjhDistribution({ learners, unavailable }: { learners: CoachLearner[];
 /* ═══════════════════════════════════════════════════════════
    KPI drill-down modal
    ═══════════════════════════════════════════════════════════ */
-function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQueue, pendingEvidence, onClose, onFilter }: {
+function KpiDetailModal({ type, loading, error, onRetry, learners, popupLearners, calendarEvents, weekEvents, evidenceQueue, pendingEvidence, onClose, onFilter }: {
   type: DashboardKpi;
+  loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
   learners: CoachLearner[];
+  popupLearners: DashboardPopupLearner[];
   calendarEvents: CoachCalendarEvent[];
   weekEvents: CoachCalendarEvent[];
   evidenceQueue: EvidenceQueueLearner[];
@@ -1911,6 +1949,36 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
   onFilter: (filter: DashboardKpi) => void;
 }) {
   const navigate = useNavigate();
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<OtjhStatusKey | 'all'>('all');
+  const modalPanel = useRef<HTMLDivElement>(null);
+  const searchInput = useRef<HTMLInputElement>(null);
+  const isCaseload = type === 'caseload';
+  const isPendingMarking = type === 'pending-marking';
+  const [markingProgramme, setMarkingProgramme] = useState('');
+  const isLightweightPopup = isCaseload || type === 'at-risk' || type === 'need-attention' || type === 'on-track';
+  useEffect(() => {
+    if (!isCaseload && !isPendingMarking) return;
+    const previousFocus = document.activeElement;
+    searchInput.current?.focus();
+    return () => {
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
+    };
+  }, [isCaseload, isPendingMarking]);
+  const trapCaseloadFocus = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if ((!isCaseload && !isPendingMarking) || event.key !== 'Tab') return;
+    const controls = Array.from(modalPanel.current?.querySelectorAll<HTMLElement>('*') ?? [])
+      .filter(element => element.matches('button:not(:disabled), input:not(:disabled), select:not(:disabled), a[href]'));
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last?.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first?.focus();
+    }
+  };
   const meta: Record<DashboardKpi, { title: string; subtitle: string; icon: string; iconStyle: string }> = {
     caseload: { title: 'Learner caseload', subtitle: 'All learners currently assigned to you', icon: 'ri-group-line', iconStyle: 'bg-primary-100 text-primary-600' },
     active: { title: 'Active learners', subtitle: 'Learners currently active on their programme', icon: 'ri-user-follow-line', iconStyle: 'bg-emerald-100 text-emerald-600' },
@@ -1922,7 +1990,7 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
     epa: { title: 'EPA learners', subtitle: 'Learners currently at the end-point assessment stage', icon: 'ri-award-line', iconStyle: 'bg-secondary-100 text-secondary-700' },
     evidence: { title: 'Evidence awaiting review', subtitle: 'Evidence submissions and review status', icon: 'ri-file-search-line', iconStyle: 'bg-secondary-100 text-secondary-600' },
     reviews: { title: 'Upcoming reviews', subtitle: 'Progress reviews scheduled in the next 14 days', icon: 'ri-file-chart-line', iconStyle: 'bg-primary-100 text-primary-600' },
-    'pending-marking': { title: 'Pending marking', subtitle: 'Submissions currently waiting for your review', icon: 'ri-file-list-3-line', iconStyle: 'bg-secondary-100 text-secondary-600' },
+    'pending-marking': { title: 'Pending marking', subtitle: 'Submissions currently waiting for your review', icon: 'ri-file-list-3-line', iconStyle: 'bg-primary-50 text-primary-700' },
     'pr-week': { title: 'Progress reviews this week', subtitle: formatWeekRangeLabel(), icon: 'ri-focus-3-line', iconStyle: 'bg-amber-100 text-amber-700' },
     'mcm-week': { title: 'Monthly coaching this week', subtitle: formatWeekRangeLabel(), icon: 'ri-history-line', iconStyle: 'bg-amber-100 text-amber-700' },
     'catch-ups-week': { title: 'Catch-ups this week', subtitle: formatWeekRangeLabel(), icon: 'ri-calendar-event-line', iconStyle: 'bg-amber-100 text-amber-700' },
@@ -1948,11 +2016,23 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
         ? learners.filter(isCompletedLearner)
       : type === 'epa'
         ? learners.filter(isEpaLearner)
-    : type === 'on-track' || type === 'at-risk' || type === 'need-attention'
-      ? learners.filter(learner => isActiveLearner(learner) && canonicalOtjhStatus(learner) === type)
       : [];
+  const lightweightLearners = type === 'at-risk'
+    ? selectAtRiskPopupLearners(popupLearners)
+    : type === 'on-track' || type === 'need-attention'
+      ? popupLearners.filter(learner => learner.otjh.ragStatus === type)
+      : popupLearners;
   const reviews = sortEvents(calendarEvents.filter(event => event.source === 'progress-review' && isWithinNextDays(event, 14)));
+  const searchedLearners = lightweightLearners.filter(learner =>
+    (statusFilter === 'all' || learner.otjh.ragStatus === statusFilter)
+    && `${learner.name} ${learner.programme} ${learner.group}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
+  );
   const evidenceLearners = evidenceQueue;
+  const markingProgrammes = [...new Set(evidenceQueue.map(learner => learner.programme).filter(value => value && value !== EMPTY_VALUE))].sort();
+  const searchedMarkingLearners = evidenceQueue.filter(learner =>
+    (!markingProgramme || learner.programme === markingProgramme)
+    && `${learner.learner} ${learner.programme} ${learner.group}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
+  );
   const weeklyEventSource = type === 'pr-week' ? 'progress-review' : type === 'mcm-week' ? 'mcr' : type === 'catch-ups-week' ? 'catch-up' : null;
   const weeklyDetails = weeklyEventSource ? sortEvents(weekEvents.filter(event => event.source === weeklyEventSource)) : [];
   const detailCount = type === 'evidence' || type === 'pending-marking'
@@ -1961,7 +2041,7 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
       ? reviews.length
       : weeklyEventSource
         ? weeklyDetails.length
-        : modalLearners.length;
+        : isLightweightPopup ? lightweightLearners.length : modalLearners.length;
 
   useEffect(() => {
     const previousOverflow = document.body.style.overflow;
@@ -1978,7 +2058,7 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
     };
   }, [onClose]);
 
-  const openLearnerProfile = (learner: CoachLearner) => {
+  const openLearnerProfile = (learner: Pick<CoachLearner, 'id' | 'name' | 'learnerType' | 'enrolmentId'>) => {
     navigate(`/coach/learner-case-file?id=${encodeURIComponent(learner.id)}`, {
       state: {
         learnerId: learner.id,
@@ -1999,18 +2079,20 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
   return createPortal(
     <div className="fixed inset-0 z-[9999] overflow-y-auto overscroll-contain p-3 sm:p-6 lg:p-8" role="dialog" aria-modal="true" aria-labelledby="kpi-modal-title" aria-describedby="kpi-modal-description">
       <button type="button" onClick={onClose} className="fixed inset-0 bg-foreground-950/10 backdrop-blur-[5px] backdrop-saturate-125" aria-label="Close popup"></button>
-      <div className="relative mx-auto flex min-h-full w-full max-w-5xl items-start justify-center">
-        <div className="relative my-auto flex max-h-[88vh] w-full flex-col overflow-hidden rounded-2xl border border-white/80 bg-background-50 shadow-xl">
+      <div className={cn("relative mx-auto flex min-h-full w-full items-start justify-center", isPendingMarking ? markingStyles.width : "max-w-5xl")}>
+        <div ref={modalPanel} onKeyDown={trapCaseloadFocus} className={cn("relative my-auto flex max-h-[88vh] w-full flex-col overflow-hidden rounded-2xl border border-white/80 bg-background-50 shadow-xl", isPendingMarking && markingStyles.panel)}>
         {/* shrink-0 so a long caseload cannot squeeze the header away: the body
             below is the flex child that scrolls, and this stays put. */}
         <header className={cn(
           'relative z-10 shrink-0 overflow-hidden border-b border-foreground-100/80 px-5 py-5 sm:px-7 sm:py-6',
-          type === 'mcm-week' || type === 'pr-week' ? 'bg-background-50' : 'bg-gradient-to-r from-primary-50/90 via-background-50 to-secondary-50/60',
+          isCaseload || isPendingMarking || type === 'mcm-week' || type === 'pr-week' ? 'bg-background-50' : 'bg-gradient-to-r from-primary-50/90 via-background-50 to-secondary-50/60',
+          isCaseload && '!py-4',
+          isPendingMarking && markingStyles.header,
         )}>
-          {type !== 'mcm-week' && type !== 'pr-week' && <div className="pointer-events-none absolute -right-12 -top-20 h-48 w-48 rounded-full bg-primary-200/25 blur-3xl"></div>}
+          {!isCaseload && !isPendingMarking && type !== 'mcm-week' && type !== 'pr-week' && <div className="pointer-events-none absolute -right-12 -top-20 h-48 w-48 rounded-full bg-primary-200/25 blur-3xl"></div>}
           <div className="relative flex items-start justify-between gap-4">
             <div className="flex min-w-0 items-center gap-4">
-              <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl shadow-sm ring-1 ring-white/80 sm:h-14 sm:w-14 ${current.iconStyle}`}><AppIcon className={`${current.icon} text-xl`}></AppIcon></span>
+              <span className={cn(`flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl shadow-sm ring-1 ring-white/80 sm:h-14 sm:w-14 ${current.iconStyle}`, isPendingMarking && markingStyles.headerIcon)}><AppIcon className={`${current.icon} text-xl`}></AppIcon></span>
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2.5">
                   <h2 id="kpi-modal-title" className="font-heading text-xl font-bold tracking-tight text-foreground-900 sm:text-2xl">{current.title}</h2>
@@ -2021,24 +2103,85 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
             </div>
             <button type="button" onClick={onClose} className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-foreground-200/80 bg-background-50/90 text-foreground-500 shadow-sm transition-all hover:-translate-y-0.5 hover:border-foreground-300 hover:text-foreground-800 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2" aria-label="Close"><AppIcon className="ri-close-line text-xl"></AppIcon></button>
           </div>
+          {isCaseload && <div className={modalStyles.controls}>
+            <label className={modalStyles.search}>
+              <AppIcon className="ri-search-line" aria-hidden="true" />
+              <span className="sr-only">Search learners</span>
+              <input ref={searchInput} type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search name, programme or group" />
+            </label>
+            <div className={modalStyles.filters} role="group" aria-label="Filter learners by OTJH status">
+              {([{ key: 'all', label: 'All' }, { key: 'at-risk', label: 'At Risk' }, { key: 'need-attention', label: 'Need Attention' }, { key: 'on-track', label: 'On Track' }] as const).map(filter =>
+                <button key={filter.key} type="button" aria-pressed={statusFilter === filter.key} onClick={() => setStatusFilter(filter.key)}>{filter.label}</button>,
+              )}
+            </div>
+          </div>}
+          {isPendingMarking && <div className={markingStyles.toolbar}>
+            <label className={markingStyles.search}>
+              <AppIcon className="ri-search-line" aria-hidden="true" />
+              <span className="sr-only">Search learner</span>
+              <input ref={searchInput} type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="Search learner, programme or group" />
+            </label>
+            {markingProgrammes.length > 1 && <select className={markingStyles.filter} aria-label="Filter by programme" value={markingProgramme} onChange={event => setMarkingProgramme(event.target.value)}>
+              <option value="">All programmes</option>
+              {markingProgrammes.map(programme => <option key={programme} value={programme}>{programme}</option>)}
+            </select>}
+          </div>}
         </header>
 
         <div className={cn(
           'min-h-0 flex-1 overflow-y-auto p-4 sm:p-6',
-          type === 'mcm-week' || type === 'pr-week' ? 'bg-background-50' : 'bg-gradient-to-b from-background-50 to-background-100/50',
+          isCaseload || isPendingMarking || type === 'mcm-week' || type === 'pr-week' ? 'bg-background-50' : 'bg-gradient-to-b from-background-50 to-background-100/50',
+          isCaseload && '!px-5 !py-2 sm:!px-7',
+          isPendingMarking && markingStyles.body,
         )}>
-          {(type === 'mcm-week' || type === 'pr-week') && (
+          {loading && <div role="status" aria-label="Loading meeting details"><ScheduleSkeleton /></div>}
+          {error && <div role="alert"><p>{error}</p><button type="button" onClick={onRetry}>Retry meetings</button></div>}
+          {!loading && !error && (type === 'mcm-week' || type === 'pr-week') && (
             <CompactWeeklyMeetingDetails
               events={weeklyDetails}
               summaryLabel={type === 'mcm-week' ? 'Monthly coaching' : 'Progress review'}
               emptyIcon={current.icon}
             />
           )}
-          {(type === 'caseload' || type === 'active' || type === 'on-break' || type === 'on-track' || type === 'at-risk' || type === 'need-attention' || type === 'completed' || type === 'epa') && (
+          {isLightweightPopup && <>
+            <p className={modalStyles.resultCount} role="status">Showing {searchedLearners.length} of {lightweightLearners.length} learners</p>
+            <ul className={modalStyles.list} aria-label="Learners">
+              {searchedLearners.map(learner => {
+                const status = OTJH_STATUS_META[learner.otjh.ragStatus === 'unavailable' ? 'unknown' : learner.otjh.ragStatus];
+                const { completed, target } = learner.otjh;
+                const hasHours = completed !== null && target !== null && target > 0;
+                const percent = hasHours ? clampPercent(completed! / target! * 100) : null;
+                const secondary = [learner.programme, learner.group].filter(value => value && value !== EMPTY_VALUE).join(' · ');
+                return <li key={learner.id}>
+                  <button type="button" className={modalStyles.row} onClick={() => openLearnerProfile(learner)} aria-label={`Open ${learner.name}'s profile`}>
+                    <div className={modalStyles.identity}>
+                      <LearnerAvatar name={learner.name} initials={learner.initials} size="sm" />
+                      <div className={modalStyles.identityText}>
+                        <div className={modalStyles.nameLine}>
+                          <span className={modalStyles.name} title={learner.name}>{learner.name}</span>
+                          {status.label !== EMPTY_VALUE && <StatusBadge tone={status.tone} label={status.label} size="sm" />}
+                        </div>
+                        <p className={modalStyles.secondary} title={secondary}>{secondary}</p>
+                      </div>
+                    </div>
+                    <div className={modalStyles.hours}>
+                      <div className={modalStyles.metricLine}><span>OTJH</span><strong>{hasHours ? `${completed} / ${target}h` : EMPTY_VALUE}</strong></div>
+                      <div className={modalStyles.progressLine}>
+                        <span className={modalStyles.progressTrack} aria-hidden="true"><span className="bg-primary-500" style={{ width: `${percent ?? 0}%` }} /></span>
+                        <span>{percent === null ? EMPTY_VALUE : `${percent}%`}</span>
+                      </div>
+                    </div>
+                    <AppIcon className={cn('ri-arrow-right-s-line', modalStyles.chevron)} aria-hidden="true" />
+                  </button>
+                </li>;
+              })}
+            </ul>
+            {!searchedLearners.length && <EmptyState icon="ri-search-line" title="No learners found" description="Try another search or status filter." />}
+          </>}
+          {(type === 'active' || type === 'on-break' || type === 'completed' || type === 'epa') && (
             <div className="space-y-3.5">
               {modalLearners.map(learner => {
                 const status = OTJH_STATUS_META[canonicalOtjhStatus(learner)];
-                const attendance = learner.attendanceRateAvailable ? `${learner.attendanceRate}%` : EMPTY_VALUE;
                 const otjhProgress = otjhProgressAsOfToday(learner);
                 const otjh = otjhProgress.targetHours !== null && otjhProgress.targetHours > 0
                   ? `${otjhProgress.actualHours}/${otjhProgress.targetHours}`
@@ -2071,7 +2214,7 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
                     <div className="grid min-w-0 grid-cols-3 gap-2 text-center sm:col-span-2 lg:col-span-1 lg:min-w-[320px]">
                       <ModalMiniMetric label="OTJH" value={otjh} />
                       <ModalMiniMetric label="KSB" value={ksbCellValue(learner)} />
-                      <ModalMiniMetric label="Attendance" value={attendance} tone={percentTone(learner.attendanceRateAvailable ? learner.attendanceRate : null, ATTENDANCE_MINIMUM_RATE, ATTENDANCE_EXPECTED_RATE)} />
+                      <ModalMiniMetric label="Attendance" value={learner.attendanceRateAvailable ? `${learner.attendanceRate}%` : EMPTY_VALUE} tone={percentTone(learner.attendanceRateAvailable ? learner.attendanceRate : null, ATTENDANCE_MINIMUM_RATE, ATTENDANCE_EXPECTED_RATE)} />
                     </div>
                     <span className="hidden h-10 w-10 items-center justify-center rounded-lg bg-background-100 text-foreground-400 transition-colors group-hover:bg-primary-50 group-hover:text-primary-700 sm:flex"><AppIcon className="ri-arrow-right-s-line text-xl"></AppIcon></span>
                   </button>
@@ -2083,7 +2226,45 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
             </div>
           )}
 
-          {(type === 'evidence' || type === 'pending-marking') && (
+          {isPendingMarking && <>
+            <p className={markingStyles.resultCount} role="status">Showing {searchedMarkingLearners.length} of {evidenceLearners.length} learners</p>
+            <ul className={markingStyles.list} aria-label="Learners awaiting marking">
+              {searchedMarkingLearners.map(learner => {
+                const caseloadMatch = learners.find(candidate => candidate.id === learner.learnerId);
+                const context = [learner.programme, learner.group].filter(value => value && value !== EMPTY_VALUE).join(' \u00b7 ');
+                return <li key={learner.id}>
+                  <Link className={markingStyles.row} to={`/coach/marking-queue?learnerId=${encodeURIComponent(learner.learnerId)}`}
+                    aria-label={`Open marking for ${learner.learner}`}
+                    state={{ learnerId: learner.learnerId, learnerName: learner.learner, tab: 'evidence',
+                      ...(caseloadMatch?.learnerType ? { kind: caseloadMatch.learnerType } : {}),
+                      ...(caseloadMatch?.enrolmentId ? { enrolmentId: caseloadMatch.enrolmentId } : {}),
+                    }} onClick={onClose}>
+                    <div className={markingStyles.identity}>
+                      <LearnerAvatar name={learner.learner} initials={learner.initials} tone="brand" size="sm" />
+                      <div className={markingStyles.identityText}>
+                        <p className={markingStyles.name} title={learner.learner}>{learner.learner}</p>
+                        {context && <p className={markingStyles.context} title={context}>{context}</p>}
+                      </div>
+                    </div>
+                    <div className={markingStyles.date}>
+                      <span>Oldest pending</span>
+                      <strong>{learner.oldestPendingDate ? formatCompletedSessionDate(learner.oldestPendingDate) : EMPTY_VALUE}</strong>
+                    </div>
+                    <div className={markingStyles.pending}>
+                      <span className={markingStyles.badge}>{learner.pendingEvidence} Pending</span>
+                      {learner.isOverdue && <span className={cn(markingStyles.overdue, 'text-red-600')}>Overdue</span>}
+                    </div>
+                    <AppIcon className={cn('ri-arrow-right-s-line', markingStyles.chevron)} aria-hidden="true" />
+                  </Link>
+                </li>;
+              })}
+            </ul>
+            {!searchedMarkingLearners.length && <EmptyState icon="ri-file-search-line"
+              title={evidenceLearners.length ? 'No learners found' : 'No evidence awaiting review'}
+              description={evidenceLearners.length ? 'Try another search or programme filter.' : 'Learners will appear here when submitted evidence needs marking.'} />}
+          </>}
+
+          {type === 'evidence' && (
             <div className="space-y-3">
               {evidenceLearners.map(learner => {
                 // The marking queue has no learnerType of its own -- cross-reference the
@@ -2092,9 +2273,7 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
                 return (
                 <Link
                   key={learner.id}
-                  to={type === 'pending-marking'
-                    ? `/coach/marking-queue?learnerId=${encodeURIComponent(learner.learnerId)}`
-                    : `/coach/learner-case-file?id=${encodeURIComponent(learner.learnerId)}&tab=evidence`}
+                  to={`/coach/learner-case-file?id=${encodeURIComponent(learner.learnerId)}&tab=evidence`}
                   state={{
                     learnerId: learner.learnerId,
                     learnerName: learner.learner,
@@ -2109,7 +2288,7 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[13px] font-semibold text-foreground-900">{learner.learner}</p>
                     <p className="mt-0.5 truncate text-[12px] text-foreground-400">{learner.programme} · {learner.group}</p>
-                    {type === 'pending-marking' && learner.oldestPendingDate && <p className="mt-1 text-[11px] text-foreground-500">Oldest pending: {formatCompletedSessionDate(learner.oldestPendingDate)}{learner.latestPendingDate && learner.latestPendingDate !== learner.oldestPendingDate ? ` · Latest: ${formatCompletedSessionDate(learner.latestPendingDate)}` : ''}</p>}
+
                   </div>
                   <div className="text-right">
                     <p className="text-sm font-bold text-secondary-700">{learner.pendingEvidence} / {learner.totalEvidence}</p>
@@ -2175,7 +2354,7 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
           )}
         </div>
 
-        <footer className="sticky bottom-0 z-10 flex shrink-0 flex-wrap items-center justify-end gap-2.5 border-t border-foreground-100 bg-background-50 px-5 py-4 sm:px-7">
+        <footer className={cn("sticky bottom-0 z-10 flex shrink-0 flex-wrap items-center justify-end gap-2.5 border-t border-foreground-100 bg-background-50 px-5 py-4 sm:px-7", isPendingMarking && markingStyles.footer)}>
           <button type="button" onClick={onClose} className="rounded-xl border border-foreground-200 bg-background-50 px-4 py-2.5 text-xs font-semibold text-foreground-700 shadow-sm transition-colors hover:bg-background-100 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Close</button>
           {filterForType[type] && <button type="button" onClick={() => onFilter(filterForType[type]!)} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">View in caseload list</button>}
           {(type === 'evidence' || type === 'pending-marking') && <Link to="/coach/marking-queue" onClick={onClose} className="primary-action rounded-xl bg-primary-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition-colors hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2">Open marking queue</Link>}

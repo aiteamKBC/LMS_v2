@@ -99,11 +99,9 @@ DB_POOL_OPTIONS = {
     'min_size': 1,
     'max_size': int(os.environ.get('DB_POOL_MAX_SIZE', '10')),
     'timeout': DB_POOL_TIMEOUT,
-    # Neon closes idle server-side connections; retire pooled connections
-    # before that happens so requests never receive a dead socket. Django 6
-    # already installs psycopg_pool's check_connection on every pool it
-    # builds, so no explicit 'check' entry here (passing one crashes startup
-    # with a duplicate-keyword error).
+    # max_idle shrinks connections above min_size; it isn't a health check.
+    # Django installs psycopg_pool.check_connection only when
+    # CONN_HEALTH_CHECKS is enabled (including pooled connections).
     'max_idle': int(os.environ.get('DB_POOL_MAX_IDLE', '180')),
 }
 
@@ -143,7 +141,7 @@ def database_from_url(database_url):
         'PORT': str(parsed.port or ''),
         'OPTIONS': options,
         'CONN_MAX_AGE': 0 if pooled else DB_CONN_MAX_AGE,
-        'CONN_HEALTH_CHECKS': False if pooled else DB_CONN_HEALTH_CHECKS,
+        'CONN_HEALTH_CHECKS': DB_CONN_HEALTH_CHECKS,
     }
 
 
@@ -664,7 +662,7 @@ if DATABASE_URL and not USE_SQLITE_FOR_TESTS:
             "PORT": parsed_db.port or "5432",
             "OPTIONS": db_options,
             "CONN_MAX_AGE": 0 if DB_POOL else DB_CONN_MAX_AGE,
-            "CONN_HEALTH_CHECKS": False if DB_POOL else DB_CONN_HEALTH_CHECKS,
+            "CONN_HEALTH_CHECKS": DB_CONN_HEALTH_CHECKS,
         }
     }
 else:
@@ -924,7 +922,10 @@ MEDIA_ROOT = BASE_DIR / 'media'
 # Certificate templates can store a compressed background image inside their
 # JSON layout config. Django's default request-body limit is too small for that
 # and returns an HTML 400 page before the API view can respond with JSON.
-DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('DATA_UPLOAD_MAX_MEMORY_SIZE', str(12 * 1024 * 1024)))
+# Module Builder saves a module's whole structure in one PATCH, and a large
+# module (800+ components) passes 12 MB, so the ceiling is 30 MB. The frontend
+# mirrors this number in MODULE_STRUCTURE_SAVE_LIMIT_BYTES to explain a refusal.
+DATA_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('DATA_UPLOAD_MAX_MEMORY_SIZE', str(30 * 1024 * 1024)))
 FILE_UPLOAD_MAX_MEMORY_SIZE = int(os.environ.get('FILE_UPLOAD_MAX_MEMORY_SIZE', str(12 * 1024 * 1024)))
 
 # Azure Blob Storage (learner evidence uploads — see learner_api/evidence_storage.py).

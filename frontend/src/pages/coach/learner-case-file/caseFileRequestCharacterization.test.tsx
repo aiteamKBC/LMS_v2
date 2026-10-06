@@ -46,6 +46,8 @@ vi.mock('@/pages/coach/shared/calendarEvents', () => ({
 
 import { selectCaseFileOtjh, useCoachLearnerCaseFileData } from './data';
 import { LearnerCaseFileHeader } from './components/LearnerCaseFileHeader';
+import { adaptDashboardLearnerRow, type DashboardLearnerRow } from '@/features/coach/dashboard/api/dashboardLearnerRow';
+import { otjhProgressAsOfToday } from '@/pages/coach/caseload/lib/format';
 
 const headerProps = {
   pageTitle: 'Learner', pageSubtitle: 'Programme', overall: '--', otjh: '--', ksb: '--',
@@ -135,6 +137,31 @@ describe('Learner Case File request characterization', () => {
 
   afterEach(() => vi.useRealTimers());
 
+  it.each([
+    [72.0581, 850, '2026-05-29', '2028-08-01', 138.99, 51.84],
+    [558.4808, 569, '2025-05-01', '2027-06-30', 376.69, 100],
+  ] as const)('matches dashboard actual %s and target-to-date independently of planned %s', async (actual, planned, start, end, target, progress) => {
+    vi.setSystemTime(new Date('2026-10-06T12:00:00Z'));
+    mocks.coachFetch.mockResolvedValue(response(shell({ startDate: null, plannedEndDate: null,
+      otjhProgrammeStartDate: start, otjhProgrammeEndDate: end })));
+    mocks.fetchLearnerMetrics.mockResolvedValue({ ...metrics, aptem_planned_total: planned,
+      otjh: { ...metrics.otjh, actual, planned } });
+    const { result } = renderHook(() => useCoachLearnerCaseFileData({ learnerId: '316' }));
+    await waitFor(() => expect(result.current.data?.reviewsLoading).toBe(false));
+    const profile = selectCaseFileOtjh(result.current.data!);
+    const dashboard = otjhProgressAsOfToday(adaptDashboardLearnerRow({
+      id: '316', name: 'Synthetic learner', initials: 'SL', programme: null, programmeStatus: 'Active',
+      otjh: { completed: actual, targetToDate: target, planned, progress, ragStatus: progress === 100 ? 'on-track' : 'at-risk' },
+      activities: { completed: null, total: null, progress: null }, attendance: { rate: null },
+      startDate: start, lastActivity: { date: null }, lastPr: null, lastMcm: null,
+    } satisfies DashboardLearnerRow));
+    expect(profile.logged).toBe(dashboard.actualHours);
+    expect(profile.target).toBe(dashboard.targetHours);
+    expect(profile.target).not.toBe(profile.programmeTotal);
+    expect(profile.programmeTotal).toBe(planned);
+    expect(profile.progressPercent).toBe(Math.round(dashboard.percent!));
+  });
+
   it.each(['apprenticeship', 'commercial'] as const)('uses the coach target-to-date for %s while retaining the whole plan', async kind => {
     mocks.coachFetch.mockResolvedValue(response({ ...shell({ startDate: '2026-06-01', plannedEndDate: '2026-07-31' }),
       identity: { ...shell().identity, kind },
@@ -154,8 +181,8 @@ describe('Learner Case File request characterization', () => {
   it.each([
     ['2026-08-01', '2026-09-01', 0, 0, null],
     ['2026-05-01', '2026-06-01', 20, 8, 60],
-    [null, null, 20, 8, 60],
-  ])('preserves target boundaries and missing-date fallback (%s / %s)', async (startDate, plannedEndDate, target, remaining, progressPercent) => {
+    [null, null, null, null, null],
+  ])('preserves target boundaries without a planned fallback (%s / %s)', async (startDate, plannedEndDate, target, remaining, progressPercent) => {
     mocks.coachFetch.mockResolvedValue(response(shell({ startDate, plannedEndDate })));
     const { result } = renderHook(() => useCoachLearnerCaseFileData({ learnerId: '316' }));
     await waitFor(() => expect(result.current.data?.reviewsLoading).toBe(false));
