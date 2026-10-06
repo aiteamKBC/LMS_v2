@@ -6,6 +6,7 @@ from curriculum_api.tests import CurriculumPersistenceHarness
 
 OLD_LINK = 'https://teams.example/old'
 NEW_LINK = 'https://teams.microsoft.com/l/meetup-join/new'
+SOURCE_LINK = 'https://teams.example/source-meeting'
 
 
 class TeamsLinksReplaceTests(CurriculumPersistenceHarness):
@@ -99,13 +100,51 @@ class TeamsLinksReplaceTests(CurriculumPersistenceHarness):
         self.assertEqual(self.client.get(self.url).status_code, 405)
         self.assertEqual(self.settings_of(self.live_ids[0])['liveSessionUrl'], OLD_LINK)
 
-    def test_refuses_a_module_that_shares_another_modules_meeting(self):
-        views.update_authoring_rows(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [self.module_id], {
-            'teams_shared_source_module_id': 'MOD-SOURCE',
+    def make_source_module(self):
+        """A second module that owns the meeting this one will share."""
+        response = self.post_json('/curriculum_api/curriculum/modules/', {
+            'moduleType': 'authoring', 'title': 'Meeting owner', 'weeks': 3, 'sessionsNumber': 3,
+            'weekStructure': [{'weekNumber': index + 1, 'title': f'Week {index + 1}', 'components': []} for index in range(3)],
         })
+        source_id = response.json()['moduleCatalogueId']
+        structure = views.get_authoring_structure_payload(source_id)
+        for week in structure['weekStructure']:
+            week['components'] = [{'id': f"SRC-LIVE-{week['weekNumber']}", 'type': 'live-session', 'title': 'Live',
+                                   'settings': {'liveSessionUrl': SOURCE_LINK, 'teamsMeetingUrl': SOURCE_LINK}}]
+        views.save_module_authoring_structure(source_id, structure)
+        return source_id
 
-        response = self.post_json(self.url, {'weekIds': [self.weeks[0]['id']], 'link': NEW_LINK})
+    def test_a_module_sharing_another_modules_meeting_keeps_its_own_replaced_link(self):
+        source_id = self.make_source_module()
+        views.update_authoring_rows(views.AUTHORING_MODULES_TABLE, 'module_catalogue_id = %s', [self.module_id], {
+            'teams_shared_source_module_id': source_id,
+        })
+        # Saved as an alias, its rows hold no link of their own: it is read from the source.
+        views.save_module_authoring_structure(self.module_id, views.get_authoring_structure_payload(self.module_id))
+        self.assertEqual(self.component_row(self.live_ids[0])['live_sessions_link'], '')
+        before = views.get_authoring_structure_payload(self.module_id)
+        self.assertEqual(before['weekStructure'][0]['components'][0]['settings']['liveSessionUrl'], SOURCE_LINK)
 
-        self.assertEqual(response.status_code, 409)
-        self.assertIn('MOD-SOURCE', response.json()['error'])
-        self.assertEqual(self.settings_of(self.live_ids[0])['liveSessionUrl'], OLD_LINK)
+        response = self.post_json(self.url, {'weekIds': [self.weeks[0]['id'], self.weeks[2]['id']], 'link': NEW_LINK})
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()['updatedComponentIds'], [self.live_ids[0], self.live_ids[2]])
+        after = views.get_authoring_structure_payload(self.module_id)
+        links = [week['components'][0]['settings']['liveSessionUrl'] for week in after['weekStructure']]
+        # Weeks 1 and 3 replaced; week 2 is the one-off meeting and keeps its own.
+        self.assertEqual(links[0], NEW_LINK)
+        self.assertEqual(links[2], NEW_LINK)
+        self.assertNotEqual(links[1], NEW_LINK)
+        # What learner and coach views read first.
+        self.assertEqual(self.component_row(self.live_ids[0])['live_sessions_link'], NEW_LINK)
+        # The source, and so every other module sharing it, is untouched.
+        source = views.get_authoring_structure_payload(source_id)
+        self.assertEqual({c['settings']['liveSessionUrl'] for w in source['weekStructure'] for c in w['components']}, {SOURCE_LINK})
+
+        # A later full save of the alias keeps its link, in the settings and the column.
+        saved = views.save_module_authoring_structure(self.module_id, after)
+        self.assertEqual(saved['weekStructure'][0]['components'][0]['settings']['liveSessionUrl'], NEW_LINK)
+        self.assertEqual(self.component_row(self.live_ids[0])['live_sessions_link'], NEW_LINK)
+        # The source's meeting identity is still not stored on the alias.
+        stored = self.settings_of(self.live_ids[0])
+        self.assertNotIn('teamsEventId', stored)
