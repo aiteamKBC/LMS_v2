@@ -1,5 +1,5 @@
 import type { LearnerDetail, LearnerKind } from '@/api/learnerDetail';
-import { formatHoursMinutes, isComponentComplete, type JourneyComponent } from '@/utils/learnerJourney';
+import { formatHoursMinutes, isComponentComplete, quizAttemptsFor, type JourneyComponent } from '@/utils/learnerJourney';
 import type { CurriculumRow } from '@/pages/learner/training-plan-timeline/model';
 import { nativeHref, type SubjectEntry } from '@/pages/learner/my-learning/SubjectWorkspace';
 
@@ -38,7 +38,7 @@ export function weekComponents(real: LearnerDetail | null, moduleId: string | un
       ...component,
       title: component.component,
       quizAttempts: component.isQuiz && component.quizMeta
-        ? real.quizAttempts.filter(attempt => String(attempt.quizId) === String(component.quizMeta!.quizId))
+        ? quizAttemptsFor(component, real.quizAttempts)
         : undefined,
     }));
 }

@@ -1,10 +1,10 @@
+import { ImportedReviewSection } from './imported/ImportedReviewSection';
 import { useEffect, useMemo, useState } from 'react';
 import type { LearnerKind } from '@/api/learnerDetail';
 import {
   fetchReviewHistory,
   type ImportedReview,
-  type ImportedReviewField,
-  type ImportedReviewSection,
+  type ImportedReviewSection as HistorySection,
   type ReviewHistoryCategory,
 } from '@/api/reviewHistory';
 import { RowsSkeleton } from '@/components/feature/Skeletons';
@@ -50,49 +50,7 @@ function statusStyle(value: string): string {
   return 'border-amber-200 bg-amber-50 text-amber-700';
 }
 
-function printableValue(value: unknown): string {
-  if (value === null || value === undefined || value === '') return '-';
-  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-  if (typeof value === 'string' || typeof value === 'number') return String(value);
-  if (Array.isArray(value)) return value.map(printableValue).join(', ');
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-function safeLink(value?: string): string | null {
-  if (!value) return null;
-  try {
-    const url = new URL(value);
-    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : null;
-  } catch {
-    return null;
-  }
-}
-
-function Field({ field }: { field: ImportedReviewField }) {
-  const links = Array.isArray(field.links) ? field.links : [];
-  return (
-    <div className="rounded-xl border border-background-200 bg-background-100/45 p-3.5">
-      {field.label && <p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">{field.label}</p>}
-      <p className="mt-1.5 whitespace-pre-wrap break-words text-sm leading-6 text-foreground-800">{printableValue(field.value)}</p>
-      {field.description && <p className="mt-1 text-xs leading-5 text-foreground-500">{field.description}</p>}
-      {links.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-2">
-          {links.map((link, index) => {
-            const href = safeLink(link.href || link.url || link.azure_url);
-            if (!href) return null;
-            return <a key={`${href}:${index}`} href={href} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded-lg border border-primary-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-primary-700 hover:bg-primary-50"><AppIcon className="ri-attachment-2" />{link.text || link.title || 'Open attachment'}</a>;
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ReviewSection({ section, open, onToggle }: { section: ImportedReviewSection; open: boolean; onToggle: () => void }) {
+function ReviewSection({ section, open, onToggle }: { section: HistorySection; open: boolean; onToggle: () => void }) {
   return (
     <section className="overflow-hidden rounded-xl border border-background-200 bg-white">
       <button type="button" onClick={onToggle} aria-expanded={open} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-primary-50/40">
@@ -103,26 +61,7 @@ function ReviewSection({ section, open, onToggle }: { section: ImportedReviewSec
       </button>
       {open && (
         <div className="space-y-3 border-t border-background-200 p-3.5 sm:p-4">
-          {section.fields.map((field, index) => <Field key={`${field.label || 'field'}:${index}`} field={field} />)}
-          {section.tables.map((table, tableIndex) => {
-            const rows = Array.isArray(table.rows) ? table.rows : [];
-            if (!rows.length) return null;
-            return (
-              <div key={tableIndex} className="overflow-x-auto rounded-xl border border-background-200">
-                <table className="min-w-full text-left text-xs">
-                  <tbody className="divide-y divide-background-200">
-                    {rows.map((row, rowIndex) => (
-                      <tr key={rowIndex} className={rowIndex === 0 ? 'bg-primary-50/55 font-bold text-primary-900' : 'text-foreground-700'}>
-                        {(Array.isArray(row) ? row : [row]).map((cell, cellIndex) => <td key={cellIndex} className="max-w-[420px] whitespace-pre-wrap break-words px-3 py-2.5 align-top">{printableValue(cell)}</td>)}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            );
-          })}
-          {section.rawText && <div className="rounded-xl border border-background-200 bg-background-100/45 p-3.5"><p className="text-[10px] font-bold uppercase tracking-wide text-foreground-400">Imported text</p><p className="mt-1.5 whitespace-pre-wrap break-words text-sm leading-6 text-foreground-700">{section.rawText}</p></div>}
-          {!section.fields.length && !section.tables.length && !section.rawText && <p className="text-sm text-foreground-400">No section details were imported.</p>}
+          <ImportedReviewSection section={section} />
         </div>
       )}
     </section>

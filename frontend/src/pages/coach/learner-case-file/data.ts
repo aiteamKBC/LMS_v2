@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { KsbActivityPoint } from '@/api/learnerMetrics';
-import { formatHoursMinutes } from '@/lib/format';
+import { formatHoursMinutes, systemDateParts } from '@/lib/format';
+import { otjhProgressAsOfToday } from '@/pages/coach/caseload/lib/format';
 import {
   type LearnerActivityEntry,
   type LearnerDetail,
@@ -703,13 +704,31 @@ function buildCaseFileData(args: {
   const allReviewMeetings = buildReviewMeetingItems(reviewEventContext, args.timetableEvents);
   const progressReviews = allReviewMeetings.filter(item => caseFileReviewCategory(item) === 'progress-review');
   const monthlyCoachMeetings = allReviewMeetings.filter(item => caseFileReviewCategory(item) === 'mcr');
-  // Use the exact programme/OTJH totals displayed by the learner dashboard.
-  // The coach view must not turn the learner's whole-plan target into a
-  // cumulative target-to-date or substitute OTJH progress for programme progress.
+  // Preserve canonical actual/whole-plan totals, but use the coach table's
+  // target-to-date for the Case File target and its dependent calculations.
   const canonicalActual = args.learnerMetrics?.actual ?? null;
   const canonicalPlanned = args.learnerMetrics?.planned ?? null;
+  const businessDay = systemDateParts(new Date())!;
+  const targetToDate = otjhProgressAsOfToday({
+    otjhCompleted: canonicalActual,
+    otjhPlanned: canonicalPlanned,
+    otjhTarget: canonicalPlanned,
+    startDate: args.shell.profile.startDate,
+    otjhProgrammeStartDate: args.shell.profile.otjhProgrammeStartDate ?? args.shell.profile.startDate,
+    plannedEndDate: args.shell.profile.otjhProgrammeEndDate ?? args.shell.profile.plannedEndDate ?? args.detail?.programmeEndDate,
+  }, new Date(businessDay.year, businessDay.month - 1, businessDay.day)).targetHours;
+  // The caseload API publishes target-to-date rounded to two decimal places.
+  const canonicalTarget = targetToDate === null ? null : Number(targetToDate.toFixed(2));
   const metricsAvailable = Boolean(args.learnerMetrics);
   const overallProgress = metricsAvailable ? args.learnerMetrics?.programmeProgress ?? null : null;
+  const learnerEndDate = args.detail?.learnerEndDate;
+  const formattedLearnerEndDate = learnerEndDate && /^\d{4}-\d{2}-\d{2}(?:T|$)/.test(learnerEndDate)
+    ? formatCalendarDateLabel(learnerEndDate)
+    : learnerEndDate;
+  const plannedEndDate = args.detail?.programmeEndDate
+    || args.shell.profile.plannedEndDate
+    || formattedLearnerEndDate
+    || '--';
 
   return {
     learnerId: args.learnerId,
@@ -746,7 +765,7 @@ function buildCaseFileData(args: {
     attendanceSessionCount: null,
     attendanceAbsentCount: null,
     otjhCompleted: metricsAvailable ? canonicalActual : null,
-    otjhTarget: metricsAvailable ? canonicalPlanned : null,
+    otjhTarget: metricsAvailable ? canonicalTarget : null,
     otjhPlanned: metricsAvailable ? canonicalPlanned : null,
     ksbProgress: metricsAvailable ? args.learnerMetrics?.ksbProgress ?? null : null,
     metricsAvailable,
@@ -761,7 +780,7 @@ function buildCaseFileData(args: {
     evidenceCount: args.snapshot?.evidenceCount ?? args.evidence?.totalEvidence ?? null,
     startDate: args.shell.profile.startDate || '--',
     gatewayReviewDate: args.shell.profile.gatewayReviewDate || '--',
-    plannedEndDate: args.detail?.programmeEndDate || args.shell.profile.plannedEndDate || '--',
+    plannedEndDate: (args.detail ? args.detail.learnerEndDate : args.shell.profile.learnerEndDate) || '--',
     totalExpectedOtjh: metricsAvailable ? canonicalPlanned ?? 0 : 0,
     touchedKsbCodes,
     activityItems: buildActivityItems(args.snapshot, args.detail, args.evidence),

@@ -125,6 +125,27 @@
 .errorState p { margin: 7px 0 0; color: var(--muted); font-size: 12px; }
 .errorState button { margin-top: 16px; padding: 9px 14px; border-radius: 8px; background: var(--navy); color: #fff; font-size: 11px; font-weight: 700; }
 @keyframes shimmer { to { background-position: -250% 0; } }
+
+:global(html[data-theme="dark"]) .page {
+  --navy: var(--coach-dark-text);
+  --ink: var(--coach-dark-text);
+  --muted: var(--coach-dark-muted);
+  --line: var(--coach-dark-border);
+  background: var(--coach-dark-page);
+  color: var(--coach-dark-text);
+}
+:global(html[data-theme="dark"]) .hero { border-color: var(--coach-dark-border); }
+:global(html[data-theme="dark"]) :is(.back, .hero h1 + p, .stats span, .queueTitle, .queueMeta, .personRow p, .metrics dt, .answerBlock header span, .sectionHeading p, .evidenceList span, .ksbList small, .historyCard p, .feedbackHeading p, .promptEditor > p, .promptMeta) { color: var(--coach-dark-muted); }
+:global(html[data-theme="dark"]) :is(.judgement, .stats > div, .search, .queueItem, .reviewPanel, .errorState) { border-color: var(--coach-dark-border); background: var(--coach-dark-surface); color: var(--coach-dark-text); box-shadow: none; }
+:global(html[data-theme="dark"]) .queueItem:is(:hover, [aria-current="true"]) { border-color: #637388; background: var(--coach-dark-hover); }
+:global(html[data-theme="dark"]) .tabs { background: var(--coach-dark-soft); }
+:global(html[data-theme="dark"]) .tabs button { color: var(--coach-dark-muted); }
+:global(html[data-theme="dark"]) .tabs button[aria-selected="true"] { background: var(--coach-dark-hover); color: var(--coach-dark-text); box-shadow: none; }
+:global(html[data-theme="dark"]) :is(.questionBlock, .answerBlock, .feedbackPanel, .previousFeedback, .declarationGrid span) { border-color: var(--coach-dark-border); background: var(--coach-dark-soft); color: var(--coach-dark-text); }
+:global(html[data-theme="dark"]) .answerBlock header { border-color: var(--coach-dark-border); background: var(--coach-dark-hover); }
+:global(html[data-theme="dark"]) :is(.evidenceList li, .ksbList article, .historyCard, .emptyText) { border-color: var(--coach-dark-border); }
+:global(html[data-theme="dark"]) :is(.feedbackPanel > textarea, .promptEditor textarea) { border-color: var(--coach-dark-border); background: var(--coach-dark-page); color: var(--coach-dark-text); }
+:global(html[data-theme="dark"]) .loading span { border-color: var(--coach-dark-border); background: linear-gradient(90deg, #263f59 25%, #3a5572 50%, #263f59 75%); background-size: 200% 100%; }
 @media (max-width: 1050px) {
   .workspace { grid-template-columns: 280px minmax(0, 1fr); gap: 14px; }
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }

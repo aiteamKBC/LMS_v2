@@ -1,3 +1,4 @@
+import { learnerRecordedDates } from '@/lib/learnerRecordedDates';
 import { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { ClipboardList, FileText, Monitor } from 'lucide-react';
@@ -148,10 +149,9 @@ export default function LearnerOverview() {
     ?? real?.programmeEndDate
     ?? dashboardPlan.data?.programmeEndDate
     ?? real?.learnerEndDate;
-  const startDateDisplay = formatProgrammeStartDate(programmeStartDate) || (loading ? 'Loading…' : EMPTY_VALUE);
-  const plannedEndDisplay = dashboardPlan.targetsLoading
-    ? 'Loading…'
-    : formatProgrammeStartDate(programmeEndDate) || (loading ? 'Loading…' : EMPTY_VALUE);
+  const recordedDates = learnerRecordedDates(real);
+  const startDateDisplay = formatProgrammeStartDate(recordedDates.start) || (loading ? 'Loading…' : EMPTY_VALUE);
+  const plannedEndDisplay = formatProgrammeStartDate(recordedDates.end) || (loading ? 'Loading…' : EMPTY_VALUE);
   const plan = learnerHeaderPlan(scheduleRead.data?.modules || [], knownLearner || {},
     new Date(now).toLocaleDateString('en-CA', { timeZone: 'Europe/London' }));
   const planPlaceholder = scheduleRead.loading ? 'Loading...' : scheduleRead.error ? 'Unavailable' : EMPTY_VALUE;

@@ -52,6 +52,7 @@ describe('Coach caseload loading', () => {
     expect(destination.pathname).toBe('/coach/learner-case-file');
     expect(destination.state).toMatchObject({ learnerId: '42',
       activitySnapshot: { learnerId: '42', completed: 137, total: 157, percent: 87.26 },
+      otjhSnapshot: { learnerId: '42', completed: 70, target: 90, planned: null, percent: 77.77777777777779 },
     });
   });
 
@@ -90,19 +91,21 @@ describe('Coach caseload loading', () => {
     expect(screen.queryByRole('button', { name: /Sort direction:/ })).not.toBeInTheDocument();
   });
 
-  it('hides onboarding, entered EPA and withdrawn learners from the table and status filter', async () => {
+  it('hides onboarding, entered EPA, completed and withdrawn learners from the table and status filter', async () => {
     const learners = [
       { ...learner, id: 'active', name: 'Included Learner', rawProgramStatus: 'Delivery' },
       { ...learner, id: 'onboarding', name: 'Onboarding Learner', rawProgramStatus: 'Onboarding Stage' },
       { ...learner, id: 'epa', name: 'EPA Learner', rawProgramStatus: 'Entered-EPA' },
       { ...learner, id: 'withdrawn', name: 'Withdrawn Learner', rawProgramStatus: 'Withdrawn' },
       { ...learner, id: 'fallback', name: 'Fallback Withdrawn', rawProgramStatus: '--', enrollmentStatus: 'withdrawn' as const },
+      { ...learner, id: 'completed', name: 'Completed Learner', rawProgramStatus: 'Completed' },
+      { ...learner, id: 'aptem-epa', name: 'Aptem EPA Learner', rawProgramStatus: 'EPA' },
     ] satisfies CaseloadApiLearner[];
 
     render(<MemoryRouter><CoachCaseloadContent embedded embeddedLearners={learners} /></MemoryRouter>);
 
     expect(await screen.findByText('Included Learner')).toBeVisible();
-    for (const name of ['Onboarding Learner', 'EPA Learner', 'Withdrawn Learner', 'Fallback Withdrawn']) {
+    for (const name of ['Onboarding Learner', 'EPA Learner', 'Withdrawn Learner', 'Fallback Withdrawn', 'Completed Learner', 'Aptem EPA Learner']) {
       expect(screen.queryByText(name)).not.toBeInTheDocument();
     }
     fireEvent.click(screen.getByRole('button', { name: 'All programme statuses' }));

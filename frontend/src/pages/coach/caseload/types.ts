@@ -150,6 +150,7 @@ export interface Learner {
   /** Contract window used by existing OTJH/review pacing, separate from Profile date. */
   otjhProgrammeStartDate?: string;
   displayStartDate?: string;
+  displayEndDate?: string;
   gatewayReviewDate: string;
   plannedEndDate: string;
   coachName?: string;

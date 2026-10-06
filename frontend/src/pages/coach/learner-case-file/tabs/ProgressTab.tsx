@@ -9,18 +9,70 @@ import { cn } from '@/lib/cn';
 import { Pagination } from '@/components/ui/Pagination';
 import { StatusBadge } from '@/components/ui/StatusBadge';
 import { formatHours, selectCaseFileOtjh } from '../data';
-import type { CoachLearnerCaseFileData } from '../types';
+import type { CaseFileOtjhMetrics, CoachLearnerCaseFileData } from '../types';
 import {
   type EvidencePreviewTarget,
 } from '../domain/ksbSelectors';
 import { ProfileEmpty, ReferencePanel } from '../components/CaseFilePrimitives';
 import styles from '../learnerCaseFile.module.css';
+import type { DashboardPlanState } from '@/pages/workspace/learner/useDashboardPlan';
+import { monthFromDate, monthlyHours } from '@/pages/learner/training-plan-timeline/monthlyHours';
+import { OtjHoursChart } from '@/pages/learner/training-plan-timeline/OtjHoursChart';
+import { targetHoursAsOfToday } from '@/lib/format';
 
 type KsbSortKey = 'code' | 'category' | 'status' | 'activity';
 type SortDirection = 'asc' | 'desc';
-export function ProgressTab({ data, onViewEvidence }: {
+
+function validHours(value: number | null | undefined) {
+  return value != null && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function currentReportingMonth() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' }).slice(0, 7);
+}
+
+type OtjhSnapshot = {
+  completed: number | null;
+  target: number | null;
+  planned: number | null;
+  percent: number | null;
+};
+
+function selectProgressOtjh(data: CoachLearnerCaseFileData, plan?: DashboardPlanState,
+  snapshot?: OtjhSnapshot | null, reportingMonth = currentReportingMonth()): CaseFileOtjhMetrics {
+  const fallback = selectCaseFileOtjh(data);
+  const planData = plan?.data;
+  const rows = planData ? monthlyHours(planData,
+    monthFromDate(data.detail?.programmeStartDate), monthFromDate(data.detail?.programmeEndDate)) : [];
+  const completedFromRows = rows.length && rows.every(row => row.completed != null)
+    ? rows.reduce((sum, row) => sum + row.completed!, 0) : null;
+  const knownTargets = rows.filter(row => row.target != null);
+  const targetToDate = knownTargets.filter(row => row.key <= reportingMonth);
+  const monthlyTarget = targetToDate.length ? targetToDate.reduce((sum, row) => sum + row.target!, 0) : null;
+  const planned = validHours(snapshot?.planned)
+    ?? validHours(plan?.otjh?.planned)
+    ?? validHours(planData?.requiredOtjh)
+    ?? validHours(fallback.programmeTotal)
+    ?? (knownTargets.length ? knownTargets.reduce((sum, row) => sum + row.target!, 0) : null);
+  const pacedTargetValue = targetHoursAsOfToday(
+    planned,
+    planData?.programmeStartDate ?? data.detail?.programmeStartDate ?? data.startDate,
+    plan?.plannedEndDate ?? planData?.programmeEndDate ?? data.detail?.programmeEndDate ?? data.plannedEndDate,
+  );
+  const pacedTarget = pacedTargetValue === null ? null : Math.round(pacedTargetValue * 100) / 100;
+  const target = validHours(snapshot?.target) ?? validHours(pacedTarget) ?? monthlyTarget ?? validHours(fallback.target);
+  const logged = validHours(snapshot?.completed) ?? validHours(plan?.otjh?.actual) ?? validHours(completedFromRows) ?? fallback.logged;
+  const remaining = logged !== null && target !== null ? Math.max(0, target - logged) : null;
+  const progressPercent = validHours(snapshot?.percent) ?? (logged !== null && target !== null && target > 0
+    ? Math.min(100, Math.round((logged / target) * 100)) : null);
+  return { logged, target, programmeTotal: planned, remaining, progressPercent };
+}
+
+export function ProgressTab({ data, onViewEvidence, plan, otjhSnapshot }: {
   data: CoachLearnerCaseFileData;
   onViewEvidence: (evidence: EvidencePreviewTarget) => void;
+  plan?: DashboardPlanState;
+  otjhSnapshot?: OtjhSnapshot | null;
 }) {
   const [activeKsbCategory, setActiveKsbCategory] = useState('All');
   const [activeKsbStatus, setActiveKsbStatus] = useState('All Status');
@@ -50,7 +102,7 @@ export function ProgressTab({ data, onViewEvidence }: {
   }, [breakdownKey, data.kind, data.enrolmentId]);
   const breakdown = breakdownState?.key === breakdownKey ? breakdownState.value : undefined;
   const breakdownError = breakdownState?.key === breakdownKey ? breakdownState.error : undefined;
-  const otjh = selectCaseFileOtjh(data);
+  const otjh = selectProgressOtjh(data, plan, otjhSnapshot);
   const ksbs = selectAptemKsbGroups(breakdown?.rows || [], breakdown?.source);
   const ksbSummary = summarizeAptemKsbGroups(ksbs, Boolean(breakdown));
   const categoryOrder = ['Knowledge', 'Skills', 'Behaviours', 'Other'];
@@ -119,6 +171,10 @@ export function ProgressTab({ data, onViewEvidence }: {
         </div>
         <ProfileProgress label="OTJH Progress" value={otjh.progressPercent} color="bg-primary-600" />
       </ReferencePanel>
+      {plan?.data && <OtjHoursChart data={plan.data}
+        programmeStartMonth={monthFromDate(data.detail?.programmeStartDate)}
+        programmeEndMonth={monthFromDate(data.detail?.programmeEndDate)}
+        targetAsOfToday={otjh.target} />}
       <ReferencePanel title="KSB Detailed Breakdown" subtitle="View your KSB progress and browse evidence coverage by framework code." icon="ri-stack-line" tone="primary">
         {(
           <div className="space-y-3">

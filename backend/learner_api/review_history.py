@@ -11,7 +11,7 @@ from login.permissions import learner_self_or_staff
 
 from .learner_detail import SOURCE_MODELS
 from .mappers import _s
-from .student_activity_access import student_activity_available
+from coach_api.review_sources import review_profile_for_source, source_for_learner
 
 
 REVIEW_TYPES = {
@@ -92,35 +92,8 @@ def _iso_time(value):
 
 
 def _learner_profile_id(cursor, source, kind):
-    cursor.execute(
-        '''
-        SELECT id
-        FROM "Learner".learners
-        WHERE enrolment_id = %s AND lower(COALESCE(learner_type, '')) = lower(%s)
-        ORDER BY id
-        LIMIT 1
-        ''',
-        [source.pk, kind],
-    )
-    row = cursor.fetchone()
-    if row:
-        return row[0]
-
-    email = _s(getattr(source, "email", "")).strip().casefold()
-    if not email:
-        return None
-    cursor.execute(
-        '''
-        SELECT id
-        FROM "Learner".learners
-        WHERE email_normalized = %s OR lower(COALESCE(email, '')) = %s
-        ORDER BY CASE WHEN enrolment_id = %s THEN 0 ELSE 1 END, id
-        LIMIT 2
-        ''',
-        [email, email, source.pk],
-    )
-    matches = cursor.fetchall()
-    return matches[0][0] if len(matches) == 1 else None
+    profile = review_profile_for_source(source)
+    return profile.id if profile is not None and source_for_learner(source, profile).kind == "aptem" else None
 
 
 def _review_rows(cursor, learner_id, review_types):
@@ -240,6 +213,7 @@ def _serialize_review(row, sections):
         "plannedTime": _iso_time(planned_raw),
         "completedDate": _iso_date(completed_raw),
         "status": _normalise_status(row.get("status") or metadata.get("Status")),
+        "rawStatus": _s(row.get("status") or metadata.get("Status")),
         "extractionStatus": _s(row.get("extraction_status")) or "partial",
         "detailsAvailable": bool(review_sections),
         "sections": review_sections,
@@ -263,10 +237,12 @@ def learner_review_history(request, kind, pk):
         # Imported Aptem reviews are intentionally isolated from the live
         # programme-cycle data. A learner without a valid Aptem id has no rows
         # in this source and must continue through the normal calendar path.
-        if not student_activity_available(getattr(source, "aptem_id", None)):
+        profile = review_profile_for_source(source)
+        review_source = source_for_learner(source, profile)
+        if review_source.kind != "aptem":
             return JsonResponse({"learnerId": None, "category": category, "reviews": []})
         with connection.cursor() as cursor:
-            learner_id = _learner_profile_id(cursor, source, kind)
+            learner_id = profile.id if profile else None
             if learner_id is None:
                 return JsonResponse({"learnerId": None, "category": category, "reviews": []})
             # Review rows are the persisted source of truth. A read must never
@@ -276,6 +252,8 @@ def learner_review_history(request, kind, pk):
     except DatabaseError:
         return _error("Could not load review history.", 503)
     serialized = [_serialize_review(row, sections) for row in rows]
+    serialized = [review for review in serialized if not review.get("aptemLearnerId")
+                  or review["aptemLearnerId"] == str(review_source.aptem_id)]
     serialized.sort(
         key=lambda item: (
             item["completedDate"] or item["plannedDate"] or "",

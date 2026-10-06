@@ -31,9 +31,10 @@ class CoachDashboardService:
     # v16 emits the API-owned OTJH target-to-date/RAG contract.
     # v17 carries the Case File start date separately for table display.
     # v18 makes startDate itself use the Profile resolver.
+    # v19 keeps imported Review continuations on their source occurrence.
     # Older snapshots may legitimately contain ``--`` dates, so they must not
     # be served as if they were current after the serializer is corrected.
-    SCHEMA_VERSION = 18
+    SCHEMA_VERSION = 19
 
     def build(self) -> dict:
         """Read the persistent projection; build once only if it is absent."""
@@ -82,17 +83,28 @@ class CoachDashboardService:
 
         Preserve every metric and the existing contractual OTJH window. Older
         snapshots must not expose their outdated startDate while refresh queues.
+        Learners who have since been withdrawn, completed or entered EPA are
+        dropped the same way, so an hourly snapshot never shows them.
         """
         from coach_api import views as domain
 
         payload = deepcopy(previous_payload)
         rows = domain.fetch_caseload_dashboard_profiles(self.context.owner_email)
         rows_by_id = {str(row.id): row for row in rows}
+        learners = []
         for learner in payload.get("learners") or []:
             row = rows_by_id.get(str(learner.get("id")))
+            if row is not None and domain.is_hidden_caseload_programme_status(
+                domain.get_lms_row_program_status(row),
+            ):
+                continue
             learner.setdefault("otjhProgrammeStartDate", learner.get("startDate", "--"))
             learner["startDate"] = domain.caseload_profile_start_date(row)
             learner["displayStartDate"] = learner["startDate"]
+            learner["displayEndDate"] = domain.format_date(getattr(getattr(row, "_caseload_source", None), "learner_end_date", None))
+            learners.append(learner)
+        if "learners" in payload:
+            payload["learners"] = learners
         return payload
 
     @staticmethod
@@ -131,6 +143,7 @@ class CoachDashboardService:
             )
             learner["startDate"] = domain.caseload_profile_start_date(rows_by_id[profile_id])
             learner["displayStartDate"] = learner["startDate"]
+            learner["displayEndDate"] = domain.format_date(getattr(getattr(rows_by_id[profile_id], "_caseload_source", None), "learner_end_date", None))
             learner["otjhProgrammeStartDate"] = domain.format_date(schedule_start)
             if schedule_planned not in (None, ""):
                 learner["otjhPlanned"] = domain.to_number(schedule_planned)
@@ -235,10 +248,14 @@ class CoachDashboardService:
             domain.overlay_calendar_record(event, stored_by_key.get(event.get("eventKey")))
             for event in all_review_events
         ]
-        standalone_records = [
-            record for record in domain.fetch_standalone_event_records(context.owner_email)
-            if record.event_key not in stored_by_key
-        ]
+        from coach_api.review_sources import enrich_imported_events, standalone_review_records
+        imported = enrich_imported_events([event for event in resolved.get("events", []) if event.get("reviewSource") == "aptem"])
+        imported_by_key = {event["eventKey"]: event for event in imported}
+        all_review_events = [imported_by_key.get(event["eventKey"], event) for event in all_review_events]
+        linked_keys = set(stored_by_key) | {event.get("calendarEventKey") for event in imported}
+        standalone_records = standalone_review_records(
+            domain.fetch_standalone_event_records(context.owner_email), context.rows,
+            resolved.get("aptemProfileIds", set()), linked_keys=linked_keys)
         standalone_type_fields = domain.review_type_fields_by_template(
             getattr(record, "review_template_id", "") for record in standalone_records
         )

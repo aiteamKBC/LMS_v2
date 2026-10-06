@@ -9,13 +9,16 @@ import {
 import { EntraPeopleInput } from './EntraPeopleInput';
 import { CalendarActionDialog } from './CalendarActionDialog';
 import { CreateProgressPanel } from './CreateProgressPanel';
+import { LeftoverSlotsPanel } from './LeftoverSlotsPanel';
 import { AttendeeComparisonPanel } from './AttendeeComparisonPanel';
 import { MeetingScopePanel } from './MeetingScopePanel';
 import { pendingInvitations } from './attendeeComparison';
 import { emailList } from '../module-builder/EmailChipsInput';
+import { forwardScheduleEmail } from './forwardScheduleEmail';
 import { updateProgressSteps } from './updateProgress';
 import { createPortal } from 'react-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { formatSystemTimestamp } from '@/lib/format';
 import { Modal } from '@/pages/users/components/Modal';
 import {
   parseUtcInstant,
@@ -360,6 +363,12 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
   secondTab?: TeamsDialogSecondTab;
 }) {
   const [activeTab, setActiveTab] = useState<'calendar' | 'second'>('calendar');
+  const [forwardOpen, setForwardOpen] = useState(false);
+  const [forwardRecipients, setForwardRecipients] = useState('');
+  const [forwardSaving, setForwardSaving] = useState(false);
+  const [forwardError, setForwardError] = useState('');
+  const [forwardNotice, setForwardNotice] = useState('');
+  const [updateConfirmOpen, setUpdateConfirmOpen] = useState(false);
   const onSecondTab = Boolean(secondTab) && activeTab === 'second';
   // Coming back from the additional-meeting tab: a week may have been booked or
   // cancelled there, which changes which calendar runs it.
@@ -374,6 +383,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
     requestCloseSelected, notice, openCalendarAction, busy, detailLoading, detail, graphConfigured,
     graphStatus, checkGraphConfiguration,
     checkCalendarAction, pendingComponents, reattach, selectedForDisplay, createCalendar, createDrawer, createRecovery,
+    createDraft, createDraftSaving, saveCreateDraft, leftoverCancelling, cancelLeftover,
     runCalendarSync, calendarSyncing, autoSyncEnabled, setAutoSyncEnabled,
     openSettings, setResultsModule, resultsModule, detailError, loadDetail, holidayLabelFor,
     detailOccurrenceFor, now, setPreview, setTranscriptPreview, invitedPrefilling, prefillNotice, prefillInvitees, preview,
@@ -388,6 +398,23 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
     ? pendingInvitations([...emailList(updateDrawer.form.attendees), ...emailList(updateDrawer.form.presenters),
       ...emailList(updateDrawer.form.coOrganizers)], publishedInvitees(selected))
     : [];
+  const submitForward = async () => {
+    if (!selected?.summary?.liveSessionId) return;
+    const recipients = emailList(forwardRecipients);
+    if (!recipients.length) { setForwardError('Add at least one email address.'); return; }
+    setForwardSaving(true); setForwardError(''); setForwardNotice('');
+    try {
+      const result = await forwardScheduleEmail(selected.summary.liveSessionId, recipients);
+      if (result.uncertain || result.failed || result.queued) {
+        setForwardError(`Forwarding is incomplete: ${result.accepted} accepted, ${result.failed} failed, ${result.uncertain + result.queued} pending.`);
+      } else {
+        setForwardNotice(`Schedule forwarded to ${result.accepted} recipient${result.accepted === 1 ? '' : 's'}.`);
+        setForwardRecipients('');
+      }
+    } catch (error) {
+      setForwardError(error instanceof Error ? error.message : 'The schedule could not be forwarded.');
+    } finally { setForwardSaving(false); }
+  };
   return (
     <>
         {calendarActionTarget && <CalendarActionDialog target={calendarActionTarget}
@@ -478,28 +505,43 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                       title="Send the full schedule email -- the complete timetable and join links, the same message a new calendar sends -- to every learner this meeting invites. Every learner is emailed, including anyone who already received it. The Teams calendar is not changed."
                       className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-primary-200 bg-primary-50 px-3 text-[12px] font-bold text-primary-700 transition-colors hover:bg-primary-100 disabled:cursor-not-allowed disabled:opacity-40">
                       <AppIcon className={busy === `${selected.catalogueId}:resend` ? 'ri-loader-4-line animate-spin text-sm' : 'ri-mail-send-line text-sm'}></AppIcon>
-                      Email schedule to everyone
+                      Email the schedule to everyone as the original creation email (not an update)
                     </button>
-                    <label className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-background-200 bg-background-50 px-3 text-[11px] font-semibold text-foreground-700">
-                      <input
-                        type="checkbox"
-                        aria-label="Email existing invitees about this update"
-                        checked={sendUpdateEmails}
-                        onChange={event => setSendUpdateEmails(event.target.checked)}
-                        disabled={Boolean(busy) || Boolean(updateProgress) || updateDrawer.saving || Boolean(blockedReason) || detailLoading || !graphConfigured}
-                        className="h-4 w-4 accent-primary-600"
-                      />
-                      <span>
-                        Email existing invitees
-                        <span className="ml-1 font-normal text-foreground-500">(only when something changed; new people are emailed separately)</span>
-                      </span>
-                    </label>
+                    <button type="button" onClick={() => { setForwardOpen(true); setForwardError(''); setForwardNotice(''); }}
+                      disabled={Boolean(busy) || Boolean(updateProgress) || Boolean(blockedReason) || detailLoading || updateDrawer.saving || !graphConfigured}
+                      title="Send the current timetable and Teams links to selected email addresses."
+                      className="inline-flex h-10 items-center gap-1.5 rounded-lg border border-background-200 bg-background-50 px-3 text-[12px] font-bold text-foreground-700 transition-colors hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-40">
+                      <AppIcon className="ri-share-forward-line text-sm"></AppIcon>
+                      Forward dates
+                    </button>
+                    {updateConfirmOpen && (
+                      <div className="w-full rounded-lg border border-amber-200 bg-amber-50 p-3 text-[11px] text-amber-900">
+                        <p className="font-bold">Before updating the Teams calendar</p>
+                        <p className="mt-1 leading-relaxed">Teams will move the session dates to the planned schedule. If you select the option below, the system will also send one update email to every existing learner invitee with the dates that changed. New people added to the invitation receive their full schedule separately.</p>
+                        <label className="mt-2 inline-flex items-start gap-2 font-semibold">
+                          <input
+                            type="checkbox"
+                            aria-label="Email existing invitees about this update"
+                            checked={sendUpdateEmails}
+                            onChange={event => setSendUpdateEmails(event.target.checked)}
+                            disabled={Boolean(busy) || Boolean(updateProgress) || updateDrawer.saving || Boolean(blockedReason) || detailLoading || !graphConfigured}
+                            className="mt-0.5 h-4 w-4 accent-primary-600"
+                          />
+                          <span>Email existing invitees about this update</span>
+                        </label>
+                        <button type="button" onClick={() => { setUpdateConfirmOpen(false); setSendUpdateEmails(false); }} className="mt-2 font-semibold text-foreground-600 underline">Cancel</button>
+                      </div>
+                    )}
                     <button
                       type="button"
-                      onClick={() => void pushDates(selectedForDisplay || selected)}
+                      onClick={() => {
+                        if (!updateConfirmOpen) { setUpdateConfirmOpen(true); return; }
+                        if (!sendUpdateEmails) return;
+                        void pushDates(selectedForDisplay || selected);
+                      }}
                       // Waits for the calendar's own read, so the invitation
                       // fields it sends with the dates hold the saved values.
-                      disabled={!(selectedForDisplay || selected).sessions.length || Boolean(busy) || Boolean(updateProgress) || Boolean(blockedReason) || detailLoading || updateDrawer.saving || !graphConfigured}
+                      disabled={!(selectedForDisplay || selected).sessions.length || Boolean(busy) || Boolean(updateProgress) || Boolean(blockedReason) || detailLoading || updateDrawer.saving || !graphConfigured || (updateConfirmOpen && !sendUpdateEmails)}
                       title="Move the Teams calendar onto this module's stored session dates, holiday shifts included, with any changes to the invitations below."
                       className="inline-flex h-10 items-center gap-1.5 rounded-lg bg-primary-600 px-3 text-[12px] font-bold text-white shadow-sm transition-colors hover:bg-primary-700 disabled:cursor-not-allowed disabled:opacity-50"
                     >
@@ -507,10 +549,30 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                       {/* The calendar already exists by the time this button is
                           rendered, so the action is an update, not a first send
                           -- which is what its own confirmation has always said. */}
-                      Update Teams calendar
+                      {updateConfirmOpen ? 'Confirm update and send emails' : 'Update Teams calendar'}
                     </button>
                    </div>
                  ) : (
+                  <>
+                  {createDraft?.catalogueId === selected.catalogueId && !createDrawer.dirty && (
+                    <span className="mr-auto text-[11px] font-semibold text-foreground-500">
+                      Draft saved {formatSystemTimestamp(createDraft.updatedAt, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}
+                      {createDraft.updatedByName ? ` by ${createDraft.updatedByName}` : ''}. Nothing is in Teams yet.
+                    </span>
+                  )}
+                  {/* Keeps the answers on the server for this module and
+                      nothing more: no Microsoft call, no email. */}
+                  <button
+                    type="button"
+                    onClick={() => void saveCreateDraft(selected)}
+                    disabled={!createDrawer.dirty || createDraftSaving || createDrawer.saving
+                      || Boolean(createProgress) || Boolean(createRecovery && createRecovery.phase !== 'failed')}
+                    title="Keep what you have filled in for this module without creating anything in Teams. Nobody is emailed."
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-background-300 bg-white px-4 text-[12px] font-bold text-foreground-700 transition-smooth hover:bg-background-100 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    <AppIcon className={createDraftSaving ? 'ri-loader-4-line animate-spin text-sm' : 'ri-save-3-line text-sm'}></AppIcon>
+                    Save draft
+                  </button>
                   <button
                     type="button"
                     onClick={() => void createCalendar(selected)}
@@ -524,6 +586,7 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                     <AppIcon className={createDrawer.saving ? 'ri-loader-4-line animate-spin text-sm' : 'ri-calendar-check-line text-sm'}></AppIcon>
                     Create
                   </button>
+                  </>
                 )}
               </div>
             )}
@@ -850,6 +913,15 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
                   }}
                 />
 
+                {/* Slots Teams holds that the plan does not. Only their own
+                    Cancel removes one -- never Update or the status check. */}
+                <LeftoverSlotsPanel
+                  slots={detail?.series.id === selected.summary?.liveSessionId ? detail?.leftoverSlots || [] : []}
+                  cancelling={leftoverCancelling}
+                  disabled={Boolean(busy) || Boolean(updateProgress) || updateDrawer.saving || !graphConfigured}
+                  onCancel={slot => void cancelLeftover(slot)}
+                />
+
                 {/* Under the dates, the same fields the create form asks for,
                     filled with what the calendar holds. Update sends them with
                     the dates; Save invitations sends them alone. */}
@@ -954,6 +1026,34 @@ export function TeamsMeetingDialogs({ workspace, secondTab }: {
             </>)}
           </Modal>
         )}
+
+      {forwardOpen && selected?.summary && (
+        <Modal
+          title="Forward module dates"
+          size="max-w-xl"
+          onClose={() => { if (!forwardSaving) setForwardOpen(false); }}
+          footer={(
+            <div className="flex w-full items-center justify-end gap-2">
+              <button type="button" onClick={() => setForwardOpen(false)} disabled={forwardSaving}
+                className="rounded-lg border border-background-200 bg-background-50 px-3 py-2 text-[12px] font-bold text-foreground-700">Cancel</button>
+              <button type="button" onClick={() => void submitForward()} disabled={forwardSaving || !emailList(forwardRecipients).length}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-primary-600 px-3 py-2 text-[12px] font-bold text-white disabled:cursor-not-allowed disabled:opacity-50">
+                <AppIcon className={forwardSaving ? 'ri-loader-4-line animate-spin text-sm' : 'ri-send-plane-line text-sm'}></AppIcon>
+                {forwardSaving ? 'Forwarding...' : 'Forward dates'}
+              </button>
+            </div>
+          )}
+        >
+          <div className="space-y-4">
+            <p className="text-sm text-foreground-600">Send the current timetable, session details and Teams join links from the saved calendar.</p>
+            <FormField label="Recipients" hint="Search your Microsoft 365 tenant or type full email addresses. You can add more than one.">
+              <EntraPeopleInput label="Forward recipients" value={forwardRecipients} onChange={setForwardRecipients} />
+            </FormField>
+            {forwardError && <InlineError message={forwardError} />}
+            {forwardNotice && <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-sm font-semibold text-emerald-800">{forwardNotice}</p>}
+          </div>
+        </Modal>
+      )}
 
       {preview && (
         <RecordingPreview

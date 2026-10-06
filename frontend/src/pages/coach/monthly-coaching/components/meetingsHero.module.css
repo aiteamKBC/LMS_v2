@@ -28,23 +28,23 @@
 }
 
 :global(html[data-theme="dark"]) .hero {
-  --hero-bg-start: #17122a;
-  --hero-bg-mid: #1f1838;
-  --hero-bg-end: #2b1d55;
-  --hero-border: rgb(167 139 250 / 22%);
-  --hero-dot: rgb(196 181 253 / 13%);
-  --hero-glow: rgb(124 58 237 / 35%);
+  --hero-bg-start: #182d48;
+  --hero-bg-mid: #1e344d;
+  --hero-bg-end: #24405d;
+  --hero-border: #3b526c;
+  --hero-dot: rgb(191 163 238 / 13%);
+  --hero-glow: rgb(111 82 162 / 30%);
   --hero-wave-a: #a78bfa;
   --hero-wave-b: #8b5cf6;
   --hero-wave-c: #e879f9;
   --hero-wave-line: rgb(196 181 253 / 28%);
   --hero-title: #f5f3ff;
-  --hero-text: #c4bce0;
+  --hero-text: #b6c4d5;
   --hero-strong: #ffffff;
-  --hero-card-bg: rgb(255 255 255 / 6%);
-  --hero-card-border: rgb(196 181 253 / 20%);
+  --hero-card-bg: rgb(16 30 48 / 52%);
+  --hero-card-border: rgb(99 115 136 / 48%);
   --hero-card-title: #ddd6fe;
-  --hero-card-text: #c4bce0;
+  --hero-card-text: #b6c4d5;
   box-shadow: 0 14px 40px -24px rgb(0 0 0 / 70%);
 }
 

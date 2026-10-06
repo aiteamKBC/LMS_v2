@@ -50,6 +50,25 @@
 .skeleton { height: 176px; border: 1px solid #e0e7ef; border-radius: 15px; background: linear-gradient(90deg, #fff 20%, #f0f4f8 45%, #fff 70%); background-size: 250% 100%; animation: shimmer 1.2s infinite linear; }
 .pagination { display: flex; max-width: 1180px; margin: 18px auto 0; justify-content: flex-end; }
 @keyframes shimmer { to { background-position: -250% 0; } }
+
+:global(html[data-theme="dark"]) .page {
+  --navy: var(--coach-dark-text);
+  --ink: var(--coach-dark-text);
+  --muted: var(--coach-dark-muted);
+  --line: var(--coach-dark-border);
+  background: var(--coach-dark-page);
+  color: var(--coach-dark-text);
+}
+:global(html[data-theme="dark"]) .hero { border-color: var(--coach-dark-border); }
+:global(html[data-theme="dark"]) :is(.hero h1 + p, .meta, .preview, .state p) { color: var(--coach-dark-muted); }
+:global(html[data-theme="dark"]) :is(.judgementBadge, .controls button, .submissionCard, .state) { border-color: var(--coach-dark-border); background: var(--coach-dark-surface); color: var(--coach-dark-text); box-shadow: none; }
+:global(html[data-theme="dark"]) .controls button span { background: var(--coach-dark-hover); }
+:global(html[data-theme="dark"]) .controls button:hover { border-color: #637388; background: var(--coach-dark-hover); }
+:global(html[data-theme="dark"]) .controls button[aria-pressed="true"] { border-color: var(--action-primary-hover); background: var(--action-primary); color: #fff; }
+:global(html[data-theme="dark"]) .typeTag { border-color: var(--coach-dark-border); background: var(--coach-dark-soft); color: var(--coach-dark-text); }
+:global(html[data-theme="dark"]) .ksbTag { background: var(--coach-dark-hover); color: #c7dcf5; }
+:global(html[data-theme="dark"]) .preview { border-color: var(--coach-dark-border); background: var(--coach-dark-soft); }
+:global(html[data-theme="dark"]) .skeleton { border-color: var(--coach-dark-border); background: linear-gradient(90deg, #263f59 25%, #3a5572 50%, #263f59 75%); background-size: 200% 100%; }
 @media (max-width: 820px) {
   .heroRow, .controls, .cardTop { align-items: stretch; flex-direction: column; }
   .judgementBadge { align-self: flex-start; }

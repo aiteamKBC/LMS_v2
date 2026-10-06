@@ -89,8 +89,8 @@ function Summary({ title, lines, accent = false }: { title: string; lines: strin
 function AttendancePrintReport({ learner, coachName, rows }: { learner: NonNullable<ReturnType<typeof useAttendanceDetail>['learner']>; coachName: string; rows: CoachAttendanceSession[] }) {
   const total = learner.sessions || 0;
   const attendanceRate = formatAttendancePercentage(learner.attendance);
-  const programmeDates = learner.programmeStartDate || learner.programmeEndDate
-    ? `${show(learner.programmeStartDate)} — ${show(learner.programmeEndDate)}`
+  const programmeDates = learner.learnerStartDate || learner.learnerEndDate
+    ? `${show(learner.learnerStartDate)} — ${show(learner.learnerEndDate)}`
     : '--';
   return <article className={styles.printReport} aria-label="Student attendance report">
     <div className={styles.printTopBar} />

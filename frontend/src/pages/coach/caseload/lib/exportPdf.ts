@@ -209,7 +209,7 @@ export function buildLearnersPdf(learners: Learner[], ownerName: string, logo: P
       otjhStatusOverride ? EMPTY_VALUE : formatOtjhPercent(otjh.percent),
       formatPercent(learner.liveAttendanceRate),
       displayValue(learner.startDate),
-      displayValue(learner.plannedEndDate),
+      displayValue(learner.displayEndDate),
       learnerProgramme(learner),
     ];
 

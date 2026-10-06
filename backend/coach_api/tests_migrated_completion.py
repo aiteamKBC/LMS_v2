@@ -48,7 +48,8 @@ class MigratedReviewCompletionTests(SimpleTestCase):
             event_key="imported-review:synthetic", learner_id=1208,
             event_type="mcr", target_date=datetime(2026, 11, 18).date(),
         )
-        with patch("learner_api.calendar.ImportedReviewInstance.objects.filter") as lookup:
+        with patch("learner_api.calendar.ImportedReviewInstance.objects.filter") as lookup, \
+             patch("coach_api.local_mcm_bookings.local_mcm_metadata", return_value=("62", "2026-11")):
             lookup.return_value.exists.return_value = True
             self.assertTrue(_serialize_event(event, review_types_by_template={}, templates_by_id={})["migratedForm"])
             lookup.assert_called_once_with(

@@ -1,8 +1,9 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { StrictMode } from 'react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ReviewInstanceModal } from './ReviewInstanceModal';
+import { progressExample, skillsExample } from '@/pages/learner/reviews/imported/presentationFixtures';
 import { calculateMigratedReviewProgress } from '@/api/reviewInstances';
 import { bookMigratedReview, calculateReviewInstanceProgress, completeMigratedReview, completeReviewInstance, downloadReviewInstancePdf, fetchPreviousReviewSession, fetchReviewInstanceForm, generateMigratedReviewPdf, generateReviewMeetingSummary, initializeMigratedReview, reopenReviewInstance, saveReviewInstanceAnswers, signMigratedReviewAsCoach, signReviewInstance, startMigratedReview, submitMigratedReview, type ReviewInstanceFormDefinition, type ReviewProgressSnapshot } from '@/api/reviewInstances';
 
@@ -114,6 +115,177 @@ beforeEach(() => {
     transcriptText: '',
     transcriptAvailable: false,
     transcriptTruncated: false,
+  });
+});
+
+describe('imported Coach content presentation', () => {
+  const importedField = (id: string, title: string, answer: unknown, displayOrder = 0) => ({
+    id, title, answer, displayOrder, fieldType: 'text_multiline' as const, required: false, configuration: { imported: true },
+  });
+  function historical(type = 'Progress Review') {
+    const base = definition('completed');
+    return {
+      ...base, source: 'aptem', readOnly: true, migratedForm: false, formAvailable: true,
+      learnerName: 'Alex Example', programme: 'Example programme', sourceStatus: 'Completed',
+      instance: { ...base.instance, id: 'imported-review:example-42', occurrenceNumber: null },
+      historicalReview: { id: '901', aptemReviewId: 'example-42', type },
+      template: { ...base.template, name: type, reviewTypeCode: type === 'Monthly Coaching Meeting' ? 'aptem_mcm' : 'aptem_progress_review' },
+      signatures: { advisor: { required: false, signed: false }, participant: { required: false, signed: false }, employer: { required: false, signed: false }, referrer: { required: false, signed: false } },
+      sections: [{ id: 'progress', title: 'Learning progress', enabled: true, displayOrder: 0, estimatedMinutes: 0, fields: [
+        importedField('helper', 'hasPrevProgress', 'No'),
+        importedField('progress-data', 'progress', JSON.stringify(progressExample), 1),
+        importedField('event', 'eventKey', 'imported-review:example-42', 2),
+      ] }],
+    };
+  }
+  function open(data: ReviewInstanceFormDefinition) {
+    vi.mocked(fetchReviewInstanceForm).mockResolvedValue(data);
+    return render(<ReviewInstanceModal instanceId={data.instance.id} presentation="page" onClose={vi.fn()} />);
+  }
+
+  it.each(['Progress Review', 'Progress Review (+ Skills Radar)'])('renders semantic progress inside the existing %s step', async (type) => {
+    const data = historical(type);
+    const before = JSON.stringify(data);
+    open(data);
+    const step = (await screen.findByRole('heading', { name: 'Learning progress' })).closest('section')!;
+    expect(within(step).getByRole('img', { name: '107 completed of 169 activities' })).toBeVisible();
+    [/Learning plan activities/i, /Standard \/ Programme Progress/i, /Programme timeline/i, /Off-the-job hours/i].forEach(name => {
+      expect(within(step).getByRole('heading', { name })).toBeVisible();
+    });
+    ['62', '117', 'Behind', '110%', '837h', '867h', '957h', '1,302h', '17/04/2028'].forEach(value => {
+      expect(within(step).getByText(value)).toBeVisible();
+    });
+    expect(step.textContent).not.toMatch(/hasPrevProgress|completedCount|progressType|eventKey|imported-review:|T00:00/);
+    expect(within(step).queryByRole('textbox')).not.toBeInTheDocument();
+    expect(screen.getByText('Step 1 of 1')).toBeVisible();
+    expect(screen.getByRole('button', { name: /Learning progress/ })).toHaveAttribute('aria-current', 'step');
+    expect(screen.getByText('Review completed')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Save draft' })).not.toBeInTheDocument();
+    expect(fetchReviewInstanceForm).toHaveBeenCalledWith('imported-review:example-42', expect.any(AbortSignal));
+    expect(JSON.stringify(data)).toBe(before);
+    expect(data.historicalReview).toEqual({ id: '901', aptemReviewId: 'example-42', type });
+    expect(initializeMigratedReview).not.toHaveBeenCalled();
+    expect(saveReviewInstanceAnswers).not.toHaveBeenCalled();
+  });
+
+  it('uses the existing sanitizer for historical MCM HTML and readable Q&A', async () => {
+    const data = historical('Monthly Coaching Meeting');
+    data.sections[0].title = 'Meeting Summary';
+    data.sections[0].fields = [
+      importedField('summary', 'Summary', '<h3>Review discussion</h3><p>Evidence <strong>reviewed</strong></p><ul><li>Portfolio update</li></ul><ol><li>Agree next actions</li></ol><script>alert(1)</script><iframe src="https://example.invalid"></iframe><a href="javascript:alert(1)" onclick="alert(1)">Unsafe link</a>'),
+      importedField('question', 'WORKPLACE_TRAINING_COMPLETED', 'Yes', 1),
+      importedField('notes', 'Coach comments', 'Confident application of learning.', 2),
+    ];
+    open(data);
+    const step = await screen.findByRole('region', { name: 'Meeting Summary' });
+    expect(within(step).getByRole('heading', { name: 'Review discussion' })).toBeVisible();
+    expect(step.querySelector('p strong')).toHaveTextContent('reviewed');
+    expect(step.querySelector('ul li')).toHaveTextContent('Portfolio update');
+    expect(step.querySelector('ol li')).toHaveTextContent('Agree next actions');
+    expect(step.querySelector('script,iframe,[onclick],[href^="javascript:"]')).toBeNull();
+    expect(within(step).getByText('Workplace training completed')).toBeVisible();
+    expect(within(step).getByText('Yes')).toBeVisible();
+    expect(within(step).getByText('Confident application of learning.')).toBeVisible();
+    expect(step.textContent).not.toMatch(/<p>|<li>|alert\(1\)|WORKPLACE_TRAINING/);
+    expect(within(step).queryByRole('textbox')).not.toBeInTheDocument();
+  });
+
+  it('retains competency levels, notes, actions and expandable source scales', async () => {
+    const data = historical('Progress Review (+ Skills Radar)');
+    data.sections[0].title = 'Skills Radar';
+    data.sections[0].fields = [importedField('skills', 'Professional skills', JSON.stringify(skillsExample))];
+    open(data);
+    const step = await screen.findByRole('region', { name: 'Skills Radar' });
+    ['Plan and communicate work', 'Level 3', 'Clear progress this term.', 'Practise presenting', 'Not assessed'].forEach(value => expect(within(step).getByText(value)).toBeVisible());
+    fireEvent.click(within(step).getByText('Assessment scale'));
+    expect(within(step).getByText('Beginning')).toBeVisible();
+    expect(step.textContent).not.toMatch(/characteristicsLevelId|competenceId|assessedLevel|\{"/);
+  });
+
+  it('preserves step order, previous/next navigation and the current-step marker', async () => {
+    const data = historical();
+    data.sections.push({ ...data.sections[0], id: 'questions', title: 'Progress Checks', displayOrder: 1,
+      fields: [importedField('attendance', 'Any attendance concerns?', 'No')] });
+    open(data);
+    const nav = await screen.findByRole('navigation', { name: 'Review steps' });
+    expect(within(nav).getAllByRole('button')).toHaveLength(2);
+    expect(screen.getByRole('button', { name: 'Previous' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Next step' }));
+    expect(screen.getByText('Step 2 of 2')).toBeVisible();
+    expect(within(nav).getByRole('button', { name: /Progress Checks/ })).toHaveAttribute('aria-current', 'step');
+    expect(screen.getByText('Any attendance concerns?')).toBeVisible();
+    fireEvent.click(screen.getByRole('button', { name: 'Previous' }));
+    expect(screen.getByText('Step 1 of 2')).toBeVisible();
+    within(nav).getByRole('button', { name: /Progress Checks/ }).focus();
+    await userEvent.keyboard('{Enter}');
+    expect(screen.getByText('Final form step')).toBeVisible();
+    expect(saveReviewInstanceAnswers).not.toHaveBeenCalled();
+  });
+
+  it('keeps local continuation inputs, summary actions, validation and versioned save payloads', async () => {
+    const data = migratedDefinition();
+    data.answerVersion = 'version-example';
+    data.summaryBinding = { fieldKey: 'summary' };
+    data.sections[0].fields.push(
+      { ...importedField('evidence', 'Historical evidence', null), fieldType: 'title_description', configuration: { imported: true, description: '<p>Original evidence</p>' } },
+      { ...importedField('summary', 'Meeting Summary', 'Local draft', 2), configuration: { migrated: true, semanticKey: 'meeting_summary' } },
+      { ...importedField('action', 'Existing action', null, 3), fieldType: 'action_button', configuration: {} },
+    );
+    vi.mocked(saveReviewInstanceAnswers).mockResolvedValue(data);
+    open(data);
+    const step = await screen.findByRole('region', { name: 'Next steps' });
+    expect(within(step).getByText('Original evidence')).toBeVisible();
+    expect(within(step).getAllByRole('textbox')).toHaveLength(2);
+    expect(within(step).getByRole('button', { name: 'Existing action' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Generate from Teams' })).toBeVisible();
+    const input = within(step).getByDisplayValue('Review the next module');
+    fireEvent.change(input, { target: { value: '' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Submit Review' }));
+    expect(screen.getByRole('alert')).toHaveTextContent('Please complete every required field');
+    expect(submitMigratedReview).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: 'Updated coach action' } });
+    fireEvent.change(within(step).getByRole('textbox', { name: 'Meeting Summary' }), { target: { value: 'Updated summary' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(saveReviewInstanceAnswers).toHaveBeenCalledWith(data.instance.id,
+      { 'field-1': 'Updated coach action', summary: 'Updated summary' },
+      { answerVersion: 'version-example', editedFields: ['field-1', 'summary'] }));
+    expect(bookMigratedReview).not.toHaveBeenCalled();
+  });
+
+  it('retains editable imported questions when the existing API permits editing', async () => {
+    const data = historical('Monthly Coaching Meeting');
+    data.readOnly = false;
+    data.instance.status = 'in-progress';
+    data.sections[0].title = 'Reflection';
+    data.sections[0].fields = [importedField('answer', 'Reflection', 'Existing editable answer')];
+    vi.mocked(saveReviewInstanceAnswers).mockResolvedValue(data);
+    open(data);
+    const input = await screen.findByRole('textbox');
+    expect(input).toBeEnabled();
+    fireEvent.change(input, { target: { value: 'Updated answer' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save draft' }));
+    await waitFor(() => expect(saveReviewInstanceAnswers).toHaveBeenCalledWith(data.instance.id, { answer: 'Updated answer' }));
+  });
+
+  it.each(['awaiting-signature', 'completed'])('keeps locked local continuation controls and signatures at %s', async status => {
+    const data = migratedDefinition(status);
+    open(data);
+    const input = await screen.findByRole('textbox');
+    expect(input).toBeDisabled();
+    expect(input).toHaveValue('Review the next module');
+    expect(screen.queryByRole('button', { name: 'Save draft' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Confirm coach signature' })).toBeVisible();
+  });
+
+  it('leaves Native content and controls on their original renderer path', async () => {
+    const data = historical();
+    data.source = 'curriculum';
+    data.template.reviewTypeCode = 'progress_review';
+    open(data);
+    const step = (await screen.findByRole('heading', { name: 'Learning progress' })).closest('section')!;
+    expect(within(step).getAllByRole('textbox')).toHaveLength(3);
+    expect(within(step).getByDisplayValue(JSON.stringify(progressExample))).toBeDisabled();
+    expect(within(step).queryByRole('img', { name: /activities/ })).not.toBeInTheDocument();
   });
 });
 
