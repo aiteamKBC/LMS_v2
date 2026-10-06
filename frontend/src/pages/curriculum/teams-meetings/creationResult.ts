@@ -25,7 +25,7 @@ export type UpdatedCalendar = Pick<TeamsMeetingInput, 'title' | 'scheduledOccurr
 // Only learners are emailed, so a calendar that invites none has nothing to send.
 const mailLine = (email: ScheduleEmailStatus) => email.total
   ? `${email.accepted} of ${email.total} submitted to Microsoft${email.failed ? ` · ${email.failed} failed` : ''}${email.uncertain ? ` · ${email.uncertain} awaiting verification` : ''}`
-  : 'None to send — no learners are invited';
+  : 'None to send — nobody is invited';
 
 /** The dates the update put on the calendar, as one readable span. */
 function sessionSpan(input: UpdatedCalendar): string {
@@ -58,9 +58,9 @@ export interface TeamsUpdateOutcome {
  * What an update did, once Microsoft has confirmed it.
  *
  * Separate from `finishTeamsCreation` because the two finish differently. A
- * create always submits one schedule email per learner. An update emails
+ * create always submits one schedule email per invited participant. An update emails
  * about the change only when the calendar actually moved, and then sends the
- * change email -- each learner their own copy with what their
+ * change email -- each invited participant their own copy with what their
  * dates were and are now; Microsoft mails its own change notice to everyone
  * invited alongside it. The organiser, co-organisers and presenters are never
  * emailed by the LMS. A save that only changed who is invited announces
@@ -106,7 +106,7 @@ export async function finishTeamsUpdate(
   });
   while (true) {
     if (shouldSend) {
-      sending('Sending change emails', 'The calendar is already updated. Submitting one individual email per learner.');
+      sending('Sending change emails', 'The calendar is already updated. Submitting one individual email per invited participant.');
       try {
         email = await submitChangeEmails(liveSessionId, notice, { retryFailed, onProgress: progressText });
         error = '';
@@ -116,7 +116,7 @@ export async function finishTeamsUpdate(
       Swal.close();
     }
     if (shouldWelcome) {
-      sending('Emailing the learners you added', 'The calendar is already updated. Each learner added to it gets the full schedule, once.');
+      sending('Emailing the people you added', 'The calendar is already updated. Each person added to it gets the full schedule, once.');
       try {
         welcome = await submitAddedPeopleEmails(liveSessionId, added, { retryFailed, onProgress: progressText });
         welcomeError = '';
@@ -136,7 +136,7 @@ export async function finishTeamsUpdate(
           : 'Not sent';
     // A total of 0 means nobody added is a learner: presenters and co-organisers
     // get Microsoft's invitation and no schedule email.
-    const welcomeSummary = welcome ? (welcome.total ? mailLine(welcome) : 'None to send — no learners were added') : 'Not sent';
+    const welcomeSummary = welcome ? (welcome.total ? mailLine(welcome) : 'None to send — no people were added') : 'Not sent';
     const retryable = (canSend && Boolean(error || email?.failed || email?.queued))
       || (canWelcome && Boolean(welcomeError || welcome?.failed || welcome?.queued));
     const choice = await Swal.fire({
@@ -148,8 +148,8 @@ export async function finishTeamsUpdate(
         ${welcomeError ? `<p class="teams-calendar-result-note" role="alert">${htmlText(welcomeError)}</p>` : ''}
         ${warnings.map(warning => `<p class="teams-calendar-result-note" role="alert">${htmlText(warning)}</p>`).join('')}
         ${email?.uncertain || welcome?.uncertain ? '<p class="teams-calendar-result-note">Emails with an uncertain result will not be sent again automatically. An administrator can check their status.</p>' : ''}
-        <p class="teams-calendar-result-help">${notify ? 'Microsoft notifies everyone already invited when a meeting moves. The change email is a separate message: each learner receives their own copy with their previous and new dates only. The organiser, co-organisers and presenters are not emailed by the LMS.' : 'No session moved, so Microsoft was asked not to announce this save: nobody already invited was emailed, by Teams or by the LMS.'}</p>
-        ${canWelcome ? '<p class="teams-calendar-result-help">Everyone you added is sent the meeting invitation by Microsoft. Learners you added are also sent the full schedule email; presenters and co-organisers are not. Nobody already on the calendar is emailed again.</p>' : ''}
+        <p class="teams-calendar-result-help">${notify ? 'Microsoft notifies everyone already invited when a meeting moves. The change email is a separate message: every invited participant receives their own copy with their previous and new dates only.' : 'No session moved, so Microsoft was asked not to announce this save: nobody already invited was emailed, by Teams or by the LMS.'}</p>
+        ${canWelcome ? '<p class="teams-calendar-result-help">Everyone you added is sent the meeting invitation by Microsoft and the full schedule email from the LMS. Nobody already on the calendar is emailed again.</p>' : ''}
         <p class="teams-calendar-result-help">Done closes this message. It does not save or send anything else.</p>`,
       width: 560, buttonsStyling: false, customClass: classes,
       showCloseButton: true, closeButtonAriaLabel: 'Close result',
@@ -201,7 +201,7 @@ export async function finishTeamsCreation(result: TeamsMeetingResult, input: Tea
     if (shouldSend) {
       void Swal.fire({
         title: 'Sending schedule emails',
-        html: `<p class="teams-calendar-result-module">${htmlText(input.title)}</p><p>Your Teams calendar is saved. Submitting one individual schedule email per learner.</p><p role="status" id="teams-email-progress">Preparing emails…</p>`,
+        html: `<p class="teams-calendar-result-module">${htmlText(input.title)}</p><p>Your Teams calendar is saved. Submitting one individual schedule email per invited participant.</p><p role="status" id="teams-email-progress">Preparing emails…</p>`,
         showConfirmButton: false, allowOutsideClick: false, allowEscapeKey: false,
         customClass: { ...classes, popup: 'teams-calendar-result teams-calendar-sending' },
         didOpen: popup => { if (Swal.getPopup() === popup) Swal.showLoading(); },
@@ -234,7 +234,7 @@ export async function finishTeamsCreation(result: TeamsMeetingResult, input: Tea
         ${error ? `<p class="teams-calendar-result-note" role="alert">${htmlText(error)}</p>` : ''}
         ${warnings.map(warning => `<p class="teams-calendar-result-note" role="alert">${htmlText(warning)}</p>`).join('')}
         ${email?.uncertain ? '<p class="teams-calendar-result-note">Emails with an uncertain result will not be sent again automatically. An administrator can check their status.</p>' : ''}
-        <p class="teams-calendar-result-help">Each schedule email is addressed to one learner and carries their own schedule only. The organiser, co-organisers and presenters are not emailed by the LMS. Microsoft acceptance does not confirm arrival in the Inbox.</p>
+        <p class="teams-calendar-result-help">Each schedule email is addressed to one invited participant and carries their own schedule only. Microsoft acceptance does not confirm arrival in the Inbox.</p>
         <p class="teams-calendar-result-help">Done closes this message. It does not save or send anything else.</p>`,
       width: 560, buttonsStyling: false, customClass: classes,
       showCloseButton: true, closeButtonAriaLabel: 'Close result',
