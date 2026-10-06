@@ -802,6 +802,73 @@ export function replaceLiveSessionLinksInWeeks(
 }
 
 /**
+ * Put a replaced join link onto exactly the components the server rewrote.
+ *
+ * By id rather than by re-running the week rule, so the workspace ends up
+ * holding what was stored: a live session added in this tab and not saved yet
+ * was not touched by the server, and is not touched here either.
+ */
+export function applyLiveSessionLinkToComponents(
+  module: ModuleCatalogueItem,
+  componentIds: Iterable<string>,
+  link: string,
+): ModuleCatalogueItem {
+  const ids = new Set(Array.from(componentIds, value => String(value || '').trim()).filter(Boolean));
+  const nextLink = String(link || '').trim();
+  if (!ids.size || !nextLink) return module;
+  return {
+    ...module,
+    weekStructure: module.weekStructure.map(week => (
+      week.components.some(component => ids.has(component.id))
+        ? {
+          ...week,
+          components: week.components.map(component => (
+            ids.has(component.id)
+              ? { ...component, settings: { ...component.settings, liveSessionUrl: nextLink, teamsMeetingUrl: nextLink, liveSessionLinkOverride: nextLink } }
+              : component
+          )),
+        }
+        : week
+    )),
+  };
+}
+
+export interface TeamsLinkReplacementResult {
+  updated: number;
+  updatedComponentIds: string[];
+  link: string;
+  structureRevision: string;
+  /** True when nothing else had changed the module since `expectedRevision`. */
+  revisionWasCurrent: boolean;
+}
+
+/**
+ * Save a replaced join link for the chosen weeks, on its own.
+ *
+ * Not through `saveModuleStructure`: that sends and rewrites the whole module,
+ * which on a large one outran the timeout for an edit touching a dozen rows.
+ * Stored links only -- nothing is sent to Microsoft, so the Teams meetings and
+ * their invitations stay as they are.
+ */
+export async function replaceModuleTeamsLinks(
+  moduleCatalogueId: string,
+  input: { weekIds: string[]; link: string; expectedRevision?: string },
+) {
+  const result = await apiJson<TeamsLinkReplacementResult>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/teams-links/`, {
+    method: 'POST',
+    body: JSON.stringify({
+      weekIds: input.weekIds,
+      link: input.link,
+      ...(input.expectedRevision ? { expectedRevision: input.expectedRevision } : {}),
+    }),
+    timeoutMs: 60000,
+  });
+  // The components the cached module views describe have just changed.
+  if (result.updated) invalidateCurriculumCacheByEntity('module');
+  return result;
+}
+
+/**
  * Which authored weeks have a delivery day a ticked holiday falls on.
  *
  * States the fact, decides nothing: the plan stays exactly as authored, every
@@ -2649,20 +2716,92 @@ export class ModuleStructureTooLargeError extends Error {
  * module left open all afternoon produces one entry per real edit rather than
  * one per timer tick.
  */
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  if (value && typeof value === 'object') {
+    return `{${Object.keys(value as Record<string, unknown>)
+      .filter(key => (value as Record<string, unknown>)[key] !== undefined)
+      .sort()
+      .map(key => `${JSON.stringify(key)}:${stableStringify((value as Record<string, unknown>)[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value) ?? 'null';
+}
+
+export interface ModuleStructureDelta {
+  /** Every week id, in order. Removing or reordering a week needs nothing else. */
+  weekOrder: string[];
+  /** Every week's component ids, in order -- so moves and removals carry no rows. */
+  componentOrder: Record<string, string[]>;
+  /** Weeks that are new or whose own fields changed, without their components. */
+  weeks: Record<string, Omit<ModuleWeek, 'components'>>;
+  /** Components that are new or changed. Everything else is the stored copy. */
+  components: Record<string, ModuleComponent>;
+}
+
+/**
+ * What changed between the last saved copy and this one.
+ *
+ * Compared with sorted keys, so two copies that differ only in the order their
+ * fields were written in read as the same; a false "changed" would only send
+ * a row the server then finds unchanged.
+ */
+export function moduleStructureDelta(base: ModuleCatalogueItem, current: ModuleCatalogueItem): ModuleStructureDelta {
+  const baseWeeks = new Map(base.weekStructure.map(week => [week.id, week]));
+  const baseComponents = new Map(base.weekStructure.flatMap(week => week.components.map(component => [component.id, component] as const)));
+  const delta: ModuleStructureDelta = { weekOrder: [], componentOrder: {}, weeks: {}, components: {} };
+  for (const week of current.weekStructure) {
+    const { components, ...fields } = week;
+    delta.weekOrder.push(week.id);
+    delta.componentOrder[week.id] = components.map(component => component.id);
+    const baseWeek = baseWeeks.get(week.id);
+    if (!baseWeek) {
+      delta.weeks[week.id] = fields;
+    } else {
+      const { components: _baseComponents, ...baseFields } = baseWeek;
+      if (stableStringify(fields) !== stableStringify(baseFields)) delta.weeks[week.id] = fields;
+    }
+    for (const component of components) {
+      const baseComponent = baseComponents.get(component.id);
+      if (!baseComponent || stableStringify(component) !== stableStringify(baseComponent)) delta.components[component.id] = component;
+    }
+  }
+  return delta;
+}
+
 export async function saveModuleStructure(
   moduleCatalogueId: string,
   payload: ModuleCatalogueItem,
-  options: { expectedRevision?: string; source?: 'auto-save' | 'manual' } = {},
+  options: {
+    expectedRevision?: string;
+    source?: 'auto-save' | 'manual';
+    /**
+     * The copy last agreed with the server at `expectedRevision`. With both,
+     * only what changed since is sent and written -- see moduleStructureDelta.
+     * Without either, the whole structure is sent, as every other caller does.
+     */
+    base?: ModuleCatalogueItem | null;
+  } = {},
 ) {
   const recalculated = recalculateModule(payload);
   // `weeksNumber` states the authored week count outright. `weeks` cannot carry
   // it: on this endpoint that name is the legacy alias for the week *list*, and
   // the backend rejects a number there.
-  const body = {
-    ...recalculated,
-    weeksNumber: recalculated.weekStructure.length || recalculated.weeks,
-    ...(options.expectedRevision ? { expectedRevision: options.expectedRevision } : {}),
-  };
+  const partial = Boolean(options.base && options.expectedRevision && options.base.catalogueId === recalculated.catalogueId);
+  const { weekStructure: _weekStructure, ...moduleFields } = recalculated;
+  const body = partial
+    ? {
+      ...moduleFields,
+      weeksNumber: recalculated.weekStructure.length || recalculated.weeks,
+      expectedRevision: options.expectedRevision,
+      saveMode: 'partial',
+      structureDelta: moduleStructureDelta(recalculateModule(options.base as ModuleCatalogueItem), recalculated),
+    }
+    : {
+      ...recalculated,
+      weeksNumber: recalculated.weekStructure.length || recalculated.weeks,
+      ...(options.expectedRevision ? { expectedRevision: options.expectedRevision } : {}),
+    };
   const serialized = JSON.stringify(body);
   const sizeBytes = new Blob([serialized]).size;
   const componentCount = recalculated.weekStructure.reduce((total, week) => total + week.components.length, 0);
