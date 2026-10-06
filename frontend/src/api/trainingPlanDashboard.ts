@@ -36,7 +36,7 @@ export type PlanCurriculumSlot = { slotNumber: number; date: string; day: string
   holidayNote?: string };
 export type PlanModule = { id: string; title: string; description: string; start_date: string | null; end_date: string | null; tutor_name: string; coach_name: string;
   programme_name?: string; cohort_name?: string; group_name?: string; total_otjh?: number | null;
-  weeks_number?: number | null; sessions_number?: number | null;
+  weeks_number?: number | null; sessions_number?: number | null; educational_session_count?: number;
   session_week_day?: string; session_start_time?: string; session_end_time?: string; learning_outcomes?: string[];
   /** The curriculum spine for this module. Empty when the module has no plannable schedule. */
   curriculumSlots?: PlanCurriculumSlot[];
