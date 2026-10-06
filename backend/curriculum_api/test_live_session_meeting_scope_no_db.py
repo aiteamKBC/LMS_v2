@@ -35,6 +35,14 @@ class MeetingScopeTests(unittest.TestCase):
         self.assertEqual(self.scope({'teamsOccurrenceId': 'OCC-1', 'teamsMeetingScope': 'additional'}), 'main')
         self.assertEqual(self.scope({'teamsSessionNumber': '2'}), 'main')
 
+    def test_a_saved_normal_meeting_link_is_an_assigned_module_calendar(self):
+        self.assertEqual(self.scope({'liveSessionUrl': 'https://teams.invalid/normal'}, True), 'main')
+        self.assertEqual(self.scope({'teamsMeetingUrl': 'https://teams.invalid/normal'}, True), 'main')
+        self.assertEqual(self.scope({
+            'liveSessionUrl': 'https://teams.invalid/additional',
+            'teamsMeetingScope': 'additional',
+        }, True), 'additional')
+
     def test_the_stored_choice_decides_an_unbooked_week(self):
         self.assertEqual(self.scope({'teamsMeetingScope': 'main'}), 'main')
         self.assertEqual(self.scope({'teamsMeetingScope': 'Additional'}), 'additional')
@@ -49,6 +57,12 @@ class MeetingScopeTests(unittest.TestCase):
         has = self.n['module_has_booked_series']
         self.assertFalse(has([{}, {'teamsMeetingScope': 'main'}]))
         self.assertTrue(has([{}, {'teamsOccurrenceId': 'OCC-1'}]))
+        self.assertFalse(has([{'liveSessionUrl': 'https://teams.invalid/normal'}]))
+        self.assertFalse(has([{
+            'liveSessionUrl': 'https://teams.invalid/additional',
+            'extraTeamsMeetingUrl': 'https://teams.invalid/additional',
+            'teamsMeetingScope': 'additional',
+        }]))
 
 
 class PreserveScopeOnSaveTests(unittest.TestCase):

@@ -5,6 +5,12 @@ from .csrf import coach_csrf_token
 from .bulk_attendance import coach_bulk_attendance
 from . import personal_learning
 from .monthly_reports import coach_monthly_report_detail, coach_monthly_reports
+from .support_tickets import (
+    coach_support_ticket_notes,
+    coach_support_ticket_status,
+    coach_support_ticket_wellbeing_report,
+    coach_support_tickets,
+)
 from .meeting_reminders import coach_meeting_reminder
 from .enrolment_documents import (
     coach_enrolment_document,
@@ -108,6 +114,10 @@ urlpatterns = [
     # the bare list route would otherwise never be reached for a report id.
     path('coach/monthly-reports/<uuid:report_id>', coach_monthly_report_detail, name='coach-monthly-report-detail'),
     path('coach/monthly-reports', coach_monthly_reports, name='coach-monthly-reports'),
+    path('coach/support-tickets', coach_support_tickets, name='coach-support-tickets'),
+    path('coach/support-tickets/<int:ticket_id>/status', coach_support_ticket_status, name='coach-support-ticket-status'),
+    path('coach/support-tickets/<int:ticket_id>/notes', coach_support_ticket_notes, name='coach-support-ticket-notes'),
+    path('coach/support-tickets/<int:ticket_id>/wellbeing-report', coach_support_ticket_wellbeing_report, name='coach-support-ticket-wellbeing-report'),
     path('coach/marking-queue', coach_marking_queue, name='coach-marking-queue'),
     path('coach/marking-queue/<uuid:submission_id>', coach_marking_queue, name='coach-marking-submission'),
     path('coach/marking-queue/<uuid:submission_id>/ai-feedback', coach_marking_ai_feedback, name='coach-marking-ai-feedback'),

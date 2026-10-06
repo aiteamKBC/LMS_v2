@@ -10014,8 +10014,8 @@ def resolve_coach_review_events(
 ) -> dict:
     """Resolve each learner to exactly one review source by effective Aptem id.
 
-    Aptem-linked learners use Learner.reviews exclusively. Curriculum review
-    occurrences are generated only for learners without an effective Aptem id.
+    The one exception: an Aptem-linked learner with no imported Aptem MCM gets
+    Curriculum MCM occurrences (never Curriculum Progress Reviews).
     """
     aptem_by_profile, identity_conflicts = resolve_effective_aptem_ids(learners)
     aptem_reviews_available = True
@@ -10043,6 +10043,22 @@ def resolve_coach_review_events(
         learner for learner in learners
         if int(learner.id) not in aptem_by_profile and int(learner.id) not in identity_conflicts
     ]
+    # An Aptem-linked learner with no imported Aptem MCM still has monthly
+    # coaching due, so their MCMs come from Curriculum like a native learner's.
+    # Progress Reviews stay Aptem-only. The all-history lookup is the same rule
+    # the learner calendar and booking use, so a date window never changes it.
+    # Fail closed: an unavailable Aptem source never switches anyone to Curriculum.
+    aptem_mcm_profiles = set(aptem_by_profile)
+    if aptem_reviews_available and aptem_by_profile:
+        try:
+            aptem_mcm_profiles = fetch_aptem_mcm_profile_ids(aptem_by_profile)
+        except DatabaseError as exc:
+            logger.warning("Could not load Aptem MCM history for coach timetable: %s", exc)
+            aptem_reviews_available = False
+    mcm_fallback_learners = [
+        learner for learner in learners
+        if int(learner.id) in aptem_by_profile and int(learner.id) not in aptem_mcm_profiles
+    ]
     events: list[dict] = list(aptem_events)
     issues: list[dict[str, str]] = [
         {"learnerId": str(profile_id), "code": "aptem_identity_conflict"}
@@ -10064,13 +10080,12 @@ def resolve_coach_review_events(
         "curriculumReviewRows": 0,
         "aptemLearners": len(aptem_by_profile),
         "curriculumLearners": len(native_learners),
-        # Retained in the response contract for existing dashboard consumers.
-        "curriculumMcmFallbackLearners": 0,
+        "curriculumMcmFallbackLearners": len(mcm_fallback_learners),
     }
     review_template_cache: dict[str, list[dict]] = {}
 
-    for learner in native_learners:
-        mcm_only = False
+    for learner in [*native_learners, *mcm_fallback_learners]:
+        mcm_only = int(learner.id) in aptem_by_profile
         programme_id = resolve_curriculum_programme_id(getattr(learner, "programme_id", None) or getattr(learner, "programme", None))
         template_identifiers = curriculum_review_instances.programme_review_template_identifiers(
             programme_id, template_cache=review_template_cache,
