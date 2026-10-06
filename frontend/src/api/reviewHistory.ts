@@ -25,6 +25,8 @@ export interface ImportedReviewTable {
 }
 
 export interface ImportedReviewSection {
+  historicalPresentation?: boolean;
+  preserveRawText?: boolean;
   id: number | string;
   name: string;
   order: number | null;
