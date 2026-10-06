@@ -102,12 +102,60 @@ class ReviewSourceSeparationTests(SimpleTestCase):
         self.assertEqual(views.resolve_effective_aptem_ids([person]), ({}, {21}))
 
     def test_missing_imported_rows_do_not_fall_back_to_curriculum(self):
+        # The learner has imported Aptem MCMs, so Curriculum never adds a second one.
         with patch.object(calendar.CoachCalendarEvent.objects, "filter") as records, \
              patch("learner_api.imported_review_calendar.imported_events_for_learner", return_value=[]), \
+             patch("coach_api.views.fetch_aptem_mcm_profile_ids", return_value={21}) as lookup, \
              patch.object(calendar, "_generated_cycle_events") as native:
             records.return_value.order_by.return_value = []
             self.assertEqual(calendar.coaching_events_for_learner(source(), profile()), [])
             native.assert_not_called()
+            lookup.assert_called_once_with({21: 6301})
+
+    def test_learner_without_any_aptem_mcm_gets_curriculum_mcms_only(self):
+        mcm = {"eventKey": "review:21:T-1:1", "source": "mcr", "reviewTemplateId": "T-1"}
+        with patch.object(calendar.CoachCalendarEvent.objects, "filter") as records, \
+             patch("learner_api.imported_review_calendar.imported_events_for_learner", return_value=[]), \
+             patch("coach_api.views.fetch_aptem_mcm_profile_ids", return_value=set()), \
+             patch("curriculum_api.review_instances.reconcile_review_event_keys", return_value={}), \
+             patch.object(calendar, "_generated_cycle_events", return_value=[mcm]) as native:
+            records.return_value.order_by.return_value = []
+            self.assertEqual(calendar.coaching_events_for_learner(source(), profile()), [mcm])
+            self.assertEqual(native.call_args.kwargs, {"mcm_only": True})
+
+    def test_mcm_fallback_generator_never_emits_curriculum_progress_reviews(self):
+        with patch.object(views, "resolve_curriculum_programme_id", return_value="P1"), \
+             patch.object(views, "resolve_review_anchor_date", return_value=(date(2026, 1, 1), None)), \
+             patch.object(views, "resolve_schedule_window", return_value=(date(2026, 1, 1), date(2027, 1, 1))), \
+             patch.object(views, "resolve_curriculum_review_occurrences", return_value=[
+                 {"reviewTemplateId": "MCM-1", "reviewName": "Monthly Coaching", "reviewTypeCode": "mcm",
+                  "occurrenceNumber": 1, "targetDate": date(2026, 10, 24)},
+                 {"reviewTemplateId": "PR-1", "reviewName": "Progress Review", "reviewTypeCode": "progress_review",
+                  "occurrenceNumber": 1, "targetDate": date(2026, 11, 24)}]):
+            self.assertEqual(calendar._generated_cycle_events(source(), profile(), set()), [])
+            items = calendar._generated_cycle_events(source(), profile(), set(), mcm_only=True)
+        self.assertEqual([(item["source"], item["reviewTemplateId"]) for item in items], [("mcr", "MCM-1")])
+
+    def test_assignment_mcm_booking_without_aptem_mcm_uses_the_curriculum_occurrence(self):
+        import json
+        from inspect import unwrap
+        payload = {"sessionType": "mcr", "eventKey": "review:21:MCM-1:1",
+                   "scheduledDate": "2099-11-19", "scheduledTime": "10:00", "durationMinutes": 60}
+        for fallback, expected in ((True, 404), (False, 409)):
+            with self.subTest(fallback=fallback), ExitStack() as stack:
+                enrolment = source(); enrolment.username = "Synthetic learner"
+                model = MagicMock(); model.all_learners.filter.return_value.first.return_value = enrolment
+                stack.enter_context(patch.dict(calendar.SOURCE_MODELS, {"commercial": model}))
+                stack.enter_context(patch.object(calendar, "_calendar_profile", return_value=profile()))
+                stack.enter_context(patch.object(calendar, "booking_date_restriction", return_value=None))
+                stack.enter_context(patch.object(calendar, "_curriculum_mcm_fallback", return_value=fallback))
+                stack.enter_context(patch.object(calendar, "coaching_events_for_learner", return_value=[]))
+                timetable = stack.enter_context(patch.object(views, "find_generated_timetable_event", return_value=(None, "Coach")))
+                request = RequestFactory().post("/book/", data=json.dumps(payload), content_type="application/json")
+                response = unwrap(calendar.learner_calendar_book)(request, "commercial", 121)
+                self.assertEqual(response.status_code, expected, response.content)
+                # Fallback resolves the coach's Curriculum occurrence; otherwise the Aptem rule stands.
+                self.assertEqual(timetable.called, fallback)
 
     def test_native_families_keep_template_identity_and_occurrence_numbers(self):
         for title, code in [("Monthly Coaching", "mcm"), ("Progress Review", "progress_review"),

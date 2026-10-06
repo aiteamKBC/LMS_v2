@@ -15680,6 +15680,10 @@ COMPONENT_SETTINGS_SCHEMA = {
         'selectedGroupKeys': [],
         'selectedGroupNames': [],
         'liveSessionUrl': '',
+        # A module-builder bulk replacement is an explicit authoring override.
+        # Keep it as a first-class setting so the normaliser does not hide it
+        # inside legacySettings before the calendar re-attach reads the row.
+        'liveSessionLinkOverride': '',
         'teamsEventId': '',
         'teamsLiveSessionId': '',
         # Written when a calendar is created or a plan is stamped, by the
@@ -15873,12 +15877,19 @@ LIVE_SESSION_TRACKING_SETTING_KEYS = {
     'teamsOccurrenceId', 'teamsSessionNumber', 'teamsOnlineMeetingId',
     'teamsMeetingUrl', 'teamsWebLink', 'teamsStartDateTimeUtc',
     'teamsDurationMinutes', 'sessionDay', 'sessionRescheduled',
+    'liveSessionLinkOverride',
 }
 
 # A shared duplicate reads these values from its canonical source module.  They
 # are deliberately not persisted on the alias: saving an alias must not create
 # a second owner for the same live_sessions row or leave stale occurrence IDs
 # behind after the source meeting changes.
+#
+# ``liveSessionLinkOverride`` is not one of them. It is the alias's OWN join
+# link, set by Replace Teams links: the alias keeps the source's calendar, but
+# its learners join through the link it was given. Stripping it would undo the
+# replacement on the next save, and copying the source's would hand the alias
+# a link nobody chose for it.
 SHARED_TEAMS_DELIVERY_SETTING_KEYS = {
     'teamsLiveSessionId', 'teamsSessionNumber', 'teamsEventId',
     'teamsOnlineMeetingId', 'teamsCalendarSeries', 'teamsMeetingUrl',
@@ -17353,13 +17364,18 @@ def apply_shared_teams_settings_to_weeks(module, weeks):
                 return weeks
             current = component.get('settings') if isinstance(component.get('settings'), dict) else {}
             source = source_settings[index]
-            component['settings'] = {
+            merged = {
                 **current,
                 **{
                     key: value for key, value in source.items()
                     if key in SHARED_TEAMS_DELIVERY_SETTING_KEYS and value not in (None, '')
                 },
             }
+            own_link = clean_str(current.get('liveSessionLinkOverride'))
+            if own_link:
+                merged['liveSessionUrl'] = own_link
+                merged['teamsMeetingUrl'] = own_link
+            component['settings'] = merged
             index += 1
     return weeks
 
@@ -17529,8 +17545,8 @@ def live_session_booked_on_module_calendar(settings):
     """Whether the module series already holds a booked occurrence for this live session.
 
     ``teamsOccurrenceId``/``teamsSessionNumber`` are written only when a real
-    Graph occurrence was paired to the component, unlike ``liveSessionUrl``,
-    which the series stamps on every live session regardless.
+    Graph occurrence is paired to the component, unlike ``liveSessionUrl``,
+    which the series can stamp on a live session without a confirmed booking.
     """
     settings = settings if isinstance(settings, dict) else {}
     return bool(clean_str(settings.get('teamsOccurrenceId')) or parse_int(settings.get('teamsSessionNumber'), 0) > 0)
@@ -17544,9 +17560,10 @@ def module_has_booked_series(settings_list):
 def live_session_meeting_scope(settings, module_has_series=True):
     """Which calendar delivers this live session: 'main', 'additional' or 'pending'.
 
-    A booking is the fact and outranks any stored choice: a live session that
-    holds an additional meeting is 'additional', one the module series has
-    booked is 'main'. Otherwise the author's stored choice decides.
+    A confirmed booking outranks the stored choice: a live session that holds
+    an additional meeting is 'additional', one the module series has booked is
+    'main'. Otherwise the author's stored choice decides, and a legacy normal
+    meeting link fills in the display when no choice was stored.
 
     With neither, it depends on whether the module already has a calendar.
     Before it has one every live session is the module's -- there is nothing to
@@ -17565,6 +17582,11 @@ def live_session_meeting_scope(settings, module_has_series=True):
     chosen = clean_str(settings.get(LIVE_SESSION_MEETING_SCOPE_KEY)).lower()
     if chosen in LIVE_SESSION_MEETING_SCOPES:
         return chosen
+    # Legacy rows can retain a normal join link without occurrence metadata.
+    # The link settles what the dialog displays; it is not treated as a
+    # confirmed booking by `live_session_booked_on_module_calendar`.
+    if clean_str(settings.get('liveSessionUrl')) or clean_str(settings.get('teamsMeetingUrl')):
+        return 'main'
     return 'pending' if module_has_series else 'main'
 
 
@@ -17732,7 +17754,12 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
         """
         existing_settings = existing_settings if isinstance(existing_settings, dict) else {}
         if not occurrence and stored_calendar_series(series_row):
-            return {key: '' for key in ('teamsMeetingUrl', 'liveSessionUrl', 'teamsEventId', 'teamsOnlineMeetingId', 'teamsOccurrenceId', 'teamsLiveSessionId', 'teamsSessionNumber', 'sessionDateTimeUtc', 'teamsStartDateTimeUtc')}
+            empty_settings = {key: '' for key in ('teamsMeetingUrl', 'liveSessionUrl', 'teamsEventId', 'teamsOnlineMeetingId', 'teamsOccurrenceId', 'teamsLiveSessionId', 'teamsSessionNumber', 'sessionDateTimeUtc', 'teamsStartDateTimeUtc')}
+            override = clean_str(existing_settings.get('liveSessionLinkOverride'))
+            if override:
+                empty_settings['liveSessionUrl'] = override
+                empty_settings['teamsMeetingUrl'] = override
+            return empty_settings
         session_settings = live_occurrence_component_settings(occurrence, series_settings)
         # Imported defaults may still be stored on an unbooked component even
         # though Create used its group's current clock. Stamp the verified clock
@@ -17772,7 +17799,17 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                 if planned_instant:
                     planned_settings['sessionDateTimeUtc'] = planned_instant
                     planned_settings['teamsStartDateTimeUtc'] = planned_instant
-        return {**shared_series_settings, **planned_settings, **session_settings}
+        attached = {**shared_series_settings, **planned_settings, **session_settings}
+        # A bulk authoring replacement intentionally changes the join URL while
+        # leaving the Teams meeting identity and occurrence metadata intact.
+        # Keep that explicit override when the calendar is re-attached after a
+        # normal module save; an ordinary edit without this marker remains
+        # authoritative from the verified calendar occurrence.
+        override = clean_str(existing_settings.get('liveSessionLinkOverride'))
+        if override:
+            attached['liveSessionUrl'] = override
+            attached['teamsMeetingUrl'] = override
+        return attached
 
     session_index = 0
     sessions_per_week = delivery_days_per_week(module_row)
@@ -17901,9 +17938,14 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                 or live_session_meeting_scope(orphan_settings, series_already_booked) == 'additional'):
             continue
         if not dry_run:
+            attached_orphan_settings = {**orphan_settings, **series_settings}
+            override = clean_str(orphan_settings.get('liveSessionLinkOverride'))
+            if override:
+                attached_orphan_settings['liveSessionUrl'] = override
+                attached_orphan_settings['teamsMeetingUrl'] = override
             update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [row.get('id')], {
-                'settings_json': json_db_value({**orphan_settings, **series_settings}),
-                'live_sessions_link': clean_str(series_settings.get('liveSessionUrl')),
+                'settings_json': json_db_value(attached_orphan_settings),
+                'live_sessions_link': clean_str(attached_orphan_settings.get('liveSessionUrl') or attached_orphan_settings.get('teamsMeetingUrl')),
                 'updated_at': now,
             })
         updated += 1
@@ -18043,6 +18085,122 @@ def curriculum_module_teams_meeting_restore(request, module_catalogue_id):
         # real work to do.
         body['pendingComponents'] = pending_components
     return JsonResponse(body)
+
+
+def replaceable_live_session(row, *, shared=False):
+    """May a bulk replacement overwrite this component's join link?
+
+    The same rule the Module Builder's Replace Teams links dialog counts by: a
+    live session that carries a link, and is not an additional one-off meeting
+    -- that one is booked separately and keeps its own link. A module sharing
+    another module's meeting stores no link on its rows (it is read from the
+    source), so for it every such live session carries one.
+    """
+    if frontend_component_type(row.get('type')) != 'live-session':
+        return False
+    settings = component_builder_settings(row)
+    if clean_str(settings.get('extraTeamsMeetingUrl')):
+        return False
+    return shared or bool(clean_str(settings.get('liveSessionUrl') or settings.get('teamsMeetingUrl')))
+
+
+@csrf_exempt
+def curriculum_module_teams_links_replace(request, module_catalogue_id):
+    """Point the chosen weeks' live sessions at a new join link, and nothing else.
+
+    Its own endpoint rather than the structure PATCH, because that one rewrites
+    every week, component and KSB mapping in the module: on a large module the
+    full save outran the browser's timeout for an edit that changes a dozen
+    rows. This touches only the live-session components in the selected weeks.
+
+    Stored links only. Nothing is sent to Microsoft: the Teams meetings, their
+    invitations and attendees are left exactly as they are. The replacement is
+    stamped as ``liveSessionLinkOverride`` so a later module save, which
+    re-attaches the stored calendar, keeps the new link rather than restoring
+    the meeting's own one.
+
+    A module that shares another module's Teams meeting is changed on its own
+    rows only: it keeps the source's calendar, the source and the other modules
+    sharing it keep their link, and its own learners join through the new one.
+    """
+    if request.method != 'POST':
+        return json_error('Method not allowed.', status=405)
+    payload = json_body(request)
+    if not isinstance(payload, dict):
+        return json_error('Invalid JSON body.')
+    link = clean_str(payload.get('link'))
+    if not http_url(link):
+        return json_error('Paste a full http:// or https:// link.', fields=['link'])
+    raw_week_ids = payload.get('weekIds')
+    week_ids = unique([clean_str(value) for value in raw_week_ids if clean_str(value)]) if isinstance(raw_week_ids, list) else []
+    if not week_ids:
+        return json_error('Choose at least one week to update.', fields=['weekIds'])
+
+    ensure_module_authoring_tables()
+    requested_id = clean_str(module_catalogue_id)
+    resolved_id = resolve_stored_module_catalogue_id(requested_id) or requested_id
+    module_row = authoring_module_exists(resolved_id)
+    if not module_row:
+        return json_error('Module authoring structure not found.', status=404)
+    archived_error = archived_programme_module_edit_error(
+        module_row,
+        title=module_row.get('title'),
+        programme_id=module_row.get('programme_id'),
+        programme_name=module_row.get('programme_name'),
+    )
+    if archived_error:
+        return archived_error
+    shared = bool(clean_str(module_row.get('teams_shared_source_module_id')))
+
+    expected_revision = clean_str(payload.get('expectedRevision'))
+    updated_ids = []
+    try:
+        with transaction.atomic():
+            lock_module_structure_row(resolved_id)
+            # Not a refusal: this write changes only the link fields of the rows
+            # it names, so it cannot destroy another writer's work the way a full
+            # structure save can. The answer only tells the Builder whether it
+            # may take the new revision as its own (nothing else moved) or must
+            # merge the stored module first, as for any other outside write.
+            revision_was_current = bool(expected_revision) and module_structure_revision(resolved_id) == expected_revision
+            placeholders = ', '.join(['%s'] * len(week_ids))
+            rows = active_component_rows(authoring_fetch_all(
+                AUTHORING_COMPONENTS_TABLE,
+                f'module_catalogue_id = %s and week_id in ({placeholders})',
+                [resolved_id, *week_ids],
+                'display_order, id',
+            ))
+            now = datetime.utcnow()
+            for row in rows:
+                if not replaceable_live_session(row, shared=shared):
+                    continue
+                settings = as_json_value(row.get('settings_json'), {})
+                settings = settings if isinstance(settings, dict) else {}
+                update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [row.get('id')], {
+                    'settings_json': json_db_value({
+                        **settings,
+                        'liveSessionUrl': link,
+                        'teamsMeetingUrl': link,
+                        'liveSessionLinkOverride': link,
+                    }),
+                    'live_sessions_link': link,
+                    'updated_at': now,
+                })
+                updated_ids.append(clean_str(row.get('id')))
+    except Exception as exc:
+        logger.exception('Unable to replace Teams links for %s.', resolved_id)
+        return json_error('The Teams links could not be saved. Nothing was changed.', status=500, detail=str(exc))
+
+    if updated_ids:
+        invalidate_curriculum_cache()
+    return JsonResponse({
+        'updated': len(updated_ids),
+        'updatedComponentIds': updated_ids,
+        'link': link,
+        # Read after the commit, so it describes the module as this write left it.
+        'structureRevision': module_structure_revision(resolved_id) or STRUCTURE_REVISION_UNAVAILABLE,
+        'revisionWasCurrent': revision_was_current,
+    })
 
 
 # --------------------------------------------------- Teams calendar sync state
@@ -20915,7 +21073,173 @@ def save_authoring_mapping(module_catalogue_id, mapping, week_id=None, component
     ))
 
 
-def save_module_authoring_structure(module_catalogue_id, payload, *, repair_links=True):
+# ---------------------------------------------------------------------------
+# Partial structure saves.
+#
+# The Module Builder used to send, and the server used to rewrite, every week,
+# component and KSB mapping in a module on every save. On a module of 845
+# components that was ~15 MB each way and outran the browser's timeout for an
+# edit that changed one row. A partial save sends only what the author changed;
+# the server merges it into the stored module and writes only the rows that
+# then differ from what is stored. The rows themselves are built by the same
+# code as a full save, so the stored result cannot drift between the two.
+# ---------------------------------------------------------------------------
+
+AUTHORING_JSON_COMPARE_COLUMNS = {'settings_json', 'ksb_mappings', 'learning_outcomes'}
+AUTHORING_COMPARE_IGNORED_COLUMNS = {'created_at', 'updated_at'}
+
+
+class ModuleStructureDeltaConflict(ValueError):
+    """A partial save names a week or component the stored module does not hold."""
+
+
+def authoring_comparable(column, value):
+    if column in AUTHORING_JSON_COMPARE_COLUMNS:
+        return parse_json_value(value, value)
+    if isinstance(value, bool) or value is None:
+        return value
+    if isinstance(value, (int, float)) or type(value).__name__ == 'Decimal':
+        return float(value)
+    return value
+
+
+def authoring_row_differs(payload, stored_row):
+    """Would writing ``payload`` change ``stored_row``? Timestamps aside.
+
+    Errs towards True: a value that merely looks different is written, which
+    costs a row, never correctness.
+    """
+    if not stored_row:
+        return True
+    for column, value in payload.items():
+        if column in AUTHORING_COMPARE_IGNORED_COLUMNS or column not in stored_row:
+            continue
+        if authoring_comparable(column, value) != authoring_comparable(column, stored_row.get(column)):
+            return True
+    return False
+
+
+def authoring_row_is_active(row):
+    return not row.get('deleted_at') and not truthy(row.get('is_programme_deleted'))
+
+
+def authoring_mapping_owner(row):
+    if clean_str(row.get('component_id')):
+        return ('component', clean_str(row.get('component_id')))
+    if clean_str(row.get('week_id')):
+        return ('week', clean_str(row.get('week_id')))
+    return ('module', '')
+
+
+def authoring_mapping_signature(rows):
+    """What an owner's KSB mappings say, without their ids.
+
+    By content because a mapping that arrives without an id is minted a fresh
+    one on every save: compared by id, an untouched component would always
+    look changed.
+    """
+    return sorted(
+        json.dumps({
+            column: authoring_comparable(column, value)
+            for column, value in row.items()
+            if column not in AUTHORING_COMPARE_IGNORED_COLUMNS
+            and column not in {'id', 'deleted_at', 'deleted_by', 'deleted_via_parent', 'is_programme_deleted'}
+        }, sort_keys=True, default=str)
+        for row in rows
+    )
+
+
+def soft_delete_authoring_ids(table, ids):
+    ids = [value for value in ids if value]
+    for start in range(0, len(ids), 500):
+        chunk = ids[start:start + 500]
+        placeholders = ', '.join(['%s'] * len(chunk))
+        authoring_soft_delete(table, f'id in ({placeholders})', chunk, deleted_by='module-save')
+
+
+def write_changed_authoring_rows(module_catalogue_id, week_payloads, component_payloads, mapping_payloads, stored_components_by_id):
+    """Write only what differs from the stored module; withdraw only what left it."""
+    stored_weeks_by_id = {
+        clean_str(row.get('id')): row
+        for row in authoring_fetch_all(AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
+    }
+    for table, payloads, stored_by_id in (
+        (AUTHORING_WEEKS_TABLE, week_payloads, stored_weeks_by_id),
+        (AUTHORING_COMPONENTS_TABLE, component_payloads, stored_components_by_id),
+    ):
+        kept = {clean_str(payload.get('id')) for payload in payloads}
+        soft_delete_authoring_ids(table, [
+            row_id for row_id, row in stored_by_id.items()
+            if row_id not in kept and authoring_row_is_active(row)
+        ])
+        authoring_bulk_upsert(table, ['id'], [
+            payload for payload in payloads
+            if authoring_row_differs(payload, stored_by_id.get(clean_str(payload.get('id'))))
+        ])
+
+    stored_mappings_by_owner = defaultdict(list)
+    for row in authoring_fetch_all(AUTHORING_KSB_MAPPINGS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id]):
+        if authoring_row_is_active(row):
+            stored_mappings_by_owner[authoring_mapping_owner(row)].append(row)
+    new_mappings_by_owner = defaultdict(list)
+    for payload in mapping_payloads:
+        new_mappings_by_owner[authoring_mapping_owner(payload)].append(payload)
+    withdrawn, written = [], []
+    for owner in set(stored_mappings_by_owner) | set(new_mappings_by_owner):
+        stored_rows = stored_mappings_by_owner.get(owner, [])
+        new_rows = new_mappings_by_owner.get(owner, [])
+        if authoring_mapping_signature(stored_rows) == authoring_mapping_signature(new_rows):
+            continue
+        withdrawn.extend(clean_str(row.get('id')) for row in stored_rows)
+        written.extend(new_rows)
+    soft_delete_authoring_ids(AUTHORING_KSB_MAPPINGS_TABLE, withdrawn)
+    authoring_bulk_upsert(AUTHORING_KSB_MAPPINGS_TABLE, ['id'], written)
+
+
+def merge_partial_module_structure(stored, payload):
+    """Rebuild the whole module a full save would have sent, from a partial one.
+
+    Module fields come from the payload alone -- as in a full save, where they
+    come from the client and nowhere else. Weeks and components the author
+    changed come from ``structureDelta``; everything else is the stored copy.
+    The delta carries the order of every week and component, so moves,
+    reorders and removals need no rows of their own.
+    """
+    delta = payload.get('structureDelta')
+    if not isinstance(delta, dict):
+        raise ModuleAuthoringValidationError([{'path': 'structureDelta', 'message': 'A partial save needs its changes.'}])
+    stored_weeks = {clean_str(week.get('id')): week for week in (stored.get('weekStructure') or [])}
+    stored_components = {
+        clean_str(component.get('id')): component
+        for week in stored_weeks.values()
+        for component in (week.get('components') or [])
+    }
+    changed_weeks = delta.get('weeks') if isinstance(delta.get('weeks'), dict) else {}
+    changed_components = delta.get('components') if isinstance(delta.get('components'), dict) else {}
+    component_order = delta.get('componentOrder') if isinstance(delta.get('componentOrder'), dict) else {}
+    week_order = delta.get('weekOrder') if isinstance(delta.get('weekOrder'), list) else []
+    weeks = []
+    for raw_week_id in week_order:
+        week_id = clean_str(raw_week_id)
+        source = changed_weeks.get(week_id) or stored_weeks.get(week_id)
+        if not isinstance(source, dict):
+            raise ModuleStructureDeltaConflict(f'Week {week_id} is not in the saved module.')
+        components = []
+        for raw_component_id in component_order.get(week_id) or []:
+            component_id = clean_str(raw_component_id)
+            component = changed_components.get(component_id) or stored_components.get(component_id)
+            if not isinstance(component, dict):
+                raise ModuleStructureDeltaConflict(f'Component {component_id} is not in the saved module.')
+            components.append(component)
+        weeks.append({**{key: value for key, value in source.items() if key != 'components'}, 'components': components})
+    module_fields = {
+        key: value for key, value in payload.items()
+        if key not in {'saveMode', 'structureDelta', 'expectedRevision', 'expected_revision', 'weekStructure', 'weeks'}
+    }
+    return {**module_fields, 'weekStructure': weeks}
+
+
+def save_module_authoring_structure(module_catalogue_id, payload, *, repair_links=True, write_changed_only=False):
     """Persist one module's structure.
 
     ``repair_links=False`` skips the parent-link repair, which a caller that is
@@ -20923,6 +21247,11 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
     row and writes back the ones it corrects, so running it per module made a
     save cost one full pass per module on top of the single pass the tree save
     already runs once every module is written.
+
+    ``write_changed_only=True`` writes only the week, component and KSB mapping
+    rows that differ from what is stored, and withdraws only the ones the
+    payload no longer holds, instead of withdrawing and rewriting them all. The
+    rows are built identically either way; see merge_partial_module_structure.
     """
     validation_errors = validate_module_authoring_payload(payload)
     if validation_errors:
@@ -21145,9 +21474,10 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
             for row in authoring_fetch_all(
                 AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id])
         }
-        authoring_soft_delete(AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], deleted_by='module-save')
-        authoring_soft_delete(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], deleted_by='module-save')
-        authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], deleted_by='module-save')
+        if not write_changed_only:
+            authoring_soft_delete(AUTHORING_WEEKS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], deleted_by='module-save')
+            authoring_soft_delete(AUTHORING_COMPONENTS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], deleted_by='module-save')
+            authoring_soft_delete(AUTHORING_KSB_MAPPINGS_TABLE, 'module_catalogue_id = %s', [module_catalogue_id], deleted_by='module-save')
 
         mapping_source_cache = {}
         week_payloads = []
@@ -21236,7 +21566,13 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
                         'coachValidationRequired', 'coach_validation_required', True),
                     'display_order': component_index,
                     'settings_json': json_db_value(component_settings),
-                    'live_sessions_link': clean_str(component_settings.get('liveSessionUrl') or component_settings.get('teamsMeetingUrl')),
+                    # An alias has its meeting keys stripped above, so its own
+                    # replaced link is the only one it can store here.
+                    'live_sessions_link': clean_str(
+                        component_settings.get('liveSessionUrl')
+                        or component_settings.get('teamsMeetingUrl')
+                        or component_settings.get('liveSessionLinkOverride')
+                    ),
                     'copied_from_id': clean_str(component.get('copiedFromId') or component.get('copied_from_id')) or None,
                     # A saved component is attached to this module by definition,
                     # so it is never a library item - and if it was copied out of
@@ -21255,9 +21591,14 @@ def save_module_authoring_structure(module_catalogue_id, payload, *, repair_link
                 module_row=saved_module_row,
                 source_cache=mapping_source_cache,
             ))
-        authoring_bulk_upsert(AUTHORING_WEEKS_TABLE, ['id'], week_payloads)
-        authoring_bulk_upsert(AUTHORING_COMPONENTS_TABLE, ['id'], component_payloads)
-        authoring_bulk_upsert(AUTHORING_KSB_MAPPINGS_TABLE, ['id'], mapping_payloads)
+        if write_changed_only:
+            write_changed_authoring_rows(
+                module_catalogue_id, week_payloads, component_payloads, mapping_payloads, stored_components_by_id,
+            )
+        else:
+            authoring_bulk_upsert(AUTHORING_WEEKS_TABLE, ['id'], week_payloads)
+            authoring_bulk_upsert(AUTHORING_COMPONENTS_TABLE, ['id'], component_payloads)
+            authoring_bulk_upsert(AUTHORING_KSB_MAPPINGS_TABLE, ['id'], mapping_payloads)
         sync_progress_ksbs({
             component['id']: as_json_value(component.get('ksb_mappings'), [])
             for component in component_payloads
@@ -24060,6 +24401,12 @@ def curriculum_module_structure(request, module_catalogue_id):
         or payload.get('expected_revision')
         or request.headers.get('If-Match')
     )
+    # A partial save only says what changed relative to one stored version, so
+    # it is only meaningful against that version: it needs the revision, and a
+    # module that is already stored.
+    partial_save = clean_str(payload.get('saveMode')) == 'partial'
+    if partial_save and (not expected_revision or not stored_catalogue_id):
+        return json_error('A partial save needs the saved version it was made against. Save the whole module instead.')
     try:
         if module_catalogue_id.startswith('training-module-'):
             training_id = module_catalogue_id.replace('training-module-', '', 1)
@@ -24114,7 +24461,28 @@ def curriculum_module_structure(request, module_catalogue_id):
                             resolved_catalogue_id,
                         ),
                     )
-            result = save_module_authoring_structure(resolved_catalogue_id, payload)
+            if partial_save:
+                stored_structure = get_authoring_structure_payload(resolved_catalogue_id)
+                if not stored_structure:
+                    return json_error('Module not found.', status=404)
+                try:
+                    full_payload = merge_partial_module_structure(stored_structure, payload)
+                except ModuleStructureDeltaConflict:
+                    # The changes were made against a version of the module that
+                    # no longer matches what is stored. Answered exactly like a
+                    # revision mismatch, so the Builder merges and tries again.
+                    return json_error(
+                        'This module changed after you opened it. Your changes have not been '
+                        'overwritten. Reload the latest version before saving again.',
+                        status=409,
+                        conflict=True,
+                        expectedRevision=expected_revision,
+                        currentRevision=module_structure_revision(resolved_catalogue_id),
+                        module=stamp_revision_after_write(stored_structure, resolved_catalogue_id),
+                    )
+                result = save_module_authoring_structure(resolved_catalogue_id, full_payload, write_changed_only=True)
+            else:
+                result = save_module_authoring_structure(resolved_catalogue_id, payload)
             if module_catalogue_id.startswith('training-module-'):
                 link_training_row_to_catalogue(
                     module_catalogue_id.replace('training-module-', '', 1),
