@@ -27,7 +27,7 @@ from .migrated_intelligence_views import (
 )
 from .migrated_summary_upload import migrated_review_summary_upload
 from .migrated_progress_views import migrated_review_progress
-from .dashboard_view import coach_dashboard
+from .dashboard_view import coach_dashboard, coach_dashboard_section
 from .views import (
     coach_attendance,
     coach_attendance_details,
@@ -89,6 +89,10 @@ urlpatterns = [
     path('coaches', coach_directory, name='coach-directory'),
     path('coaches/calendar', coach_directory_calendar, name='coach-directory-calendar'),
     path('coach/dashboard', coach_dashboard, name='coach-dashboard'),
+    path('coach/dashboard/summary', coach_dashboard_section, {"section": "summary"}, name='coach-dashboard-summary'),
+    path('coach/dashboard/learners', coach_dashboard_section, {"section": "learners"}, name='coach-dashboard-learners'),
+    path('coach/dashboard/meetings', coach_dashboard_section, {"section": "meetings"}, name='coach-dashboard-meetings'),
+    path('coach/dashboard/risk', coach_dashboard_section, {"section": "risk"}, name='coach-dashboard-risk'),
     path('coach/learners/<int:learner_id>/case-file', coach_learner_case_file, name='coach-learner-case-file'),
     path('coach/learners/<int:learner_id>/next-session', coach_learner_case_file_next_session, name='coach-learner-case-file-next-session'),
     path('coach/learners/<int:learner_id>/reviews', coach_learner_case_file_reviews, name='coach-learner-case-file-reviews'),

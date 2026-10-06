@@ -192,27 +192,16 @@ export function otjhProgressAsOfToday(
     ? learner.otjhTargetAsOfToday
     : null;
   const apiStatus = learner.otjhRagStatus;
-  if (apiTargetAsOfToday !== null && apiStatus) {
-    const target = apiTargetAsOfToday;
-    const available = target > 0 && actual !== null;
-    const shortfall = typeof learner.otjhShortfallHours === 'number'
-      && Number.isFinite(learner.otjhShortfallHours)
-      ? Math.max(learner.otjhShortfallHours, 0)
-      : available ? Math.max(target - actual!, 0) : null;
-    const delta = typeof learner.otjhDeltaHours === 'number'
-      && Number.isFinite(learner.otjhDeltaHours)
-      ? learner.otjhDeltaHours
-      : available ? actual! - target : null;
-    const percent = typeof learner.otjhProgressAsOfToday === 'number'
-      && Number.isFinite(learner.otjhProgressAsOfToday)
-      ? Math.max(0, Math.min(100, learner.otjhProgressAsOfToday))
-      : available ? Math.max(0, Math.min(100, (actual! / target) * 100)) : null;
+  if (apiStatus) {
+    // The backend contract is authoritative, including explicit nulls and
+    // unavailable data. Do not reconstruct it from legacy metrics/dates.
+    const metric = (value?: number | null) => typeof value === 'number' && Number.isFinite(value) ? value : null;
     return {
       actualHours: actual,
-      targetHours: target,
-      percent,
-      gapHours: shortfall,
-      deltaHours: delta,
+      targetHours: apiTargetAsOfToday,
+      percent: metric(learner.otjhProgressAsOfToday),
+      gapHours: metric(learner.otjhShortfallHours),
+      deltaHours: metric(learner.otjhDeltaHours),
       status: apiStatus,
     };
   }
