@@ -1,3 +1,4 @@
+import { reviewCategory } from '@/lib/reviewCategory';
 import { Fragment, useState, useEffect, useMemo, useCallback, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
@@ -715,7 +716,7 @@ function nextEventSummaryForLearner(
 ): { label: string; status: ScheduleStatus } {
   const matches = events
     .filter(event => (
-      event.source === source &&
+      reviewCategory(event) === source &&
       eventMatchesLearner(event, learner) &&
       !isCompletedEvent(event) &&
       event.status !== 'cancelled'
@@ -840,7 +841,7 @@ function formatCalendarWeekday(value?: string | null) {
 }
 
 function eventTypeLabel(event: CoachCalendarEvent) {
-  if (event.source === 'progress-review') return eventPeriodLabel(event);
+  if (reviewCategory(event) === 'progress-review') return eventPeriodLabel(event);
   if (event.source === 'mcr') return 'Monthly Coaching';
   return displayValue(event.title);
 }
@@ -921,7 +922,7 @@ function buildOverdueMap(learners: CoachLearner[], events: CoachCalendarEvent[])
 
   learners.forEach(learner => {
     const matches = overdueEvents.filter(event => eventMatchesLearner(event, learner));
-    const review = matches.find(event => event.source === 'progress-review');
+    const review = matches.find(event => reviewCategory(event) === 'progress-review');
     const coaching = matches.find(event => event.source === 'mcr');
     if (!review && !coaching) return;
     map.set(learner.id, {
@@ -1618,7 +1619,7 @@ export default function CoachDashboard() {
       .filter(event => event.status !== 'cancelled' && isEventThisWeek(event)),
     [activeCalendarEvents, liveSessionEvents],
   );
-  const progressReviewsThisWeek = popupWeekEvents === undefined && meetingsLoadedKey === cacheKey ? weekEvents.filter(event => event.source === 'progress-review').length : totals?.prThisWeek ?? undefined;
+  const progressReviewsThisWeek = popupWeekEvents === undefined && meetingsLoadedKey === cacheKey ? weekEvents.filter(event => reviewCategory(event) === 'progress-review').length : totals?.prThisWeek ?? undefined;
   const monthlyCoachingThisWeek = popupWeekEvents === undefined && meetingsLoadedKey === cacheKey ? weekEvents.filter(event => event.source === 'mcr').length : totals?.mcmThisWeek ?? undefined;
   const catchUpsThisWeek = popupWeekEvents === undefined && meetingsLoadedKey === cacheKey ? weekEvents.filter(event => event.source === 'catch-up').length : totals?.catchUpsThisWeek;
 
@@ -2022,7 +2023,7 @@ function KpiDetailModal({ type, loading, error, onRetry, learners, popupLearners
     : type === 'on-track' || type === 'need-attention'
       ? popupLearners.filter(learner => learner.otjh.ragStatus === type)
       : popupLearners;
-  const reviews = sortEvents(calendarEvents.filter(event => event.source === 'progress-review' && isWithinNextDays(event, 14)));
+  const reviews = sortEvents(calendarEvents.filter(event => reviewCategory(event) === 'progress-review' && isWithinNextDays(event, 14)));
   const searchedLearners = lightweightLearners.filter(learner =>
     (statusFilter === 'all' || learner.otjh.ragStatus === statusFilter)
     && `${learner.name} ${learner.programme} ${learner.group}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
@@ -2034,7 +2035,7 @@ function KpiDetailModal({ type, loading, error, onRetry, learners, popupLearners
     && `${learner.learner} ${learner.programme} ${learner.group}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
   );
   const weeklyEventSource = type === 'pr-week' ? 'progress-review' : type === 'mcm-week' ? 'mcr' : type === 'catch-ups-week' ? 'catch-up' : null;
-  const weeklyDetails = weeklyEventSource ? sortEvents(weekEvents.filter(event => event.source === weeklyEventSource)) : [];
+  const weeklyDetails = weeklyEventSource ? sortEvents(weekEvents.filter(event => reviewCategory(event) === weeklyEventSource)) : [];
   const detailCount = type === 'evidence' || type === 'pending-marking'
     ? pendingEvidence
     : type === 'reviews'

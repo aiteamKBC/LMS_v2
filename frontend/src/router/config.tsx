@@ -875,7 +875,11 @@ const routes: RouteObject[] = [
   },
   {
     path: "/coach/progress-reviews",
-    element: <CoachProgressReviews />,
+    element: <CoachProgressReviews key="progress-review" />,
+  },
+  {
+    path: "/coach/reviews",
+    element: <CoachProgressReviews key="review" category="review" />,
   },
   {
     path: "/coach/progress-reviews/:eventKey",

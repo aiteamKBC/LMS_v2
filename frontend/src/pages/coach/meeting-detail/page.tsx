@@ -44,7 +44,7 @@ interface MeetingDetailLocationState {
 }
 
 function safeReturnTo(value?: string) {
-  const allowedPaths = ['/coach/meetings', '/coach/monthly-coaching', '/coach/progress-reviews', '/coach/learner-case-file', '/coach/timetable'];
+  const allowedPaths = ['/coach/meetings', '/coach/monthly-coaching', '/coach/progress-reviews', '/coach/reviews', '/coach/learner-case-file', '/coach/timetable'];
   return value && allowedPaths.some(path => value === path || value.startsWith(`${path}/`) || value.startsWith(`${path}?`)) ? value : null;
 }
 
@@ -166,13 +166,14 @@ export default function CoachMeetingDetail() {
   const { eventKey = '' } = useParams();
   const isProgressReview = location.pathname.startsWith('/coach/progress-reviews/')
     || location.pathname.startsWith('/coach/reviews/');
-  const listPath = isProgressReview ? '/coach/progress-reviews' : '/coach/monthly-coaching';
+  const otherReviews = location.pathname.startsWith('/coach/reviews/');
+  const listPath = otherReviews ? '/coach/reviews' : isProgressReview ? '/coach/progress-reviews' : '/coach/monthly-coaching';
   const returnTo = safeReturnTo((location.state as MeetingDetailLocationState | null)?.returnTo) || listPath;
   const backLabel = returnTo.startsWith('/coach/learner-case-file')
     ? 'Back to Learner Reviews'
     : returnTo.startsWith('/coach/timetable')
       ? 'Back to Timetable'
-    : isProgressReview ? 'Back to Progress Reviews' : 'Back to Coaching Meetings';
+    : otherReviews ? 'Back to Review' : isProgressReview ? 'Back to Progress Reviews' : 'Back to Coaching Meetings';
   const [event, setEvent] = useState<CoachCalendarEvent | null>(null);
   const [ownerName, setOwnerName] = useState('Coach');
   const [scheduleForm, setScheduleForm] = useState<ScheduleFormState>(EMPTY_SCHEDULE_FORM);
@@ -403,7 +404,7 @@ export default function CoachMeetingDetail() {
   );
 
   return (
-    <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle={isProgressReview ? 'Review Details' : 'Meeting Details'} pageSubtitle={isProgressReview ? 'Progress review workspace' : 'Monthly coaching meeting workspace'} userName={ownerName} userRole="Progress Coach">
+    <WorkspaceShell role="coach" roleLabel={coachNav.label} navItems={coachNav.items} workspaceLabel={coachNav.workspaceLabel} pageTitle={isProgressReview ? 'Review Details' : 'Meeting Details'} pageSubtitle={otherReviews ? 'Learner review workspace' : isProgressReview ? 'Progress review workspace' : 'Monthly coaching meeting workspace'} userName={ownerName} userRole="Progress Coach">
       <PageContainer>
         {loading ? <Panel><RowsSkeleton rows={6} /></Panel> : null}
         {!loading && error ? <EmptyState variant="error" title={`Unable to load this ${isProgressReview ? 'review' : 'meeting'}.`} description={error} /> : null}

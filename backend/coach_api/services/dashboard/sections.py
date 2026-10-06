@@ -51,7 +51,8 @@ SORT_FIELDS = ("ksbCompleted", "ksbTarget", "ksbProgress", "ksbProgressAvailable
 RISK_FIELDS = IDENTITY_FIELDS + OTJH_FIELDS + ATTENDANCE_FIELDS + ("lastPr", "lastMcm")
 # Full event DTOs belong to the on-demand meetings section. The summary needs
 # only date/source/status/learner identity to keep the existing weekly rule.
-COUNT_EVENT_FIELDS = ("learnerId", "source", "status", "date", "scheduledDate", "targetDate", "originalDate")
+COUNT_EVENT_FIELDS = ("learnerId", "source", "status", "date", "scheduledDate", "targetDate", "originalDate",
+                      "importedReviewType", "reviewTypeCode")
 POPUP_EVENT_FIELDS = COUNT_EVENT_FIELDS + ("id", "eventKey", "calendarEventId", "enrolmentId", "learner", "title", "programme", "group", "scheduledTime", "timeLabel", "durationMinutes")
 MARKING_FIELDS = (
     "id", "learnerId", "learner", "initials", "email", "programme", "group",
@@ -217,10 +218,11 @@ def canonical_meeting_source(value):
 
 def weekly_meeting_rows(events, learners, monday, friday):
     from coach_api import views as domain
+    from coach_api.review_categories import review_event_category
 
     by_id = {str(item["id"]): item for item in learners if item.get("id") is not None and _is_active(item)}
     for event in events:
-        source = canonical_meeting_source(event.get("source"))
+        source = canonical_meeting_source(review_event_category(event))
         learner = by_id.get(str(event.get("learnerId"))) if event.get("learnerId") is not None else None
         day = domain.parse_schedule_date(event.get("scheduledDate") or event.get("date") or event.get("targetDate"))
         if source and learner and day and monday <= day <= friday and event.get("status") not in {"cancelled", "completed"}:
