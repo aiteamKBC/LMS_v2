@@ -169,6 +169,7 @@ from curriculum_api.views import (
 )
 from curriculum_api import review_instances as curriculum_review_instances
 from curriculum_api import review_types as curriculum_review_types
+from .review_categories import imported_review_category, review_event_category
 from curriculum_api import reviews as curriculum_reviews
 from learner_api.review_progress_snapshot import (
     UnresolvedTrainingPlanTarget,
@@ -4655,7 +4656,7 @@ def monthly_event_matches_learner(event: dict, learner: dict) -> bool:
 
 
 def monthly_event_type_label(event: dict) -> str:
-    source = clean_text(event.get("source")).lower()
+    source = review_event_category(event)
     if source == "mcr":
         return "MCM"
     if source == "progress-review":
@@ -4740,7 +4741,7 @@ def build_monthly_activity_learner(
         for event in learner_events
         if clean_text(event.get("status")).lower() != CoachCalendarEvent.STATUS_CANCELLED
     ]
-    event_sources = [clean_text(event.get("source")).lower() for event in active_learner_events]
+    event_sources = [review_event_category(event) for event in active_learner_events]
     mcm_count = event_sources.count("mcr")
     review_count = event_sources.count("progress-review")
     catchup_count = event_sources.count(CATCH_UP_EVENT_TYPE)
@@ -5811,7 +5812,7 @@ def build_timetable_summary(
                     source_needs_scheduling.get("mcr", 0),
                 ),
                 "progressReview": summarize_timetable_events(
-                    [event for event in events if event["source"] == "progress-review"],
+                    [event for event in events if review_event_category(event) == "progress-review"],
                     source_needs_scheduling.get("progress-review", 0),
                 ),
                 "catchUp": summarize_timetable_events(
@@ -10054,9 +10055,9 @@ def resolve_coach_review_events(
             for profile_id in sorted(aptem_by_profile)
         )
     counts = {
-        "progressReviewRows": sum(1 for event in aptem_events if event["source"] == "progress-review"),
+        "progressReviewRows": sum(1 for event in aptem_events if review_event_category(event) == "progress-review"),
         "mcrRows": sum(1 for event in aptem_events if event["source"] == "mcr"),
-        "reviewRows": 0,
+        "reviewRows": sum(1 for event in aptem_events if review_event_category(event) == "review"),
         "learnersWithDates": len(aptem_contributors),
         "reviewAnchorSkipped": 0,
         "reviewAnchorSkipReasons": {},
@@ -10311,7 +10312,7 @@ def collect_generated_timetable(
 
     source_needs_scheduling = {
         "mcr": sum(1 for event in events if event["source"] == "mcr" and event["status"] == CoachCalendarEvent.STATUS_NOT_SCHEDULED),
-        "progress-review": sum(1 for event in events if event["source"] == "progress-review" and event["status"] == CoachCalendarEvent.STATUS_NOT_SCHEDULED),
+        "progress-review": sum(1 for event in events if review_event_category(event) == "progress-review" and event["status"] == CoachCalendarEvent.STATUS_NOT_SCHEDULED),
         CATCH_UP_EVENT_TYPE: sum(
             1
             for event in events
@@ -11934,7 +11935,7 @@ def latest_completed_review_dates_from_events(rows, events) -> dict[int, dict[st
     for event in events or []:
         if clean_text(event.get("status")).casefold() != CoachCalendarEvent.STATUS_COMPLETED:
             continue
-        source = clean_text(event.get("source")).casefold()
+        source = review_event_category(event)
         field = "lastPr" if source == "progress-review" else "lastMcm" if source == "mcr" else None
         if field is None:
             continue
@@ -11959,6 +11960,32 @@ def latest_completed_review_dates_from_events(rows, events) -> dict[int, dict[st
         }
         for profile_id, values in latest.items()
     }
+
+
+def dashboard_imported_completed_review_dates(profile_ids, *, owner_email, owner_name):
+    """Repair old Aptem PR snapshot dates with scoped reads, without native planning.
+
+    The date-only dashboard rows do not contain the Aptem identity bridge, so
+    load the small set of identity/display fields the imported adapter needs.
+    """
+    from .review_sources import enrich_imported_events
+
+    profiles = list(LearnerProfile.objects.annotate(
+        coach_email_key=Lower(Trim("coach_email")),
+    ).filter(coach_email_key=normalize_email(owner_email), pk__in=profile_ids).only(
+        "id", "aptem_id", "enrolment_id", "full_name", "email", "learner_type",
+        "programme", "cohort", "group_name",
+    ))
+    aptem_by_profile, _conflicts = resolve_effective_aptem_ids(profiles)
+    if not aptem_by_profile:
+        return {}
+    events, _contributors = fetch_aptem_review_events(
+        profiles, aptem_by_profile, owner_email=owner_email, owner_name=owner_name,
+    )
+    return latest_completed_review_dates_from_events(
+        [profile for profile in profiles if profile.id in aptem_by_profile],
+        enrich_imported_events(events),
+    )
 
 
 def dashboard_latest_completed_review_dates(
@@ -13334,11 +13361,14 @@ def coach_caseload(request):
             apply_aptem_variance_status(learner, aptem_by_profile.get(int(row.id)))
             imported = review_history.get(int(row.id), {})
             last_mcm = _latest_completed_review_date(imported.get("mcm", []))
-            last_pr = _latest_completed_review_date(imported.get("reviews", []))
+            last_pr = _latest_completed_review_date([
+                review for review in imported.get("reviews", [])
+                if imported_review_category(review.get("type")) == "progress-review"
+            ])
             if last_mcm:
                 learner["lastReview"] = last_mcm
-            if last_pr:
-                learner["lastProgressReview"] = last_pr
+            if imported:
+                learner["lastProgressReview"] = last_pr or "--"
             if paginated:
                 apply_latest_learning_activity(learner, latest_activities.get(int(row.id)))
         if paginated:
@@ -13355,8 +13385,8 @@ def coach_caseload(request):
             for row, learner in zip(rows, learners):
                 dates = review_dates.get(int(row.id), {})
                 learner.update(dates)
-                if dates.get("lastPr"):
-                    learner["lastProgressReview"] = dates["lastPr"]
+                if "lastPr" in dates:
+                    learner["lastProgressReview"] = dates["lastPr"] or "--"
                 if dates.get("lastMcm"):
                     learner["lastReview"] = dates["lastMcm"]
                 apply_attendance_summary(learner, attendance_by_id.get(int(row.id)))

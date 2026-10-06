@@ -1,5 +1,6 @@
 import { fetchSharedJsonGet } from '@/lib/sharedGetJson';
 import { coachFetch } from '@/lib/coachFetch';
+import { reviewCategory } from '@/lib/reviewCategory';
 import { withCoachViewAs } from '@/lib/coachViewAs';
 
 interface CoachCalendarFetchOptions {
@@ -707,7 +708,7 @@ export function latestCompletedReviewDate(
   const latest = events
     .filter(event => (
       isCompletedEvent(event)
-      && event.source === source
+      && reviewCategory(event) === source
       && String(event.learnerId || '') === String(learnerId)
     ))
     .map(event => ({

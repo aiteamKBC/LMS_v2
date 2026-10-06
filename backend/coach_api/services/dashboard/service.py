@@ -32,9 +32,10 @@ class CoachDashboardService:
     # v17 carries the Case File start date separately for table display.
     # v18 makes startDate itself use the Profile resolver.
     # v19 keeps imported Review continuations on their source occurrence.
+    # v20 separates other imported reviews from PR dates and dashboard counts.
     # Older snapshots may legitimately contain ``--`` dates, so they must not
     # be served as if they were current after the serializer is corrected.
-    SCHEMA_VERSION = 19
+    SCHEMA_VERSION = 20
 
     def build(self) -> dict:
         """Read the persistent projection; build once only if it is absent."""
@@ -97,6 +98,15 @@ class CoachDashboardService:
         profile_ids = [identity for identity in profile_ids if identity > 0]
         rows = fetch_dashboard_profile_dates(self.context.owner_email, profile_ids) if profile_ids else []
         rows_by_id = {str(row.id): row for row in rows}
+        snapshot_version = (payload.get("readModel") or {}).get("version")
+        review_dates = {}
+        if rows and snapshot_version is not None and snapshot_version < 20:
+            # Old projections can contain a completed onboarding review as
+            # Last PR. Read the owned history while the normal refresh queues.
+            review_dates = domain.dashboard_imported_completed_review_dates(
+                [row.id for row in rows], owner_email=self.context.owner_email,
+                owner_name=(payload.get("owner") or {}).get("name") or "Coach",
+            )
         learners = []
         for learner in payload.get("learners") or []:
             row = rows_by_id.get(str(learner.get("id")))
@@ -108,6 +118,10 @@ class CoachDashboardService:
             learner["startDate"] = domain.caseload_profile_start_date(row)
             learner["displayStartDate"] = learner["startDate"]
             learner["displayEndDate"] = domain.format_date(getattr(getattr(row, "_caseload_source", None), "learner_end_date", None))
+            dates = review_dates.get(domain.to_int(learner.get("id")))
+            if dates is not None:
+                learner["lastPr"] = dates.get("lastPr")
+                learner["lastProgressReview"] = dates.get("lastPr") or "--"
             learners.append(learner)
         if "learners" in payload:
             payload["learners"] = learners
@@ -321,7 +335,8 @@ class CoachDashboardService:
             completed = event.get("date") or event.get("scheduledDate")
             if learner_id is None or not completed:
                 continue
-            key = "lastMcm" if event.get("source") == "mcr" else "lastPr" if event.get("source") == "progress-review" else None
+            category = domain.review_event_category(event)
+            key = "lastMcm" if category == "mcr" else "lastPr" if category == "progress-review" else None
             if key and (last_dates[learner_id][key] is None or completed > last_dates[learner_id][key]):
                 last_dates[learner_id][key] = completed
 
@@ -335,6 +350,7 @@ class CoachDashboardService:
         for row, learner in zip(context.rows, context.learners):
             learner.update(last_dates.get(int(row.id), {"lastPr": None, "lastMcm": None}))
             learner.update(progress_projections.get(int(row.id), {}))
+            learner["lastProgressReview"] = learner["lastPr"] or "--"
             domain.apply_audit_hour_totals(learner, audit_totals.get(int(row.id)))
             domain.apply_evidenced_ksb_count(learner, ksb_counts.get(int(row.id)))
             domain.apply_canonical_learner_metrics(learner, canonical_metrics.get(int(row.id)), learner_workspace=True)
