@@ -29,6 +29,8 @@ def context_profiles(owner, programme, group):
     attach_caseload_source_rows(profiles)
     learners = [serialize_attendance_source_learner(row) for row in profiles]
     apply_curriculum_attendance_placements(learners, profiles)
+    from .attendance_loading import current_placements
+    learners = current_placements(learners)
     allowed = {row['id'] for row in learners if str(row.get('programmeId')) == programme and str(row.get('groupId')) == group}
     return {str(row.id): row for row in profiles if str(row.id) in allowed}
 
