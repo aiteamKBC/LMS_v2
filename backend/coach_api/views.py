@@ -48,7 +48,7 @@ from coach_api.cache.learners import (
     get_cached_caseload,
     release_caseload_lock,
 )
-from coach_api.models import CoachAbsenceReport, CoachAttendanceSourceAdjustment, CoachCalendarEvent, CoachCalendarSequence, CoachManualAttendance, ImportedReviewInstance
+from coach_api.models import CoachAbsenceReport, CoachAttendanceSourceAdjustment, CoachCalendarEvent, CoachCalendarSequence, CoachDashboardSnapshot, CoachManualAttendance, ImportedReviewInstance
 from coach_api.migrated_reviews import (
     EDITABLE_STATUSES as MIGRATED_EDITABLE_STATUSES,
     booking_event_type as migrated_booking_event_type,
@@ -12574,6 +12574,302 @@ def caseload_counts_by_coach(coach_emails: set[str]) -> dict[str, dict[str, int]
     return counts
 
 
+def coach_performance_metrics_by_coach(
+    coach_emails: set[str], *, today: date | None = None,
+) -> dict[str, dict]:
+    """Summarise coach performance from the authoritative learner sources.
+
+    Attendance and OTJH remain compact values in the dashboard snapshot. PR and
+    MCM figures come from ``Learner.reviews`` and pending work comes from the
+    assignment marking table; neither may be inferred from generated calendar
+    events in a snapshot.
+    """
+    if not coach_emails:
+        return {}
+
+    today = today or timezone.localdate()
+    pr_start = today - timedelta(weeks=12)
+    mcm_start = today - timedelta(weeks=4)
+    # Production model names use Django's schema-qualified ``Schema\".\"table``
+    # convention and therefore need the same outer quotes Django adds.
+    table = f'"{CoachDashboardSnapshot._meta.db_table}"'
+    database = router.db_for_read(CoachDashboardSnapshot)
+
+    # Do not select ``payload`` into Python. A single snapshot can contain
+    # hundreds of full review-event objects; transferring and decoding all
+    # snapshots made this directory request hit the 60-second DB timeout. Let
+    # Postgres expand the JSONB and return only the small aggregate row.
+    sql = f"""
+        WITH selected AS (
+            SELECT lower(trim(owner_email)) AS email, payload
+              FROM {table}
+             WHERE lower(trim(owner_email)) = ANY(%s)
+        ), coach_profiles AS (
+            SELECT lower(trim(coach_email)) AS email,
+                   id AS profile_id,
+                   enrolment_id,
+                   full_name,
+                   programme_status
+              FROM "Learner".learners
+             WHERE lower(trim(coach_email)) = ANY(%s)
+               AND nullif(trim(full_name), '') IS NOT NULL
+        ), learner_profiles AS (
+            SELECT email, profile_id, enrolment_id
+              FROM coach_profiles
+             WHERE enrolment_id IS NOT NULL
+               AND regexp_replace(
+                   lower(coalesce(programme_status, '')), '[^a-z0-9]', '', 'g'
+               ) IN ('active', 'delivery')
+        ), learner_metrics AS (
+            SELECT selected.email,
+                   round(avg((learner->>'attendanceRate')::numeric)
+                       FILTER (WHERE learner->>'enrollmentStatus' = 'active'
+                               AND learner->>'attendanceRateAvailable' = 'true'
+                               AND learner->>'attendanceRate' IS NOT NULL))::int AS attendance_rate,
+                   count(*) FILTER (WHERE learner->>'enrollmentStatus' = 'active'
+                                     AND learner->>'otjhRagStatus' = 'on-track')::int AS on_track,
+                   count(*) FILTER (WHERE learner->>'enrollmentStatus' = 'active'
+                                     AND learner->>'otjhRagStatus' = 'need-attention')::int AS need_attention,
+                   count(*) FILTER (WHERE learner->>'enrollmentStatus' = 'active'
+                                     AND learner->>'otjhRagStatus' = 'at-risk')::int AS at_risk
+              FROM selected
+              CROSS JOIN LATERAL jsonb_array_elements(
+                  coalesce(selected.payload->'learners', '[]'::jsonb)
+              ) AS learner
+             GROUP BY selected.email
+        ), review_rows AS (
+            SELECT profiles.email,
+                   CASE
+                     WHEN lower(trim(reviews.review_type)) = ANY(%s) THEN 'progress-review'
+                     WHEN lower(trim(reviews.review_type)) = ANY(%s) THEN 'mcm'
+                   END AS family,
+                   lower(trim(coalesce(reviews.status, ''))) IN (
+                       'completed', 'complete', 'finished'
+                   ) AS is_completed,
+                   coalesce(reviews.completed_date, reviews.planned_scheduled_date)::date AS review_date
+              FROM learner_profiles AS profiles
+              JOIN "Learner".reviews AS reviews
+                ON reviews.learner_id = profiles.profile_id
+             WHERE lower(trim(reviews.review_type)) = ANY(%s)
+                OR lower(trim(reviews.review_type)) = ANY(%s)
+        ), review_metrics AS (
+            SELECT email,
+                   count(*) FILTER (WHERE is_completed)::int AS completed_reviews,
+                   count(*) FILTER (WHERE family = 'progress-review'
+                                     AND review_date BETWEEN %s AND %s)::int AS pr_required,
+                   count(*) FILTER (WHERE family = 'progress-review' AND is_completed
+                                     AND review_date BETWEEN %s AND %s)::int AS pr_completed,
+                   count(*) FILTER (WHERE family = 'progress-review' AND NOT is_completed
+                                     AND review_date BETWEEN %s AND %s AND review_date < %s)::int AS pr_overdue,
+                   count(*) FILTER (WHERE family = 'mcm'
+                                     AND review_date BETWEEN %s AND %s)::int AS mcm_required,
+                   count(*) FILTER (WHERE family = 'mcm' AND is_completed
+                                     AND review_date BETWEEN %s AND %s)::int AS mcm_completed,
+                   count(*) FILTER (WHERE family = 'mcm' AND NOT is_completed
+                                     AND review_date BETWEEN %s AND %s AND review_date < %s)::int AS mcm_overdue
+              FROM review_rows
+             GROUP BY email
+        ), pending_assignment_metrics AS (
+            SELECT profiles.email, count(*)::int AS pending_assignments
+              FROM coach_profiles AS profiles
+              JOIN "Learner".learning_reflection_submissions AS assignments
+                ON assignments.learner_id = profiles.enrolment_id::text
+             WHERE assignments.status IN ('submitted_for_tutor_review', 'escalated')
+               AND lower(trim(assignments.activity_type)) = ANY(%s)
+             GROUP BY profiles.email
+        )
+        SELECT selected.email,
+               learner_metrics.attendance_rate,
+               coalesce(pending_assignment_metrics.pending_assignments, 0),
+               coalesce(learner_metrics.on_track, 0),
+               coalesce(learner_metrics.need_attention, 0),
+               coalesce(learner_metrics.at_risk, 0),
+               coalesce(review_metrics.completed_reviews, 0),
+               coalesce(review_metrics.pr_required, 0),
+               coalesce(review_metrics.pr_completed, 0),
+               coalesce(review_metrics.pr_overdue, 0),
+               coalesce(review_metrics.mcm_required, 0),
+               coalesce(review_metrics.mcm_completed, 0),
+               coalesce(review_metrics.mcm_overdue, 0)
+          FROM selected
+          LEFT JOIN learner_metrics USING (email)
+          LEFT JOIN review_metrics USING (email)
+          LEFT JOIN pending_assignment_metrics USING (email)
+    """
+    progress_review_types = [value.casefold() for value in REVIEW_TYPES["progress-review"]]
+    monthly_review_types = [value.casefold() for value in REVIEW_TYPES["monthly-coaching"]]
+    params = [
+        sorted(coach_emails),
+        sorted(coach_emails),
+        progress_review_types, monthly_review_types,
+        progress_review_types, monthly_review_types,
+        pr_start, today, pr_start, today, pr_start, today, today,
+        mcm_start, today, mcm_start, today, mcm_start, today, today,
+        list(ASSIGNMENT_ACTIVITY_TYPES),
+    ]
+    with connections[database].cursor() as cursor:
+        cursor.execute(sql, params)
+        rows = cursor.fetchall()
+
+    result: dict[str, dict] = {}
+    for row in rows:
+        (
+            email, attendance_rate, pending_marking,
+            on_track, need_attention, at_risk, completed_reviews,
+            pr_required, pr_completed, pr_overdue,
+            mcm_required, mcm_completed, mcm_overdue,
+        ) = row
+        progress_reviews = {
+            "required": pr_required,
+            "completed": pr_completed,
+            "overdue": pr_overdue,
+        }
+        result[email] = {
+            "available": True,
+            "attendanceRate": attendance_rate,
+            "progressReviewRate": (
+                round(pr_completed / pr_required * 100) if pr_required else None
+            ),
+            "pendingMarking": pending_marking,
+            "completedReviews": completed_reviews,
+            "otjh": {
+                "onTrack": on_track,
+                "needAttention": need_attention,
+                "atRisk": at_risk,
+            },
+            "progressReviews": progress_reviews,
+            "monthlyCoaching": {
+                "required": mcm_required,
+                "completed": mcm_completed,
+                "overdue": mcm_overdue,
+            },
+        }
+    return result
+
+
+@require_access(ACCESS_SUPER_ADMIN)
+@require_GET
+def coach_directory_calendar(request):
+    """Return one week's calendar events for every coach in one snapshot read.
+
+    The overview used to call the full timetable endpoint once per coach. Each
+    call rebuilds live sessions and review schedules from Curriculum, so the
+    page waited for the slowest of twenty-plus expensive requests. Dashboard
+    snapshots already hold the same read-only meeting projection; filter their
+    JSON in PostgreSQL and return only the requested week.
+    """
+    validator = ObjectValidator(request.GET)
+    start_date = validator.iso_date("start")
+    end_date = validator.iso_date("end")
+    if start_date is None:
+        validator.error("start", "Start date is required.")
+    if end_date is None:
+        validator.error("end", "End date is required.")
+    if start_date and end_date:
+        if start_date > end_date:
+            validator.error("end", "Must be on or after start.")
+        elif (end_date - start_date).days > 31:
+            validator.error("end", "Calendar range cannot exceed 31 days.")
+    try:
+        validator.check()
+    except ValidationError as exc:
+        return validation_error_response(exc)
+
+    try:
+        coach_emails = {
+            clean_text(value).casefold()
+            for value in StaffUser.objects.annotate(
+                staff_access_key=Lower(Trim("access")),
+            )
+            .filter(staff_access_key=ACCESS_COACH)
+            .values_list("email", flat=True)
+            if clean_text(value)
+        }
+        if not coach_emails:
+            return JsonResponse({"calendars": [], "missingCoaches": []})
+
+        table = f'"{CoachDashboardSnapshot._meta.db_table}"'
+        database = router.db_for_read(CoachDashboardSnapshot)
+        sql = f"""
+            WITH selected AS (
+                SELECT lower(trim(owner_email)) AS email, payload, refreshed_at
+                  FROM {table}
+                 WHERE lower(trim(owner_email)) = ANY(%s)
+            ), event_rows AS (
+                SELECT selected.email,
+                       selected.refreshed_at,
+                       event,
+                       CASE
+                         WHEN coalesce(
+                             event->>'scheduledDate', event->>'date', event->>'targetDate', ''
+                         ) ~ '^[0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}'
+                         THEN substring(coalesce(
+                             event->>'scheduledDate', event->>'date', event->>'targetDate'
+                         ) FROM 1 FOR 10)::date
+                       END AS event_date
+                  FROM selected
+                  CROSS JOIN LATERAL jsonb_array_elements(
+                      coalesce(selected.payload->'meetings'->'events', '[]'::jsonb)
+                  ) AS event
+            )
+            SELECT email, refreshed_at, event
+              FROM event_rows
+             WHERE event_date BETWEEN %s AND %s
+             ORDER BY email, event_date,
+                      coalesce(event->>'scheduledTime', '99:99'),
+                      coalesce(event->>'learner', event->>'title', '')
+        """
+        with connections[database].cursor() as cursor:
+            cursor.execute(sql, [sorted(coach_emails), start_date, end_date])
+            rows = cursor.fetchall()
+    except DatabaseError:
+        logger.exception("coach_directory_calendar_failed")
+        return coach_error(
+            request,
+            code="database_unavailable",
+            message="Unable to load the all-coaches calendar.",
+            status=503,
+        )
+
+    events_by_email: dict[str, list[dict]] = {email: [] for email in coach_emails}
+    refreshed_by_email: dict[str, datetime] = {}
+    for email, refreshed_at, event in rows:
+        if isinstance(event, str):
+            try:
+                event = json.loads(event)
+            except (TypeError, ValueError):
+                continue
+        if not isinstance(event, dict):
+            continue
+        events_by_email.setdefault(email, []).append(event)
+        refreshed_by_email[email] = refreshed_at
+
+    snapshot_emails = {
+        clean_text(value).casefold()
+        for value in CoachDashboardSnapshot.objects.annotate(
+            owner_email_key=Lower(Trim("owner_email")),
+        ).filter(
+            owner_email_key__in=sorted(coach_emails),
+        ).values_list("owner_email_key", flat=True)
+        if clean_text(value)
+    }
+    return JsonResponse({
+        "calendars": [
+            {
+                "email": email,
+                "events": events_by_email[email],
+                "refreshedAt": (
+                    refreshed_by_email[email].isoformat()
+                    if email in refreshed_by_email else None
+                ),
+            }
+            for email in sorted(coach_emails)
+            if email in snapshot_emails
+        ],
+        "missingCoaches": sorted(coach_emails - snapshot_emails),
+    })
+
+
 @require_access(ACCESS_SUPER_ADMIN)
 @require_GET
 def coach_directory(request):
@@ -12613,6 +12909,12 @@ def coach_directory(request):
         counts_available = False
         counts = {}
 
+    try:
+        performance = coach_performance_metrics_by_coach(emails)
+    except DatabaseError:
+        logger.exception("coach_directory_performance_metrics_failed")
+        performance = {}
+
     coaches: list[dict] = []
     seen: set[str] = set()
     for row in staff_rows:
@@ -12631,6 +12933,7 @@ def coach_directory(request):
                 "email": email,
                 "caseloadCount": bucket.get("total", 0),
                 "activeLearnerCount": bucket.get("active", 0),
+                "performance": performance.get(email),
             }
         )
 
