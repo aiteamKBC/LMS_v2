@@ -10,7 +10,7 @@ export interface DashboardLearnerRow {
   enrolmentId?: string | null;
   programme: string | null;
   programmeStatus: string | null;
-  otjh: { completed: number | null; targetToDate: number | null; progress: number | null;
+  otjh: { completed: number | null; targetToDate: number | null; planned: number | null; progress: number | null;
     ragStatus: 'at-risk' | 'need-attention' | 'on-track' | 'unavailable' };
   activities: { completed: number | null; total: number | null; progress: number | null };
   attendance: { rate: number | null };
@@ -34,6 +34,7 @@ export function adaptDashboardLearnerRow(row: DashboardLearnerRow): CaseloadApiL
     employer: '--', cohortId: '', cohortName: '--', group: '--', riskFlags: [],
     overallProgress: 0,
     otjhCompleted: row.otjh.completed, otjhTargetAsOfToday: row.otjh.targetToDate,
+    otjhPlanned: row.otjh.planned,
     otjhProgressAsOfToday: row.otjh.progress, otjhRagStatus: row.otjh.ragStatus,
     componentsCompleted: row.activities.completed, componentsPlanned: row.activities.total,
     activityProgress: row.activities.progress, activityProgressAvailable: row.activities.progress !== null,

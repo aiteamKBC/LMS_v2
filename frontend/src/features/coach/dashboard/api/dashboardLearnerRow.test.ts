@@ -10,7 +10,7 @@ import { fetchDashboardLearners, getDashboardLearnerPageCache, invalidateDashboa
 const row: DashboardLearnerRow = {
   id: '42', name: 'Synthetic Learner', initials: 'SL', learnerType: 'apprenticeship', enrolmentId: '1002',
   programme: 'Programme A', programmeStatus: 'Active',
-  otjh: { completed: 7, targetToDate: 13, progress: 12.34, ragStatus: 'need-attention' },
+  otjh: { completed: 7, targetToDate: 13, planned: 400, progress: 12.34, ragStatus: 'need-attention' },
   activities: { completed: 2, total: 3, progress: 66.67 }, attendance: { rate: 0 },
   startDate: '2026-01-01', lastActivity: { date: '2026-09-20' }, lastPr: null, lastMcm: '2026-09-01',
 };
@@ -55,7 +55,7 @@ describe('dashboard minimal learner contract', () => {
     expect(adaptDashboardLearnerRow(row).attendanceAvailable).toBe(true);
   });
   it('keeps unavailable values distinct from zero without calculating OTJH', () => {
-    const unavailable = adaptDashboardLearnerRow({ ...row, otjh: { completed: 0, targetToDate: null, progress: null, ragStatus: 'unavailable' }, attendance: { rate: null } });
+    const unavailable = adaptDashboardLearnerRow({ ...row, otjh: { completed: 0, targetToDate: null, planned: 850, progress: null, ragStatus: 'unavailable' }, attendance: { rate: null } });
     expect(otjhProgressAsOfToday(normalizeLearner(unavailable))).toMatchObject({ actualHours: 0, targetHours: null, percent: null, status: 'unavailable' });
     expect(unavailable.attendanceAvailable).toBe(false);
   });

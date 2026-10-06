@@ -647,13 +647,10 @@ def apply_otjh_to_date_metrics(payload: dict, *, today: date | None = None) -> d
     are emitted by the API so cards, tables, filters and KPI legends do not
     each re-implement the denominator in the browser.
 
-    If the plan window is unavailable, keep the existing API target as an
-    explicit fallback.  A missing/invalid target stays unavailable instead of
-    being presented as a green zero.
+    A missing/invalid programme window stays unavailable. Legacy target fields
+    can contain whole-programme totals and cannot supply target-to-date.
     """
     total = to_number(payload.get("otjhPlanned"))
-    if total <= 0:
-        total = to_number(payload.get("otjhTarget"))
 
     start = parse_date_value(payload.get("otjhProgrammeStartDate", payload.get("startDate")))
     end = parse_date_value(payload.get("plannedEndDate"))
@@ -673,15 +670,12 @@ def apply_otjh_to_date_metrics(payload: dict, *, today: date | None = None) -> d
             programme_days = (end_day - start_day).days
             target = max(0.0, min(total, total * elapsed_days / programme_days))
         target_source = "ssot:programme-plan-window"
-    elif total > 0:
-        target = total
-        target_source = "ssot:api-target-fallback"
 
     actual = to_number(payload.get("otjhCompleted"))
     # Classify the same precision exposed by the API, so a rounded 40h
     # shortfall cannot be labelled >40h by an unrounded intermediate.
     target = round(target, 2) if target is not None else None
-    if target is None:
+    if target is None or payload.get("otjhCompleted") is None:
         status = "unavailable"
         percent = None
         shortfall = None
@@ -2156,6 +2150,7 @@ def fetch_case_file_shell(owner_email: str, learner_id: int):
                 "id", "aptem_id", "learner_type", "username", "email", "programme",
                 "programme_status", "cohort", "group", "employer", "coach_name",
                 "coach_email", "start_date", "learner_start_date", "learner_end_date", "end_date",
+                "apprenticeship_end_date", "practical_period_end_date",
             )
             .first()
         )
@@ -2173,21 +2168,10 @@ def serialize_case_file_shell(profile, source) -> dict:
         student_activity_available=student_activity_available,
         format_coach_rag_value=format_coach_rag_value,
     )
-    # Use the same contract/source window as the dashboard, independently of
+    # Use the same learner/source window as the dashboard, independently of
     # the recorded learner dates displayed in the profile header.
-    aptem_id = payload["identity"]["aptemId"]
-    try:
-        contracts = load_contracts_bulk([int(aptem_id)]) if aptem_id else {}
-    except (DatabaseError, TypeError, ValueError) as exc:
-        logger.warning("Could not load case-file training-plan contract: %s", exc)
-        contracts = {}
-    schedule_row = SimpleNamespace(
-        _caseload_source=source,
-        _caseload_contract=contracts.get(int(aptem_id)) if aptem_id else None,
-        start_date=getattr(profile, "start_date", None),
-        end_date=getattr(profile, "end_date", None),
-    )
-    _, schedule_start, schedule_end = caseload_schedule_values(schedule_row)
+    from .selectors.otjh import learner_programme_window
+    schedule_start, schedule_end = learner_programme_window(profile, source)
     payload["profile"]["otjhProgrammeStartDate"] = format_date(schedule_start) if schedule_start else None
     payload["profile"]["otjhProgrammeEndDate"] = format_date(schedule_end) if schedule_end else None
     return payload

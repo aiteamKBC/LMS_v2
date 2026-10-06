@@ -81,6 +81,7 @@ class ProfileStartDateTests(SimpleTestCase):
         cached = {"learners": [{"id": "1", "startDate": "--", "otjhTarget": 42}]}
         with patch("coach_api.dashboard_view.dashboard_cache.get_cached_coach_dashboard", return_value=cached), \
                 patch("coach_api.dashboard_view.snapshot_needs_refresh", return_value=False), \
+                patch("coach_api.services.dashboard.otjh.refresh_otjh_rows"), \
                 patch("coach_api.services.dashboard.profile_dates.fetch_dashboard_profile_dates", return_value=[row]):
             response = call_coach_view(coach_dashboard, RequestFactory().get("/coach_api/coach/dashboard"))
         self.assertEqual(response.status_code, 200)

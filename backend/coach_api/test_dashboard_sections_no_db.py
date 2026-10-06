@@ -43,7 +43,7 @@ class DashboardSectionTests(SimpleTestCase):
                                      "status": "scheduled", "scheduledDate": "2026-09-21", "meetingLink": "https://example.invalid/join",
                                      "meetingOptions": {"presenters": ["synthetic"]}}],
                          "summary": {"mcrRows": 1}, "reviewGenerationIssues": []},
-            "marking": {"summary": {"pendingItems": 3}, "items": []}, "assignedGroups": [{"unused": True}],
+            "marking": {"summary": {"pendingItems": 3}, "items": [{"id": "1", "learnerId": "1", "learner": "Alpha", "pendingEvidence": 3}]}, "assignedGroups": [{"unused": True}],
             "monthlyRisk": [{"unused": True}], "errors": {},
         }
 
@@ -73,6 +73,23 @@ class DashboardSectionTests(SimpleTestCase):
             self.assertEqual(result["summary"]["meetingsThisWeek"][key], len(expected))
             self.assertEqual([item["id"] for item in popup["items"]], expected)
             self.assertTrue(all(item["learnerId"] == "2" and item["enrolmentId"] == "1002" for item in popup["items"]))
+
+    def test_marking_counts_weighted_rows_by_learner_id_not_name(self):
+        self.payload["marking"] = {"summary": {"pendingItems": 7}, "items": [
+            {"id": "a", "learnerId": "1", "learner": "Same Name", "pendingEvidence": 3,
+             "submittedAt": "2026-09-02"},
+            {"id": "b", "learnerId": "1", "learner": "Same Name", "pendingEvidence": 2,
+             "submittedAt": "2026-09-01"},
+            {"id": "c", "learnerId": "2", "learner": "Same Name", "pendingEvidence": 2},
+        ]}
+        result = summarize_meetings(project_section(self.payload, "summary"))
+        rows = result["markingPopup"]["items"]
+        self.assertEqual([row["pendingCount"] for row in rows], [5, 2])
+        self.assertEqual(rows[0]["oldestPendingDate"], "2026-09-01")
+        self.assertEqual(set(rows[0]), {"learnerId", "learnerName", "programme", "group",
+                                        "pendingCount", "oldestPendingDate"})
+        self.assertEqual(result["summary"]["pendingMarking"], 7)
+        self.assertEqual(result["markingPopup"]["count"], sum(row["pendingCount"] for row in rows))
 
     def test_risk_summary_and_popup_use_unique_nested_rows_without_active_gate(self):
         self.payload["learners"] = [
@@ -106,7 +123,9 @@ class DashboardSectionTests(SimpleTestCase):
             with self.subTest(shortfall=shortfall):
                 actual = 200 - shortfall
                 result = apply_otjh_to_date_metrics({"otjhTarget": 200, "otjhCompleted": actual,
-                                                     "status": "at-risk", "otjhStatus": "at-risk"})
+                    "otjhPlanned": 200, "otjhProgrammeStartDate": "2026-01-01",
+                    "plannedEndDate": "2026-01-02", "status": "at-risk", "otjhStatus": "at-risk"},
+                    today=date(2026,9,23))
                 self.assertEqual(result["otjhShortfallHours"], max(shortfall, 0))
                 self.assertEqual(result["otjhRagStatus"], expected)
                 self.assertEqual(result["otjhTargetAsOfToday"], 200)
@@ -143,13 +162,18 @@ class DashboardSectionTests(SimpleTestCase):
         self.assertEqual(result["otjhCompleted"], 40)
         self.assertEqual(result["otjhPlanned"], 120)
 
-    @patch("coach_api.services.dashboard.profile_dates.fetch_dashboard_profile_dates", return_value=[])
+    @patch("coach_api.services.dashboard.otjh.otjh_summary_bulk")
+    @patch("coach_api.services.dashboard.profile_dates.fetch_dashboard_profile_dates")
     @patch("coach_api.dashboard_view.schedule_coach_dashboard_refresh")
     @patch("coach_api.dashboard_view.load_section")
     @patch("coach_api.services.dashboard.sections.timezone.localdate", return_value=date(2026, 9, 23))
-    def test_cached_endpoint_repairs_otjh_and_global_summary_is_independent_of_page(self, _today, load, _refresh, _profiles):
+    def test_cached_endpoint_repairs_otjh_and_global_summary_is_independent_of_page(self, _today, load, _refresh, _profiles, facts):
         self.payload["learners"] = [learner(i, f"Learner {i}", otjhTarget=200, otjhCompleted=100 if i <= 16 else 170,
                                              otjhRagStatus="on-track") for i in range(1, 33)]
+        _profiles.return_value = [SimpleNamespace(id=i, enrolment_id=i, programme_status="Active",
+            start_date=date(2026,1,1), end_date=date(2026,1,2)) for i in range(1,33)]
+        facts.return_value = {i: dict(profile_id=i, actual=100 if i <= 16 else 170, planned=200)
+                              for i in range(1,33)}
         self.payload["meetings"]["events"] = [
             {"learnerId": "32", "source": source, "status": "scheduled", "scheduledDate": "2026-09-23"}
             for source in ("progress-review", "mcr", "catch-up")
@@ -344,7 +368,8 @@ class DashboardSectionTests(SimpleTestCase):
         row = result["results"][0]
         self.assertEqual(set(row), {"id", "name", "initials", "programme", "programmeStatus", "learnerType", "enrolmentId",
             "otjh", "activities", "attendance", "startDate", "lastActivity", "lastPr", "lastMcm"})
-        self.assertEqual(row["otjh"], {"completed": 20, "targetToDate": 100, "progress": 12.34, "ragStatus": "at-risk"})
+        self.assertEqual(row["otjh"], {"completed": 20, "targetToDate": 100, "planned": None,
+                                      "progress": 12.34, "ragStatus": "at-risk"})
         self.assertEqual(row["activities"], {"completed": 2, "total": 3, "progress": 66.67})
         self.assertEqual(row["attendance"], {"rate": 0})
         self.assertEqual(row["lastActivity"], {"date": "2026-09-20"})

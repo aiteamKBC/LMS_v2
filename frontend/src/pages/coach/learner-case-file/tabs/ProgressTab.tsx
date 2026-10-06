@@ -27,10 +27,6 @@ function validHours(value: number | null | undefined) {
   return value != null && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
-function currentReportingMonth() {
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' }).slice(0, 7);
-}
-
 type OtjhSnapshot = {
   completed: number | null;
   target: number | null;
@@ -39,7 +35,7 @@ type OtjhSnapshot = {
 };
 
 function selectProgressOtjh(data: CoachLearnerCaseFileData, plan?: DashboardPlanState,
-  snapshot?: OtjhSnapshot | null, reportingMonth = currentReportingMonth()): CaseFileOtjhMetrics {
+  snapshot?: OtjhSnapshot | null): CaseFileOtjhMetrics {
   const fallback = selectCaseFileOtjh(data);
   const planData = plan?.data;
   const rows = planData ? monthlyHours(planData,
@@ -47,10 +43,9 @@ function selectProgressOtjh(data: CoachLearnerCaseFileData, plan?: DashboardPlan
   const completedFromRows = rows.length && rows.every(row => row.completed != null)
     ? rows.reduce((sum, row) => sum + row.completed!, 0) : null;
   const knownTargets = rows.filter(row => row.target != null);
-  const targetToDate = knownTargets.filter(row => row.key <= reportingMonth);
-  const monthlyTarget = targetToDate.length ? targetToDate.reduce((sum, row) => sum + row.target!, 0) : null;
-  const planned = validHours(snapshot?.planned)
-    ?? validHours(plan?.otjh?.planned)
+  const planned = snapshot ? validHours(snapshot.planned)
+    : data.metricsAvailable === true ? validHours(fallback.programmeTotal)
+    : validHours(plan?.otjh?.planned)
     ?? validHours(planData?.requiredOtjh)
     ?? validHours(fallback.programmeTotal)
     ?? (knownTargets.length ? knownTargets.reduce((sum, row) => sum + row.target!, 0) : null);
@@ -60,11 +55,17 @@ function selectProgressOtjh(data: CoachLearnerCaseFileData, plan?: DashboardPlan
     plan?.plannedEndDate ?? planData?.programmeEndDate ?? data.detail?.programmeEndDate ?? data.plannedEndDate,
   );
   const pacedTarget = pacedTargetValue === null ? null : Math.round(pacedTargetValue * 100) / 100;
-  const target = validHours(snapshot?.target) ?? validHours(pacedTarget) ?? monthlyTarget ?? validHours(fallback.target);
-  const logged = validHours(snapshot?.completed) ?? validHours(plan?.otjh?.actual) ?? validHours(completedFromRows) ?? fallback.logged;
+  // Canonical Profile values and table snapshots own their nulls. A monthly
+  // plan sum is never a substitute for the daily target-to-date.
+  const target = snapshot ? validHours(snapshot.target)
+    : data.metricsAvailable === true ? validHours(fallback.target)
+    : validHours(pacedTarget) ?? validHours(fallback.target);
+  const logged = snapshot ? validHours(snapshot.completed)
+    : data.metricsAvailable === true ? validHours(fallback.logged)
+    : validHours(plan?.otjh?.actual) ?? validHours(completedFromRows) ?? fallback.logged;
   const remaining = logged !== null && target !== null ? Math.max(0, target - logged) : null;
-  const progressPercent = validHours(snapshot?.percent) ?? (logged !== null && target !== null && target > 0
-    ? Math.min(100, Math.round((logged / target) * 100)) : null);
+  const progressPercent = logged !== null && target !== null && target > 0
+    ? validHours(snapshot?.percent) ?? Math.min(100, Math.round((logged / target) * 100)) : null;
   return { logged, target, programmeTotal: planned, remaining, progressPercent };
 }
 

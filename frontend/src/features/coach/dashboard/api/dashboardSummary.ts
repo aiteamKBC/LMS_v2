@@ -3,6 +3,7 @@ import type { CoachCalendarEvent } from '@/pages/coach/shared/calendarEvents';
 export interface DashboardSummary {
   totalLearners: number;
   otjh: { atRisk: number; needAttention: number };
+  /** Total pending submissions, never the number of learner groups. */
   pendingMarking: number | null;
   meetingsThisWeek: { pr: number | null; mcm: number | null; catchUps: number };
 }
@@ -43,11 +44,23 @@ export interface DashboardPopupLearner {
   };
 }
 
+export interface PendingMarkingRow {
+  learnerId: string;
+  learnerName: string;
+  programme: string | null;
+  group: string | null;
+  pendingCount: number;
+  oldestPendingDate: string | null;
+  initials?: string;
+  totalEvidence?: number;
+  isOverdue?: boolean;
+}
+
 export interface DashboardPopupContract {
   owner: { name?: string };
   summary: DashboardSummary;
   learnerPopup: { all: DashboardPopupLearner[]; atRisk?: string[] };
-  markingPopup: { count: number | null; items: unknown[] };
+  markingPopup: { count: number | null; items: PendingMarkingRow[] };
   meetingsPopup: Record<'pr' | 'mcm' | 'catchUps', { count: number | null; items: Array<{
     id?: string; eventKey?: string; calendarEventId?: string; enrolmentId?: string | null;
     learnerId: string; learnerName: string; programme: string | null; group: string | null;
@@ -85,7 +98,12 @@ export function adaptDashboardPopupContract(wire: DashboardPopupContract) {
       otjhCompleted: row.otjh.completed, otjhTargetAsOfToday: row.otjh.target, otjhPlanned: row.otjh.planned,
       otjhRagStatus: row.otjh.ragStatus,
     })),
-    marking: { summary: { pendingItems: wire.markingPopup.count }, items: wire.markingPopup.items },
+    marking: { summary: { pendingItems: wire.markingPopup.count }, items: wire.markingPopup.items.map(row => 'pendingCount' in row ? ({
+      id: row.learnerId, learnerId: row.learnerId, learner: row.learnerName,
+      programme: row.programme, group: row.group, pendingEvidence: row.pendingCount,
+      submittedAt: row.oldestPendingDate,
+      initials: row.initials, totalEvidence: row.totalEvidence, isOverdue: row.isOverdue,
+    }) : row) },
     popupWeekEvents: (['pr', 'mcm', 'catchUps'] as const).flatMap(key => wire.meetingsPopup[key].items.map((item, index): CoachCalendarEvent => ({
       id: item.id || item.eventKey || item.calendarEventId || `${key}:${item.learnerId}:${item.date}:${index}`,
       eventKey: item.eventKey, calendarEventId: item.calendarEventId, enrolmentId: item.enrolmentId, learnerId: item.learnerId,

@@ -55,7 +55,7 @@ class CoachDashboardService:
                     "version": shared.schema_version,
                     "refreshedAt": shared.refreshed_at.isoformat(),
                 }
-                return self.normalize_start_dates(payload)
+                return self.normalize_start_dates(payload, refresh_otjh=True)
 
         # Resolve through the compatibility module so existing patch points and
         # operational tooling remain valid during the module relocation.
@@ -65,7 +65,7 @@ class CoachDashboardService:
             schema_version=self.SCHEMA_VERSION,
         ).only("payload", "refreshed_at").first()
         if snapshot is not None:
-            return self.normalize_start_dates(self._snapshot_payload(snapshot, version=self.SCHEMA_VERSION))
+            return self.normalize_start_dates(self._snapshot_payload(snapshot, version=self.SCHEMA_VERSION), refresh_otjh=True)
         previous = compatibility.CoachDashboardSnapshot.objects.filter(
             owner_email=self.context.owner_email,
         ).order_by("-refreshed_at").only(
@@ -75,13 +75,13 @@ class CoachDashboardService:
             # A schema mismatch should not make the first page load wait for a
             # full caseload rebuild.  Serve the newest durable projection and
             # let dashboard_view enqueue the schema refresh after responding.
-            return self.normalize_start_dates(self._snapshot_payload(previous, version=previous.schema_version))
+            return self.normalize_start_dates(self._snapshot_payload(previous, version=previous.schema_version), refresh_otjh=True)
         return self.refresh()
 
-    def normalize_start_dates(self, previous_payload: dict) -> dict:
+    def normalize_start_dates(self, previous_payload: dict, *, refresh_otjh=False) -> dict:
         """Correct persisted/cached dates with read-only, coach-scoped source reads.
 
-        Preserve every metric and the existing contractual OTJH window. Older
+        The optional OTJH overlay reads current Profile facts and window. Older
         snapshots must not expose their outdated startDate while refresh queues.
         Learners who have since been withdrawn, completed or entered EPA are
         dropped the same way, so an hourly snapshot never shows them.
@@ -111,6 +111,9 @@ class CoachDashboardService:
             learners.append(learner)
         if "learners" in payload:
             payload["learners"] = learners
+        if refresh_otjh:
+            from .otjh import refresh_otjh_rows
+            refresh_otjh_rows(payload, rows, today=self.context.today)
         return payload
 
     @staticmethod
@@ -160,6 +163,8 @@ class CoachDashboardService:
             domain.apply_attendance_summary(learner, attendance_by_id.get(profile_id))
             domain.apply_otjh_to_date_metrics(learner, today=self.context.today)
             learner["attendanceAvailable"] = bool(learner.get("attendanceRateAvailable"))
+        from .otjh import refresh_otjh_rows
+        refresh_otjh_rows(payload, rows, today=self.context.today)
         compatibility.CoachDashboardSnapshot.objects.update_or_create(
             owner_email=self.context.owner_email,
             defaults={"payload": payload, "schema_version": self.SCHEMA_VERSION},
@@ -339,6 +344,8 @@ class CoachDashboardService:
             learner["attendanceAvailable"] = bool(learner.get("attendanceRateAvailable"))
 
         marking = dashboard_marking_projection(context)
+        from .otjh import refresh_otjh_rows
+        refresh_otjh_rows({"learners": context.learners}, context.rows, today=context.today)
         return {
             "owner": {"name": owner_name, "email": context.owner_email},
             "learners": context.learners,

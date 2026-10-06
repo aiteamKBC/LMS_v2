@@ -49,9 +49,11 @@ class DashboardLoadingTests(SimpleTestCase):
         sources.filter.return_value.values.return_value = [{"id": 77, "learner_start_date": "2026-01-01", "learner_end_date": None}]
         rows = fetch_dashboard_profile_dates(" Coach@Example.Invalid ", [12])
         profiles.annotate.return_value.filter.assert_called_once_with(coach_email_key="coach@example.invalid", pk__in=[12])
-        query.values.assert_called_once_with("id", "programme_status", "enrolment_id")
+        query.values.assert_called_once_with("id", "programme_status", "enrolment_id", "start_date", "end_date")
         sources.filter.assert_called_once_with(pk__in={77})
-        sources.filter.return_value.values.assert_called_once_with("id", "learner_start_date", "learner_end_date")
+        sources.filter.return_value.values.assert_called_once_with(
+            "id", "start_date", "end_date", "learner_start_date", "learner_end_date",
+            "apprenticeship_end_date", "practical_period_end_date")
         self.assertEqual(rows[0]._caseload_source.learner_start_date, "2026-01-01")
 
     def test_cache_timeout_is_nonfatal_for_learner_section(self):

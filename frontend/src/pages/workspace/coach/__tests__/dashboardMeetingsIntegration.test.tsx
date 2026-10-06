@@ -1401,3 +1401,29 @@ it('fetches once per coach and reuses the previous coach cache on return', async
   expect(screen.queryByText('Other Coach Learner')).not.toBeInTheDocument();
   expect(mocks.load.mock.calls.filter(([url]) => url.includes('/learners'))).toHaveLength(2);
 });
+
+
+it('preserves weighted learner aggregates and counts pending items without new requests', async () => {
+  mocks.load.mockResolvedValue({
+    owner: {},
+    summary: { totalLearners: 2, otjh: { atRisk: 0, needAttention: 0 }, pendingMarking: 7,
+      meetingsThisWeek: { pr: 0, mcm: 0, catchUps: 0 } },
+    learnerPopup: { all: [], atRisk: [] },
+    markingPopup: { count: 7, items: [
+      { learnerId: 'synthetic-a', learnerName: 'Same Name', programme: 'Programme', group: 'A', pendingCount: 5, oldestPendingDate: '2026-09-01' },
+      { learnerId: 'synthetic-b', learnerName: 'Same Name', programme: 'Programme', group: 'B', pendingCount: 2, oldestPendingDate: '2026-09-02' },
+    ] },
+    meetingsPopup: { pr: { count: 0, items: [] }, mcm: { count: 0, items: [] }, catchUps: { count: 0, items: [] } },
+  });
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  const card = await screen.findByRole('button', { name: 'Open Pending marking details' });
+  await waitFor(() => expect(card).toHaveTextContent('7'));
+  const requests = mocks.load.mock.calls.length;
+  fireEvent.click(card);
+  const dialog = within(screen.getByRole('dialog', { name: 'Pending marking' }));
+  expect(dialog.getByLabelText('7 total')).toHaveTextContent('7');
+  expect(dialog.getByRole('list', { name: 'Learners awaiting marking' }).children).toHaveLength(2);
+  expect(dialog.getByText('5 Pending')).toBeVisible();
+  expect(dialog.getByText('2 Pending')).toBeVisible();
+  expect(mocks.load).toHaveBeenCalledTimes(requests);
+});

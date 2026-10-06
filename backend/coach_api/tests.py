@@ -786,7 +786,7 @@ class OtjhToDateContractTests(SimpleTestCase):
         self.assertEqual(result["otjhRagStatus"], "on-track")
         self.assertEqual(result["otjhRagSource"], "ssot:programme-plan-window")
 
-    def test_missing_window_uses_explicit_api_target_fallback(self):
+    def test_missing_window_does_not_use_legacy_target_fallback(self):
         result = apply_otjh_to_date_metrics({
             "otjhCompleted": 9,
             "otjhPlanned": 0,
@@ -795,9 +795,10 @@ class OtjhToDateContractTests(SimpleTestCase):
             "plannedEndDate": "--",
         }, today=date(2026, 6, 15))
 
-        self.assertEqual(result["otjhTargetAsOfToday"], 50.0)
-        self.assertEqual(result["otjhRagStatus"], "at-risk")
-        self.assertEqual(result["otjhRagSource"], "ssot:api-target-fallback")
+        self.assertIsNone(result["otjhTargetAsOfToday"])
+        self.assertIsNone(result["otjhProgressAsOfToday"])
+        self.assertEqual(result["otjhRagStatus"], "unavailable")
+        self.assertEqual(result["otjhRagSource"], "unavailable")
 
 
 class CanonicalCoachMetricsTests(SimpleTestCase):

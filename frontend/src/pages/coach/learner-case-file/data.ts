@@ -712,7 +712,6 @@ function buildCaseFileData(args: {
   const targetToDate = otjhProgressAsOfToday({
     otjhCompleted: canonicalActual,
     otjhPlanned: canonicalPlanned,
-    otjhTarget: canonicalPlanned,
     startDate: args.shell.profile.startDate,
     otjhProgrammeStartDate: args.shell.profile.otjhProgrammeStartDate ?? args.shell.profile.startDate,
     plannedEndDate: args.shell.profile.otjhProgrammeEndDate ?? args.shell.profile.plannedEndDate ?? args.detail?.programmeEndDate,

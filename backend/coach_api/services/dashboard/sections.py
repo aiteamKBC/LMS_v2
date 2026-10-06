@@ -161,7 +161,7 @@ def load_section(owner_email: str, section: str) -> dict | None:
         version, refreshed_at = snapshot.schema_version, snapshot.refreshed_at
     payload["readModel"] = {"version": version, "refreshedAt": refreshed_at.isoformat()}
     if section != "meetings":
-        payload = CoachDashboardService(owner_email).normalize_start_dates(payload)
+        payload = CoachDashboardService(owner_email).normalize_start_dates(payload, refresh_otjh=True)
         with dashboard_stage("otjh_enrichment"):
             normalize_otjh_contract(payload)
     if section == "learners":
@@ -300,9 +300,40 @@ def dashboard_popup_contract(payload, weekly_rows):
             "time": event.get("scheduledTime") or event.get("timeLabel"),
             "durationMinutes": event.get("durationMinutes") or 60, "status": event.get("status"),
         })
-    marking_items = [_pick(item, ("id", "learnerId", "learner", "initials", "programme", "group", "totalEvidence",
-                                       "submittedAt", "lastSubmissionIso", "isOverdue"))
-                     for item in (payload.get("marking") or {}).get("items") or []]
+    # Inputs may be learner aggregates or legacy individual submissions.
+    # Group only by stable learner identity and preserve each input's weight.
+    marking_rows = {}
+    seen = set()
+    for item in (payload.get("marking") or {}).get("items") or []:
+        identity = item.get("learnerId")
+        if identity is None:
+            continue
+        submission_id = item.get("id")
+        if submission_id is not None:
+            key = (str(identity), str(submission_id))
+            if key in seen:
+                continue
+            seen.add(key)
+        count = int(item.get("pendingEvidence", 1))
+        if count <= 0:
+            continue
+        oldest = item.get("submittedAt") or item.get("lastSubmissionIso")
+        row = marking_rows.setdefault(str(identity), {
+            "learnerId": str(identity), "learnerName": item.get("learner"),
+            "programme": item.get("programme"), "group": item.get("group"),
+            "pendingCount": 0, "oldestPendingDate": None,
+            **_pick(item, ("initials", "totalEvidence", "isOverdue")),
+        })
+        row["pendingCount"] += count
+        if item.get("isOverdue"):
+            row["isOverdue"] = True
+        if oldest and (row["oldestPendingDate"] is None or oldest < row["oldestPendingDate"]):
+            row["oldestPendingDate"] = oldest
+    marking_items = list(marking_rows.values())
+    # Unavailable marking remains null; a successful projection counts items,
+    # never the number of learner groups.
+    if payload["pendingMarking"] is not None:
+        payload["pendingMarking"] = sum(row["pendingCount"] for row in marking_items)
     return {
         "owner": _pick(payload.get("owner") or {}, ("name",)),
         "summary": _pick(payload, ("totalLearners", "otjh", "pendingMarking", "meetingsThisWeek")),
@@ -342,6 +373,7 @@ def learner_table_row(item):
         "otjh": {
             "completed": item.get("otjhCompleted"),
             "targetToDate": item.get("otjhTargetAsOfToday"),
+            "planned": item.get("otjhPlanned"),
             "progress": item.get("otjhProgressAsOfToday"),
             "ragStatus": item.get("otjhRagStatus") or "unavailable",
         },

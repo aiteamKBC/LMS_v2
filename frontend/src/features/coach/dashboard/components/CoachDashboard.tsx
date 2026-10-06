@@ -617,7 +617,7 @@ function normalizeEvidenceQueueLearner(item: Partial<EvidenceQueueLearner>, inde
     email: item.email || null,
     programme: displayValue(item.programme),
     group: displayValue(item.group),
-    pendingEvidence: toNumber(item.pendingEvidence) || 1,
+    pendingEvidence: item.pendingEvidence == null ? 1 : toNumber(item.pendingEvidence),
     acceptedEvidence: toNumber(item.acceptedEvidence),
     referredEvidence: toNumber(item.referredEvidence),
     totalEvidence: toNumber(item.totalEvidence),
@@ -641,8 +641,8 @@ function groupPendingMarkingByLearner(items: EvidenceQueueLearner[]): EvidenceQu
     const key = normalizeIdentity(item.learnerId);
     if (!key) continue;
     const existing = grouped.get(key);
-    if (!existing) { grouped.set(key, { ...item, pendingEvidence: 1 }); continue; }
-    existing.pendingEvidence += 1;
+    if (!existing) { grouped.set(key, { ...item }); continue; }
+    existing.pendingEvidence += item.pendingEvidence;
     const dates = [existing.oldestPendingDate, item.oldestPendingDate].filter(Boolean).sort();
     existing.oldestPendingDate = dates[0] || null;
     existing.latestPendingDate = dates[dates.length - 1] || null;

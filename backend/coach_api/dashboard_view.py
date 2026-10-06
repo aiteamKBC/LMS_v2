@@ -49,7 +49,7 @@ def coach_dashboard(request):
     cached_dashboard = dashboard_cache.get_cached_coach_dashboard(owner_email)
     if cached_dashboard is not None:
         try:
-            cached_dashboard = CoachDashboardService(owner_email).normalize_start_dates(cached_dashboard)
+            cached_dashboard = CoachDashboardService(owner_email).normalize_start_dates(cached_dashboard, refresh_otjh=True)
             normalize_otjh_contract(cached_dashboard)
         except Exception:
             logging.getLogger(__name__).exception("coach_dashboard_start_date_read_failed")
@@ -147,7 +147,7 @@ def coach_dashboard_section(request, section):
         if payload is not None and section != "meetings":
             # Keep the same read-time Profile date/hidden-status protection as
             # the legacy endpoint, even while the durable snapshot is stale.
-            payload = CoachDashboardService(owner_email).normalize_start_dates(payload)
+            payload = CoachDashboardService(owner_email).normalize_start_dates(payload, refresh_otjh=True)
             with dashboard_stage("otjh_enrichment"):
                 normalize_otjh_contract(payload)
         if payload is None:
