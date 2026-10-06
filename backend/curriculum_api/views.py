@@ -15680,6 +15680,10 @@ COMPONENT_SETTINGS_SCHEMA = {
         'selectedGroupKeys': [],
         'selectedGroupNames': [],
         'liveSessionUrl': '',
+        # A module-builder bulk replacement is an explicit authoring override.
+        # Keep it as a first-class setting so the normaliser does not hide it
+        # inside legacySettings before the calendar re-attach reads the row.
+        'liveSessionLinkOverride': '',
         'teamsEventId': '',
         'teamsLiveSessionId': '',
         # Written when a calendar is created or a plan is stamped, by the
@@ -15873,6 +15877,7 @@ LIVE_SESSION_TRACKING_SETTING_KEYS = {
     'teamsOccurrenceId', 'teamsSessionNumber', 'teamsOnlineMeetingId',
     'teamsMeetingUrl', 'teamsWebLink', 'teamsStartDateTimeUtc',
     'teamsDurationMinutes', 'sessionDay', 'sessionRescheduled',
+    'liveSessionLinkOverride',
 }
 
 # A shared duplicate reads these values from its canonical source module.  They
@@ -15885,6 +15890,7 @@ SHARED_TEAMS_DELIVERY_SETTING_KEYS = {
     'liveSessionUrl', 'teamsMeetingOptionsUrl', 'teamsProvider',
     'teamsOccurrenceId', 'teamsWebLink', 'teamsStartDateTimeUtc',
     'teamsDurationMinutes', 'sessionDateTimeUtc', 'sessionRescheduled',
+    'liveSessionLinkOverride',
 }
 
 
@@ -17529,8 +17535,8 @@ def live_session_booked_on_module_calendar(settings):
     """Whether the module series already holds a booked occurrence for this live session.
 
     ``teamsOccurrenceId``/``teamsSessionNumber`` are written only when a real
-    Graph occurrence was paired to the component, unlike ``liveSessionUrl``,
-    which the series stamps on every live session regardless.
+    Graph occurrence is paired to the component, unlike ``liveSessionUrl``,
+    which the series can stamp on a live session without a confirmed booking.
     """
     settings = settings if isinstance(settings, dict) else {}
     return bool(clean_str(settings.get('teamsOccurrenceId')) or parse_int(settings.get('teamsSessionNumber'), 0) > 0)
@@ -17544,9 +17550,10 @@ def module_has_booked_series(settings_list):
 def live_session_meeting_scope(settings, module_has_series=True):
     """Which calendar delivers this live session: 'main', 'additional' or 'pending'.
 
-    A booking is the fact and outranks any stored choice: a live session that
-    holds an additional meeting is 'additional', one the module series has
-    booked is 'main'. Otherwise the author's stored choice decides.
+    A confirmed booking outranks the stored choice: a live session that holds
+    an additional meeting is 'additional', one the module series has booked is
+    'main'. Otherwise the author's stored choice decides, and a legacy normal
+    meeting link fills in the display when no choice was stored.
 
     With neither, it depends on whether the module already has a calendar.
     Before it has one every live session is the module's -- there is nothing to
@@ -17565,6 +17572,11 @@ def live_session_meeting_scope(settings, module_has_series=True):
     chosen = clean_str(settings.get(LIVE_SESSION_MEETING_SCOPE_KEY)).lower()
     if chosen in LIVE_SESSION_MEETING_SCOPES:
         return chosen
+    # Legacy rows can retain a normal join link without occurrence metadata.
+    # The link settles what the dialog displays; it is not treated as a
+    # confirmed booking by `live_session_booked_on_module_calendar`.
+    if clean_str(settings.get('liveSessionUrl')) or clean_str(settings.get('teamsMeetingUrl')):
+        return 'main'
     return 'pending' if module_has_series else 'main'
 
 
@@ -17732,7 +17744,12 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
         """
         existing_settings = existing_settings if isinstance(existing_settings, dict) else {}
         if not occurrence and stored_calendar_series(series_row):
-            return {key: '' for key in ('teamsMeetingUrl', 'liveSessionUrl', 'teamsEventId', 'teamsOnlineMeetingId', 'teamsOccurrenceId', 'teamsLiveSessionId', 'teamsSessionNumber', 'sessionDateTimeUtc', 'teamsStartDateTimeUtc')}
+            empty_settings = {key: '' for key in ('teamsMeetingUrl', 'liveSessionUrl', 'teamsEventId', 'teamsOnlineMeetingId', 'teamsOccurrenceId', 'teamsLiveSessionId', 'teamsSessionNumber', 'sessionDateTimeUtc', 'teamsStartDateTimeUtc')}
+            override = clean_str(existing_settings.get('liveSessionLinkOverride'))
+            if override:
+                empty_settings['liveSessionUrl'] = override
+                empty_settings['teamsMeetingUrl'] = override
+            return empty_settings
         session_settings = live_occurrence_component_settings(occurrence, series_settings)
         # Imported defaults may still be stored on an unbooked component even
         # though Create used its group's current clock. Stamp the verified clock
@@ -17772,7 +17789,17 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                 if planned_instant:
                     planned_settings['sessionDateTimeUtc'] = planned_instant
                     planned_settings['teamsStartDateTimeUtc'] = planned_instant
-        return {**shared_series_settings, **planned_settings, **session_settings}
+        attached = {**shared_series_settings, **planned_settings, **session_settings}
+        # A bulk authoring replacement intentionally changes the join URL while
+        # leaving the Teams meeting identity and occurrence metadata intact.
+        # Keep that explicit override when the calendar is re-attached after a
+        # normal module save; an ordinary edit without this marker remains
+        # authoritative from the verified calendar occurrence.
+        override = clean_str(existing_settings.get('liveSessionLinkOverride'))
+        if override:
+            attached['liveSessionUrl'] = override
+            attached['teamsMeetingUrl'] = override
+        return attached
 
     session_index = 0
     sessions_per_week = delivery_days_per_week(module_row)
@@ -17901,9 +17928,14 @@ def attach_teams_meeting_to_module_weeks(module_catalogue_id, series_row, series
                 or live_session_meeting_scope(orphan_settings, series_already_booked) == 'additional'):
             continue
         if not dry_run:
+            attached_orphan_settings = {**orphan_settings, **series_settings}
+            override = clean_str(orphan_settings.get('liveSessionLinkOverride'))
+            if override:
+                attached_orphan_settings['liveSessionUrl'] = override
+                attached_orphan_settings['teamsMeetingUrl'] = override
             update_authoring_rows(AUTHORING_COMPONENTS_TABLE, 'id = %s', [row.get('id')], {
-                'settings_json': json_db_value({**orphan_settings, **series_settings}),
-                'live_sessions_link': clean_str(series_settings.get('liveSessionUrl')),
+                'settings_json': json_db_value(attached_orphan_settings),
+                'live_sessions_link': clean_str(attached_orphan_settings.get('liveSessionUrl') or attached_orphan_settings.get('teamsMeetingUrl')),
                 'updated_at': now,
             })
         updated += 1

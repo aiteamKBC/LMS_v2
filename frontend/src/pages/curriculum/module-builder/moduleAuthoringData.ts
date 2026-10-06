@@ -759,6 +759,49 @@ export function moduleAuthoredLiveSessions(
 }
 
 /**
+ * Replace the saved join link for live-session components in selected weeks.
+ *
+ * The module calendar identity, occurrence ids and attendance metadata remain
+ * untouched. Additional one-off meetings also keep their own link because
+ * that meeting is owned by the component rather than the module calendar.
+ */
+export function replaceLiveSessionLinksInWeeks(
+  module: ModuleCatalogueItem,
+  weekIds: Iterable<string>,
+  link: string,
+): ModuleCatalogueItem {
+  const selectedWeekIds = new Set(Array.from(weekIds, value => String(value || '').trim()).filter(Boolean));
+  const nextLink = String(link || '').trim();
+  if (!selectedWeekIds.size || !nextLink) return module;
+
+  return {
+    ...module,
+    weekStructure: module.weekStructure.map(week => {
+      if (!selectedWeekIds.has(week.id)) return week;
+      return {
+        ...week,
+        components: week.components.map(component => {
+          if (
+            component.type !== 'live-session'
+            || String(component.settings.extraTeamsMeetingUrl || '').trim()
+            || !String(component.settings.liveSessionUrl || component.settings.teamsMeetingUrl || '').trim()
+          ) return component;
+          return {
+            ...component,
+            settings: {
+              ...component.settings,
+              liveSessionUrl: nextLink,
+              teamsMeetingUrl: nextLink,
+              liveSessionLinkOverride: nextLink,
+            },
+          };
+        }),
+      };
+    }),
+  };
+}
+
+/**
  * Which authored weeks have a delivery day a ticked holiday falls on.
  *
  * States the fact, decides nothing: the plan stays exactly as authored, every
@@ -1715,6 +1758,10 @@ export const TEAMS_MEETING_SETTING_KEYS = [
   'teamsWebLink',
   'teamsDurationMinutes',
   'sessionRescheduled',
+  // A bulk link replacement belongs to the source module's saved calendar;
+  // an independent copy keeps its join URL only through the explicit copy
+  // path below and must not inherit the override marker.
+  'liveSessionLinkOverride',
   // The one-off week meeting is the original's too: its organiser invited its
   // own guests to one date, and a copy placed in another week must arrive with
   // no link at all rather than pointing people at somebody else's meeting.
