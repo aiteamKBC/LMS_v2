@@ -41,6 +41,8 @@ export interface ReviewFieldDefinition {
 }
 
 export interface ReviewSectionDefinition {
+  historicalPresentation?: boolean;
+  preserveRawText?: boolean;
   id: string;
   title: string;
   estimatedMinutes: number;
