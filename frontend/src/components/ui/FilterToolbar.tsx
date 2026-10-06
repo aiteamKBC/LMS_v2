@@ -76,6 +76,7 @@ export const SearchInput = memo(function SearchInput({
   ariaLabel,
   suggestions,
   className,
+  showClearButton = true,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -83,6 +84,7 @@ export const SearchInput = memo(function SearchInput({
   ariaLabel?: string;
   suggestions?: string[];
   className?: string;
+  showClearButton?: boolean;
 }) {
   const suggestionListId = useId();
   // Reported here, by name, rather than left to the LMS-wide capture listener:
@@ -105,7 +107,7 @@ export const SearchInput = memo(function SearchInput({
         aria-label={ariaLabel || placeholder}
         className="ui-search-input h-9 w-full rounded-lg border border-foreground-200 bg-background-50 pl-9 pr-8 text-[13px] text-foreground-900 placeholder:text-foreground-400 transition hover:border-foreground-300 focus:border-primary-400 focus:outline-none focus:ring-2 focus:ring-primary-200/50"
       />
-      {value ? (
+      {value && showClearButton ? (
         <button
           type="button"
           onClick={() => onChange('')}

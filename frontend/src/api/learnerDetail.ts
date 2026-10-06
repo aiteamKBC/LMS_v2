@@ -63,6 +63,10 @@ export interface LearnerComponentEntry {
   contentHtml?: string | null;          // reading rich-text content
   hasReadingContent?: boolean;         // list response; HTML is loaded when opened
   fileName?: string | null;             // powerpoint / document file name
+  /** Every file attached to the component, in the author's order. Entry 0
+   *  is the same file `resourceUrl` points at; the rest are the extra
+   *  attachments a reading / deck / podcast can now carry. */
+  files?: import('@/lib/componentFiles').ComponentFile[];
   downloadAllowed?: boolean;            // powerpoint download flag
   reflectionPrompt?: string | null;     // authored reflection prompt / learner guidance
   reflectionRequired?: boolean;         // false completes the activity without the reflection flow
@@ -83,6 +87,8 @@ export interface LearnerComponentEntry {
   durationMinutes?: number | null;
   isQuiz?: boolean;
   quizMeta?: { quizId: number; questions: number | null; duration: number | null; timeUnit: string | null };
+  /** A passed quiz whose slot an author has since removed from the module. */
+  retired?: boolean;
 }
 export interface LearnerKsbItem {
   code: string;
@@ -189,6 +195,9 @@ export interface LearnerDetail {
   modules: string[];
   week: LearnerWeekEntry[];
   components: LearnerComponentEntry[];
+  /** Passed quizzes whose slot was later removed; kept so the module still
+   *  shows the completed work. Never part of `components`. */
+  retiredQuizComponents?: LearnerComponentEntry[];
   ksbs: LearnerKsbItem[];
   progressKsbCodes?: string[];
   quizAttempts: LearnerQuizAttempt[];

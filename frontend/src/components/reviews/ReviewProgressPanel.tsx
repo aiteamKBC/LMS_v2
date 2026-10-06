@@ -1,5 +1,6 @@
 import { Loader2, RefreshCw } from 'lucide-react';
 import type { CSSProperties } from 'react';
+import { useId } from 'react';
 import type { ReviewKsbProgress, ReviewProgressMetric, ReviewProgressSnapshot, ReviewRagHistoryEntry } from '@/api/reviewInstances';
 
 /**
@@ -150,7 +151,9 @@ export function ReviewProgressPanel({
   snapshot,
   ragHistory = [],
   canCalculate,
+  showCalculateAction = canCalculate,
   calculating,
+  disabled = false,
   onCalculate,
 }: {
   snapshot: ReviewProgressSnapshot | null | undefined;
@@ -158,9 +161,13 @@ export function ReviewProgressPanel({
   /** False once the review reaches the signature step -- the figures a party
    *  is signing must not move underneath them. */
   canCalculate: boolean;
+  /** Opt in to showing an unavailable action without granting execution. */
+  showCalculateAction?: boolean;
   calculating: boolean;
+  disabled?: boolean;
   onCalculate: () => void;
 }) {
+  const actionHelpId = useId();
   return (
     <section aria-label="Learning progress" className="rounded-2xl border border-background-200 bg-background-50 p-4 sm:p-5">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -174,11 +181,12 @@ export function ReviewProgressPanel({
             <p className="mt-1 text-[13px] text-foreground-500">No progress snapshot calculated yet.</p>
           )}
         </div>
-        {canCalculate ? (
+        {showCalculateAction ? (
           <button
             type="button"
-            onClick={onCalculate}
-            disabled={calculating}
+            onClick={() => { if (canCalculate && !calculating && !disabled) onCalculate(); }}
+            disabled={!canCalculate || calculating || disabled}
+            aria-describedby={!canCalculate ? actionHelpId : undefined}
             className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-lg border border-background-300 bg-white px-4 text-xs font-bold text-foreground-700 shadow-sm transition hover:bg-background-100 disabled:opacity-60"
           >
             {calculating
@@ -188,6 +196,7 @@ export function ReviewProgressPanel({
           </button>
         ) : null}
       </div>
+      {showCalculateAction && !canCalculate && <p id={actionHelpId} className="mt-1 text-xs text-foreground-500 sm:text-right">Available to the assigned Coach only.</p>}
 
       {snapshot ? (
         <div className="mt-5 overflow-hidden border border-[#ccd5df] bg-white">
@@ -202,7 +211,7 @@ export function ReviewProgressPanel({
             </div>
           </div>
         </div>
-      ) : !canCalculate ? (
+      ) : !showCalculateAction ? (
         <p className="mt-3 text-[13px] text-foreground-500">No progress was calculated for this review.</p>
       ) : null}
 

@@ -1,11 +1,13 @@
 from django.urls import path
+from coach_api import migrated_template_views
 
 from system_audit import activity as system_activity
 
 from . import activity, learner_assignments, programme_audit, quality, review_schedule, review_types, reviews, views
 from .teams_attendee_compare import teams_meeting_attendee_comparison
 from .teams_create_guard import teams_create_status, teams_meeting_collection
-from .teams_schedule_delivery import schedule_email
+from .teams_create_drafts import teams_create_draft
+from .teams_schedule_delivery import forward_schedule_email, schedule_email
 from .teams_calendar_state import sync_calendar_state
 from .teams_directory import search_teams_directory
 from .teams_calendar_actions import calendar_action
@@ -14,11 +16,22 @@ from .teams_week_meeting import (
     curriculum_week_teams_meeting,
     curriculum_week_teams_meeting_detail,
 )
-from . import session_results
+from . import session_results, tutor_notifications
 
 
 urlpatterns = [
+    path('curriculum/migrated-review-templates/', migrated_template_views.collection),
+    path('curriculum/migrated-review-templates/preview/', migrated_template_views.preview),
+    path('curriculum/migrated-review-templates/reset/', migrated_template_views.reset),
+    path('curriculum/migrated-review-templates/<int:template_id>/', migrated_template_views.detail),
     path('curriculum/modules/<str:module_id>/session-results/', session_results.module_results),
+    path('curriculum/modules/<str:module_id>/tutor-email/', tutor_notifications.module_tutor_email, name='curriculum-module-tutor-email'),
+    # Several deliveries of one module, one mail. Carries no module id, so it
+    # must stay above `curriculum/modules/<str:identifier>/` at the bottom of
+    # this list -- that catch-all matches two segments and would otherwise read
+    # "tutor-email" as a module id, exactly as `resolve-structures/` and
+    # `archived/` are kept above it for the same reason.
+    path('curriculum/modules/tutor-email/', tutor_notifications.modules_tutor_email, name='curriculum-modules-tutor-email'),
     path('curriculum/session-results/<str:series_id>/sync/', session_results.queue_sync),
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/', session_results.admin_session),
     path('curriculum/session-results/<str:series_id>/sessions/<int:session_number>/attendance-alias/', session_results.link_attendance_alias),
@@ -69,6 +82,8 @@ urlpatterns = [
     # list of thirty programmes does not wait on thirty authoring-tree reads.
     path('curriculum/programmes/<str:programme_id>/ksb-stats/', views.curriculum_programme_ksb_stats, name='curriculum-programme-ksb-stats'),
     path('curriculum/programmes/<str:programme_id>/learner-ksb-impact/', views.curriculum_programme_learner_ksb_impact, name='curriculum-programme-learner-ksb-impact'),
+    path('curriculum/programmes/<str:programme_id>/ksb-achievement/', views.curriculum_programme_ksb_achievement, name='curriculum-programme-ksb-achievement'),
+    path('curriculum/programmes/<str:programme_id>/ksb-achievement/<path:ksb_definition_id>/consumptions/', views.curriculum_programme_ksb_achievement_consumptions, name='curriculum-programme-ksb-achievement-consumptions'),
     path('curriculum/programmes/<str:programme_id>/learner-roster/', views.curriculum_programme_learner_roster, name='curriculum-programme-learner-roster'),
     path('curriculum/programmes/<str:programme_id>/cohorts/', views.curriculum_programme_cohort_collection, name='curriculum-programme-cohorts'),
     path('curriculum/programmes/<str:identifier>/restore/', views.curriculum_programme_restore, name='curriculum-programme-restore'),
@@ -138,10 +153,12 @@ urlpatterns = [
     path('curriculum/components/<str:component_id>/', views.curriculum_component_detail, name='curriculum-component-detail'),
     path('curriculum/teams-meetings/', teams_meeting_collection, name='curriculum-teams-meeting'),
     path('curriculum/teams-meetings/create-status/', teams_create_status, name='curriculum-teams-create-status'),
+    path('curriculum/teams-meetings/create-draft/', teams_create_draft, name='curriculum-teams-create-draft'),
     path('curriculum/teams-meetings/summary/', views.curriculum_teams_meeting_summary, name='curriculum-teams-meeting-summary'),
     path('curriculum/live-sessions/occurrences/', views.curriculum_live_session_occurrences, name='curriculum-live-session-occurrences'),
     path('curriculum/teams-meetings/<str:live_session_id>/schedule/', views.curriculum_teams_meeting_schedule, name='curriculum-teams-meeting-schedule'),
     path('curriculum/teams-meetings/<str:live_session_id>/schedule-email/', schedule_email, name='curriculum-teams-schedule-email'),
+    path('curriculum/teams-meetings/<str:live_session_id>/forward-email/', forward_schedule_email, name='curriculum-teams-forward-email'),
     path('curriculum/teams-meetings/<str:live_session_id>/calendar-state/', sync_calendar_state, name='curriculum-teams-calendar-state'),
     path('curriculum/teams-meetings/<str:live_session_id>/actions/', calendar_action, name='curriculum-teams-calendar-action'),
     path('curriculum/teams-meetings/<str:live_session_id>/compare-attendees/', teams_meeting_attendee_comparison, name='curriculum-teams-compare-attendees'),

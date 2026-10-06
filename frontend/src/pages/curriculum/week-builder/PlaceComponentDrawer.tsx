@@ -133,17 +133,19 @@ export function GroupPlacementPanel({ component, groupId, groupName, programmeId
       const selectedWeeks = freshStructure.weekStructure.filter(week => selectedWeekIds.has(week.id));
       const targetHasLiveSession = selectedWeeks.some(week =>
         week.components.some(item => item.type === 'live-session'));
+      const sourceTeamsLink = hasLiveSession
+        ? String(component.settings.liveSessionUrl || component.settings.teamsMeetingUrl || '').trim()
+        : '';
       let replaceExisting = false;
       let copyWithLink = false;
       if (hasLiveSession && targetHasLiveSession) {
-        const sourceTeamsLink = String(component.settings.liveSessionUrl || component.settings.teamsMeetingUrl || '').trim();
         const copyChoice = sourceTeamsLink ? 'Copy with Teams link' : 'Copy without Teams link';
         const copyDescription = sourceTeamsLink
           ? 'add another copy with its Teams link'
           : 'add another copy without a Teams link (the source has no link to copy)';
         await showCurriculumConfirm({
           title: 'Live session already exists',
-          text: `One or more selected weeks already contain a Live Session. Replace those selected sessions, or ${copyDescription}? Sessions in other weeks are not affected.`,
+          text: `One or more selected weeks already contain a Live Session. Replace those selected sessions with the source session's Teams link, calendar identity and dates, or ${copyDescription}? Sessions in other weeks are not affected.`,
           icon: 'warning',
           confirmButtonText: 'Replace selected session',
           cancelButtonText: 'Reject',
@@ -161,15 +163,19 @@ export function GroupPlacementPanel({ component, groupId, groupName, programmeId
         if (!selectedWeekIds.has(week.id)) return week;
         const existingLive = week.components.find(item => item.type === 'live-session');
         const copy = copyComponentToWeek(component, week.id, catalogueId);
-        // Replacing a component in a week keeps that week's existing calendar
-        // occurrence. A new week gets an unbooked authoring copy instead.
+        // An Assigned Groups replacement is an explicit request to make the
+        // destination use the source delivery. Carry the source Teams identity
+        // and schedule so the destination resolves to the same meeting/link
+        // and dates. This also makes the destination's existing "Update Teams
+        // meeting" action operate on the shared calendar instead of its old
+        // meeting.
         const clone = replaceExisting && existingLive ? {
           ...copy,
           settings: {
             ...copy.settings,
             ...Object.fromEntries([...TEAMS_MEETING_SETTING_KEYS, ...SESSION_DATE_SETTING_KEYS]
-              .filter(key => existingLive.settings[key] !== undefined)
-              .map(key => [key, existingLive.settings[key]])),
+              .filter(key => component.settings[key] !== undefined)
+              .map(key => [key, component.settings[key]])),
           },
         } : copy;
         const components = replaceExisting
@@ -178,7 +184,19 @@ export function GroupPlacementPanel({ component, groupId, groupName, programmeId
         results.push({ moduleCatalogueId: catalogueId, weekId: week.id, componentId: clone.id });
         return { ...week, components: [...components, clone] };
       });
-      await saveModuleStructure(catalogueId, { ...freshStructure, weekStructure: nextWeekStructure });
+      // A replacement that carries a booked Teams session is a shared-module
+      // alias, not seven new owners of the same live_sessions row. Persist the
+      // source module once so the backend strips duplicate calendar identities
+      // from the destination payload and projects the source calendar when it
+      // is read back.
+      const sharedTeamsSourceModuleId = hasLiveSession && sourceTeamsLink
+        ? String(component.moduleId || '').trim()
+        : '';
+      await saveModuleStructure(catalogueId, {
+        ...freshStructure,
+        ...(replaceExisting && sharedTeamsSourceModuleId ? { teamsSharedSourceModuleId: sharedTeamsSourceModuleId } : {}),
+        weekStructure: nextWeekStructure,
+      });
       void showCurriculumAlert({
         title: 'Placed',
         text: `Copied into ${groupName}'s ${results.length} week${results.length === 1 ? '' : 's'}.`,

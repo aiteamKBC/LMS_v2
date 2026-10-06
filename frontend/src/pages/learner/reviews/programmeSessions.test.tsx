@@ -86,8 +86,7 @@ beforeEach(() => {
   }));
 });
 
-it('falls back to generated sessions when an Aptem learner has no imported MCM rows', async () => {
-  detailActivityAvailable = true;
+it('renders server-owned Native occurrences without requiring imported history', async () => {
   events = [session('mcr'), session('mcr', 2, 'completed')];
   mount(cases[1]);
 
@@ -107,6 +106,9 @@ it('keeps completed imported review history in all Reviews', async () => {
     plannedDate: '2026-09-18', plannedTime: null, completedDate: null,
     status: 'completed', extractionStatus: 'complete', detailsAvailable: false, sections: [],
   }];
+  events = [{ ...session('progress-review', 1, 'completed'), id: 'imported-review:A-900', eventKey: 'imported-review:A-900',
+    reviewSource: 'aptem', reviewId: historyReviews[0].id, importedReview: historyReviews[0], title: historyReviews[0].name,
+    date: historyReviews[0].plannedDate, targetDate: historyReviews[0].plannedDate }];
   mount(cases[0]);
 
   const region = await screen.findByRole('region', { name: 'Reviews sessions' });
@@ -151,7 +153,7 @@ function openMoreOptions(item: typeof cases[number]) {
 }
 
 describe.each(cases)('$path programme sessions', item => {
-  it('schedules the Curriculum occurrence when imported future reviews also exist', async () => {
+  it('uses server-owned Native occurrences without merging the legacy history stream', async () => {
     detailActivityAvailable = true;
     historyReviews = [{ id: '908', aptemReviewId: 'A-908', name: 'Old imported meeting',
       type: 'Progress Review', reviewerName: 'Assigned coach',

@@ -1,3 +1,4 @@
+import { coachFetch } from '@/lib/coachFetch';
 import { publishCrossTabWrite, subscribeCrossTabWrites } from '@/lib/crossTabWrites';
 
 export type CurriculumStatus = 'active' | 'draft' | 'archived' | 'published' | 'planned' | 'completed' | string;
@@ -363,6 +364,14 @@ export interface CurriculumModule {
   cohort?: string;
   groupId?: string;
   group?: string;
+  learnerRosterMode?: 'inherited' | 'manual' | string;
+  teamsSharedSourceModuleId?: string;
+  ksbRemapReport?: {
+    status?: 'complete' | 'partial' | 'no-source' | string;
+    matchedCount?: number;
+    unmatched?: Array<{ location?: string; path?: string; code?: string; description?: string; reason?: string }>;
+    [key: string]: unknown;
+  } | null;
   isProgrammeDeleted?: boolean;
   /**
    * The authored week count — what the week builder holds and what the UI shows
@@ -973,6 +982,8 @@ export interface CurriculumScopeStructureCounts {
 
 export interface CurriculumProgrammeAssignedLearner {
   id: number | string;
+  /** EnrolmentUser primary key used by learner-assignment writes. */
+  enrolmentId?: number | string;
   name: string;
   email: string;
   programme: string;
@@ -1004,6 +1015,75 @@ export interface CurriculumProgrammeAssignedLearner {
   reflectionActualOtjh?: number | null;
   reflectionExpectedOtjh?: number | null;
   reflectionCount?: number;
+}
+
+export interface CurriculumKsbAchievementFilters {
+  cohortId?: string;
+  groupId?: string;
+  moduleId?: string;
+  learnerId?: string;
+  componentId?: string;
+  ksbType?: string;
+  ksbId?: string;
+  search?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  page?: number;
+  pageSize?: number;
+  ksbPage?: number;
+  ksbPageSize?: number;
+}
+
+export interface CurriculumKsbAchievementItem {
+  ksbDefinitionId: string;
+  code: string;
+  type: string;
+  description: string;
+  sourceType: string;
+  sourceId: string;
+  learnerCount: number;
+  consumptionCount: number;
+  componentCount: number;
+  firstConsumedAt?: string | null;
+  lastConsumedAt?: string | null;
+}
+
+export interface CurriculumKsbConsumption {
+  effectiveConsumptionId: string;
+  learner: { id: string | number; name: string };
+  cohort: { id: string; name: string };
+  group: { id: string; name: string };
+  module: { id: string; title: string };
+  week: { id: string; title: string };
+  component: { id: string; title: string; type: string };
+  ksb: CurriculumKsbAchievementItem;
+  consumedAt: string;
+  weight: number;
+}
+
+export interface CurriculumKsbAchievementResponse {
+  scope: { programmeId: string; cohortId: string | null; groupId: string | null; moduleId: string | null };
+  appliedSource: { type: string; id: string; label: string; definitionCount: number };
+  summary: { appliedKsbCount: number; consumedKsbCount: number; learnerCount: number; consumptionCount: number };
+  items: CurriculumKsbAchievementItem[];
+  ksbPagination: { page: number; pageSize: number; total: number; hasNext: boolean };
+  consumptionLog: { items: CurriculumKsbConsumption[]; page: number; pageSize: number; total: number; hasNext: boolean };
+}
+
+export interface CurriculumKsbAchievementConsumptionResponse {
+  ksb: CurriculumKsbAchievementItem | null;
+  items: CurriculumKsbConsumption[];
+  page: number;
+  pageSize: number;
+  total: number;
+  hasNext: boolean;
+}
+
+/** The identifier accepted by curriculum learner-assignment writes. */
+export function curriculumLearnerAssignmentId(
+  learner: Pick<CurriculumProgrammeAssignedLearner, 'id' | 'enrolmentId'>,
+) {
+  return String(learner.enrolmentId ?? learner.id);
 }
 
 export interface CurriculumLearnerKsbConsumptionItem {
@@ -1717,6 +1797,14 @@ export interface CurriculumAuditChange {
 
 export interface CurriculumAuditEvent {
   id: string;
+  /**
+   * Where the event comes from: the revision log saw the save happen, or it
+   * was recovered from a timestamp the record keeps, from before its record
+   * type's revision history began. Recovered events never carry a before and
+   * after, and name an author only where the record itself recorded one.
+   */
+  provenance?: 'revision' | 'timestamps';
+  provenanceLabel?: string;
   /** ISO stamp of the write itself, not a display date. */
   at: string;
   action: CurriculumAuditAction;
@@ -1724,6 +1812,9 @@ export interface CurriculumAuditEvent {
   actionLabel: string;
   entity: 'programme' | 'module' | 'week' | 'component' | 'cohort' | 'group' | string;
   entityLabel: string;
+  /** Workspace owning the record, or the page workspace that made the save. */
+  workspace?: string;
+  workspaceLabel?: string;
   entityId: string;
   revisionNo: number;
   title: string;
@@ -1797,7 +1888,22 @@ export interface CurriculumAuditActor {
 
 export interface CurriculumAuditTrail {
   workspaces?: { value: string; label: string }[];
+  /** Every workspace this response can speak for, whichever reading covers it. */
   changeWorkspaces?: string[];
+  /** Covered by the revision log: who saved, and what each field held before and after. */
+  revisionWorkspaces?: string[];
+  /** Covered only by the records' own timestamps: what moved and when, rarely who. */
+  derivedWorkspaces?: string[];
+  /** Nothing in this database records what changed there. */
+  uncoveredWorkspaces?: string[];
+  /** How many events in the whole window came from each reading. */
+  provenanceCounts?: { revision: number; timestamps: number };
+  /** Whether history from before the revision log was recovered into this feed. */
+  recoveredHistory?: boolean;
+  /** The recovered history could not be read this time; the log is shown alone. */
+  recoveryFailed?: boolean;
+  /** Where each record type's revision history begins; null when it has none yet. */
+  revisionStartedAt?: Record<string, string | null>;
   generatedAt: string;
   windowDays: number;
   since: string;
@@ -3352,7 +3458,7 @@ export function fetchCurriculumKsbCoverage(params: { sourceType?: string; source
   if (params.sourceType) query.set('source_type', params.sourceType);
   if (params.sourceId) query.set('source_id', params.sourceId);
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/ksb-coverage/${suffix}`, { signal });
+  return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/ksb-coverage/${suffix}`, { signal, timeoutMs: 60000 });
 }
 
 export function fetchCurriculumProgrammeKsbCoverage(programmeId: string, params: { sourceType?: string; sourceId?: string; actualMappings?: boolean } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageResponse> {
@@ -3361,7 +3467,7 @@ export function fetchCurriculumProgrammeKsbCoverage(programmeId: string, params:
   if (params.sourceId) query.set('source_id', params.sourceId);
   if (params.actualMappings) query.set('actual_mappings', '1');
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/ksb-coverage/${suffix}`, { signal });
+  return fetchJson<CurriculumKsbCoverageResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/ksb-coverage/${suffix}`, { signal, timeoutMs: 60000 });
 }
 
 // Kept as named entry points because the Programme workspace reads them by
@@ -3428,7 +3534,7 @@ export function fetchCurriculumScopeLearnerRoster(
   if (params.learnerStatus) query.set('learnerStatus', params.learnerStatus);
   return fetchJson<CurriculumScopeLearnerRosterResponse>(
     scopePath(SCOPE_ROSTER_PATHS, '/curriculum/learner-roster/', scope, identifier, query),
-    { signal },
+    { signal, timeoutMs: 60000 },
   );
 }
 
@@ -3453,6 +3559,26 @@ export function fetchCurriculumScopeLearnerKsbImpact(
     scopePath(SCOPE_IMPACT_PATHS, '/curriculum/learner-ksb-impact/', scope, identifier, query),
     { signal },
   );
+}
+
+function ksbAchievementQuery(params: CurriculumKsbAchievementFilters = {}) {
+  const query = new URLSearchParams();
+  const values: Array<[string, string | number | undefined]> = [
+    ['cohort_id', params.cohortId], ['group_id', params.groupId], ['module_id', params.moduleId],
+    ['learner_id', params.learnerId], ['component_id', params.componentId], ['ksb_type', params.ksbType],
+    ['ksb_id', params.ksbId], ['search', params.search], ['date_from', params.dateFrom], ['date_to', params.dateTo],
+    ['page', params.page], ['page_size', params.pageSize], ['ksb_page', params.ksbPage], ['ksb_page_size', params.ksbPageSize],
+  ];
+  values.forEach(([key, value]) => { if (value !== undefined && value !== '') query.set(key, String(value)); });
+  return query.toString() ? `?${query.toString()}` : '';
+}
+
+export function fetchCurriculumKsbAchievement(programmeId: string, params: CurriculumKsbAchievementFilters = {}, signal?: AbortSignal) {
+  return fetchJson<CurriculumKsbAchievementResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/ksb-achievement/${ksbAchievementQuery(params)}`, { signal });
+}
+
+export function fetchCurriculumKsbAchievementConsumptions(programmeId: string, ksbDefinitionId: string, params: CurriculumKsbAchievementFilters = {}, signal?: AbortSignal) {
+  return fetchJson<CurriculumKsbAchievementConsumptionResponse>(`/curriculum/programmes/${encodeURIComponent(programmeId)}/ksb-achievement/${encodeURIComponent(ksbDefinitionId)}/consumptions/${ksbAchievementQuery(params)}`, { signal });
 }
 
 export function fetchCurriculumGroupKsbCoverage(groupId: string, params: { sourceType?: string; sourceId?: string } = {}, signal?: AbortSignal): Promise<CurriculumKsbCoverageResponse> {
@@ -3655,11 +3781,12 @@ export function fetchCurriculumOverview(signal?: AbortSignal, options: { compact
   return fetchJson<CurriculumOverview>(`/curriculum/overview/${options.compact ? '?compact=true' : ''}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 30000 });
 }
 
-export function fetchCurriculumProgrammeDetail(id: string, signal?: AbortSignal, options: { visibility?: 'all' | 'operational'; skipCache?: boolean; revalidate?: boolean } = {}): Promise<CurriculumProgrammeDetail> {
+export function fetchCurriculumProgrammeDetail(id: string, signal?: AbortSignal, options: { visibility?: 'all' | 'operational'; deferStats?: boolean; skipCache?: boolean; revalidate?: boolean; timeoutMs?: number } = {}): Promise<CurriculumProgrammeDetail> {
   const query = new URLSearchParams();
   if (options.visibility === 'all') query.set('visibility', 'all');
+  if (options.deferStats) query.set('defer_stats', '1');
   const suffix = query.toString() ? `?${query.toString()}` : '';
-  return fetchJson<CurriculumProgrammeDetail>(`/curriculum/programmes/${encodeURIComponent(id)}/detail/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate });
+  return fetchJson<CurriculumProgrammeDetail>(`/curriculum/programmes/${encodeURIComponent(id)}/detail/${suffix}`, { signal, skipCache: options.skipCache, revalidate: options.revalidate, timeoutMs: options.timeoutMs ?? 60000 });
 }
 
 export { fetchCurriculumOverview as fetchCurriculumOverviewBundle };
@@ -4488,6 +4615,87 @@ export interface StaleTeamsCalendar {
 
 export function updateCurriculumModule(id: string, input: CurriculumModuleInput) {
   return patchJson<{ updated: boolean; module: CurriculumModule; revision?: string; teamsCalendarsToUpdate?: StaleTeamsCalendar[] }>(`/curriculum/modules/${encodeURIComponent(id)}/`, input);
+}
+
+/**
+ * Tell a module's tutor they have been put on it.
+ *
+ * One mail covers every id in the list, because one drawer save can attach the
+ * module to several groups at once -- one delivery per group, all carrying the
+ * same tutor -- and that is one decision, not three. Every id must therefore
+ * name a module with the same tutor; the backend refuses a mixed list rather
+ * than guessing who to write to.
+ *
+ * Only ever called because somebody ticked the box: assigning a tutor does not
+ * mail them on its own (see curriculum_api/tutor_notifications.py).
+ */
+export interface TutorAssignmentEmailStatus {
+  tutor: { name: string; hasEmail: boolean } | null;
+  /** How many deliveries were asked about. */
+  total: number;
+  /** How many of them this tutor has actually been emailed about. */
+  emailed: number;
+  /** The most recent successful send across them, ISO, or null. */
+  lastSentAt: string | null;
+  deliveries: { moduleId: string; emailed: boolean; lastSent: { status: string | null; at: string | null } | null }[];
+}
+
+/**
+ * Whether this tutor has already been told about these deliveries.
+ *
+ * The answer comes from the assignment ledger, which is keyed on (tutor,
+ * module) -- so it is per tutor by construction, and a module whose tutor
+ * changed reports nothing for the new name. `tutorName` asks about a tutor the
+ * module does not carry yet, which is what the drawer needs while somebody is
+ * still choosing one.
+ *
+ * A read, so it must not disturb the caches a write would: see `isReadOnlyPost`
+ * for the same idea on the POST side.
+ */
+export function fetchTutorAssignmentEmailStatus(moduleIds: string[], tutorName: string, signal?: AbortSignal) {
+  const params = new URLSearchParams({ moduleIds: moduleIds.join(',') });
+  if (tutorName) params.set('tutor', tutorName);
+  return tutorEmailJson<TutorAssignmentEmailStatus>(`${tutorEmailUrl()}?${params.toString()}`, { signal });
+}
+
+export function sendTutorAssignmentEmail(moduleIds: string[]) {
+  return tutorEmailJson<{ sent: boolean; tutor: string; modules: number }>(tutorEmailUrl(), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ moduleIds }),
+  });
+}
+
+function tutorEmailUrl() {
+  return `${API_BASE_URL}/curriculum/modules/tutor-email/`;
+}
+
+/**
+ * The two tutor-email calls go through `coachFetch`, not this module's own
+ * `fetchJson`, and that is not an oversight.
+ *
+ * Almost every curriculum write is `@csrf_exempt` (61 of them in views.py), so
+ * `fetchJson` never had to send a CSRF token. `tutor_notifications` is not
+ * exempt -- it is a view that sends real mail to a real person, and it keeps the
+ * protection -- so a POST from `fetchJson` is rejected by Django's CSRF
+ * middleware before the view runs, which surfaced as a bare "could not be sent".
+ * `coachFetch` fetches and attaches the token, which is exactly why the module
+ * workspace's own "Email tutor" button has always used it.
+ *
+ * The right fix is to send the token, never to exempt the view.
+ */
+async function tutorEmailJson<T>(url: string, init?: globalThis.RequestInit): Promise<T> {
+  const response = await coachFetch(url, init);
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    // The server's own sentence when it has one -- "Amira has no email address
+    // in the staff directory" tells the reader what to do; "502" does not.
+    throw new Error(
+      (data && typeof data.error === 'string' && data.error)
+      || `The tutor email request failed (${response.status}).`,
+    );
+  }
+  return data as T;
 }
 
 export function updateCurriculumModuleCover(id: string, coverImage: string) {

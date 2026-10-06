@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { formatHoursMinutes } from '@/lib/format';
 import type {
   CurriculumLearnerKsbConsumption,
@@ -50,7 +51,7 @@ function ksbFor(learners: CurriculumLearnerKsbConsumption[], learner: Curriculum
   return learners.find(row => learnerKey(row.learnerId) === learnerKey(learner.id));
 }
 
-export function ModuleLearnerProgressDialog({ moduleName, impact, assignedLearners, onClose, onAssignMore }: {
+export function ModuleLearnerProgressDialog({ moduleName, impact, assignedLearners, onClose, onAssignMore, onRemoveLearner }: {
   moduleName: string;
   impact: CurriculumScopeLearnerKsbImpactResponse;
   /**
@@ -61,6 +62,7 @@ export function ModuleLearnerProgressDialog({ moduleName, impact, assignedLearne
   assignedLearners?: CurriculumProgrammeAssignedLearner[];
   onClose: () => void;
   onAssignMore: () => void;
+  onRemoveLearner: (learner: CurriculumProgrammeAssignedLearner) => Promise<void>;
 }) {
   const dialog = useRef<HTMLDivElement>(null);
   const learners = useMemo(
@@ -69,6 +71,7 @@ export function ModuleLearnerProgressDialog({ moduleName, impact, assignedLearne
   );
   const otjhRows = impact.otjhAchievement?.learners || [];
   const ksbRows = impact.learnerKsbConsumption || [];
+  const [removingLearnerId, setRemovingLearnerId] = useState<string | null>(null);
 
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
@@ -131,8 +134,9 @@ export function ModuleLearnerProgressDialog({ moduleName, impact, assignedLearne
                 const ksb = ksbFor(ksbRows, learner);
                 const otjhProgress = otjh?.progressPercentage || 0;
                 const ksbProgress = ksb?.progressPercentage || 0;
+                const id = learnerKey(learner.id);
                 return (
-                  <article key={learnerKey(learner.id)} className="rounded-xl border border-background-200 bg-background-50 p-3">
+                  <article key={id} className="rounded-xl border border-background-200 bg-background-50 p-3">
                     <div className="flex items-start gap-3">
                       <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-extrabold ${tint(learnerKey(learner.id))}`}>{initials(name)}</span>
                       <div className="min-w-0 flex-1">
@@ -140,6 +144,31 @@ export function ModuleLearnerProgressDialog({ moduleName, impact, assignedLearne
                         <p className="truncate text-[10px] text-foreground-500">{learner.email || 'No email on record'}</p>
                         <p className="mt-1 truncate text-[10px] font-semibold text-foreground-400">{[learner.cohort, learner.group].filter(Boolean).join(' · ') || 'No delivery group recorded'}</p>
                       </div>
+                      <button
+                        type="button"
+                        disabled={Boolean(removingLearnerId)}
+                        className="shrink-0 rounded-lg border border-red-200 bg-red-50 px-2.5 py-1.5 text-[10px] font-bold text-red-700 hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        onClick={async () => {
+                          const confirmed = await showCurriculumConfirm({
+                            title: `Remove ${name} from this module?`,
+                            text: 'The learner will lose current access to this module, but progress, submissions, attendance and audit history will be kept. You can add the learner again later.',
+                            icon: 'warning',
+                            confirmButtonText: 'Remove learner',
+                            cancelButtonText: 'Keep learner',
+                            onConfirm: async () => {
+                              setRemovingLearnerId(id);
+                              try {
+                                await onRemoveLearner(learner);
+                              } finally {
+                                setRemovingLearnerId(null);
+                              }
+                            },
+                          });
+                          if (!confirmed) return;
+                        }}
+                      >
+                        {removingLearnerId === id ? 'Removing…' : 'Remove'}
+                      </button>
                     </div>
                     <div className="mt-3 grid gap-3 sm:grid-cols-2">
                       <div>

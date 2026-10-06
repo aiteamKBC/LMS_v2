@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useMemo, useCallback, type CSSProperties } from 'react';
+import { Fragment, useState, useEffect, useMemo, useCallback, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
@@ -15,7 +15,7 @@ import type { DirectoryCoach } from '@/api/coachDirectory';
 import { cn } from '@/lib/cn';
 import { ATTENDANCE_EXPECTED_RATE, ATTENDANCE_MINIMUM_RATE } from '@/lib/format';
 import { toneStyle, type StatusTone } from '@/lib/statusTone';
-import { getOtjhGapStatus } from '@/pages/coach/caseload/lib/format';
+import { isVisibleCaseloadLearner, otjhProgressAsOfToday, parseDisplayDate } from '@/pages/coach/caseload/lib/format';
 import styles from '@/pages/workspace/coach/dashboard.module.css';
 import { CoachCaseloadContent } from '@/pages/coach/caseload/page';
 import { CaseloadLoading } from '@/pages/coach/caseload/components/CaseloadStates';
@@ -34,7 +34,7 @@ import {
   eventTargetDate,
   eventPeriodLabel,
   formatDateLabel,
-  formatTimeLabel,
+  formatTimeLabel as calendarTimeLabel,
   formatTimeRangeLabel,
   isAtRiskEvent,
   getCurrentWorkWeekRange,
@@ -52,12 +52,18 @@ import { fetchCoachDashboard } from '../api/dashboardApi';
 const coachNav = roleNavMap.coach;
 
 type DashboardKpi = 'caseload' | 'active' | 'on-break' | 'on-track' | 'at-risk' | 'need-attention' | 'completed' | 'epa' | 'evidence' | 'reviews' | 'pending-marking' | 'pr-week' | 'mcm-week' | 'catch-ups-week';
+type CoachDashboardTab = 'learners' | 'meetings' | 'risk';
 type OtjhStatusKey = 'at-risk' | 'need-attention' | 'on-track' | 'unknown';
 type PerformanceStatus = 'on-track' | 'at-risk' | 'high' | 'new-starter';
 type ScheduleStatus = 'upcoming' | 'overdue' | 'needs-schedule' | 'none';
 
 const EMPTY_VALUE = '--';
 const UPCOMING_MEETING_SOURCES = new Set(['progress-review', 'mcr', 'catch-up', 'support', 'student-support', 'live-session']);
+const COACH_DASHBOARD_TABS: { id: CoachDashboardTab; label: string }[] = [
+  { id: 'learners', label: 'All Learners' },
+  { id: 'meetings', label: 'Upcoming Meetings' },
+  { id: 'risk', label: 'Risk Insights' },
+];
 
 function toIsoDate(value: Date) {
   const year = value.getFullYear();
@@ -80,7 +86,12 @@ interface CoachLearner {
   currentModule?: string | null;
   currentWeek?: string | null;
   componentsTargetToDate?: number | null;
+  /** Whole-programme training-plan total used to calculate today's target. */
+  otjhPlanned?: number | null;
+  startDate?: string | null;
+  plannedEndDate?: string | null;
   programme: string;
+  programmeName?: string | null;
   cohortName?: string | null;
   group: string;
   employer: string;
@@ -99,12 +110,19 @@ interface CoachLearner {
   attendancePresent?: number | null;
   attendanceSessions?: number | null;
   attendanceAbsent?: number | null;
+  attendanceConsecutiveMissed?: number | null;
   attendanceLastSession?: string | null;
   attendanceLastSessionDate?: string | null;
   otjhCompleted: number;
   otjhTarget: number;
   otjhVariance?: number | null;
   otjhStatus?: string | null;
+  otjhTargetAsOfToday?: number | null;
+  otjhProgressAsOfToday?: number | null;
+  otjhShortfallHours?: number | null;
+  otjhDeltaHours?: number | null;
+  otjhRagStatus?: 'at-risk' | 'need-attention' | 'on-track' | 'unavailable' | null;
+  otjhRagSource?: string | null;
   ksbCompleted?: number | null;
   ksbTarget?: number | null;
   ksbProgress: number | null;
@@ -129,6 +147,7 @@ interface CoachLearner {
   recentFlag: string | null;
   email?: string | null;
   rawProgramStatus?: string | null;
+  enrollmentStatus?: string | null;
   mcmReviews: ImportedReview[];
   reviews: ImportedReview[];
 }
@@ -274,7 +293,7 @@ function isVisibleRiskFlag(value?: string | null) {
 }
 
 function canonicalOtjhStatus(learner: CoachLearner): OtjhStatusKey {
-  const status = getOtjhGapStatus(learner.otjhCompleted, learner.otjhTarget).status;
+  const status = otjhProgressAsOfToday(learner).status;
   return status === 'unavailable' ? 'unknown' : status;
 }
 
@@ -317,6 +336,17 @@ function normalizedProgramStatus(learner: CoachLearner): string {
   return displayValue(learner.rawProgramStatus).toLowerCase().replace(/[\s_-]+/g, '');
 }
 
+function isRiskInsightsLearner(learner: CoachLearner): boolean {
+  if (!isActiveLearner(learner)) return false;
+  const programmeStages = [learner.rawProgramStatus, learner.enrollmentStatus]
+    .map(value => displayValue(value).toLowerCase().replace(/[^a-z0-9]+/g, ''));
+  return !programmeStages.some(status => (
+    status.startsWith('onboarding')
+    || status.startsWith('withdrawn')
+    || status.startsWith('enteredepa')
+  ));
+}
+
 function isOnBreakLearner(learner: CoachLearner): boolean {
   return normalizedProgramStatus(learner).includes('break');
 }
@@ -345,7 +375,9 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
   const fallbackName = name === EMPTY_VALUE ? `Learner ${index + 1}` : name;
   const initials = displayValue(learner.initials);
   const id = displayValue(learner.id);
-  const programme = displayValue(learner.programme) === EMPTY_VALUE ? displayValue(learner.cohortName) : displayValue(learner.programme);
+  const apiProgrammeName = displayValue(learner.programmeName);
+  const programmeName = apiProgrammeName === EMPTY_VALUE ? displayValue(learner.programme) : apiProgrammeName;
+  const programme = programmeName === EMPTY_VALUE ? displayValue(learner.cohortName) : programmeName;
   const cohortName = displayValue(learner.cohortName);
   const riskFlags = Array.isArray(learner.riskFlags) ? learner.riskFlags.filter(isVisibleRiskFlag) : [];
   const recentFlag = isVisibleRiskFlag(learner.recentFlag) && !riskFlags.includes(String(learner.recentFlag))
@@ -361,7 +393,11 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     currentModule: learner.currentModule,
     currentWeek: learner.currentWeek,
     componentsTargetToDate: learner.componentsTargetToDate,
+    otjhPlanned: learner.otjhPlanned ?? null,
+    startDate: learner.startDate ?? null,
+    plannedEndDate: learner.plannedEndDate ?? null,
     programme,
+    programmeName: programmeName === EMPTY_VALUE ? null : programmeName,
     cohortName: cohortName === EMPTY_VALUE ? null : cohortName,
     group: displayValue(learner.group),
     employer: displayValue(learner.employer),
@@ -382,10 +418,17 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     attendancePresent: learner.attendancePresent ?? null,
     attendanceSessions: learner.attendanceSessions ?? null,
     attendanceAbsent: learner.attendanceAbsent ?? null,
+    attendanceConsecutiveMissed: learner.attendanceConsecutiveMissed ?? null,
     attendanceLastSession: learner.attendanceLastSession ?? null,
     attendanceLastSessionDate: learner.attendanceLastSessionDate ?? null,
     otjhCompleted: toNumber(learner.otjhCompleted),
     otjhTarget: Math.max(toNumber(learner.otjhTarget), 0),
+    otjhTargetAsOfToday: learner.otjhTargetAsOfToday ?? null,
+    otjhProgressAsOfToday: learner.otjhProgressAsOfToday ?? null,
+    otjhShortfallHours: learner.otjhShortfallHours ?? null,
+    otjhDeltaHours: learner.otjhDeltaHours ?? null,
+    otjhRagStatus: learner.otjhRagStatus ?? null,
+    otjhRagSource: learner.otjhRagSource ?? null,
     otjhVariance: learner.otjhVariance ?? null,
     otjhStatus: displayValue(learner.otjhStatus),
     ksbCompleted: learner.ksbCompleted ?? null,
@@ -409,6 +452,7 @@ function normalizeLearner(learner: CaseloadApiLearner, index: number): CoachLear
     recentFlag,
     email: learner.email || null,
     rawProgramStatus: learner.rawProgramStatus || null,
+    enrollmentStatus: learner.enrollmentStatus || null,
     mcmReviews: [],
     reviews: [],
   };
@@ -709,6 +753,11 @@ function isWithinNextWorkWeek(event: CoachCalendarEvent) {
   return date.getTime() >= start.getTime() && date.getTime() <= end.getTime();
 }
 
+function formatTimeLabel(event: CoachCalendarEvent) {
+  const label = calendarTimeLabel(event);
+  return label === 'Time TBC' ? '-' : label;
+}
+
 function upcomingLiveSessionTimeLabel(event: CoachCalendarEvent) {
   if (event.timeLabel && event.timeLabel !== 'Time TBC') {
     return event.timeLabel;
@@ -716,7 +765,7 @@ function upcomingLiveSessionTimeLabel(event: CoachCalendarEvent) {
   if (event.scheduledTime) {
     return event.scheduledTime.slice(0, 5);
   }
-  return 'Time TBC';
+  return '-';
 }
 
 function upcomingLiveSessionMetaLabel(event: CoachCalendarEvent) {
@@ -818,17 +867,19 @@ interface OverdueSignal {
 }
 
 function otjhPercentFor(learner: CoachLearner): number | null {
-  return learner.otjhTarget > 0 ? clampPercent((learner.otjhCompleted / learner.otjhTarget) * 100) : null;
+  const progress = otjhProgressAsOfToday(learner);
+  return progress.percent === null ? null : clampPercent(progress.percent);
 }
 
 function otjhVarianceLabel(learner: CoachLearner): string {
-  if (learner.otjhTarget <= 0) return EMPTY_VALUE;
+  const progress = otjhProgressAsOfToday(learner);
+  if (progress.deltaHours === null) return EMPTY_VALUE;
   if (learner.otjhVariance !== undefined && learner.otjhVariance !== null) {
     const variance = Math.round(learner.otjhVariance * 10) / 10;
     return `${variance > 0 ? '+' : ''}${variance}h`;
   }
-  const variance = Math.round(((learner.otjhCompleted - learner.otjhTarget) / learner.otjhTarget) * 100);
-  return `${variance > 0 ? '+' : ''}${variance}%`;
+  const variance = Math.round(progress.deltaHours * 10) / 10;
+  return `${variance > 0 ? '+' : ''}${variance}h`;
 }
 
 /** Scheduled but already past, or still needing a date after its target passed. */
@@ -973,7 +1024,7 @@ function scheduleEventTime(event: CoachCalendarEvent) {
   if (event.source === 'live-session') return upcomingLiveSessionTimeLabel(event);
   if (event.scheduledTime) return formatTimeRangeLabel(event);
   if (event.timeLabel && event.timeLabel !== 'Time TBC') return event.timeLabel;
-  return 'TBC';
+  return '-';
 }
 
 /** Just the start, for the fixed-size "Next" badge -- a live session's
@@ -1055,73 +1106,158 @@ function LearnerTableSkeleton() {
   </div>;
 }
 
-function MeetingsSkeleton() {
+type RiskInsightTone = 'warning' | 'critical';
+
+function riskTone(value: number, warningAt: number, criticalAt: number): RiskInsightTone | null {
+  if (value >= criticalAt) return 'critical';
+  if (value >= warningAt) return 'warning';
+  return null;
+}
+
+function daysSince(value?: string | null, today = new Date()): number | null {
+  const date = parseDisplayDate(value);
+  if (!date) return null;
+  const dateDay = Date.UTC(date.getFullYear(), date.getMonth(), date.getDate());
+  const todayDay = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  return Math.max(0, Math.floor((todayDay - dateDay) / 86_400_000));
+}
+
+function strongerTone(left: RiskInsightTone | null, right: RiskInsightTone | null): RiskInsightTone | null {
+  if (left === 'critical' || right === 'critical') return 'critical';
+  if (left === 'warning' || right === 'warning') return 'warning';
+  return null;
+}
+
+function RiskStatus({ tone }: { tone: RiskInsightTone }) {
+  return <span className={styles.riskStatus} data-tone={tone}>{tone === 'critical' ? 'Critical' : 'Warning'}</span>;
+}
+
+function RiskLearner({ learner }: { learner: CoachLearner }) {
+  return <div className={styles.identity}>
+    <LearnerAvatar name={learner.name} initials={learner.initials} tone={learnerAvatarTone(learner)} />
+    <Link
+      className={styles.riskLearnerLink}
+      to={`/coach/learner-case-file?id=${encodeURIComponent(learner.id)}`}
+      state={{
+        learnerId: learner.id,
+        learnerName: learner.name,
+        ...(learner.learnerType ? { kind: learner.learnerType } : {}),
+        ...(learner.enrolmentId ? { enrolmentId: learner.enrolmentId } : {}),
+      }}
+    >{learner.name}</Link>
+  </div>;
+}
+
+function ReviewAge({ value, days, tone, label }: {
+  value?: string | null;
+  days: number | null;
+  tone: RiskInsightTone | null;
+  label: 'PR' | 'MCM';
+}) {
+  return <div className={styles.reviewAge} data-tone={tone || undefined}>
+    <strong>{formatCompletedSessionDate(value)}</strong>
+    <small>{days === null ? `No ${label} yet` : `${days} days ago`}</small>
+  </div>;
+}
+
+function EmptyRiskRow({ columns, message }: { columns: number; message: string }) {
+  return <tr><td className={styles.emptyRiskRow} colSpan={columns}>{message}</td></tr>;
+}
+
+function RiskInsightPanel({ id, title, icon, description, children }: {
+  id: string;
+  title: string;
+  icon: string;
+  description: string;
+  children: ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+
   return <Panel className={styles.panel}>
-    <SectionHeader icon="ri-calendar-schedule-line" title="Upcoming Meetings"
-      description={`Your scheduled meetings and live sessions · next work week (${formatUpcomingRangeLabel()})`}
-      actions={<>
-        <LoadingBlock className="h-11 w-11" />
-        <LoadingBlock className="h-11 w-[118px]" />
-        <LoadingBlock className="h-11 w-[172px]" />
-      </>} />
-    <div className={styles.tableScroll}>
-      <table className={`${styles.table} ${styles.meetingsTable}`}>
-        <tbody>
-          <tr><th colSpan={9}><LoadingBlock className="h-3.5 w-32" /></th></tr>
-          {Array.from({ length: 3 }, (_, index) => <tr key={index} data-skeleton="meeting">
-            <td><LoadingBlock className={styles.meetingDateSkeleton} /></td>
-            <td><LoadingBlock className="h-3.5 w-16" /></td>
-            <td><div className={styles.identity}>
-              <LoadingBlock className="h-9 w-9 shrink-0 rounded-full" />
-              <span className="flex-1"><LoadingBlock className="h-3.5 w-36" /><LoadingBlock className="mt-2 h-3 w-20" /></span>
-            </div></td>
-            <td><div className={styles.meetingType}><LoadingBlock className="h-[30px] w-[30px] shrink-0" /><LoadingBlock className="h-3.5 w-28" /></div></td>
-            <td><LoadingBlock className="h-6 w-20 rounded-full" /></td>
-            {Array.from({ length: 4 }, (_, action) => <td key={action}><LoadingBlock className="h-11 w-28" /></td>)}
-          </tr>)}
-        </tbody>
-      </table>
-    </div>
+    <SectionHeader
+      title={title}
+      icon={icon}
+      description={description}
+      actions={<button
+        type="button"
+        className={styles.riskInsightToggle}
+        aria-expanded={open}
+        aria-controls={id}
+        aria-label={`${open ? 'Collapse' : 'Expand'} ${title}`}
+        onClick={() => setOpen(current => !current)}
+      >
+        <AppIcon className="ri-arrow-down-s-line" aria-hidden="true" />
+      </button>}
+    />
+    <div id={id} hidden={!open}>{children}</div>
   </Panel>;
 }
 
-const MONTHLY_BAR_SKELETON_HEIGHTS = ['46%', '64%', '38%', '78%', '52%', '30%'];
+function RiskInsightsTables({ learners, unavailable }: { learners: CoachLearner[]; unavailable: boolean }) {
+  const attendanceRows = learners
+    .map(learner => ({ learner, missed: learner.attendanceConsecutiveMissed ?? 0 }))
+    .map(row => ({ ...row, tone: riskTone(row.missed, 2, 3) }))
+    .filter((row): row is typeof row & { tone: RiskInsightTone } => Boolean(row.tone))
+    .sort((left, right) => right.missed - left.missed);
 
-function ChartSkeleton({ variant }: { variant: 'distribution' | 'monthly' }) {
-  if (variant === 'distribution') {
-    return <Panel className={styles.panel}>
-      <SectionHeader title="Risk Distribution" icon="ri-bar-chart-line" actions={<span className={styles.chartScope}>By OTJH status</span>} />
-      <div className={styles.distribution}>
-        <div className={`${styles.donut} ${styles.donutSkeleton} animate-pulse`}><div className={styles.donutCenter} /></div>
-        <ul className={styles.legend}>
-          {Array.from({ length: 4 }, (_, index) => <li key={index}>
-            <LoadingBlock className={`${styles.legendDot} rounded-full`} />
-            <LoadingBlock className="h-3.5 w-24" />
-            <LoadingBlock className="h-3.5 w-12" />
-          </li>)}
-        </ul>
+  const otjhRows = learners
+    .map(learner => ({ learner, target: otjhProgressAsOfToday(learner).targetHours }))
+    .filter((row): row is typeof row & { target: number } => row.target !== null && row.target > 0)
+    .map(row => ({ ...row, gap: Math.max(row.target - row.learner.otjhCompleted, 0) }))
+    .map(row => ({ ...row, tone: riskTone(row.gap, 30, 40) }))
+    .filter((row): row is typeof row & { tone: RiskInsightTone } => Boolean(row.tone))
+    .sort((left, right) => right.gap - left.gap);
+
+  const reviewRows = learners
+    .map(learner => {
+      const prDays = daysSince(learner.lastPr);
+      const mcmDays = daysSince(learner.lastMcm);
+      const prTone = prDays === null ? null : riskTone(prDays, 70, 84);
+      const mcmTone = mcmDays === null ? null : riskTone(mcmDays, 21, 28);
+      return { learner, prDays, mcmDays, prTone, mcmTone, tone: strongerTone(prTone, mcmTone) };
+    })
+    .filter((row): row is typeof row & { tone: RiskInsightTone } => Boolean(row.tone))
+    .sort((left, right) => (right.tone === 'critical' ? 1 : 0) - (left.tone === 'critical' ? 1 : 0));
+
+  const dataUnavailable = unavailable ? 'Risk insight data is not available.' : null;
+
+  return <section className={styles.riskInsights} aria-label="Learner risk insights">
+    <RiskInsightPanel id="attendance-risk-insights" title="Attendance Insights" icon="ri-calendar-check-line" description="Two consecutive absences are a warning; three or more are critical.">
+      <div className={styles.tableScroll} tabIndex={0} role="region" aria-label="Attendance risk insights">
+        <table className={`${styles.table} ${styles.riskInsightTable}`}>
+          <thead><tr><th scope="col">Learner</th><th scope="col">Programme</th><th scope="col">Consecutive absences</th><th scope="col">Status</th></tr></thead>
+          <tbody>{attendanceRows.length ? attendanceRows.map(({ learner, missed, tone }) => <tr key={learner.id} data-tone={tone}>
+            <td><RiskLearner learner={learner} /></td><td>{learner.programme}</td><td><strong>{missed}</strong></td><td><RiskStatus tone={tone} /></td>
+          </tr>) : <EmptyRiskRow columns={4} message={dataUnavailable || 'No attendance warnings.'} />}</tbody>
+        </table>
       </div>
-    </Panel>;
-  }
-  return <Panel className={styles.panel}>
-    <SectionHeader title="Monthly Learners at Risk" icon="ri-bar-chart-line" actions={<span className={styles.chartPeriod}>Last 6 months</span>} />
-    <div className={styles.monthlyRisk}>
-      <div className={styles.monthlyRiskChart}>
-        <ol className={styles.monthlyBars}>
-          {MONTHLY_BAR_SKELETON_HEIGHTS.map((height, index) => <li key={index}>
-            <LoadingBlock className="h-3 w-4" />
-            <span className={styles.monthlyBarTrack}><LoadingBlock className={styles.monthlyBarSkeleton} style={{ height }} /></span>
-            <LoadingBlock className="h-2.5 w-6" />
-          </li>)}
-        </ol>
+    </RiskInsightPanel>
+
+    <RiskInsightPanel id="otjh-risk-insights" title="OTJH Insights" icon="ri-time-line" description="30 hours behind target is a warning; 40 hours or more is critical.">
+      <div className={styles.tableScroll} tabIndex={0} role="region" aria-label="OTJH risk insights">
+        <table className={`${styles.table} ${styles.riskInsightTable}`}>
+          <thead><tr><th scope="col">Learner</th><th scope="col">Programme</th><th scope="col">Actual</th><th scope="col">Target</th><th scope="col">Behind</th><th scope="col">Status</th></tr></thead>
+          <tbody>{otjhRows.length ? otjhRows.map(({ learner, target, gap, tone }) => <tr key={learner.id} data-tone={tone}>
+            <td><RiskLearner learner={learner} /></td><td>{learner.programme}</td><td>{learner.otjhCompleted}h</td><td>{target}h</td><td><strong>{Math.round(gap * 10) / 10}h</strong></td><td><RiskStatus tone={tone} /></td>
+          </tr>) : <EmptyRiskRow columns={6} message={dataUnavailable || 'No OTJH warnings.'} />}</tbody>
+        </table>
       </div>
-      <div className={styles.currentRisk}>
-        <LoadingBlock className="h-8 w-10" />
-        <LoadingBlock className="h-3.5 w-16" />
-        <LoadingBlock className="mt-1 h-3 w-20" />
+    </RiskInsightPanel>
+
+    <RiskInsightPanel id="review-risk-insights" title="Review Insights" icon="ri-file-list-3-line" description="PR: warning after 10 weeks, critical after 12. MCM: warning after 3 weeks, critical after 4.">
+      <div className={styles.tableScroll} tabIndex={0} role="region" aria-label="Review risk insights">
+        <table className={`${styles.table} ${styles.riskInsightTable}`}>
+          <thead><tr><th scope="col">Learner</th><th scope="col">Programme</th><th scope="col">Last PR</th><th scope="col">Last MCM</th><th scope="col">Status</th></tr></thead>
+          <tbody>{reviewRows.length ? reviewRows.map(({ learner, prDays, mcmDays, prTone, mcmTone, tone }) => <tr key={learner.id} data-tone={tone}>
+            <td><RiskLearner learner={learner} /></td><td>{learner.programme}</td>
+            <td><ReviewAge value={learner.lastPr} days={prDays} tone={prTone} label="PR" /></td>
+            <td><ReviewAge value={learner.lastMcm} days={mcmDays} tone={mcmTone} label="MCM" /></td>
+            <td><RiskStatus tone={tone} /></td>
+          </tr>) : <EmptyRiskRow columns={5} message={dataUnavailable || 'No review warnings.'} />}</tbody>
+        </table>
       </div>
-    </div>
-  </Panel>;
+    </RiskInsightPanel>
+  </section>;
 }
 
 export default function CoachDashboard() {
@@ -1156,7 +1292,18 @@ export default function CoachDashboard() {
   const [liveSessionsLoading, setLiveSessionsLoading] = useState(() => !initialDashboard);
   const [scheduleExpanded, setScheduleExpanded] = useState(true);
   const [scheduleNotice, setScheduleNotice] = useState('');
+  const [activeDashboardTab, setActiveDashboardTab] = useState<CoachDashboardTab>('learners');
   const [directoryCoaches, setDirectoryCoaches] = useState<DirectoryCoach[]>([]);
+  const activeDashboardTabIndex = COACH_DASHBOARD_TABS.findIndex(tab => tab.id === activeDashboardTab);
+  const handleDashboardTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? COACH_DASHBOARD_TABS.length - 1
+      : (activeDashboardTabIndex + (event.key === 'ArrowRight' ? 1 : COACH_DASHBOARD_TABS.length - 1)) % COACH_DASHBOARD_TABS.length;
+    const nextTab = COACH_DASHBOARD_TABS[nextIndex];
+    setActiveDashboardTab(nextTab.id);
+    document.getElementById(`coach-dashboard-tab-${nextTab.id}`)?.focus();
+  };
   const updateDashboardMeeting = (updated: CoachCalendarEvent) => {
     const replace = (events: CoachCalendarEvent[]) => events.map(event => (event.eventKey || event.id) === (updated.eventKey || updated.id) ? updated : event);
     setCalendarEvents(replace);
@@ -1367,7 +1514,15 @@ export default function CoachDashboard() {
   }, [selectedKpi]);
 
   const enrichedLearners = useMemo(() => enrichLearnerSchedule(learners, calendarEvents), [learners, calendarEvents]);
-  const activeLearners = useMemo(() => enrichedLearners.filter(isActiveLearner), [enrichedLearners]);
+  const visibleLearners = useMemo(
+    () => enrichedLearners.filter(isVisibleCaseloadLearner),
+    [enrichedLearners],
+  );
+  const activeLearners = useMemo(() => visibleLearners.filter(isActiveLearner), [visibleLearners]);
+  const riskInsightsLearners = useMemo(
+    () => activeLearners.filter(isRiskInsightsLearner),
+    [activeLearners],
+  );
   const atRiskLearners = useMemo(
     () => activeLearners.filter(learner => canonicalOtjhStatus(learner) === 'at-risk'),
     [activeLearners],
@@ -1383,7 +1538,7 @@ export default function CoachDashboard() {
     [evidenceQueue],
   );
   const atRiskCount = atRiskLearners.length;
-  const totalCaseload = enrichedLearners.length;
+  const totalCaseload = visibleLearners.length;
   const pendingEvidence = useMemo(
     () => evidenceLearners.reduce((total, learner) => total + learner.pendingEvidence, 0),
     [evidenceLearners],
@@ -1514,21 +1669,47 @@ export default function CoachDashboard() {
           <DashboardMetric kind="catchup" label="Catch-ups this week" value={loading || loadWarning ? undefined : catchUpsThisWeek} note={`Catch-up sessions · ${formatWeekRangeLabel()}`} icon="ri-calendar-event-line" tone="caution" onClick={() => setSelectedKpi('catch-ups-week')} />
         </section>
 
-        <div id="learner-caseload" className={styles.fullWidthCaseload}>
-          <CoachCaseloadContent embedded embeddedLearners={enrichedLearners} />
-        </div>
+        <section className={styles.dashboardTabs} aria-label="Coach dashboard sections">
+          <div className={styles.dashboardTabList} role="tablist" aria-label="Dashboard tabs">
+            {COACH_DASHBOARD_TABS.map(tab => <button key={tab.id} id={`coach-dashboard-tab-${tab.id}`} type="button" role="tab"
+              className={styles.dashboardTab} aria-selected={activeDashboardTab === tab.id} aria-controls={`coach-dashboard-panel-${tab.id}`}
+              tabIndex={activeDashboardTab === tab.id ? 0 : -1} onClick={() => setActiveDashboardTab(tab.id)} onKeyDown={handleDashboardTabKeyDown}>
+              {tab.label}
+            </button>)}
+          </div>
 
+          <div id={`coach-dashboard-panel-${activeDashboardTab}`} role="tabpanel" aria-labelledby={`coach-dashboard-tab-${activeDashboardTab}`} className={styles.dashboardTabPanel}>
+          {activeDashboardTab === 'learners' && <div id="learner-caseload" className={styles.fullWidthCaseload}>
+            <CoachCaseloadContent embedded embeddedLearners={visibleLearners} />
+          </div>}
+
+          {activeDashboardTab === 'meetings' && <>
+        <header className={styles.dueActivitiesHero}>
+          <div className={styles.dueActivitiesHeroContent}>
+            <span className={styles.dueActivitiesHeroIcon}><AppIcon name="ri-calendar-event-line" aria-hidden="true" /></span>
+            <div>
+              <h2>Upcoming Meetings</h2>
+              <p>Your scheduled meetings and live sessions in the next work week</p>
+              <span className={styles.dueActivitiesRange}><AppIcon name="ri-calendar-line" aria-hidden="true" />{formatUpcomingRangeLabel()}</span>
+            </div>
+          </div>
+          <div className={styles.dueActivitiesArtwork} aria-hidden="true">
+            <AppIcon name="ri-calendar-2-line" /><AppIcon name="ri-time-line" />
+          </div>
+          <div className={styles.dueActivitiesActions}>
+            <Link to="/coach/timetable" className={`${styles.textButton} ${styles.dueActivitiesSecondaryAction}`}><AppIcon name="ri-calendar-line" />Calendar</Link>
+            <Link to="/coach/timetable" className={`${styles.textButton} ${styles.dueActivitiesPrimaryAction}`}>View all meetings <AppIcon name="ri-arrow-right-line" /></Link>
+          </div>
+        </header>
         <Panel className={styles.panel}>
-          <SectionHeader icon="ri-calendar-schedule-line" title="Upcoming Meetings"
-            description={`Your scheduled meetings and live sessions · next work week (${formatUpcomingRangeLabel()})`}
-            actions={<>
+          <SectionHeader icon="ri-calendar-schedule-line" title="Learner Meetings"
+            actions={<div className={styles.dueActivitySectionActions}>
+              <span>{upcomingScheduleGroups.reduce((total, group) => total + group.events.length, 0)} meetings next week</span>
               <button type="button" className={styles.iconButton} onClick={() => setScheduleExpanded(current => !current)}
                 aria-expanded={scheduleExpanded} aria-controls="coach-schedule-content" aria-label={`${scheduleExpanded ? 'Collapse' : 'Expand'} upcoming schedule`}>
                 <AppIcon name={scheduleExpanded ? 'ri-arrow-down-s-line' : 'ri-arrow-right-s-line'} />
               </button>
-              <Link to="/coach/timetable" className={styles.textButton}>Calendar <AppIcon name="ri-calendar-line" /></Link>
-              <Link to="/coach/timetable" className={`${styles.textButton} ${styles.sectionLink}`}>View all meetings <AppIcon name="ri-arrow-right-line" /></Link>
-            </>} />
+            </div>} />
           {scheduleExpanded && (
             <div id="coach-schedule-content">
               {scheduleNotice && <p className={styles.notice} role="status">{scheduleNotice}</p>}
@@ -1538,15 +1719,17 @@ export default function CoachDashboard() {
                   <table className={`${styles.table} ${styles.meetingsTable}`}>
                     <caption className="sr-only">Meetings and live sessions in the next work week</caption>
                     <thead className="sr-only"><tr><th scope="col">Date</th><th scope="col">Time</th><th scope="col">Learner / session</th><th scope="col">Meeting type</th><th scope="col">Status</th><th scope="col">Reschedule</th><th scope="col">Send Reminder</th><th scope="col">Generate Presentation</th><th scope="col">View Form</th></tr></thead>
-                    <tbody>{upcomingScheduleGroups.flatMap(group => group.events.map((event, eventIndex) => (
+                    <tbody>{upcomingScheduleGroups.flatMap((group, groupIndex) => group.events.map((event, eventIndex) => (
                       <Fragment key={event.eventKey || event.id}>
-                      {eventIndex === 0 && <tr><th colSpan={9} className="text-left">{event.source === 'live-session' ? 'Live Sessions' : 'Learner Meetings'}</th></tr>}
-                      <tr>
+                      {eventIndex === 0 && groupIndex > 0 && <tr className={styles.meetingDaySpacer} data-day-spacer="true" aria-hidden="true"><td colSpan={9} /></tr>}
+                      {eventIndex === 0 && event.source === 'live-session' && <tr><th colSpan={9} className="text-left">Live Sessions</th></tr>}
+                      <tr className={cn(styles.meetingRow, eventIndex === 0 && styles.meetingDayFirstRow, eventIndex === group.events.length - 1 && styles.meetingDayLastRow)}
+                        data-meeting-row="true" data-day-first={eventIndex === 0 ? 'true' : undefined} data-day-last={eventIndex === group.events.length - 1 ? 'true' : undefined}>
                         {eventIndex === 0 && <td className={`${styles.dateCell} ${styles.meetingDateCell}`} rowSpan={group.events.length}><time className={styles.meetingDate} dateTime={group.date}><span>{formatCalendarWeekday(group.date)}</span><strong>{formatDateLabel(group.date)}</strong></time></td>}
                         <td className={styles.dateCell}><span className={styles.meetingTime}><AppIcon name="ri-time-line" aria-hidden="true" />{scheduleEventTime(event)}</span></td>
                         <td><div className={styles.identity}>
                           <LearnerAvatar name={scheduleEventTitle(event)} />
-                          <span><span className={styles.identityName}>{scheduleEventTitle(event)}</span>{optionalDisplayValue(event.group) && <span className={styles.subtle}>{event.group}</span>}</span>
+                          <span className={styles.meetingIdentityText}><span className={styles.identityName}>{scheduleEventTitle(event)}</span>{optionalDisplayValue(event.group) && <span className={styles.meetingIdentityMeta}>{event.group}</span>}</span>
                         </div></td>
                         <td><span className={styles.meetingType}><span className={styles.meetingTypeIcon}><AppIcon name="ri-book-open-line" aria-hidden="true" /></span>{scheduleEventMeta(event)}</span></td>
                         <td><StatusBadge status={event.status} label={statusLabel(event.status)} size="sm" /></td>
@@ -1563,23 +1746,10 @@ export default function CoachDashboard() {
             </div>
           )}
         </Panel>
+        </>}
 
-        <section className={styles.charts} aria-label="Learner risk insights">
-          <Panel className={styles.panel}>
-            <SectionHeader title="Risk Distribution" icon="ri-bar-chart-line" actions={<span className={styles.chartScope}>By OTJH status</span>} />
-            <OtjhDistribution learners={activeLearners} unavailable={loading || Boolean(loadWarning)} />
-          </Panel>
-          <Panel className={styles.panel}>
-            <SectionHeader title="Monthly Learners at Risk" icon="ri-bar-chart-line" actions={<span className={styles.chartPeriod}>Last 6 months</span>} />
-            <div className={styles.monthlyRisk}>
-              <MonthlyRiskChart points={monthlyRisk} unavailable={loading || Boolean(loadWarning)} />
-              <div className={styles.currentRisk}>
-                <strong>{loading || loadWarning ? EMPTY_VALUE : atRiskCount}</strong>
-                <span>at risk now</span>
-                <small>Current OTJH status</small>
-              </div>
-            </div>
-          </Panel>
+        {activeDashboardTab === 'risk' && <RiskInsightsTables learners={riskInsightsLearners} unavailable={loading || Boolean(loadWarning)} />}
+          </div>
         </section>
 
           </>
@@ -1590,7 +1760,7 @@ export default function CoachDashboard() {
       {selectedKpi && (
         <KpiDetailModal
           type={selectedKpi}
-          learners={enrichedLearners}
+          learners={visibleLearners}
           calendarEvents={activeCalendarEvents}
           weekEvents={weekEvents}
           evidenceQueue={evidenceLearners}
@@ -1612,9 +1782,18 @@ function DashboardLoadingSkeleton() {
       <span className="sr-only">Loading coach dashboard data</span>
       <div className={styles.loadingDashboard} aria-hidden="true">
         <section className={styles.metrics}>{Array.from({ length: 6 }, (_, index) => <MetricCardSkeleton key={index} />)}</section>
-        <LearnerTableSkeleton />
-        <MeetingsSkeleton />
-        <section className={styles.charts}><ChartSkeleton variant="distribution" /><ChartSkeleton variant="monthly" /></section>
+        <section className={styles.dashboardTabs}>
+          <div className={styles.dashboardTabList}>
+            {COACH_DASHBOARD_TABS.map(tab => (
+              <span key={tab.id} className={styles.dashboardTab} aria-current={tab.id === 'learners' ? 'page' : undefined}>
+                {tab.label}
+              </span>
+            ))}
+          </div>
+          <div className={styles.dashboardTabPanel}>
+            <LearnerTableSkeleton />
+          </div>
+        </section>
       </div>
     </div>
   );
@@ -1860,7 +2039,10 @@ function KpiDetailModal({ type, learners, calendarEvents, weekEvents, evidenceQu
               {modalLearners.map(learner => {
                 const status = OTJH_STATUS_META[canonicalOtjhStatus(learner)];
                 const attendance = learner.attendanceRateAvailable ? `${learner.attendanceRate}%` : EMPTY_VALUE;
-                const otjh = learner.otjhTarget > 0 ? `${learner.otjhCompleted}/${learner.otjhTarget}` : EMPTY_VALUE;
+                const otjhProgress = otjhProgressAsOfToday(learner);
+                const otjh = otjhProgress.targetHours !== null && otjhProgress.targetHours > 0
+                  ? `${otjhProgress.actualHours}/${otjhProgress.targetHours}`
+                  : EMPTY_VALUE;
                 return (
                   <button
                     key={learner.id}

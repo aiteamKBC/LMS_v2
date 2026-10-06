@@ -6,6 +6,7 @@ import { roleNavMap } from '@/mocks/navigation';
 import { EmptyState } from '@/pages/users/components/ui';
 import { useCoachIdentity } from '@/hooks/useCoachIdentity';
 import { DashboardTrainingPlan } from '@/pages/workspace/learner/DashboardTrainingPlan';
+import { DashboardWeeklyContent } from '@/pages/workspace/learner/tabs/DashboardWeeklyTab';
 import OTJHTab from './components/OTJHTab';
 import KSBsTab from './components/KSBsTab';
 import EvidenceTab from './components/EvidenceTab';
@@ -45,6 +46,19 @@ type LocationState = {
   /** enrolment."Created_users".id -- see useCoachLearnerCaseFileData's enrolmentId doc. */
   enrolmentId?: string;
   tab?: string;
+  activitySnapshot?: {
+    learnerId: string;
+    completed: number | null;
+    total: number | null;
+    percent: number | null;
+  };
+  otjhSnapshot?: {
+    learnerId: string;
+    completed: number | null;
+    target: number | null;
+    planned: number | null;
+    percent: number | null;
+  };
 };
 
 export default function LearnerCaseFile() {
@@ -84,7 +98,12 @@ export default function LearnerCaseFile() {
   const nextLiveSession = caseFileNextSession.data;
   const headerOtjh = data ? selectCaseFileOtjh(data) : null;
   const headerKsb = data?.metricsAvailable === false ? null : data ? selectCaseFileKsbProgress(data) : null;
-
+  // Keep the table-to-profile drill-down on the same read snapshot. A query
+  // selecting another learner must never reuse the previous row's figures.
+  const tableActivities = data && state.activitySnapshot?.learnerId === data.learnerId
+    && state.activitySnapshot.learnerId === learnerId ? state.activitySnapshot : null;
+  const tableOtjh = data && state.otjhSnapshot?.learnerId === data.learnerId
+    && state.otjhSnapshot.learnerId === learnerId ? state.otjhSnapshot : null;
   const handleOpenReviewMeeting = (item: CaseFileReviewMeeting) => {
     const returnParams = new URLSearchParams(location.search);
     returnParams.set('id', data?.learnerId || learnerId || '');
@@ -114,29 +133,50 @@ export default function LearnerCaseFile() {
 
     switch (activeTab) {
       case 'overview':
+        return dashboardKind ? <div className="learner-dashboard"><DashboardTrainingPlan
+            kind={dashboardKind}
+            learnerId={data.enrolmentId || data.learnerId}
+            plan={dashboardPlan}
+            programmeStartDate={data.detail?.programmeStartDate}
+            programmeEndDate={data.detail?.programmeEndDate}
+            learningActivity={data.learningActivity}
+            learnerDetail={data.detail}
+            canOpenActivities
+            showRewards={false}
+            activityOverviewOnly
+            overviewOnly
+            showOtjChart={false}
+            programmeSnapshot={{
+              overall: data.overallProgress,
+              activitiesCompleted: tableActivities ? tableActivities.completed : data.activitiesCompleted ?? null,
+              activitiesTotal: tableActivities ? tableActivities.total : data.activitiesTotal ?? null,
+              activitiesPercent: tableActivities ? tableActivities.percent : data.overallProgress,
+              otjhActual: headerOtjh?.logged ?? null,
+              otjhTarget: headerOtjh?.target ?? null,
+              ksb: headerKsb?.percent ?? null,
+              ksbAvailable: Boolean(headerKsb?.total),
+              attendancePresent: caseFileAttendance.data?.present ?? null,
+              attendanceTotal: caseFileAttendance.data?.sessions ?? null,
+            }}
+          /></div> : null;
+      case 'weekly-learning':
+        return dashboardKind ? <DashboardWeeklyContent kind={dashboardKind}
+          learnerId={data.enrolmentId || data.learnerId} plan={dashboardPlan} canOpenActivities={false} /> : null;
+      case 'monthly-focus':
         return dashboardKind ? <DashboardTrainingPlan
-          kind={dashboardKind}
-          learnerId={data.enrolmentId || data.learnerId}
-          plan={dashboardPlan}
-          programmeStartDate={data.detail?.programmeStartDate}
-          programmeEndDate={data.detail?.programmeEndDate}
-          learningActivity={data.learningActivity}
-          learnerDetail={data.detail}
-          canOpenActivities
-          showRewards={false}
-          activityOverviewOnly
-          programmeSnapshot={{
-            overall: data.overallProgress,
-            otjhActual: headerOtjh?.logged ?? null,
-            otjhTarget: headerOtjh?.target ?? null,
-            ksb: headerKsb?.percent ?? null,
-            ksbAvailable: Boolean(headerKsb?.total),
-            attendancePresent: caseFileAttendance.data?.present ?? null,
-            attendanceTotal: caseFileAttendance.data?.sessions ?? null,
-          }}
-        /> : null;
+            kind={dashboardKind}
+            learnerId={data.enrolmentId || data.learnerId}
+            plan={dashboardPlan}
+            programmeStartDate={data.detail?.programmeStartDate}
+            programmeEndDate={data.detail?.programmeEndDate}
+            learningActivity={data.learningActivity}
+            learnerDetail={data.detail}
+            canOpenActivities={false}
+            showRewards={false}
+            monthlyOnly
+          /> : null;
       case 'progress':
-        return <ProgressTab data={data} onViewEvidence={setEvidencePreview} />;
+        return <ProgressTab data={data} plan={dashboardPlan} otjhSnapshot={tableOtjh} onViewEvidence={setEvidencePreview} />;
       case 'attendance':
         return <AttendanceTab attendanceState={caseFileAttendance} />;
       case 'reviews':
@@ -225,6 +265,8 @@ export default function LearnerCaseFile() {
           ksb={headerKsb?.percent == null ? '--' : formatPercent(headerKsb.percent)}
           attendance={formatAttendanceFraction(caseFileAttendance.data?.present ?? null, caseFileAttendance.data?.sessions ?? null)}
           nextSession={nextLiveSession?.summary || '--'}
+          nextPr={caseFileReviews.error ? 'Unavailable' : caseFileReviews.loading ? 'Loading…' : caseFileReviews.nextMeetings?.pr || '--'}
+          nextMcm={caseFileReviews.error ? 'Unavailable' : caseFileReviews.loading ? 'Loading…' : caseFileReviews.nextMeetings?.mcm || '--'}
         />
 
         <CaseFileTabs activeTab={activeTab} onChange={setActiveTab} />

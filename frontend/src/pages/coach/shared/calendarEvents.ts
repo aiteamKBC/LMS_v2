@@ -82,6 +82,14 @@ export interface CoachCalendarEvent {
   reviewCompletedAt?: string | null;
   reviewSource?: 'aptem' | 'curriculum' | string;
   aptemReviewId?: string | null;
+  reviewId?: string;
+  importedReviewType?: string;
+  rawStatus?: string;
+  sourceStatus?: string;
+  effectiveLmsStatus?: string;
+  calendarEventId?: string;
+  calendarEventKey?: string | null;
+  formEventKey?: string;
   reviewerName?: string | null;
   hasReviewForm?: boolean;
   hasTranscript?: boolean;
@@ -136,6 +144,8 @@ export interface CoachCalendarBookingInput {
   durationMinutes: number;
   timezoneOffsetMinutes: number;
   notes: string;
+  /** The missed-lecture report a new coach catch-up must make up. */
+  absenceReportId?: string;
 }
 
 export type CalendarAction = 'start' | 'complete' | 'sign' | 'cancel';
@@ -244,7 +254,27 @@ export interface CoachMeetingSummary {
   error?: string;
 }
 
+export interface MigratedSummaryBinding {
+  fieldKey?: string;
+  state?: 'NEVER_POPULATED' | 'AI_POPULATED_UNEDITED' | 'COACH_EDITED' | 'COACH_CLEARED';
+  status?: string;
+  message?: string;
+  suggestionText?: string;
+  answerPresent?: boolean;
+  answer?: unknown;
+  suggestionSource?: 'teams' | 'uploaded_transcript';
+  generatedAt?: string;
+  generationStatus?: 'ready' | 'failed' | 'unavailable';
+  replacementAvailable?: boolean;
+  transcriptTruncated?: boolean;
+  summaryTooLong?: boolean;
+}
+
 export interface CoachMeetingArtifactsResponse {
+  progressVersion?: string;
+  summaryBinding?: MigratedSummaryBinding;
+  answerVersion?: string;
+  reviewAnswers?: Record<string, unknown>;
   intelligence?: {
     lastCheckedAt?: string | null;
     attendanceStatus: string;
@@ -309,6 +339,7 @@ export async function calendarBookingIdempotencyKey(input: CoachCalendarBookingI
     scheduledTime: input.scheduledTime.slice(0, 5),
     durationMinutes: input.durationMinutes,
     notes: input.notes.trim(),
+    absenceReportId: input.absenceReportId || '',
   });
   return `coach-book:${await sha256Hex(fingerprint)}`;
 }

@@ -118,13 +118,14 @@ def _module_payload(row):
         # from the plan — see the module header.
         "startDate": _iso_day(row.get("start_date")),
         "endDate": _iso_day(row.get("end_date")),
+        "learnerRosterMode": _s(row.get("learner_roster_mode")) or "inherited",
     }
 
 
 #: Modules of a deleted programme, and soft-deleted modules, are not offerable.
 _LIVE_MODULE_SQL = """
     SELECT module_catalogue_id, title, group_name, programme_id, programme_name,
-           total_otjh, start_date, end_date
+           total_otjh, start_date, end_date, learner_roster_mode
     FROM curriculum.modules
     WHERE deleted_at IS NULL AND NOT is_programme_deleted
 """
@@ -312,6 +313,32 @@ def _module_ids_from_column(ids):
     return [_s(i) for i in ids] if isinstance(ids, list) else []
 
 
+def _manual_roster_module_ids(module_ids):
+    """Return module ids that stay attached to a group but never inherit learners.
+
+    ``groups.module_ids`` is also the curriculum tree's structural list, so a
+    manual-roster duplicate must remain in it.  Learner plan resolution filters
+    the ids here instead of deleting the module from its parent.  The lookup is
+    deliberately best-effort for older test/install schemas; an unavailable
+    column means the pre-feature inherited behaviour, never a blank plan.
+    """
+    wanted = [item for item in dict.fromkeys(_s(value) for value in module_ids) if item]
+    if not wanted:
+        return set()
+    table = 'curriculum.modules' if connection.vendor == 'postgresql' else 'modules'
+    placeholders = ', '.join(['%s'] * len(wanted))
+    try:
+        rows = _rows(
+            f"SELECT module_catalogue_id FROM {table} "
+            f"WHERE module_catalogue_id IN ({placeholders}) "
+            "AND COALESCE(learner_roster_mode, 'inherited') = 'manual'",
+            wanted,
+        )
+    except Exception:
+        return set()
+    return {_s(row.get('module_catalogue_id')) for row in rows if _s(row.get('module_catalogue_id'))}
+
+
 def group_module_ids_bulk(pairs, source=None):
     """`_group_module_ids` for many (programme, group) pairs, in one query.
 
@@ -333,6 +360,13 @@ def group_module_ids_bulk(pairs, source=None):
         found = {
             (_s(row.get('programme')), _s(row.get('grp'))): _module_ids_from_column(row.get('module_ids'))
             for row in rows
+        }
+        manual_ids = _manual_roster_module_ids(
+            [module_id for values in found.values() for module_id in values]
+        )
+        found = {
+            key: [module_id for module_id in values if module_id not in manual_ids]
+            for key, values in found.items()
         }
     return {pair: found.get(pair, []) for pair in wanted}
 
@@ -371,7 +405,9 @@ def _group_module_ids(programme, group, source=None):
         return []
     # Shared with group_module_ids_bulk so the two cannot read the same column
     # differently.
-    return _module_ids_from_column(rows[0].get("module_ids"))
+    module_ids = _module_ids_from_column(rows[0].get("module_ids"))
+    manual_ids = _manual_roster_module_ids(module_ids)
+    return [module_id for module_id in module_ids if module_id not in manual_ids]
 
 
 def _saved_modules(learner):

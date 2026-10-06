@@ -51,7 +51,7 @@ beforeEach(() => {
   HTMLDialogElement.prototype.showModal = function () { this.open = true; };
   HTMLDialogElement.prototype.close = function () { this.open = false; };
   mocks.load.mockResolvedValue({ owner: { name: 'Example Coach' }, learners: [{ id: '1', name: 'Example Learner', learnerType: 'commercial',
-    rawProgramStatus: 'active', otjhStatus: 'at-risk', otjhCompleted: 20, otjhTarget: 40 }, { id: '2', name: 'Attention Only Learner', learnerType: 'commercial',
+    programme: 'Project Manager Level 4', cohortName: 'Jun 2026', rawProgramStatus: 'active', otjhStatus: 'at-risk', otjhCompleted: 20, otjhTarget: 40 }, { id: '2', name: 'Attention Only Learner', learnerType: 'commercial',
     rawProgramStatus: 'active', otjhStatus: 'need-attention', otjhCompleted: 30, otjhTarget: 40 }], monthlyRisk: [
       { month: '2026-04', label: 'Apr', count: 3 }, { month: '2026-05', label: 'May', count: 2 },
       { month: '2026-06', label: 'Jun', count: 4 }, { month: '2026-07', label: 'Jul', count: 1 },
@@ -65,16 +65,19 @@ function expectStructuredSkeleton() {
   const skeleton = screen.getByRole('status', { name: 'Loading coach dashboard' });
   expect(skeleton).toBeVisible();
   expect(skeleton.querySelectorAll('[data-skeleton="metric"]')).toHaveLength(6);
-  for (const heading of ['All Learners', 'Upcoming Meetings', 'Risk Distribution', 'Monthly Learners at Risk']) {
-    expect(within(skeleton).getByRole('heading', { name: heading, hidden: true })).toBeInTheDocument();
+  expect(within(skeleton).getByRole('heading', { name: 'All Learners', hidden: true })).toBeInTheDocument();
+  expect(within(skeleton).queryByRole('heading', { name: 'Upcoming Meetings', hidden: true })).not.toBeInTheDocument();
+  expect(within(skeleton).queryByText('Risk Distribution')).not.toBeInTheDocument();
+  for (const tabLabel of ['All Learners', 'Upcoming Meetings', 'Risk Insights']) {
+    expect(within(skeleton).getAllByText(tabLabel).length).toBeGreaterThan(0);
   }
   const learnerTable = within(skeleton).getByRole('table', { name: 'Learners are loading', hidden: true });
-  for (const column of ['Learner', 'OTJH', 'KSBs', 'Activities', 'Attendance', 'Last Activity', 'Last PR', 'Last MCM', 'Actions']) {
+  for (const column of ['Learner', 'Status', 'Progress', 'OTJH', 'Activities', 'Attendance', 'Start Date', 'Last Activity', 'Last PR', 'Last MCM', 'Actions']) {
     expect(within(learnerTable).getByRole('columnheader', { name: column, hidden: true })).toBeInTheDocument();
   }
   // Two header rows plus seven learner rows.
   expect(within(learnerTable).getAllByRole('row', { hidden: true })).toHaveLength(9);
-  expect(skeleton.querySelectorAll('[data-skeleton="meeting"]')).toHaveLength(3);
+  expect(skeleton.querySelectorAll('[data-skeleton="meeting"]')).toHaveLength(0);
   for (const emptyState of ['No learners assigned to you yet', 'Data not available', 'History not available', 'No learner meetings scheduled']) {
     expect(screen.queryByText(emptyState)).not.toBeInTheDocument();
   }
@@ -101,9 +104,13 @@ it('shows the learner table only after a successful response', async () => {
   expect(screen.getByRole('status', { name: 'Loading coach dashboard' })).toBeVisible();
   const riskTable = await screen.findByRole('region', { name: 'Coach learner caseload' });
   expect(await within(riskTable).findByText('Example Learner')).toBeVisible();
+  expect(within(riskTable).getByText('Project Manager Level 4')).toBeVisible();
+  expect(within(riskTable).queryByText('Jun 2026')).not.toBeInTheDocument();
   expect(screen.queryByRole('status', { name: 'Loading coach dashboard' })).not.toBeInTheDocument();
   expect(document.querySelectorAll('[data-skeleton]')).toHaveLength(0);
   expect(screen.getByRole('region', { name: 'Coach dashboard metrics' })).toBeVisible();
+  expect(screen.queryByRole('region', { name: 'Learner risk insights' })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('tab', { name: 'Risk Insights' }));
   expect(screen.getByRole('region', { name: 'Learner risk insights' })).toBeVisible();
   expect(mocks.load).toHaveBeenCalledTimes(1);
   expect(mocks.load).toHaveBeenCalledWith('/coach_api/coach/dashboard', expect.objectContaining({ credentials: 'include' }));
@@ -355,6 +362,19 @@ it('shows the requested empty Last PR and Last MCM labels when no completed revi
 it('keeps the live session calendar link while showing the new actions only on coaching meetings', async () => {
   useDashboardDate();
   render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  await screen.findByRole('tab', { name: 'All Learners' });
+  expect(screen.queryByRole('heading', { name: 'My Assigned Groups' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: "Today's schedule" })).not.toBeInTheDocument();
+  expect(screen.queryByRole('region', { name: 'Caseload health' })).not.toBeInTheDocument();
+  const riskTable = await screen.findByRole('region', { name: 'Coach learner caseload' });
+  expect(within(riskTable).getByRole('heading', { name: 'All Learners' })).toBeVisible();
+  expect(within(riskTable).getByRole('columnheader', { name: 'Progress' })).toBeVisible();
+  expect(await within(riskTable).findByText('Example Learner')).toBeVisible();
+  expect(await within(riskTable).findByText('Attention Only Learner')).toBeVisible();
+  expect(within(riskTable).queryByRole('region', { name: 'OTJH caseload summary' })).not.toBeInTheDocument();
+  expect(within(riskTable).getByRole('button', { name: 'All programme statuses' })).toBeVisible();
+  expect(screen.queryByRole('link', { name: /View all learners/ })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('tab', { name: 'Upcoming Meetings' }));
   expect(await screen.findByRole('button', { name: 'Send Reminder' })).toBeEnabled();
   expect(screen.getByRole('button', { name: 'View Presentation' })).toBeVisible();
   const meetings = screen.getByRole('region', { name: 'Upcoming meetings and live sessions' });
@@ -367,24 +387,18 @@ it('keeps the live session calendar link while showing the new actions only on c
   expect(within(meetings).getAllByText('Scheduled')).toHaveLength(2);
   expect(within(meetings).getAllByRole('button', { name: 'Reschedule' })).toHaveLength(1);
   expect(within(meetings).getByRole('link', { name: /View .* in calendar/ })).toHaveAttribute('href', '/coach/timetable');
-  expect(screen.queryByRole('heading', { name: 'My Assigned Groups' })).not.toBeInTheDocument();
-  expect(screen.queryByRole('heading', { name: "Today's schedule" })).not.toBeInTheDocument();
-  expect(screen.queryByRole('region', { name: 'Caseload health' })).not.toBeInTheDocument();
-  const riskTable = await screen.findByRole('region', { name: 'Coach learner caseload' });
-  expect(within(riskTable).getByRole('heading', { name: 'All Learners' })).toBeVisible();
-  expect(within(riskTable).getByRole('columnheader', { name: 'Progress' })).toBeVisible();
-  expect(await within(riskTable).findByText('Example Learner')).toBeVisible();
-  expect(await within(riskTable).findByText('Attention Only Learner')).toBeVisible();
-  expect(within(riskTable).queryByRole('region', { name: 'OTJH caseload summary' })).not.toBeInTheDocument();
-  expect(within(riskTable).getByRole('button', { name: 'Status' })).toBeVisible();
-  expect(screen.queryByRole('link', { name: /View all learners/ })).not.toBeInTheDocument();
+  expect(meetings.querySelectorAll('tr[data-meeting-row="true"]')).toHaveLength(2);
+  expect(meetings.querySelector('tr[data-day-first="true"]')).not.toBeNull();
+  expect(meetings.querySelector('tr[data-day-last="true"]')).not.toBeNull();
+  fireEvent.click(screen.getByRole('tab', { name: 'Risk Insights' }));
   const insights = screen.getByRole('region', { name: 'Learner risk insights' });
-  expect(within(insights).getByRole('heading', { name: 'Risk Distribution' })).toBeVisible();
-  expect(within(insights).getByRole('heading', { name: 'Monthly Learners at Risk' })).toBeVisible();
-  expect(within(insights).getByRole('list', { name: 'Learners at risk at each month end' })).toBeVisible();
-  expect(within(insights).getByRole('listitem', { name: 'Jun: 4 learners at risk' })).toBeVisible();
-  expect(within(insights).queryByText('History not available')).not.toBeInTheDocument();
-  expect(within(insights).getByRole('list', { name: 'Active learners by OTJH status' })).toBeVisible();
+  for (const title of ['Attendance Insights', 'OTJH Insights', 'Review Insights']) {
+    expect(within(insights).getByRole('heading', { name: title })).toBeVisible();
+    fireEvent.click(within(insights).getByRole('button', { name: `Expand ${title}` }));
+  }
+  expect(within(insights).getByRole('region', { name: 'Attendance risk insights' })).toBeVisible();
+  expect(within(insights).getByRole('region', { name: 'OTJH risk insights' })).toBeVisible();
+  expect(within(insights).getByRole('region', { name: 'Review risk insights' })).toBeVisible();
   expect(mocks.load).toHaveBeenCalledWith('/coach_api/coach/dashboard', expect.objectContaining({ credentials: 'include' }));
 });
 
@@ -419,6 +433,7 @@ it('keeps a Teams warning visible when a rescheduled meeting moves out of the se
   useDashboardDate();
   mocks.schedule.mockResolvedValue({ event: { ...meeting, scheduledDate: '2026-10-10' }, warning: 'Teams sync needs retry.' });
   render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  fireEvent.click(await screen.findByRole('tab', { name: 'Upcoming Meetings' }));
   fireEvent.click(await screen.findByRole('button', { name: 'Reschedule' }));
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Save new time' })); });
   expect(screen.queryByRole('button', { name: 'Send Reminder' })).not.toBeInTheDocument();
@@ -503,7 +518,9 @@ it('uses the current work week for KPI cards and only the next work week for upc
     expect(card).toHaveTextContent('25 Sep');
   }
 
-  expect(screen.getByText(/next work week \(28 Sep .* 02 Oct\)/)).toBeVisible();
+  fireEvent.click(screen.getByRole('tab', { name: 'Upcoming Meetings' }));
+  expect(screen.getByText('Your scheduled meetings and live sessions in the next work week')).toBeVisible();
+  expect(screen.getByText(/28 Sep .* 02 Oct/)).toBeVisible();
   const upcoming = screen.getByRole('region', { name: 'Upcoming meetings and live sessions' });
   for (const title of ['Next Monday PR', 'Next Tuesday MCM', 'Next Wednesday Catch-up', 'Next Thursday Support', 'Next Friday Live Session']) {
     expect(within(upcoming).getAllByText(title)[0]).toBeVisible();
@@ -578,16 +595,23 @@ it('shows review cards as unavailable when generation failed without usable revi
   expect(within(metrics).getByRole('button', { name: 'Open MCM this week details' })).toHaveTextContent('--');
 });
 
-it('counts delivery learners with active learners on the coach dashboard', async () => {
+it('excludes onboarding, withdrawn and entered EPA stages from every risk insight table', async () => {
   useDashboardDate();
+  const riskSignals = {
+    otjhStatus: 'at-risk', otjhCompleted: 0, otjhTarget: 100,
+    attendanceConsecutiveMissed: 3, lastPr: '1 Jan 2026', lastMcm: '1 Jan 2026',
+  };
   mocks.load.mockImplementation((url: string) => Promise.resolve(
     url.includes('/marking-queue')
       ? { summary: { pendingItems: 0 } }
       : {
           owner: { name: 'Example Coach' },
           learners: [
-            { id: '1', name: 'Active Learner', rawProgramStatus: 'active', otjhStatus: 'on-track' },
-            { id: '2', name: 'Delivery Learner', rawProgramStatus: 'delivery', otjhStatus: 'on-track' },
+            { id: '1', name: 'Active Learner', rawProgramStatus: 'active', ...riskSignals },
+            { id: '2', name: 'Delivery Learner', rawProgramStatus: 'delivery', ...riskSignals },
+            { id: '3', name: 'Onboarding Learner', rawProgramStatus: 'active', enrollmentStatus: 'On Boarding', ...riskSignals },
+            { id: '4', name: 'EPA Learner', rawProgramStatus: 'delivery', enrollmentStatus: 'Entered EPA', ...riskSignals },
+            { id: '5', name: 'Withdrawn Learner', rawProgramStatus: 'active', enrollmentStatus: 'Withdrawn', ...riskSignals },
           ],
           meetings: { events: [] },
         },
@@ -596,8 +620,24 @@ it('counts delivery learners with active learners on the coach dashboard', async
   render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
   const metrics = await screen.findByRole('region', { name: 'Coach dashboard metrics' });
   const totalLearners = within(metrics).getByRole('button', { name: 'Open Total learners details' });
-  expect(totalLearners.querySelector('[class*="metricValue"]')).toHaveTextContent('2');
-  expect(screen.getByText('2 active learners grouped by their current OTJH status.')).toBeVisible();
+  expect(totalLearners.querySelector('[class*="metricValue"]')).toHaveTextContent('5');
+  fireEvent.click(screen.getByRole('tab', { name: 'Risk Insights' }));
+  for (const title of ['Attendance Insights', 'OTJH Insights', 'Review Insights']) {
+    fireEvent.click(screen.getByRole('button', { name: `Expand ${title}` }));
+  }
+  const attendanceInsights = screen.getByRole('region', { name: 'Attendance risk insights' });
+  const otjhInsights = screen.getByRole('region', { name: 'OTJH risk insights' });
+  const reviewInsights = screen.getByRole('region', { name: 'Review risk insights' });
+  for (const name of ['Active Learner', 'Delivery Learner']) {
+    expect(within(attendanceInsights).getByText(name)).toBeVisible();
+    expect(within(otjhInsights).getByText(name)).toBeVisible();
+    expect(within(reviewInsights).getByText(name)).toBeVisible();
+  }
+  for (const name of ['Onboarding Learner', 'EPA Learner', 'Withdrawn Learner']) {
+    expect(within(attendanceInsights).queryByText(name)).not.toBeInTheDocument();
+    expect(within(otjhInsights).queryByText(name)).not.toBeInTheDocument();
+    expect(within(reviewInsights).queryByText(name)).not.toBeInTheDocument();
+  }
 });
 
 it('opens a detail popup and full-page link from every workload card', async () => {
@@ -681,7 +721,40 @@ it('uses the same compact grouped layout for weekly progress reviews', () => {
   expect(screen.getByRole('region', { name: '24 Sept 2026' })).toHaveTextContent('THU24 SEP');
   expect(screen.getByText('Hollie Hylton')).toBeVisible();
   expect(screen.getByText('Business Admin · Group A')).toBeVisible();
-  expect(screen.getByText('Time TBC')).toBeVisible();
+  expect(screen.getByText('-')).toBeVisible();
+  expect(screen.queryByText('Time TBC')).not.toBeInTheDocument();
   expect(screen.queryByText('Review 1')).not.toBeInTheDocument();
   expect(screen.queryByText('Progress Review')).not.toBeInTheDocument();
+});
+
+
+it('uses target-to-date for OTJH insights without comparing actuals to the whole plan', async () => {
+  useDashboardDate();
+  mocks.load.mockResolvedValue({ owner: { name: 'Example Coach' }, learners: [
+    { id: '1', name: 'Warning Learner', rawProgramStatus: 'active', otjhCompleted: 170,
+      otjhTarget: 576, otjhTargetAsOfToday: 200, otjhRagStatus: 'need-attention' },
+    { id: '2', name: 'Critical Learner', rawProgramStatus: 'active', otjhCompleted: 160,
+      otjhTarget: 576, otjhTargetAsOfToday: 200, otjhRagStatus: 'at-risk' },
+    { id: '3', name: 'Current Learner', rawProgramStatus: 'active', otjhCompleted: 195,
+      otjhTarget: 576, otjhTargetAsOfToday: 200, otjhRagStatus: 'on-track' },
+    { id: '4', name: 'Future Learner', rawProgramStatus: 'active', otjhCompleted: 0,
+      otjhTarget: 576, otjhTargetAsOfToday: 0, otjhRagStatus: 'on-track' },
+  ], meetings: { events: [] } });
+  render(<MemoryRouter><CoachDashboard /></MemoryRouter>);
+  await screen.findByRole('region', { name: 'Coach dashboard metrics' });
+  fireEvent.click(screen.getByRole('tab', { name: 'Risk Insights' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Expand OTJH Insights' }));
+  const table = within(screen.getByRole('region', { name: 'OTJH risk insights' }));
+  const warning = within(table.getByText('Warning Learner').closest('tr')!);
+  expect(warning.getByText('170h')).toBeVisible();
+  expect(warning.getByText('200h')).toBeVisible();
+  expect(warning.getByText('30h')).toBeVisible();
+  expect(warning.getByText('Warning')).toBeVisible();
+  const critical = within(table.getByText('Critical Learner').closest('tr')!);
+  expect(critical.getByText('200h')).toBeVisible();
+  expect(critical.getByText('40h')).toBeVisible();
+  expect(critical.getByText('Critical')).toBeVisible();
+  expect(table.queryByText('Current Learner')).not.toBeInTheDocument();
+  expect(table.queryByText('Future Learner')).not.toBeInTheDocument();
+  expect(table.queryByText('576h')).not.toBeInTheDocument();
 });

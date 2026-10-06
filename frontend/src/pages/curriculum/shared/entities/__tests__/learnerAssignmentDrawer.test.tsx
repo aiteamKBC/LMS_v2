@@ -35,6 +35,40 @@ beforeEach(() => {
 });
 
 describe('learner assignment', () => {
+  it('filters module learners by programme, cohort and status without losing selections', async () => {
+    const user = userEvent.setup();
+    vi.mocked(fetchLearnerAssignments).mockResolvedValue({
+      ...directory,
+      learners: learners.map(learner => ({ ...learner, cohort: learner.id === '2' ? 'Spring' : learner.programme === 'Data' ? 'Data intake' : 'Autumn' })),
+    });
+    render(<LearnerAssignmentDrawer target={module} onClose={vi.fn()} onAssigned={vi.fn()} />);
+    await screen.findByText('Ahmed Ali');
+    expect(screen.getAllByRole('combobox').map(select => select.closest('label')?.textContent?.split('All ')[0])).toEqual(['Programme', 'Cohort', 'Status']);
+    expect(screen.queryByLabelText('Company', { exact: true })).not.toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText('Programme', { exact: true }), 'Business');
+    const cohort = screen.getByLabelText('Cohort', { exact: true });
+    expect(cohort).not.toHaveTextContent('Data intake');
+    await user.selectOptions(cohort, 'Autumn');
+    await user.selectOptions(screen.getByLabelText('Status', { exact: true }), 'Active');
+    expect(screen.queryByText('Mona Hassan')).not.toBeInTheDocument();
+    expect(screen.queryByText('Sara Omar')).not.toBeInTheDocument();
+    await user.click(screen.getByLabelText('Select all filtered learners (1 available)'));
+    await user.click(screen.getByRole('tab', { name: /Currently assigned/ }));
+    expect(screen.getByText('Already Enrolled')).toBeInTheDocument();
+    await user.selectOptions(screen.getByLabelText('Programme', { exact: true }), 'Data');
+    expect(cohort).toHaveValue('');
+    expect(cohort).not.toHaveTextContent('Autumn');
+    await user.click(screen.getByRole('button', { name: 'Reset filters' }));
+    expect(screen.getByLabelText('Status', { exact: true })).toHaveValue('');
+    await user.click(screen.getByRole('tab', { name: /Available/ }));
+    expect(screen.getByLabelText('Select Ahmed Ali')).toBeChecked();
+    expect(screen.getByText('Mona Hassan')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Add 1' }));
+    await waitFor(() => expect(applyCurriculumLearnerAssignments).toHaveBeenCalledWith(
+      module, { add: ['1'], remove: [] }, expect.any(Function),
+    ));
+  });
+
   it('keeps assigned learners out of the available tab and on their own tab', async () => {
     const user = userEvent.setup();
     render(<LearnerAssignmentDrawer target={target} onClose={vi.fn()} onAssigned={vi.fn()} />);

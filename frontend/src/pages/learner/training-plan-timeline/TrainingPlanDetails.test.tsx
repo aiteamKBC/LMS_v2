@@ -177,6 +177,40 @@ describe('Dashboard training plan controls', () => {
     expect(screen.queryByRole('region', { name: 'Module progress' })).not.toBeInTheDocument();
   });
 
+  it('can move the OTJH chart out of the coach overview without changing the programme cards', () => {
+    render(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={summarySubjects} kind="commercial" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} activityOverviewOnly overviewOnly showOtjChart={false} programmeSnapshot={{
+        overall: 28, otjhActual: 22.5, otjhTarget: 80.4, ksb: 6, attendancePresent: 0, attendanceTotal: 4,
+      }} /></MemoryRouter>);
+
+    expect(screen.getByRole('region', { name: 'Whole programme progress' })).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Programme module progress' })).toBeVisible();
+    expect(screen.queryByRole('region', { name: 'Off-the-job hours by month' })).not.toBeInTheDocument();
+  });
+
+  it('uses coach table activity totals instead of the module slot counts', () => {
+    render(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={summarySubjects} kind="commercial" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} activityOverviewOnly programmeSnapshot={{
+        overall: 87.26, activitiesCompleted: 137, activitiesTotal: 157, activitiesPercent: 87.26,
+        otjhActual: 164.87, otjhTarget: 576, ksb: 85.27, attendancePresent: 23, attendanceTotal: 45,
+      }} /></MemoryRouter>);
+    const chart = within(screen.getByRole('region', { name: 'Whole programme progress' }));
+    expect(chart.getByText('137 / 157 completed across all modules')).toBeVisible();
+    expect(chart.queryByText('3 / 7 completed across all modules')).not.toBeInTheDocument();
+    expect(chart.getByRole('img')).toHaveAccessibleName(/Activities: 87.26%/);
+  });
+
+  it('does not replace unavailable coach totals with module counts', () => {
+    render(<MemoryRouter><TrainingPlanDetails data={fixture()} subjects={summarySubjects} kind="commercial" learnerId="125"
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} activityOverviewOnly programmeSnapshot={{
+        overall: null, activitiesCompleted: null, activitiesTotal: null, activitiesPercent: null,
+        otjhActual: null, otjhTarget: null, ksb: null, attendancePresent: null, attendanceTotal: null,
+      }} /></MemoryRouter>);
+    const chart = within(screen.getByRole('region', { name: 'Whole programme progress' }));
+    expect(chart.getByText('Activity progress unavailable')).toBeVisible();
+    expect(chart.queryByText('3 / 7 completed across all modules')).not.toBeInTheDocument();
+  });
+
   it('renders programme modules as selectable cards with a visible progress track', () => {
     renderBoard(fixture(), summarySubjects, vi.fn(), undefined, undefined, true);
     const programme = within(screen.getByRole('region', { name: 'Programme module progress' }));
@@ -589,9 +623,9 @@ describe('Dashboard training plan controls', () => {
 });
 
 describe('dashboard Monthly Plan tab layout', () => {
-  const renderMonthly = (data = fixture(), planSubjects: (Subject | PlanSubjectSummary)[] = subjects) => render(<MemoryRouter initialEntries={['/plan']}><Routes>
+  const renderMonthly = (data = fixture(), planSubjects: (Subject | PlanSubjectSummary)[] = subjects, canOpenActivities = true) => render(<MemoryRouter initialEntries={['/plan']}><Routes>
     <Route path="/plan" element={<TrainingPlanDetails data={data} subjects={planSubjects} kind="commercial" learnerId="125"
-      onRefresh={vi.fn()} onRetryContract={vi.fn()} monthlyOnly />} />
+      onRefresh={vi.fn()} onRetryContract={vi.fn()} monthlyOnly canOpenActivities={canOpenActivities} />} />
     <Route path="*" element={<Destination />} />
   </Routes></MemoryRouter>);
 
@@ -614,6 +648,24 @@ describe('dashboard Monthly Plan tab layout', () => {
     expect(lectures.getAllByRole('columnheader').map(cell => cell.textContent)).toEqual(['Date', 'Time', 'Session', 'Tutor', 'Duration', 'Join']);
     expect(lectures.getByText('Attended session')).toBeVisible();
     expect(screen.queryByLabelText('Focus month')).not.toBeInTheDocument();
+  });
+
+  it('renders the coach view without learner actions while preserving status and month navigation', () => {
+    const data = fixture();
+    data.reviews = [{ ...review('book', '2026-09-12'), reviewTemplateId: 'template-1' },
+      { ...review('join', '2026-09-15', 'scheduled'), meetingLink: 'https://teams.microsoft.com/l/meetup-join/review', invited: true }];
+    renderMonthly(data, summarySubjects, false);
+
+    expect(screen.getByRole('button', { name: 'Previous month' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Next month' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Schedule' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Attend' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'View form' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Start' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /View all activities/ })).not.toBeInTheDocument();
+    expect(within(screen.getByRole('region', { name: 'Reviews this month' })).getByText('Not booked')).toBeVisible();
+    expect(within(screen.getByRole('region', { name: 'Lectures this month' })).getAllByRole('columnheader').map(cell => cell.textContent))
+      .toEqual(['Date', 'Time', 'Session', 'Tutor', 'Duration']);
   });
 
   it('uses Attendance eligibility and opens the matching lecture in the absence form', async () => {

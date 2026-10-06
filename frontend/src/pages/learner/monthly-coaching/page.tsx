@@ -1,3 +1,4 @@
+import { ImportedReviewSection } from '../reviews/imported/ImportedReviewSection';
 import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { WorkspaceShell } from '@/components/feature/WorkspaceShell';
@@ -108,19 +109,6 @@ function importedValue(value: unknown): string {
   try { return JSON.stringify(value, null, 2); } catch { return String(value); }
 }
 
-/** Older Aptem exports kept question/answer pairs only in raw_text. */
-function rawTextFields(rawText: string): Array<{ label: string; value: string }> {
-  const blocks = rawText.split(/\r?\n\s*\r?\n+/)
-    .map((block) => block.split(/\r?\n/).map((line) => line.trim()).filter(Boolean))
-    .filter((lines) => lines.length);
-  return blocks.flatMap((lines) => {
-    const first = lines[0];
-    const separator = first.indexOf(':');
-    if (separator > 0) return [{ label: first.slice(0, separator).trim(), value: [first.slice(separator + 1).trim(), ...lines.slice(1)].filter(Boolean).join('\n') || '-' }];
-    return [{ label: first, value: lines.slice(1).join('\n') || '-' }];
-  });
-}
-
 function importedFieldValue(review: ImportedReview, labels: string[]): unknown {
   const wanted = labels.map((label) => label.toLowerCase());
   for (const section of review.sections) {
@@ -141,16 +129,13 @@ function importedDate(value?: unknown): string {
 }
 
 function ImportedSectionBody({ section }: { section: ImportedReview['sections'][number] }) {
-  const fields = section.fields.length ? section.fields : rawTextFields(section.rawText);
   const links = section.fields.flatMap((field) => 'links' in field && Array.isArray(field.links) ? field.links : []);
   const [preview, setPreview] = useState<{ url: string; name: string } | null>(null);
   return <div className="space-y-3">
-    {fields.map((field, index) => <div key={`${field.label || 'field'}:${index}`} className="rounded-lg border border-slate-200 bg-white p-3"><p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">{field.label || 'Response'}</p><p className="mt-1 whitespace-pre-wrap break-words text-sm leading-6 text-slate-700">{importedValue(field.value)}</p></div>)}
+    <ImportedReviewSection section={{ ...section, fields: section.fields.map(({ links: _links, ...field }) => field) }} />
     {links.length > 0 && <div className="space-y-1">{links.map((link, index) => { const url = link.azure_url || link.url || link.href; const name = link.text || link.title || `Attachment ${index + 1}`; return url ? <button key={index} type="button" onClick={() => setPreview({ url, name })} className="block max-w-full truncate text-left text-xs font-semibold text-primary-600 underline">{name}</button> : null; })}</div>}
-    {section.tables.map((table, index) => <div key={index} className="overflow-x-auto rounded-lg border border-slate-200 bg-white"><table className="min-w-full text-left text-xs"><tbody className="divide-y divide-slate-200">{(table.rows || []).map((row, rowIndex) => <tr key={rowIndex} className={rowIndex === 0 ? 'bg-slate-100 font-bold text-slate-800' : 'text-slate-700'}>{(Array.isArray(row) ? row : [row]).map((cell, cellIndex) => <td key={cellIndex} className="whitespace-pre-wrap px-3 py-2.5 align-top">{importedValue(cell)}</td>)}</tr>)}</tbody></table></div>)}
-    {!fields.length && section.rawText && section.rawText !== 'EMPTY_STRING' && <p className="whitespace-pre-wrap rounded-lg border border-slate-200 bg-white p-3 text-sm leading-6 text-slate-700">{section.rawText}</p>}
     {preview && <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setPreview(null); }}><div role="dialog" aria-modal="true" aria-label={preview.name} className="flex h-[min(88vh,900px)] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl"><div className="flex items-center justify-between gap-3 border-b border-slate-200 px-4 py-3"><p className="truncate text-sm font-bold text-slate-900">{preview.name}</p><button type="button" aria-label="Close attachment preview" onClick={() => setPreview(null)} className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"><AppIcon className="ri-close-line" /></button></div><iframe title={preview.name} src={preview.url} className="min-h-0 flex-1 bg-slate-100" /></div></div>}
-    {!fields.length && !section.tables.length && (!section.rawText || section.rawText === 'EMPTY_STRING') && <Empty>No response was recorded for this section.</Empty>}
+
   </div>;
 }
 
@@ -204,10 +189,10 @@ function ImportedMcmView({ selected, learner, openSections, toggle, onBack, onDo
     </header>
 
     <ImportedMcmAccordion id="learner-information" title="Learner Information" open={openSections.includes('learner-information')} onToggle={toggle}>
-      <div className="grid gap-6 md:grid-cols-[280px_1fr]">
-        <div className="flex flex-col items-center justify-center border-b border-slate-200 pb-6 md:border-b-0 md:border-r md:pb-0 md:pr-8"><span className="flex h-20 w-20 items-center justify-center rounded-full bg-slate-400 text-xl font-bold text-white">{initials(learner?.name)}</span><p className="mt-3 text-xl font-bold text-slate-800">{learner?.name || '-'}</p></div>
-        <div className="grid gap-x-8 gap-y-4 sm:grid-cols-[minmax(210px,1fr)_minmax(260px,2fr)]">{infoRows.map(([label, value]) => <div key={label} className="contents"><p className="text-xs font-semibold text-slate-600">{label}:</p><p className="text-sm text-slate-500">{label.toLowerCase().includes('date') ? importedDate(value) : importedValue(value)}</p></div>)}</div>
-      </div>
+      <ImportedReviewSection section={review.sections.find(section => section.name.toLowerCase().includes('learner information')) || {
+        id: 'learner-information', name: 'Learner Information', order: 0, tables: [], rawText: '',
+        fields: [{ label: 'Name', value: learner?.name }, ...infoRows.map(([label, value]) => ({ label, value }))],
+      }} />
     </ImportedMcmAccordion>
 
     {detailSections.length ? detailSections.map((section) => <ImportedMcmAccordion key={section.id} id={`imported-section:${section.id}`} title={section.name} open={openSections.includes(`imported-section:${section.id}`)} onToggle={toggle}><ImportedSectionBody section={section} /></ImportedMcmAccordion>) : <ImportedMcmAccordion id="imported-review" title="Review Details" open={openSections.includes('imported-review')} onToggle={toggle}><ImportedMcmSections review={review} /></ImportedMcmAccordion>}
@@ -321,13 +306,13 @@ export default function MonthlyCoachingPage() {
   // preserving the existing learning-summary default for legacy meetings.
   const [openSections, setOpenSections] = useState<string[]>(['learning', 'imported-review']);
   const [slidesOpen, setSlidesOpen] = useState(false);
-  const selected = sessions.find((session) => session.id === sessionId) || null;
+  const selected = sessions.find((session) => session.id === sessionId) || sessions.find(session => session.reviewSource === 'aptem' && `imported-review:${session.reviewId}` === sessionId) || null;
   const migratedEvent = isMigratedContinuationEvent(selected);
   const selectedDate = dateOf(selected);
   const reviewInstance = useLearnerReviewInstance(
     myLearner.kind,
     myLearner.id,
-    selected?.reviewTemplateId || selected?.reviewInstanceId || migratedEvent ? (selected?.eventKey || selected?.id || '') : '',
+    selected?.reviewTemplateId || selected?.reviewInstanceId || migratedEvent ? (selected?.formEventKey || selected?.eventKey || selected?.id || '') : '',
   );
   // Monthly Logs belong to the curriculum target month. The scheduled date
   // is only the actual appointment date and may fall in another month.
@@ -347,13 +332,13 @@ export default function MonthlyCoachingPage() {
   const backHref = `/learner/monthly-coaching?${backParams}`;
   const refreshReview = reviewInstance.refresh;
   const signLearnerReview = useCallback((signature: string, options?: { applyMonthlyLogSignature?: boolean }) => (migratedEvent
-    ? signMigratedReviewAsParty(selected.eventKey || selected.id, signature)
+    ? signMigratedReviewAsParty(selected.formEventKey || selected.eventKey || selected.id, signature)
     : signLearnerProgressReview(
     myLearner.kind,
     myLearner.id,
-    selected?.eventKey || selected?.id || '',
+    selected?.formEventKey || selected?.eventKey || selected?.id || '',
     { name: learner?.name || 'Learner', signature, ...options },
-  )).then(() => { refresh(); refreshReview(); }), [learner?.name, myLearner.id, myLearner.kind, refresh, refreshReview, selected?.eventKey, selected?.id, migratedEvent]);
+  )).then(() => { refresh(); refreshReview(); }), [learner?.name, myLearner.id, myLearner.kind, refresh, refreshReview, selected?.eventKey, selected?.formEventKey, selected?.id, migratedEvent]);
   const index = selected ? sessions.findIndex((session) => session.id === selected.id) : -1;
   const previous = index > 0 ? sessions[index - 1] : null;
 
@@ -408,13 +393,13 @@ export default function MonthlyCoachingPage() {
             </button>
           )}
         </div>
-        {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}<button type="button" onClick={reviewInstance.refresh} className="ml-3 underline">Retry review</button></p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} mcmMonthlyLog={!migratedEvent && completedMcm && targetMonth ? { id: String(myLearner.id), month: targetMonth, contractKind: myLearner.kind } : undefined} onDownload={migratedEvent ? () => downloadMigratedReviewForParty(selected.eventKey || selected.id) : () => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} signatoryName={learner?.name || 'Learner'} onSign={canProgress ? signLearnerReview : undefined} onSaveAnswers={migratedEvent ? undefined : answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, selected.eventKey || selected.id, answers)} /> : selected.importedReview ? <ImportedMcmView selected={selected} learner={learner} openSections={openSections} toggle={toggle} onBack={() => navigate(backHref)} onDownload={() => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} /> : (
+        {loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : !selected ? <div className="rounded-xl border border-background-200 bg-white p-5"><Empty>This monthly coaching session was not found.</Empty></div> : reviewInstance.loading ? <div className="rounded-xl border border-background-200 bg-white p-5"><RowsSkeleton rows={4} /></div> : reviewInstance.error ? <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">{reviewInstance.error}<button type="button" onClick={reviewInstance.refresh} className="ml-3 underline">Retry review</button></p> : reviewInstance.definition ? <LearnerReviewInstanceForm definition={reviewInstance.definition} mcmMonthlyLog={!migratedEvent && completedMcm && targetMonth ? { id: String(myLearner.id), month: targetMonth, contractKind: myLearner.kind } : undefined} onDownload={migratedEvent ? () => downloadMigratedReviewForParty(selected.formEventKey || selected.eventKey || selected.id) : () => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} signatoryName={learner?.name || 'Learner'} onSign={canProgress ? signLearnerReview : undefined} onSaveAnswers={migratedEvent ? undefined : answers => saveLearnerEventReviewAnswers(myLearner.kind, myLearner.id, selected.eventKey || selected.id, answers)} /> : selected.importedReview ? <ImportedMcmView selected={selected} learner={learner} openSections={openSections} toggle={toggle} onBack={() => navigate(backHref)} onDownload={() => downloadLearnerMcmPdf(myLearner.kind, myLearner.id, selected.eventKey || selected.id)} /> : (
           <>
             <section className="overflow-hidden rounded-2xl border border-background-200 bg-white shadow-sm">
               <div className="learner-super-admin-hero p-5 text-primary-800 sm:p-6 workspace-page-hero"><span className="rounded-full border border-primary-200/60 bg-primary-100/60 px-2.5 py-1 text-[10px] font-bold text-foreground-500">{statusLabel(selected.status)}</span><div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><p className="text-[10px] font-bold uppercase tracking-[0.14em] text-primary-600">30-day coaching meeting</p><h1 className="mt-1 text-xl font-bold text-primary-800">{monthlyCoachingTitle(selected)}</h1><p className="mt-1 text-sm text-foreground-500">{formatDate(dateOf(selected), true)} at {formatTime(selected.scheduledTime)}</p></div>{selected.meetingLink && <a href={selected.meetingLink} target="_blank" rel="noopener noreferrer" className="meeting-join-action rounded-lg px-4 py-2 text-xs font-bold"><AppIcon className="ri-video-chat-line mr-1.5" />Join meeting</a>}</div></div>
               <div className="space-y-5 p-5 sm:p-6">
                 {shouldShowLearnerMeetingRecording(selected) ? (
-                  <CoachMeetingArtifactsPanel event={{ ...selected, eventKey: selected.eventKey || selected.id }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />
+                  <CoachMeetingArtifactsPanel event={{ ...selected, eventKey: selected.calendarEventKey || selected.eventKey || selected.id }} fetchArtifacts={loadArtifacts} contentUrl={artifactContentUrl} showAttendance={false} visibleArtifactTypes={['recording']} className="border-primary-100 bg-primary-50/30" />
                 ) : null}
                 <div><p className="mb-3 text-[10px] font-bold uppercase tracking-[0.14em] text-foreground-400">Session participants</p><div className="grid gap-3 sm:grid-cols-2"><div className="flex items-center gap-3 rounded-xl border border-background-200 p-3.5"><span className="flex h-10 w-10 items-center justify-center rounded-full bg-primary-100 text-xs font-bold text-primary-700">{initials(learner?.name)}</span><div><p className="text-[10px] font-semibold uppercase text-foreground-400">Learner</p><p className="text-sm font-bold text-foreground-900">{learner?.name || '-'}</p></div></div><div className="flex items-center gap-3 rounded-xl border border-background-200 p-3.5"><span className="flex h-10 w-10 items-center justify-center rounded-full bg-accent-100 text-xs font-bold text-accent-700">{initials(selected.coachName)}</span><div><p className="text-[10px] font-semibold uppercase text-foreground-400">Coach</p><p className="text-sm font-bold text-foreground-900">{selected.coachName || '-'}</p></div></div></div></div>
                 <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">{[['Duration', `${selected.durationMinutes || 60} minutes`], ['Meeting type', selected.meetingProvider || '-'], ['Scheduled time', formatTime(selected.scheduledTime)], ['Learning window', previous ? `Since session #${previous.sequence}` : 'First 30-day period']].map(([label, value]) => <div key={label} className="rounded-xl bg-background-100 p-3.5"><p className="text-[9px] font-semibold uppercase tracking-wider text-foreground-400">{label}</p><p className="mt-1 text-xs font-bold text-foreground-800">{value}</p></div>)}</div>

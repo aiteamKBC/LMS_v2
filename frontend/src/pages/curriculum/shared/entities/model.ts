@@ -73,6 +73,28 @@ export function namedCurriculumWorkspacePath(kind: 'groups' | 'modules', identif
   return `/curriculum/${kind}/${encodeURIComponent(id)}${query ? `?${query}` : ''}`;
 }
 
+/** The flag a workspace reads to decide whether to open its own edit drawer. */
+export const WORKSPACE_EDIT_PARAM = 'edit';
+
+/**
+ * The same workspace path, asking that record's edit drawer to open on arrival.
+ *
+ * A reader who clicks a cohort or group name somewhere else in the curriculum
+ * usually means "change this one", so the link lands on the record's own home
+ * with the form already up rather than leaving them to find Edit again. The
+ * drawer stays the one the workspace already owns: this only presses its button.
+ */
+export function workspaceEditPath(path: string): string {
+  const target = cleanText(path);
+  if (!target) return target;
+  return `${target}${target.includes('?') ? '&' : '?'}${WORKSPACE_EDIT_PARAM}=1`;
+}
+
+/** Whether the current location asked this workspace to open its edit drawer. */
+export function wantsWorkspaceEdit(params: URLSearchParams): boolean {
+  return params.get(WORKSPACE_EDIT_PARAM) === '1';
+}
+
 /**
  * A record's notes with the API's bookkeeping lines removed.
  *

@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ReviewProgressSnapshot } from '@/api/reviewInstances';
@@ -36,6 +37,30 @@ function snapshot(overrides: Partial<ReviewProgressSnapshot> = {}): ReviewProgre
 }
 
 describe('ReviewProgressPanel reference visual contract', () => {
+  it('keeps an unavailable action hidden unless visibility is explicitly requested', () => {
+    render(<ReviewProgressPanel snapshot={snapshot()} canCalculate={false} calculating={false} onCalculate={vi.fn()} />);
+    expect(screen.queryByRole('button', { name: 'Recalculate' })).not.toBeInTheDocument();
+  });
+
+  it.each([false, true])('shows the disabled action with snapshot=%s and skips it during keyboard navigation', async hasSnapshot => {
+    const user = userEvent.setup();
+    const onCalculate = vi.fn();
+    render(<>
+      <button>Before progress</button>
+      <ReviewProgressPanel snapshot={hasSnapshot ? snapshot() : null} canCalculate={false} showCalculateAction calculating={false} onCalculate={onCalculate} />
+      <button>After progress</button>
+    </>);
+    const button = screen.getByRole('button', { name: hasSnapshot ? 'Recalculate' : 'Calculate' });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAccessibleDescription('Available to the assigned Coach only.');
+    await user.click(button);
+    await user.click(screen.getByRole('button', { name: 'Before progress' }));
+    await user.tab();
+    expect(screen.getByRole('button', { name: 'After progress' })).toHaveFocus();
+    await user.keyboard('{Enter} ');
+    expect(onCalculate).not.toHaveBeenCalled();
+  });
+
   it('uses the programme actual for the donut and keeps fill and target labels independent', () => {
     render(<ReviewProgressPanel snapshot={snapshot()} canCalculate={false} calculating={false} onCalculate={vi.fn()} />);
     expect(screen.getByRole('img', { name: 'Learning Plan Progress: 28%' })).toBeVisible();

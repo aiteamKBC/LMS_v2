@@ -24,15 +24,18 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { clockLabel, durationLabel, normalizedClock } from '../../teams-meetings/calendarTime';
 import { useNavigate } from 'react-router-dom';
 import { AppIcon } from '@/components/feature/AppIcon';
+import { formatSystemTimestamp } from '@/lib/format';
 import { DatePickerField } from '@/components/feature/DatePickerField';
-import { showCurriculumAlert } from '@/components/feature/CurriculumSweetAlert';
+import { showCurriculumAlert, showCurriculumConfirm } from '@/components/feature/CurriculumSweetAlert';
 import { TutorClashNotice } from '@/components/feature/TutorClashNotice';
 import { useTutorAvailability } from '@/hooks/useTutorAvailability';
 import {
   createGroupModule,
   curriculumErrorMessage,
   isTutorConflictError,
+  fetchTutorAssignmentEmailStatus,
   previewModuleSessionPlan,
+  sendTutorAssignmentEmail,
   tutorConflictMessage,
   updateCurriculumModule,
   type CurriculumGroup,
@@ -42,6 +45,7 @@ import {
   type CurriculumWeeklySession,
   type CurriculumProgramme,
   type CurriculumSessionPlanPreview,
+  type TutorAssignmentEmailStatus,
   guardedInput,
 } from '@/lib/curriculumApi';
 import type { SelectOption } from '@/components/feature/SelectField';
@@ -86,6 +90,12 @@ export interface ModuleFormDefaults {
 }
 
 interface ModuleFormDeliveryRef {
+  /**
+   * This delivery's own module row id -- the id `/curriculum/modules/<id>` and
+   * the tutor-email ledger both use. A module delivered to three groups is
+   * three rows, and the tick needs to ask about all of them.
+   */
+  deliveryModuleId?: string;
   programmeId?: string;
   programme?: string;
   cohortId?: string;
@@ -294,6 +304,13 @@ export function ModuleFormDrawer({
   const [startDate, setStartDate] = useState('');
   const [targetEndDate, setTargetEndDate] = useState('');
   const [tutor, setTutor] = useState('');
+  // Whether this save should tell the tutor. This is intent, not memory: the
+  // record of who has actually been written to lives in the assignment ledger
+  // and is read back below, so nothing here has to be remembered between opens.
+  const [notifyTutor, setNotifyTutor] = useState(false);
+  // What the ledger says about the selected tutor and this module's deliveries.
+  // null while it is being read, or when there is nothing to ask about yet.
+  const [tutorEmailStatus, setTutorEmailStatus] = useState<TutorAssignmentEmailStatus | null>(null);
   const [status, setStatus] = useState('draft');
   const [description, setDescription] = useState('');
   const [color, setColor] = useState('#2563eb');
@@ -571,6 +588,7 @@ export function ModuleFormDrawer({
     setStartDate(coEdit.take(verdict, 'startDate', initial.startDate));
     setTargetEndDate(coEdit.take(verdict, 'targetEndDate', initial.targetEndDate));
     setTutor(coEdit.take(verdict, 'tutor', initial.tutor));
+    setNotifyTutor(false);
     setStatus(coEdit.take(verdict, 'status', initial.status));
     setDescription(coEdit.take(verdict, 'description', initial.description));
     setColor(coEdit.take(verdict, 'color', initial.color));
@@ -870,6 +888,73 @@ export function ModuleFormDrawer({
   // Whether this drawer is putting a name against the module rather than
   // leaving the one it already had. A create always is.
   const assigningTutor = Boolean(cleanText(tutor)) && (!module || cleanText(tutor) !== cleanText(baseline.current?.tutor ?? ''));
+
+  // ---- "has this tutor been told?" -----------------------------------------
+  // The tick below is a status control, not a form field: it reports what the
+  // assignment ledger holds for THIS tutor and THIS module's deliveries, and it
+  // has to still report it correctly a week later. So it is read from the
+  // server on every open rather than remembered here -- a boolean kept in the
+  // drawer would be wrong the moment anyone saved from anywhere else, and gone
+  // the moment the drawer closed.
+  const selectedTutorName = cleanText(tutor);
+  // Deliveries that already exist and could therefore already have been
+  // emailed: the one this drawer edits, plus the module's other deliveries (one
+  // row per group it runs for).
+  const existingDeliveryIds = useMemo(() => {
+    const ids = new Set<string>();
+    const own = cleanText(module?.id);
+    if (own) ids.add(own);
+    (module?.deliveryUsages || []).forEach(usage => {
+      const id = cleanText(usage.deliveryModuleId);
+      if (id) ids.add(id);
+    });
+    return Array.from(ids);
+  }, [module?.id, module?.deliveryUsages]);
+  // Compared by value, not identity: the parent rebuilds `deliveryUsages` on
+  // every refresh, and an identity-keyed effect would re-ask on each one.
+  const deliveryIdsKey = existingDeliveryIds.join(',');
+
+  useEffect(() => {
+    const ids = deliveryIdsKey ? deliveryIdsKey.split(',') : [];
+    if (!open || !selectedTutorName || !ids.length) {
+      setTutorEmailStatus(null);
+      return;
+    }
+    const controller = new AbortController();
+    let cancelled = false;
+    fetchTutorAssignmentEmailStatus(ids, selectedTutorName, controller.signal)
+      .then(status => { if (!cancelled) setTutorEmailStatus(status); })
+      // The tick falls back to "not emailed", which is the safe way to be
+      // wrong: it offers to send rather than claiming somebody was told.
+      .catch(() => { if (!cancelled) setTutorEmailStatus(null); });
+    return () => { cancelled = true; controller.abort(); };
+  }, [open, selectedTutorName, deliveryIdsKey]);
+
+  // Deliveries this save would create, which cannot have been emailed yet.
+  // Counting them is what makes a fully-notified module go back to "2 of 3"
+  // the moment another group is ticked.
+  const pendingDeliveryCount = module
+    // Editing: the groups ticked on top of the ones this module already runs
+    // for. Same rule the save uses to decide what to attach.
+    ? selectedGroups.filter(group => (
+      !sameIdentifier(group.id, primaryGroupId)
+        && !attachedGroupIds.some(id => sameIdentifier(id, group.id))
+    )).length
+    // Creating: every ticked group becomes a delivery.
+    : selectedGroups.length;
+  const emailedDeliveries = tutorEmailStatus?.emailed ?? 0;
+  const totalDeliveries = (tutorEmailStatus?.total ?? 0) + pendingDeliveryCount;
+  // Every delivery this tutor could be told about has been. Nothing to send, so
+  // the tick stops being a control and simply says so.
+  const tutorFullyEmailed = totalDeliveries > 0 && emailedDeliveries === totalDeliveries;
+  // Some told, some not -- the drawer must not claim either.
+  const tutorPartlyEmailed = emailedDeliveries > 0 && emailedDeliveries < totalDeliveries;
+  const tutorEmailBoxRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    if (tutorEmailBoxRef.current) {
+      tutorEmailBoxRef.current.indeterminate = tutorPartlyEmailed && !notifyTutor;
+    }
+  }, [tutorPartlyEmailed, notifyTutor, selectedTutorName]);
   const groupDeliveryDayMessage = groupDeliveryDayMissing
     ? `${cleanText(selectedGroup?.name) || 'This module’s group'} has no delivery day, so this module has no sessions to place a tutor on. Set the delivery day on the group, then come back and choose the tutor.`
     : '';
@@ -1048,6 +1133,72 @@ export function ModuleFormDrawer({
       groupNames: selectedGroups.map(group => cleanText(group.name)).filter(Boolean),
     });
 
+    // Every delivery this save put the tutor on, in the order they were made.
+    // One save can attach the module to several groups at once, and the tutor
+    // should hear about that once rather than three times in the same second --
+    // so the ids are collected here and sent together.
+    const notifyModuleIds: string[] = [];
+    const rememberDelivery = (id: unknown) => {
+      const value = cleanText(id);
+      if (value && !notifyModuleIds.includes(value)) notifyModuleIds.push(value);
+    };
+    const deliveryIdFrom = (result: { created?: unknown[]; updatedModules?: unknown[] } | undefined) => {
+      const saved = ((result?.created || [])[0] || (result?.updatedModules || [])[0] || {}) as Record<string, unknown>;
+      return String(saved.moduleCatalogueId || saved.catalogueId || saved.structureId || saved.id || '');
+    };
+
+    /**
+     * Tell the tutor, if the person saving ticked the box.
+     *
+     * Runs after the save has committed and never throws. A module that saved
+     * but did not mail is a notification problem, not a lost edit -- the same
+     * line the backend's own notifier draws ("nothing here may break a
+     * curriculum save") -- so a failure is reported on its own and the save
+     * still reads as done.
+     *
+     * Returns a sentence to append to the save's confirmation, or ''.
+     */
+    const notifyTutorIfAsked = async () => {
+      // `tutorFullyEmailed` can only have been true while the box was ticked if
+      // the ledger answered after the tick -- there is nothing left to send.
+      if (!notifyTutor || tutorFullyEmailed || !notifyModuleIds.length) return '';
+      try {
+        const result = await sendTutorAssignmentEmail(notifyModuleIds);
+        if (!result?.sent) return '';
+        const count = Number(result.modules) || notifyModuleIds.length;
+        return count > 1
+          ? ` ${result.tutor} was emailed about all ${count} deliveries.`
+          : ` ${result.tutor} was emailed about it.`;
+      } catch (err) {
+        // Offered here rather than pointed somewhere else: the author chose to
+        // notify the tutor in this drawer, so this is where they get to try
+        // again. `showCurriculumConfirm` keeps the dialog open and reports the
+        // reason in place when a retry also fails, so repeated attempts cost
+        // one click each and never lose the module that is already saved.
+        const reason = err instanceof Error && err.message
+          ? err.message
+          : 'The email could not be sent.';
+        let sentOnRetry = '';
+        await showCurriculumConfirm({
+          title: 'The tutor was not emailed',
+          text: `${reason} ${trimmed} is saved either way — would you like to try sending it again?`,
+          icon: 'warning',
+          confirmButtonText: 'Try again',
+          cancelButtonText: 'Not now',
+          onConfirm: async () => {
+            const retried = await sendTutorAssignmentEmail(notifyModuleIds);
+            const count = Number(retried?.modules) || notifyModuleIds.length;
+            sentOnRetry = count > 1
+              ? ` ${retried.tutor} was emailed about all ${count} deliveries.`
+              : ` ${retried.tutor} was emailed about it.`;
+          },
+          successTitle: 'Tutor emailed',
+          successText: `${selectedTutorName} now has this module's dates and schedule.`,
+        });
+        return sentOnRetry;
+      }
+    };
+
     /**
      * One group's delivery of this module.
      *
@@ -1158,10 +1309,14 @@ export function ModuleFormDrawer({
           !sameIdentifier(group.id, primaryGroupId)
           && !attachedGroupIds.some(id => sameIdentifier(id, group.id))
         ));
+        // Every delivery of this module, not only the ones this save touched:
+        // the tick covers the whole assignment in one message, which is what
+        // "2 of 3 emailed" offers to finish.
+        existingDeliveryIds.forEach(rememberDelivery);
         for (const group of newGroups) {
           if (attachedThisSession.current.has(group.id)) continue;
           failingGroup = group;
-          await attachToGroup(group);
+          rememberDelivery(deliveryIdFrom(await attachToGroup(group)));
           attachedThisSession.current.add(group.id);
         }
         // The caller's refresh runs BEFORE the drawer closes, so `saving` keeps the
@@ -1170,6 +1325,7 @@ export function ModuleFormDrawer({
         // is seconds on a slow connection -- where reopening the drawer offered the
         // pre-save weeks and saving again wrote them straight back.
         await onSaved({ catalogueId: module.id, name: trimmed, created: false, ...savedParents() });
+        const editedEmailNote = await notifyTutorIfAsked();
         // In a chain the wizard owns closing and confirming, so that a run of
         // four steps says what it created once rather than four times.
         if (chained) return;
@@ -1188,10 +1344,10 @@ export function ModuleFormDrawer({
         if (!warned) {
           await showCurriculumAlert({
             title: 'Module updated',
-            text: newGroups.length
+            text: (newGroups.length
               ? `${trimmed} is saved, and now also runs for ${newGroups.map(group => group.name).join(', ')}.`
-              : `${trimmed} is saved.`,
-            timer: newGroups.length ? 2600 : 1800,
+              : `${trimmed} is saved.`) + editedEmailNote,
+            timer: newGroups.length || editedEmailNote ? 2600 : 1800,
           });
         }
         return;
@@ -1220,14 +1376,16 @@ export function ModuleFormDrawer({
           if (!(result.created || []).length && (result.updatedModules || []).length) reattached.push(group.name);
           const id = String(saved.moduleCatalogueId || saved.catalogueId || saved.structureId || saved.id || '');
           if (!createdCatalogueId.current) createdCatalogueId.current = id;
+          rememberDelivery(id);
           attachedThisSession.current.add(group.id);
         }
         if (!chained) onClose();
         await onSaved({ catalogueId: createdCatalogueId.current, name: trimmed, created: true, ...savedParents() });
+        const createdEmailNote = await notifyTutorIfAsked();
         if (!chained && reattached.length) {
           await showCurriculumAlert({
             title: 'Existing module updated',
-            text: `${trimmed} already ran for ${reattached.join(', ')}, so that module was updated with these dates and tutor rather than a second one being created. Its weeks and components are untouched.`,
+            text: `${trimmed} already ran for ${reattached.join(', ')}, so that module was updated with these dates and tutor rather than a second one being created. Its weeks and components are untouched.${createdEmailNote}`,
             timer: 4200,
           });
           return;
@@ -1237,8 +1395,16 @@ export function ModuleFormDrawer({
           // each of them is authored and scheduled separately from here on.
           await showCurriculumAlert({
             title: 'Module created for each group',
-            text: `${trimmed} now runs for ${ordered.map(group => group.name).join(', ')}. Each group has its own dates and tutor.`,
+            text: `${trimmed} now runs for ${ordered.map(group => group.name).join(', ')}. Each group has its own dates and tutor.${createdEmailNote}`,
             timer: 3000,
+          });
+        } else if (!chained && createdEmailNote) {
+          // A single-group create has no confirmation of its own, so the only
+          // place the send can be reported is one of its own.
+          await showCurriculumAlert({
+            title: 'Module created',
+            text: `${trimmed} is saved.${createdEmailNote}`,
+            timer: 2600,
           });
         }
         return;
@@ -1556,6 +1722,66 @@ export function ModuleFormDrawer({
               placeholder="Select a tutor"
             />
           </FormField>
+          {/*
+            Shown whenever the module has a tutor, not only while one is being
+            chosen: this is where you see whether that tutor has been told, and
+            that question outlives the save that assigned them. Its state is the
+            ledger's, read back on open -- so it survives closing the drawer,
+            and a tutor swap reads the new tutor's record rather than the old
+            one's.
+          */}
+          {selectedTutorName && (
+            <label
+              className={`flex items-start gap-2.5 rounded-xl border px-3.5 py-3 ${
+                tutorFullyEmailed
+                  ? 'border-emerald-200 bg-emerald-50'
+                  : 'cursor-pointer border-background-200 bg-background-50'
+              }`}
+            >
+              <input
+                ref={tutorEmailBoxRef}
+                type="checkbox"
+                checked={tutorFullyEmailed || notifyTutor}
+                onChange={event => setNotifyTutor(event.target.checked)}
+                // Already told about every delivery: there is nothing left to
+                // send, and unticking cannot unsend. Re-sending stays where it
+                // has always been, on the module's own workspace.
+                disabled={saving || tutorFullyEmailed}
+                aria-describedby="tutor-email-detail"
+                className={`mt-0.5 h-4 w-4 shrink-0 accent-primary-600 ${tutorFullyEmailed ? '' : 'cursor-pointer'}`}
+              />
+              <span className="min-w-0">
+                <span className="block text-[12px] font-bold text-foreground-800">
+                  {tutorFullyEmailed
+                    ? `${selectedTutorName} has been emailed about this module`
+                    : `Email ${selectedTutorName} about this module`}
+                </span>
+                <span id="tutor-email-detail" className="mt-0.5 block text-[11px] leading-4 text-foreground-500">
+                  {tutorFullyEmailed
+                    ? tutorEmailStatus?.lastSentAt
+                      ? `Last emailed ${formatSystemTimestamp(tutorEmailStatus.lastSentAt, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}. Send it again from the module's workspace.`
+                      : "Send it again from the module's workspace."
+                    : totalDeliveries > 1
+                      ? `One message covering all ${totalDeliveries} deliveries, with each group's dates and schedule. Nothing is sent unless you tick this.`
+                      : 'They get the module name, its dates and its schedule. Nothing is sent unless you tick this.'}
+                </span>
+                {tutorPartlyEmailed && (
+                  <span role="status" className="mt-1 block text-[11px] font-semibold leading-4 text-amber-700">
+                    {emailedDeliveries} of {totalDeliveries} deliveries emailed
+                    {tutorEmailStatus?.lastSentAt
+                      ? `, last on ${formatSystemTimestamp(tutorEmailStatus.lastSentAt, { day: 'numeric', month: 'short', year: 'numeric' })}`
+                      : ''}
+                    . Ticking this covers all of them in one message.
+                  </span>
+                )}
+                {tutorEmailStatus?.tutor && !tutorEmailStatus.tutor.hasEmail && (
+                  <span role="status" className="mt-1 block text-[11px] leading-4 text-amber-700">
+                    {selectedTutorName} has no email address in the staff directory, so nothing can be sent yet.
+                  </span>
+                )}
+              </span>
+            </label>
+          )}
           {groupDeliveryDayMissing && (
             <p className={`rounded-xl border px-3.5 py-3 text-[12px] leading-5 ${
               assigningTutor

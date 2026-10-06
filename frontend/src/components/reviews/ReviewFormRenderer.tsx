@@ -50,6 +50,8 @@ interface ReviewFormRendererProps {
       invalid: boolean;
     },
   ) => ReactNode | undefined;
+  /** Optional read-only presentation; callers retain the original field controls. */
+  renderSectionContent?: (section: ReviewSectionDefinition, renderFields: (fields: ReviewFieldDefinition[]) => ReactNode) => ReactNode;
   variant?: 'accordion' | 'steps';
 }
 
@@ -129,12 +131,22 @@ export function ReviewFormRenderer({
   onOpenSectionChange,
   renderFieldAddon,
   renderFieldInput,
+  renderSectionContent,
   variant = 'accordion',
 }: ReviewFormRendererProps) {
   const enabledSections = sections
     .filter((section) => section.enabled)
     .slice()
     .sort((a, b) => a.displayOrder - b.displayOrder);
+
+  const renderFields = (fields: ReviewFieldDefinition[]) => fields.slice()
+    .sort((a, b) => a.displayOrder - b.displayOrder)
+    .map((field, index) => <ReviewFieldControl key={field.id} field={field} index={index}
+      answers={answers} onAnswerChange={onAnswerChange} errors={errors} readOnly={readOnly}
+      fieldReadOnly={fieldReadOnly} respondentRole={respondentRole}
+      renderFieldAddon={renderFieldAddon} renderFieldInput={renderFieldInput} />);
+  const renderContent = (section: ReviewSectionDefinition) => renderSectionContent
+    ? renderSectionContent(section, renderFields) : renderFields(section.fields);
 
   if (variant === 'steps') {
     const activeIndex = Math.max(0, enabledSections.findIndex(section => section.id === openSectionId));
@@ -217,24 +229,7 @@ export function ReviewFormRenderer({
           </header>
 
           <div className="space-y-3 p-4 sm:p-6">
-            {activeSection.fields
-              .slice()
-              .sort((a, b) => a.displayOrder - b.displayOrder)
-              .map((field, fieldIndex) => (
-                <ReviewFieldControl
-                  key={field.id}
-                  field={field}
-                  index={fieldIndex}
-                  answers={answers}
-                  onAnswerChange={onAnswerChange}
-                  errors={errors}
-                  readOnly={readOnly}
-                  fieldReadOnly={fieldReadOnly}
-                  respondentRole={respondentRole}
-                  renderFieldAddon={renderFieldAddon}
-                  renderFieldInput={renderFieldInput}
-                />
-              ))}
+            {renderContent(activeSection)}
           </div>
 
           {enabledSections.length > 1 ? (
@@ -285,6 +280,7 @@ export function ReviewFormRenderer({
             <button
               type="button"
               onClick={() => onOpenSectionChange(open ? '' : section.id)}
+              aria-expanded={open}
               aria-label={`${section.title}${respondentSummary?.count ? `, ${respondentSummary.count} question${respondentSummary.count === 1 ? '' : 's'} for you` : ''}`}
               className={cn('flex w-full items-center gap-3 p-4 text-left transition-colors sm:px-5', respondentSummary?.count ? 'hover:bg-primary-50/80' : 'hover:bg-background-100')}
             >
@@ -319,24 +315,7 @@ export function ReviewFormRenderer({
 
             {open ? (
               <div className="space-y-3 border-t border-primary-100 bg-white p-4 sm:p-5">
-                {section.fields
-                  .slice()
-                  .sort((a, b) => a.displayOrder - b.displayOrder)
-                  .map((field, fieldIndex) => (
-                    <ReviewFieldControl
-                      key={field.id}
-                      field={field}
-                      index={fieldIndex}
-                      answers={answers}
-                      onAnswerChange={onAnswerChange}
-                      errors={errors}
-                      readOnly={readOnly}
-                      fieldReadOnly={fieldReadOnly}
-                      respondentRole={respondentRole}
-                      renderFieldAddon={renderFieldAddon}
-                      renderFieldInput={renderFieldInput}
-                    />
-                  ))}
+                {renderContent(section)}
               </div>
             ) : null}
           </section>
@@ -362,7 +341,7 @@ function ReviewFieldControl({
 }) {
   const value = answers[field.id];
   const invalid = Boolean(errors?.missingFieldIds.has(field.id));
-  const isMeetingSummary = field.configuration?.semanticKey === 'meeting_summary';
+  const isMeetingSummary = field.configuration?.semanticKey === 'meeting_summary' && field.configuration?.migrated !== true;
   const effectiveReadOnly = fieldReadOnly ? fieldReadOnly(field) : Boolean(readOnly);
   const canRespond = respondentRole ? fieldAllowsRespondent(field, respondentRole) : false;
   const respondentLabel = respondentRole === 'employer' ? 'Employer response' : 'Your response';
@@ -479,10 +458,11 @@ function ReviewFieldInput({
     case 'text_multiline':
       return (
         <textarea
+          aria-label={field.configuration?.migrated === true && field.configuration?.semanticKey === 'meeting_summary' ? field.title : undefined}
           value={stringValue}
           onChange={(e) => onChange(e.target.value)}
           rows={3}
-          maxLength={field.configuration?.semanticKey === 'meeting_summary' ? undefined : 4000}
+          maxLength={field.configuration?.semanticKey === 'meeting_summary' && field.configuration?.migrated !== true ? undefined : 4000}
           disabled={readOnly}
           placeholder={String(field.configuration?.placeholder || '')}
           className="w-full resize-y rounded-lg border border-background-300 bg-white px-3.5 py-3 text-sm text-foreground-800 outline-none transition placeholder:text-foreground-300 focus:border-primary-400 focus:ring-2 focus:ring-primary-200 disabled:bg-background-100"

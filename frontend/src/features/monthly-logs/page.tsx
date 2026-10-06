@@ -35,12 +35,16 @@ export default function MonthlyLogsPage() {
   const base = perspective === 'learner' ? student ? '/learner/monthly-logs' : `/learner/monthly-logs/${selected.kind}/${id}` : `/coach/monthly-logs/${id}`;
   const overview = student ? '/workspace/learner/dashboard' : `/workspace/learner/${selected.kind}/${id}/dashboard`;
   const nav = roleNavMap[perspective];
+  const coachOverview = perspective === 'coach' && !month;
   return <WorkspaceShell role={perspective} roleLabel={nav.label} navItems={nav.items}
     workspaceLabel={nav.workspaceLabel} pageTitle="Monthly Logs" pageSubtitle="Your monthly learning record, activities and signatures"
-    showBackButton backFallbackHref={month ? base : perspective === 'learner' ? overview : '/coach/monthly-logs'}>
-    <PageContainer className={`${design.scope} ${design.page} ${styles.theme} ${month ? journal.canvas : ''}`}>
-      {id ? <LearnerLogs key={`${perspective}-${id}`} id={id} month={month} base={base} perspective={perspective} /> : perspective === 'learner'
-        ? <EmptyState title="Your learner account is unavailable" /> : <CoachMonthlyLogLearners />}
+    showBackButton backFallbackHref={month ? base : perspective === 'learner' ? overview : '/coach/monthly-logs'} hidePageChrome={coachOverview}>
+    <PageContainer className={`${design.scope} ${design.page} ${styles.theme} ${month ? journal.canvas : ''} ${coachOverview ? styles.coachCanvas : ''}`}>
+      {coachOverview ? <CoachMonthlyLogLearners selectedLearnerId={id} renderSelected={learner => {
+        const learnerId = String(learner.id);
+        return <LearnerLogs key={`coach-${learnerId}`} id={learnerId} base={`/coach/monthly-logs/${learnerId}`} perspective="coach" />;
+      }} /> : id ? <LearnerLogs key={`${perspective}-${id}`} id={id} month={month} base={base} perspective={perspective} /> : perspective === 'learner'
+        ? <EmptyState title="Your learner account is unavailable" /> : <EmptyState title="Choose a learner to view monthly logs" />}
     </PageContainer>
   </WorkspaceShell>;
 }
@@ -131,7 +135,13 @@ export function MonthlyLog({ id, month, summary, base, perspective, workflow, em
   const data = query.data;
   // Training-plan values come only from the canonical monthly-log response;
   // this view must not overwrite them from a second frontend contract.
-  const displayData = data;
+  // Sort a presentation copy so the saved report and signing digest stay intact.
+  const displayData = { ...data, rows: [...data.rows].sort((left, right) =>
+    Number(!left.activity_date) - Number(!right.activity_date)
+    || (left.activity_date || '').localeCompare(right.activity_date || '')
+    || Number(!left.activity_time) - Number(!right.activity_time)
+    || (left.activity_time || '').localeCompare(right.activity_time || '')
+    || left.id - right.id) };
   // The MCM is the learner's signing surface for this linked month. Keep the
   // log available for review first, but do not allow a separate log signature
   // to diverge from the MCM signature that will be mirrored here.
@@ -158,7 +168,7 @@ export function MonthlyLog({ id, month, summary, base, perspective, workflow, em
     <LearnerInformation summary={summary} data={displayData} actions={!embedded ? <JournalDownloads summary={summary} month={month} disabled={signing.isPending || (data.source === 'lms' && !(data.student_signature && data.coach_signature))} loadMonth={(selected, signal) => mcmWorkflow ? getLogMonth(id, selected, signal, perspective, false, workflowKey) : getLogMonth(id, selected, signal, perspective)} /> : undefined} />
     {displayData.target_warning && <p role="status" className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">Target hours: Unavailable. {displayData.target_warning}</p>}
     <MonthlyHours data={displayData} />
-    <ActivityLog key={sourceRef ?? 'all'} data={data} initialSourceRef={sourceRef}
+    <ActivityLog key={sourceRef ?? 'all'} data={displayData} initialSourceRef={sourceRef}
       contentScope={`monthly-logs:${perspective}:${id}`} loadContent={rowId => mcmWorkflow ? getLogContent(id, month, rowId, perspective, workflowKey) : getLogContent(id, month, rowId, perspective)} />
     <section className={`${journal.card} ${journal.signoff}`} aria-label={embedded ? 'Learner monthly sign-off' : 'Monthly sign-off'}>
       <div className={journal.sectionHeading}><div><h2 className="font-heading">{embedded ? 'Learner sign-off' : 'Report sign-off'}</h2><p>{data.is_open ? 'This month is still updating. Signatures become available after month-end.' : embedded ? 'The learner signature is captured on the Monthly Coaching Meeting.' : 'Your learner and coach signatures for this month’s record.'}</p></div></div>

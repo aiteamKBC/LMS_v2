@@ -1,3 +1,5 @@
+import { renderImportedSection } from './imported/renderImportedSection';
+import { ImportedValue } from './imported/ImportedReviewSection';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppIcon } from '@/components/feature/AppIcon';
 import {
@@ -307,7 +309,8 @@ export function LearnerReviewInstanceForm({
       {/* The same frozen figures the coach calculated and the signed PDF
           renders. Read-only here: a learner never calculates, and nothing on
           this page recalculates against their current progress. */}
-      {definition.template.reviewTypeCode === 'progress_review' ? (
+      {(definition.template.reviewTypeCode === 'progress_review'
+        || (definition.migratedForm && definition.template.reviewTypeCode === 'aptem_progress_review')) ? (
         <ReviewProgressPanel
           snapshot={definition.progressSnapshot}
           ragHistory={definition.ragHistory}
@@ -376,6 +379,11 @@ export function LearnerReviewInstanceForm({
 
       <ReviewFormRenderer
         sections={definition.sections}
+        renderSectionContent={definition.source === 'aptem' && viewerRole === 'participant'
+          ? (section, renderFields) => renderImportedSection(section, answers, renderFields) : undefined}
+        renderFieldInput={definition.source === 'aptem' && viewerRole === 'participant'
+          ? (field, context) => context.readOnly ? <ImportedValue value={context.value} label={field.title} fieldType={field.fieldType} /> : undefined
+          : undefined}
         answers={answers}
         onAnswerChange={handleAnswerChange}
         readOnly
@@ -388,7 +396,12 @@ export function LearnerReviewInstanceForm({
 
       <div ref={signatureSection} tabIndex={-1} aria-label="Signature step" className="scroll-mt-6 space-y-3 rounded-2xl focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-500">
         <ReviewSignatures signatures={definition.signatures} />
-        <ReviewPdfDownload availability={definition.pdf} onDownload={onDownload} label={definition.migratedForm ? 'Download LMS-generated review PDF' : undefined} />
+        {(definition.source !== 'aptem' || definition.instance?.status === 'completed') && <ReviewPdfDownload
+          availability={definition.migratedForm
+            ? { available: definition.instance?.status === 'completed', reason: 'Available after completion.' }
+            : definition.pdf}
+          onDownload={onDownload}
+        />}
       {canSign && signatureOpen ? mcmMonthlyLog ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/55 p-3 sm:p-6" role="presentation">
           <div className="flex max-h-[94vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border border-violet-200 bg-background-50 shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="mcm-sign-dialog-title">

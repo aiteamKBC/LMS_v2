@@ -1,8 +1,8 @@
-import { useEffect, useId, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useId, useState, type CSSProperties } from 'react';
 import type { TrainingPlanDashboard } from '@/api/trainingPlanDashboard';
 import { percent, type TimelineModule } from './model';
 import { moduleMeasures, moduleProgress } from './progress';
-import { monthlyHours, type MonthlyHours } from './monthlyHours';
+import { OtjHoursChart } from './OtjHoursChart';
 import styles from './ProgressCharts.module.css';
 
 type Props = {
@@ -13,9 +13,13 @@ type Props = {
   programmeStartMonth?: string;
   programmeEndMonth?: string;
   programmeSnapshot?: ProgrammeProgressSnapshot;
+  showOtjChart?: boolean;
 };
 export type ProgrammeProgressSnapshot = {
   overall: number | null;
+  activitiesCompleted?: number | null;
+  activitiesTotal?: number | null;
+  activitiesPercent?: number | null;
   otjhActual: number | null;
   otjhTarget: number | null;
   ksb: number | null;
@@ -36,53 +40,10 @@ function measureCount(label: string, detail: string) {
 }
 
 
-function ratio(value: number | null, target: number | null) {
-  return value == null || target == null || target <= 0 ? null : Math.round(value / target * 100);
-}
-
-function reportingMonth() {
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/London' }).slice(0, 7);
-}
-
-function signed(value: number) {
-  return `${value > 0 ? '+' : ''}${hourNumber.format(value)}`;
-}
-
-function scaleFor(rows: MonthlyHours[]) {
-  const maximum = Math.max(0, ...rows.flatMap(row => [row.target || 0, row.submitted || 0, row.completed || 0]));
-  if (!maximum) return { maximum: 10, step: 2.5 };
-  const rough = maximum / 4;
-  const magnitude = 10 ** Math.floor(Math.log10(rough));
-  const fraction = rough / magnitude;
-  const nice = fraction <= 1 ? 1 : fraction <= 2 ? 2 : fraction <= 5 ? 5 : 10;
-  const step = nice * magnitude;
-  return { maximum: step * 4, step };
-}
-
-function MonthTooltip({ row, id }: { row: MonthlyHours; id: string }) {
-  const targetRatio = row.target == null ? null : 100;
-  const submittedRatio = ratio(row.submitted, row.target);
-  const completedRatio = ratio(row.completed, row.target);
-  const variance = row.target == null || row.completed == null ? null : row.completed - row.target;
-  return <div id={id} role="tooltip" className={styles.monthlyTooltip}>
-    <strong>{row.label}</strong>
-    <dl>
-      <div><dt><i className={styles.targetKey} />Target:</dt><dd>{targetRatio == null ? 'N/A' : `${targetRatio}% (${hourNumber.format(row.target!)} hours)`}</dd></div>
-      <div><dt><i className={styles.submittedKey} />Submitted:</dt><dd>{submittedRatio == null ? 'N/A' : `${submittedRatio}% (${hourNumber.format(row.submitted!)} hours)`}</dd></div>
-      <div><dt><i className={styles.completedKey} />Completed:</dt><dd>{completedRatio == null ? 'N/A' : `${completedRatio}% (${hourNumber.format(row.completed!)} hours)`}</dd></div>
-      <div><dt>Total completed or pending:</dt><dd>{row.submitted == null || row.completed == null ? 'N/A' : `${hourNumber.format(row.submitted + row.completed)} hours`}</dd></div>
-      <div className={styles.variance}><dt>Variance:</dt><dd>{variance == null || completedRatio == null ? 'N/A' : `${completedRatio - 100 > 0 ? '+' : ''}${completedRatio - 100}% (${signed(variance)} hours)`}</dd></div>
-    </dl>
-  </div>;
-}
-
-export function ProgressCharts({ modules, selected, data, onModuleSelect, programmeStartMonth, programmeEndMonth, programmeSnapshot }: Props) {
+export function ProgressCharts({ modules, selected, data, onModuleSelect, programmeStartMonth, programmeEndMonth, programmeSnapshot,
+  showOtjChart = true }: Props) {
   const chartId = useId();
-  const tooltipId = `${chartId}-monthly-tooltip`;
-  const [activeMonth, setActiveMonth] = useState('');
   const [programmePage, setProgrammePage] = useState(0);
-  const monthlyScrollRef = useRef<HTMLDivElement>(null);
-  const monthlyPan = useRef<{ pointerId: number; x: number; left: number } | null>(null);
   const selectedProgress = selected ? moduleProgress(selected, data) : null;
   const selectedMeasures = selected ? moduleMeasures(selected, data) : [];
   const rows = [...modules].sort((a, b) => (a.start || '9999').localeCompare(b.start || '9999') || a.title.localeCompare(b.title));
@@ -91,29 +52,13 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
   const visibleRows = rows.slice(programmePage * pageSize, (programmePage + 1) * pageSize);
   useEffect(() => { setProgrammePage(0); }, [rows.length]);
   useEffect(() => { if (programmePage >= pageCount) setProgrammePage(pageCount - 1); }, [pageCount, programmePage]);
-  const months = monthlyHours(data, programmeStartMonth, programmeEndMonth);
-  const active = months.find(row => row.key === activeMonth);
-  const activeIndex = Math.max(0, months.findIndex(row => row.key === activeMonth));
-  const scale = scaleFor(months);
-  const ticks = Array.from({ length: 5 }, (_, index) => scale.step * (4 - index));
-  const targetToDate = months.filter(row => row.key <= reportingMonth());
-  // Target-to-date is the running sum of each month's target.  A missing
-  // month must not invalidate the months that do have a target; zero remains
-  // a real target value and is included naturally by the nullish fallback.
-  const expectedTarget = targetToDate.length
-    ? targetToDate.reduce((sum, row) => sum + (row.target ?? 0), 0) : null;
-  const totalSubmitted = months.every(row => row.submitted != null) ? months.reduce((sum, row) => sum + row.submitted!, 0) : null;
-  const totalCompleted = months.every(row => row.completed != null) ? months.reduce((sum, row) => sum + row.completed!, 0) : null;
-  // Overall OTJH progress is paced against the cumulative target through the
-  // current month.  Module/programme totals can be absent or zero while the
-  // month-by-month training plan remains valid, so they are not a denominator.
-  const progressTarget = expectedTarget;
-  const overallPercent = ratio(totalCompleted, progressTarget);
-  const expectedPercent = ratio(expectedTarget, progressTarget);
-  const overallVariance = expectedTarget == null || totalCompleted == null ? null : totalCompleted - expectedTarget;
-  const variancePercent = ratio(overallVariance, expectedTarget);
-  const activityDone = modules.reduce((sum, module) => sum + module.done, 0);
-  const activityTotal = modules.reduce((sum, module) => sum + module.activityCount, 0);
+  // Coach snapshots use the same canonical activity population as the caseload
+  // table. Module summaries describe a different population of curriculum slots.
+  const hasActivitySnapshot = programmeSnapshot?.activitiesTotal !== undefined;
+  const activityDone = hasActivitySnapshot ? programmeSnapshot?.activitiesCompleted ?? null
+    : modules.reduce((sum, module) => sum + module.done, 0);
+  const activityTotal = hasActivitySnapshot ? programmeSnapshot?.activitiesTotal ?? null
+    : modules.reduce((sum, module) => sum + module.activityCount, 0);
   const wholeProgrammeProgress = programmeSnapshot ? {
     value: programmeSnapshot.overall,
     available: 5,
@@ -123,8 +68,10 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
         ? null : percent(programmeSnapshot.attendancePresent, programmeSnapshot.attendanceTotal),
         detail: programmeSnapshot.attendancePresent == null || programmeSnapshot.attendanceTotal == null
           ? 'Attendance unavailable' : `${programmeSnapshot.attendancePresent} / ${programmeSnapshot.attendanceTotal} sessions attended` },
-      { label: 'Activities', value: activityTotal ? percent(activityDone, activityTotal) : null,
-        detail: activityTotal ? `${activityDone} / ${activityTotal} completed across all modules` : 'No activities assigned' },
+      { label: 'Activities', value: hasActivitySnapshot ? programmeSnapshot.activitiesPercent ?? null
+        : activityTotal && activityDone != null ? percent(activityDone, activityTotal) : null,
+        detail: activityTotal == null || activityDone == null ? 'Activity progress unavailable'
+          : activityTotal ? `${activityDone} / ${activityTotal} completed across all modules` : 'No activities assigned' },
       { label: 'Hours', value: programmeSnapshot.otjhActual == null || programmeSnapshot.otjhTarget == null
         ? null : percent(programmeSnapshot.otjhActual, programmeSnapshot.otjhTarget),
         detail: programmeSnapshot.otjhActual == null || programmeSnapshot.otjhTarget == null
@@ -134,29 +81,6 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
   } : null;
   const chartProgress = wholeProgrammeProgress || selectedProgress;
   const chartWidth = chartProgress?.measures.length === 6 ? 470 : 400;
-  const beginMonthlyPan = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.pointerType !== 'mouse' || event.button !== 0) return;
-    const scroll = monthlyScrollRef.current;
-    if (!scroll) return;
-    monthlyPan.current = { pointerId: event.pointerId, x: event.clientX, left: scroll.scrollLeft };
-    scroll.dataset.panning = 'true';
-    scroll.setPointerCapture?.(event.pointerId);
-  };
-  const moveMonthlyPan = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const scroll = monthlyScrollRef.current;
-    const pan = monthlyPan.current;
-    if (!scroll || !pan || pan.pointerId !== event.pointerId) return;
-    const distance = event.clientX - pan.x;
-    if (Math.abs(distance) > 2) event.preventDefault();
-    scroll.scrollLeft = pan.left - distance;
-  };
-  const endMonthlyPan = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const scroll = monthlyScrollRef.current;
-    if (!monthlyPan.current || monthlyPan.current.pointerId !== event.pointerId) return;
-    scroll?.releasePointerCapture?.(event.pointerId);
-    if (scroll) delete scroll.dataset.panning;
-    monthlyPan.current = null;
-  };
   return <div className={styles.charts}>
     {programmeSnapshot ? <section className={styles.card} aria-label="Whole programme progress">
       <header><div><p className={styles.eyebrow}>Whole programme</p><h2>Whole programme progress</h2><p className={styles.subtitle}>Summary metrics for this learner across every module</p></div>
@@ -180,7 +104,9 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
         <dl className={styles.measures}>{chartProgress.measures.map((measure, index) => <div key={measure.label}>
           <dt><i style={{ background: colors[index] }} />{measure.label}</dt><dd>{measure.detail}</dd>
         </div>)}</dl>
-        <p className={styles.note}>Overall, OTJH, KSB and attendance match the case-file cards. Activities are aggregated across all learner modules.</p>
+        <p className={styles.note}>{hasActivitySnapshot
+          ? 'Activities use the same programme totals as the coach learner table. Overall, OTJH, KSB and attendance match the case-file cards.'
+          : 'Overall, OTJH, KSB and attendance match the case-file cards. Activities are aggregated across all learner modules.'}</p>
       </> : <p className={styles.empty}>Select a module to see attendance, activities, hours and KSBs.</p>}
     </section> : <section className={`${styles.card} ${styles.moduleProgressCard}`} aria-label="Module progress">
       <header><div><p className={styles.eyebrow}>Selected module</p><h2>Module progress</h2></div>
@@ -231,52 +157,6 @@ export function ProgressCharts({ modules, selected, data, onModuleSelect, progra
       </nav>}
       <p className={styles.note}>Module progress is based on activities. Attendance, hours and KSBs are shown independently.</p>
     </section>
-    <section className={`${styles.card} ${styles.monthlyCard}`} aria-label="Off-the-job hours by month">
-      <header><div><p className={styles.eyebrow}>Whole programme</p><h2>Off-The-Job Hours</h2><p className={styles.subtitle}>Target, submitted and completed hours for every month</p></div></header>
-      <div className={styles.monthlyLegend} aria-label="Chart legend">
-        <span><i className={styles.targetKey} />Target</span>
-        <span><i className={styles.submittedKey} />Submitted</span>
-        <span><i className={styles.completedKey} />Completed</span>
-      </div>
-      {active && <div className={styles.tooltipPosition} style={{ '--tooltip-left': `${(activeIndex + .5) / months.length * 100}%` } as CSSProperties}>
-        <MonthTooltip row={active} id={tooltipId} />
-      </div>}
-      {months.length ? <div ref={monthlyScrollRef} className={styles.monthlyScroll} role="region" tabIndex={0}
-        aria-label="Monthly off-the-job hours chart. Scroll horizontally to view more months."
-        onPointerDown={beginMonthlyPan} onPointerMove={moveMonthlyPan} onPointerUp={endMonthlyPan} onPointerCancel={endMonthlyPan}>
-        <div className={styles.monthlyPlot} style={{ minWidth: `${Math.max(36, months.length * 4.25)}rem` }}>
-          <div className={styles.yAxis} aria-hidden="true">{ticks.map(value => <span key={value} style={{ bottom: `${value / scale.maximum * 100}%` }}>{hourNumber.format(value)}</span>)}</div>
-          <div className={styles.grid} aria-hidden="true">{ticks.map(value => <i key={value} style={{ bottom: `${value / scale.maximum * 100}%` }} />)}</div>
-          <div className={styles.monthBars} style={{ '--month-count': months.length } as CSSProperties}>{months.map(row => {
-            const targetHeight = row.target == null ? null : row.target / scale.maximum * 100;
-            const submittedHeight = row.submitted == null ? 0 : row.submitted / scale.maximum * 100;
-            const completedHeight = row.completed == null ? 0 : row.completed / scale.maximum * 100;
-            return <button key={row.key} type="button" className={styles.monthColumn}
-              aria-label={`${row.label}: target ${row.target == null ? 'unavailable' : `${hourNumber.format(row.target)} hours`}, submitted ${row.submitted == null ? 'unavailable' : `${hourNumber.format(row.submitted)} hours`}, completed ${row.completed == null ? 'unavailable' : `${hourNumber.format(row.completed)} hours`}`}
-              aria-describedby={activeMonth === row.key ? tooltipId : undefined}
-              onMouseEnter={() => setActiveMonth(row.key)} onMouseLeave={() => setActiveMonth(current => current === row.key ? '' : current)}
-              onFocus={() => setActiveMonth(row.key)} onBlur={() => setActiveMonth(current => current === row.key ? '' : current)}>
-              <span className={styles.barArea}>
-                <i className={styles.submittedBar} style={{ bottom: `${completedHeight}%`, height: `${submittedHeight}%` }} />
-                <i className={styles.completedBar} style={{ height: `${completedHeight}%` }} />
-                {targetHeight != null && <i className={styles.targetLine} style={{ bottom: `${targetHeight}%` }} />}
-              </span>
-              <span className={styles.monthLabel}>{new Date(`${row.key}-01T12:00:00Z`).toLocaleDateString('en-GB', { month: 'short', timeZone: 'UTC' })}<small>{row.key.slice(0, 4)}</small></span>
-            </button>;
-          })}</div>
-        </div>
-      </div> : <p className={styles.empty}>Monthly hour targets will appear here once the training plan is available.</p>}
-      {months.length > 0 && <div className={styles.overall}>
-        <div><strong>Overall progress</strong><span>{totalCompleted == null ? 'Recorded hours unavailable' : `${hourNumber.format(totalCompleted)}h completed${totalSubmitted != null && totalSubmitted > 0 ? ` · ${hourNumber.format(totalSubmitted)}h submitted` : ''}`}</span></div>
-        <div className={styles.overallTrack} role="progressbar" aria-label="Overall off-the-job hours progress" aria-valuemin={0} aria-valuemax={100} aria-valuenow={overallPercent == null ? undefined : Math.min(100, overallPercent)}>
-          {totalSubmitted != null && progressTarget != null && <i className={styles.submittedOverall} style={{ left: `${Math.min(100, overallPercent || 0)}%`, width: `${Math.min(100, ratio(totalSubmitted, progressTarget) || 0)}%` }} />}
-          <i className={styles.completedOverall} style={{ width: `${Math.min(100, overallPercent || 0)}%` }} />
-          {expectedPercent != null && <b style={{ left: `${Math.min(100, expectedPercent)}%` }} />}
-        </div>
-        <strong className={overallVariance != null && overallVariance < 0 ? styles.behind : styles.ahead}>
-          {variancePercent == null || overallVariance == null ? 'N/A' : `${variancePercent > 0 ? '+' : ''}${variancePercent}% (${signed(overallVariance)}h)`}
-        </strong>
-      </div>}
-    </section>
+    {showOtjChart && <OtjHoursChart data={data} programmeStartMonth={programmeStartMonth} programmeEndMonth={programmeEndMonth} />}
   </div>;
 }

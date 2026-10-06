@@ -91,6 +91,8 @@ def action_preview(live_id, payload, actor):
     if series.get('status') != 'active':
         raise CalendarStateError('This calendar is no longer active.')
     action, scope = payload.get('action'), payload.get('scope')
+    if scope == 'leftover':
+        return leftover_preview(live_id, payload, actor, series, rows, saved)
     if action not in ('cancel', 'reschedule') or scope not in ('series', 'occurrence'):
         raise ValueError('Choose a calendar action and its scope.')
     number = payload.get('sessionNumber')
@@ -208,6 +210,61 @@ def action_preview(live_id, payload, actor):
             'title': series.get('module_title') or 'Teams calendar', 'organizer': series.get('organizer_email'),
             'timeZone': str(zone), 'notificationRequired': action == 'cancel', 'calendarRequests': len(commands),
             'sessions': reviewed_sessions, 'warnings': plan['errors']}
+
+
+def leftover_preview(live_id, payload, actor, series, rows, saved):
+    """Review cancelling one slot that is on Teams but is not a module session.
+
+    The only path that removes such a slot. Nothing automatic does -- a save, a
+    sync or a background job leaves it where it is and only reports it -- so a
+    cancellation Exchange emails to everyone invited is always this click and
+    its confirmation. The slot is re-proved against Microsoft here: it must still
+    be live, and still not be any scheduled LMS session's own occurrence.
+    """
+    from . import views as v
+    if payload.get('action') != 'cancel':
+        raise ValueError('A slot that is not a module session can only be cancelled.')
+    event_id = str(payload.get('eventId') or '')
+    if not event_id:
+        raise ValueError('Choose the Teams slot to cancel.')
+    module = load_module(series)
+    captured = {}
+    with calendar_reader() as read:
+        def capture(path):
+            result = read(path)
+            if isinstance(result, dict):
+                for event in ([result] if result.get('id') else result.get('value', [])):
+                    if event.get('id'):
+                        captured[event['id']] = event
+                for event in result.get('exceptionOccurrences') or []:
+                    captured[event['id']] = event
+            return result
+        plan = cancellation_plan(series, rows, saved, capture)
+    slot = next((item for item in plan.get('leftovers') or [] if item.get('eventId') == event_id), None)
+    if not slot:
+        raise CalendarStateError('That Teams slot is no longer listed as outside the module plan. Sync calendar status first.')
+    event = captured.get(event_id)
+    if not event or event.get('isCancelled'):
+        raise CalendarStateError('That Teams slot could not be verified. Sync calendar status first.')
+    join_url = (event.get('onlineMeeting') or {}).get('joinUrl') or ''
+    command = {'eventId': event_id, 'rootId': slot.get('rootId') or event_id, 'occurrenceId': '',
+               'occurrenceGraphId': slot.get('occurrenceId') or '', 'sessionNumber': 0,
+               'action': 'cancel', 'state': 'pending', 'leftover': True,
+               'joinUrl': join_url, 'etag': event.get('@odata.etag') or ''}
+    comment = str(payload.get('comment') or '').strip()
+    if len(comment) > 1000:
+        raise ValueError('Keep the cancellation message within 1,000 characters.')
+    operation = {'id': uuid.uuid4().hex, 'actor': actor, 'liveId': live_id, 'action': 'cancel', 'scope': 'leftover',
+                 'version': fingerprint(series, rows, module), 'commands': [command], 'comment': comment,
+                 'snapshot': plan['snapshot'], 'status': 'reviewed'}
+    zone = ZoneInfo(v.graph_timezone_iana({'timezone': series.get('timezone') or 'GMT Standard Time'}))
+    start = slot.get('startDateTimeUtc') or ''
+    return {'reviewToken': signing.dumps(operation, salt=SALT, compress=True), 'action': 'cancel', 'scope': 'leftover',
+            'title': series.get('module_title') or 'Teams calendar', 'organizer': series.get('organizer_email'),
+            'timeZone': str(zone), 'notificationRequired': True, 'calendarRequests': 1,
+            'sessions': [{'sessionNumber': 0, 'startDateTimeUtc': start, 'endDateTimeUtc': slot.get('endDateTimeUtc') or '',
+                          'calendarVerified': True, 'joinUrl': join_url, 'kind': slot.get('kind'), 'day': slot.get('day') or ''}],
+            'warnings': plan['errors']}
 
 
 def graph_action(series, command, comment, notify_attendees=True):
@@ -365,7 +422,9 @@ def with_change_notice(live_id, result):
         return result
     series, rows, saved = load_calendar_state(live_id)
     operation = saved.get('management') or {}
-    if operation.get('status') != 'done' or 'before' not in operation:
+    # A slot outside the plan changes no module session, so there is no LMS
+    # schedule change to tell anyone about; Microsoft's own cancellation is it.
+    if operation.get('status') != 'done' or 'before' not in operation or operation.get('scope') == 'leftover':
         return result
     after = schedule_snapshot(rows) if series.get('status') == 'active' else []
     return {**result, 'changeNotice': issue_change_notice(live_id, operation['before'], after, notice_id=operation['id'])}
@@ -456,6 +515,10 @@ def continue_action(live_id, operation_id, send=False):
                     # session's cancellation touches its own row and no other.
                     persist_cancellation(live_id, operation['commands'][index], operation.get('scope'),
                                          complete=all(c['state'] == 'done' for c in operation['commands']))
+                    if operation.get('scope') == 'leftover':
+                        gone = operation['commands'][index]['eventId']
+                        snapshot['leftovers'] = [item for item in snapshot.get('leftovers') or []
+                                                 if item.get('eventId') != gone]
                     current, current_rows, _ = load_calendar_state(live_id)
                     operation['version'] = fingerprint(current, current_rows, load_module(current, lock=True))
                     store_snapshot(live_id, snapshot)

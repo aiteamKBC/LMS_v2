@@ -62,7 +62,7 @@ export default function OverviewTab({ data, onOpenNotes }: CaseFileTabProps & { 
             </div>
           </div>
 
-          {totalWeeks === 0 ? (
+          {data.journey.length === 0 ? (
             <div className={styles.panelBody}>
               <EmptyState
                 variant="empty"
@@ -103,7 +103,7 @@ function CoachPlanView({
     <div className="space-y-3">
       {modules.map((module, index) => (
         <CoachModuleSection
-          key={`${module.module}-${index}`}
+          key={module.id || `${module.module}-${index}`}
           module={module}
           moduleIndex={index}
           defaultOpen={index === 0}

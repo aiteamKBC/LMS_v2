@@ -46,6 +46,44 @@ export interface KsbMapping {
   weight_class?: KsbWeightClass;
 }
 
+export interface KsbRemapReportEntry {
+  location: 'module' | 'week' | 'component';
+  path: string;
+  code: string;
+  description?: string;
+  reason: string;
+}
+
+export interface KsbRemapReport {
+  status: 'complete' | 'partial' | 'no-source';
+  sourceProgrammeId?: string;
+  sourceProgrammeName?: string;
+  sourceType?: string;
+  sourceId?: string;
+  targetProgrammeId?: string;
+  targetProgrammeName?: string;
+  targetType?: string;
+  targetId?: string;
+  matchedCount: number;
+  unmatched: KsbRemapReportEntry[];
+  createdAt: string;
+}
+
+export interface DuplicateKsbSourceEntry {
+  id?: string | number;
+  code: string;
+  description?: string;
+  type?: string;
+}
+
+export interface DuplicateKsbSource {
+  sourceType: string;
+  sourceId: string;
+  programmeId?: string;
+  programmeName?: string;
+  entries: DuplicateKsbSourceEntry[];
+}
+
 export interface CompletionCriteria {
   quizzesCompletedRequired: boolean;
   checkpointsCompletedRequired: boolean;
@@ -343,6 +381,103 @@ export function moduleWeekSessionSlots(
 }
 
 /**
+ * How many live sessions one authored week has a planned date for.
+ *
+ * The group's delivery days are what a week can plan: a Monday group gives
+ * each week one, a Mon+Fri group two. The Nth live session of the week takes
+ * the Nth of them, and one beyond them runs on a date its author sets by hand
+ * or on no date at all.
+ *
+ * Read from the fetched plan wherever it reaches, so a week the group pauses
+ * correctly answers nothing. A week the plan has NOT been recomputed for yet —
+ * one just added in the builder, or a template week appended a moment ago —
+ * would otherwise read as zero slots and have every live session called
+ * unplanned; the module's own delivery pattern is the honest answer there.
+ */
+export function weekDeliverySlotCapacity(
+  module: ModuleCatalogueItem | null | undefined,
+  weekIndex: number,
+  plannedSessions?: ModuleWeekSessionPlan['sessions'],
+): number {
+  if (!module || weekIndex < 0) return 0;
+  const plan = plannedSessions || [];
+  const plannedWeeks = plan.reduce((furthest, session) => Math.max(furthest, Number(session.weekNumber) || 0), 0);
+  if (plannedWeeks > 0 && weekIndex + 1 <= plannedWeeks && weekIndex < module.weekStructure.length) {
+    return moduleWeekSessionSlots(module, plan)[weekIndex] ?? 0;
+  }
+  return moduleDeliveryDaysPerWeek(module);
+}
+
+/** A week asked to hold more live sessions than it has planned dates for. */
+export interface LiveSessionSlotOverflow {
+  weekNumber: number;
+  /** Planned delivery dates this week owns. */
+  capacity: number;
+  /** Live sessions the week already holds. */
+  existing: number;
+  /** Live sessions about to be added to it. */
+  adding: number;
+  /** How many of them would have no planned date. */
+  beyond: number;
+}
+
+/**
+ * Whether adding live sessions to a week would outrun its delivery days.
+ *
+ * `null` when they all fit — the caller then adds them with nothing to say.
+ * Otherwise the counts behind the warning, so the screen can name the gap
+ * rather than refuse the edit: an unplanned live session is allowed, it simply
+ * has no date until somebody gives it one, and the author is the one who
+ * decides whether that is what they meant.
+ */
+export function liveSessionSlotOverflow(
+  module: ModuleCatalogueItem | null | undefined,
+  weekIndex: number,
+  adding: number,
+  plannedSessions?: ModuleWeekSessionPlan['sessions'],
+): LiveSessionSlotOverflow | null {
+  if (!module || adding <= 0) return null;
+  const week = module.weekStructure[weekIndex];
+  if (!week) return null;
+  const capacity = weekDeliverySlotCapacity(module, weekIndex, plannedSessions);
+  const existing = (week.components || []).filter(component => component.type === 'live-session').length;
+  const beyond = Math.max(0, existing + adding - capacity);
+  if (!beyond) return null;
+  return { weekNumber: Number(week.weekNumber) || weekIndex + 1, capacity, existing, adding, beyond };
+}
+
+/**
+ * What to tell the author before adding a live session the week cannot date.
+ *
+ * Says what the group delivers, what that leaves unplanned, and what happens
+ * if they go ahead — in those words, not in slot counts. Nothing is refused:
+ * the buttons decide, and the caller only adds on a yes.
+ */
+export function liveSessionSlotOverflowNotice(overflow: LiveSessionSlotOverflow): { title: string; text: string } {
+  const { weekNumber, capacity, adding, beyond } = overflow;
+  const delivers = capacity === 0
+    ? 'This group delivers on no day of the week'
+    : capacity === 1
+      ? 'This group delivers on one day a week'
+      : `This group delivers on ${capacity} days a week`;
+  const held = capacity === 0
+    ? `week ${weekNumber} has no planned date at all`
+    : capacity === 1
+      ? `week ${weekNumber} has one planned date, and its live session already has it`
+      : `week ${weekNumber} has ${capacity} planned dates, and its live sessions already have them`;
+  const subject = beyond === 1
+    ? (adding === 1 ? 'The live session you are adding' : 'One of the live sessions you are adding')
+    : `${beyond} of the live sessions you are adding`;
+  const verb = beyond === 1 ? 'has' : 'have';
+  return {
+    title: beyond === 1 ? 'This live session will have no date' : `${beyond} of these live sessions will have no date`,
+    text: `${delivers}, so ${held}. ${subject} ${verb} no date to run on. `
+      + `${beyond === 1 ? 'It' : 'They'} will show as "No date yet" until you set one by hand, and `
+      + `${beyond === 1 ? 'it is' : 'they are'} left out of the module's Teams calendar until then.`,
+  };
+}
+
+/**
  * The dates each authored week runs on, in week order.
  *
  * A week owns a run of dates, not one date: `week.sessionDate` is only the first
@@ -524,40 +659,30 @@ export function moduleTeamsPlannedSessions(
   (module.weekStructure || []).forEach((week, weekIndex) => {
     const weekDates = liveDatesByWeek[weekIndex] || [];
     const live = (week.components || []).filter(component => component.type === 'live-session');
-    // A week can deliver more than one live session, so it owns one planned date
-    // per delivery day -- the same walk the Course structure rail makes.
+    // A week owns one planned date per delivery day, and its Nth live session
+    // takes the Nth of them -- paired by position in the order the server
+    // sends the week's components (`display_order, id`), which is the order
+    // `live` is already in. The plan decides WHICH DAY, because a component
+    // keeps the date it was last stamped with while the plan is recomputed
+    // from the group -- so a group moved from Thursday to Wednesday leaves the
+    // component holding its Thursday, and taking the day from the plan is what
+    // stops this dialog offering Teams the old one while the Course structure
+    // beside it reads the new.
     //
-    // The plan decides WHICH DAY, the component decides WHICH SESSION. Both are
-    // written by the same backend planner, but a component keeps the date it was
-    // last stamped with while the plan is recomputed from the group, so a group
-    // moved from Thursday to Wednesday leaves every component still holding its
-    // Thursday. Taking the day from the plan is what stops this dialog offering
-    // Teams the old one while the Course structure beside it already reads the
-    // new.
+    // A live session beyond the week's delivery slots is an ADDITIONAL one: it
+    // runs on its own `sessionDate` and nothing else. It must not borrow
+    // another session's day -- that would put two meetings on one date and
+    // move a session somebody had deliberately placed elsewhere.
     //
-    // Paired in the order the sessions RUN, never the order the author dragged
-    // them into: the plan's dates are chronological, so a week whose components
-    // were reordered in the rail must still keep its earlier session on the
-    // earlier date rather than swapping the two.
-    const runOrder = live.map((component, index) => ({ component, index })).sort((left, right) => {
-      const leftDate = trimmed(left.component.settings?.sessionDate);
-      const rightDate = trimmed(right.component.settings?.sessionDate);
-      if (leftDate && rightDate && leftDate !== rightDate) return leftDate.localeCompare(rightDate);
-      // An undated session has no place in the running order yet, so it takes
-      // what is left over after the dated ones, in the order it was authored.
-      if (leftDate !== rightDate) return leftDate ? -1 : 1;
-      return left.index - right.index;
-    });
-    const plannedDateByIndex = new Map<number, string>();
-    runOrder.forEach((entry, slot) => {
-      if (weekDates[slot]) plannedDateByIndex.set(entry.index, weekDates[slot]);
-    });
+    // No re-sorting by stored date: position now decides which slot a session
+    // resolves to, so sorting the components BY that date would be circular,
+    // and the authored order is the deterministic one both ends already share.
     live.forEach((component, index) => {
       const settings = component.settings || {};
-      // The component's own stamp is the fallback for a plan that could not be
-      // read at all -- the caller passes `null` on a failed load -- which is the
-      // one case where that stamp is the best answer available.
-      const date = plannedDateByIndex.get(index) || trimmed(settings.sessionDate) || trimmed(week.sessionDate);
+      // The component's own stamp answers for a planned session when the plan
+      // could not be read at all -- the caller passes `null` on a failed load
+      // -- which is the one case where that stamp is the best answer available.
+      const date = weekDates[index] || trimmed(settings.sessionDate);
       const planned = plan?.sessions.find(session => session.date === date);
       const { startTime, durationMinutes } = liveSessionClock(module, settings, date, week, planned);
       sessions.push({
@@ -776,6 +901,18 @@ export function applyModuleWeekSessionPlan(
     let components = week.components;
     if (liveComponents.length) {
       const plannedByComponentId = new Map<string, ModuleWeekSessionPlan['sessions'][number] | undefined>();
+      // A week owns one planned slot per delivery day its group runs, and its
+      // Nth live session takes the Nth of them -- matched by position in the
+      // order the server sends the week's components (`display_order, id`),
+      // which is the order this array is already in. So a Mon+Fri week moves
+      // both of its planned sessions when the week moves, each onto its own
+      // new day.
+      //
+      // A live session beyond those slots is an ADDITIONAL one: the group does
+      // not deliver again that week, so `slots[offset]` is undefined, the walk
+      // below returns it untouched, and it keeps the date its author gave it.
+      //
+      // Mirrors `apply_module_session_plan_to_weeks` in curriculum_api/views.py.
       liveComponents.forEach((component, offset) => {
         plannedByComponentId.set(component.id, slots[offset]);
       });
@@ -920,6 +1057,10 @@ export function resequenceWeekSessionDates(weeks: ModuleWeek[]): ModuleWeek[] {
 }
 
 export interface ModuleCatalogueItem {
+  learnerRosterMode?: 'inherited' | 'manual' | string;
+  teamsSharedSourceModuleId?: string;
+  ksbRemapReport?: KsbRemapReport | null;
+  duplicateDestination?: boolean;
   startTime?: string;
   endTime?: string;
   weeklySchedule?: CurriculumModule['weeklySchedule'];
@@ -1133,7 +1274,7 @@ export function weekExpectedOtjhTotal(week: Pick<ModuleWeek, 'components'>): num
   return roundedMinutesToHours(totalMinutes);
 }
 
-export function createLocalModuleDraft(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; catalogueId?: string; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string; coverImage?: string }): ModuleCatalogueItem {
+export function createLocalModuleDraft(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; catalogueId?: string; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string; coverImage?: string; learnerRosterMode?: 'inherited' | 'manual'; teamsSharedSourceModuleId?: string }): ModuleCatalogueItem {
   const catalogueId = input.catalogueId || makeAuthoringId('MOD');
   const id = `local-${catalogueId}`;
   const weekCount = Math.max(0, Math.round(Number(input.weeks) || 0));
@@ -1152,6 +1293,8 @@ export function createLocalModuleDraft(input: { programme: string; title: string
     cohort: input.cohortName || '',
     groupId: input.groupId || '',
     group: input.groupName || '',
+    learnerRosterMode: input.learnerRosterMode || 'inherited',
+    teamsSharedSourceModuleId: input.teamsSharedSourceModuleId || '',
     title: input.title,
     description: input.description,
     coverImage: input.coverImage || '',
@@ -1182,7 +1325,7 @@ export function createLocalModuleDraft(input: { programme: string; title: string
   });
 }
 
-export async function createNewModule(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string; coverImage?: string }) {
+export async function createNewModule(input: { programme: string; title: string; description: string; weeks: number; status: ModuleStatus; programmeId?: string; programmeStatus?: string; cohortId?: string; cohortName?: string; groupId?: string; groupName?: string; ksbProfileSourceId?: string; sessionsNumber?: number; startDate?: string; endDate?: string; coverImage?: string; learnerRosterMode?: 'inherited' | 'manual'; teamsSharedSourceModuleId?: string; ksbRemapReport?: KsbRemapReport | null; moduleKsbMappings?: KsbMapping[]; weekStructure?: ModuleWeek[]; duplicateDestination?: boolean }) {
   const draft = createLocalModuleDraft(input);
   try {
     const response = await apiJson<{ created: boolean; moduleCatalogueId?: string; module?: ModuleCatalogueItem }>('/curriculum/modules/', {
@@ -1201,16 +1344,20 @@ export async function createNewModule(input: { programme: string; title: string;
         cohortName: input.cohortName || '',
         groupId: input.groupId || '',
         groupName: input.groupName || '',
+        learnerRosterMode: input.learnerRosterMode || 'inherited',
+        teamsSharedSourceModuleId: input.teamsSharedSourceModuleId || '',
+        ksbRemapReport: input.ksbRemapReport || null,
+        duplicateDestination: Boolean(input.duplicateDestination),
         status: draft.status || 'draft',
         sessionsNumber: draft.sessionsNumber ?? draft.weeks,
         // The authored week count, sent apart from the calendar session count.
         weeksNumber: draft.weeks,
         startDate: draft.startDate || '',
         endDate: draft.endDate || '',
-        weekStructure: draft.weekStructure,
+        weekStructure: input.weekStructure || draft.weekStructure,
         completionCriteria: draft.completionCriteria,
         advancedDetails: draft.advancedDetails,
-        moduleKsbMappings: draft.moduleKsbMappings,
+        moduleKsbMappings: input.moduleKsbMappings || draft.moduleKsbMappings,
         ksbProfileSourceId: draft.ksbProfileSourceId || '',
         background: draft.background,
         epaRequirements: draft.epaRequirements,
@@ -1240,6 +1387,88 @@ export interface DuplicateModuleStructureOptions {
   cohortName?: string;
   groupId?: string;
   groupName?: string;
+  programmeId?: string;
+  programmeName?: string;
+  learnerRosterMode?: 'inherited' | 'manual';
+  teamsCopyMode?: 'shared' | 'independent';
+  /** Independent copies use this date to regenerate their calendar plan. */
+  startDate?: string;
+  /** The destination Programme's authoritative KSB source, when it changed. */
+  ksbSource?: DuplicateKsbSource;
+  ksbRemapReport?: KsbRemapReport | null;
+  deliveryMetadata?: Record<string, ComponentSettingValue>;
+}
+
+function normaliseDuplicateKsbCode(value: unknown) {
+  return String(value || '').trim().toUpperCase().replace(/\s+/g, '');
+}
+
+function remapMapping(mapping: KsbMapping, source: DuplicateKsbSource | undefined, location: KsbRemapReportEntry['location'], path: string) {
+  const code = normaliseDuplicateKsbCode(mapping.code);
+  const target = source?.entries.find(entry => normaliseDuplicateKsbCode(entry.code) === code);
+  if (!source || !source.sourceType || !source.sourceId) {
+    return { mapping: null, unmatched: { location, path, code: mapping.code || code, description: mapping.description, reason: 'The destination Programme has no valid KSB source.' } };
+  }
+  if (!target) {
+    return { mapping: null, unmatched: { location, path, code: mapping.code || code, description: mapping.description, reason: 'The KSB code does not exist in the destination source.' } };
+  }
+  return {
+    mapping: {
+      ...mapping,
+      id: makeAuthoringId('ksb'),
+      ksbId: String(target.id ?? mapping.ksbId ?? ''),
+      code: target.code,
+      description: target.description || mapping.description,
+      sourceType: source.sourceType,
+      sourceId: source.sourceId,
+    },
+    unmatched: null,
+  };
+}
+
+/**
+ * Repoint every module/week/component mapping to a destination Programme's
+ * source. Unmatched mappings are intentionally omitted from the saved payload
+ * so backend source validation cannot reject the otherwise valid duplicate;
+ * their exact location is retained in the report for review.
+ */
+export function remapModuleKsbMappings(
+  module: ModuleCatalogueItem,
+  source: DuplicateKsbSource | undefined,
+  reportBase: Omit<KsbRemapReport, 'matchedCount' | 'unmatched' | 'createdAt' | 'status'>,
+) {
+  let matchedCount = 0;
+  const unmatched: KsbRemapReportEntry[] = [];
+  const mapList = (mappings: KsbMapping[], location: KsbRemapReportEntry['location'], path: string) => mappings.flatMap((mapping, index) => {
+    const result = remapMapping(mapping, source, location, `${path}[${index}]`);
+    if (result.mapping) {
+      matchedCount += 1;
+      return [result.mapping];
+    }
+    if (result.unmatched) unmatched.push(result.unmatched);
+    return [];
+  });
+  const next = recalculateModule({
+    ...module,
+    moduleKsbMappings: mapList(module.moduleKsbMappings || [], 'module', 'moduleKsbMappings'),
+    weekStructure: module.weekStructure.map((week, weekIndex) => ({
+      ...week,
+      ksbMappings: mapList(week.ksbMappings || [], 'week', `weekStructure[${weekIndex}].ksbMappings`),
+      components: week.components.map((component, componentIndex) => ({
+        ...component,
+        ksbMappings: mapList(component.ksbMappings || [], 'component', `weekStructure[${weekIndex}].components[${componentIndex}].ksbMappings`),
+      })),
+    })),
+    ksbProfileSourceId: source?.sourceId || '',
+  });
+  const report: KsbRemapReport = {
+    ...reportBase,
+    status: !source?.sourceId ? 'no-source' : unmatched.length ? 'partial' : 'complete',
+    matchedCount,
+    unmatched,
+    createdAt: new Date().toISOString(),
+  };
+  return { module: { ...next, ksbRemapReport: report }, report };
 }
 
 export async function duplicateModuleStructure(
@@ -1247,6 +1476,8 @@ export async function duplicateModuleStructure(
   options: DuplicateModuleStructureOptions = {},
 ) {
   const { keepDates = false, renameCopy = true } = options;
+  const learnerRosterMode = options.learnerRosterMode || (keepDates ? 'inherited' : 'manual');
+  const teamsCopyMode = options.teamsCopyMode || 'independent';
   const copyId = `copy-${Date.now().toString(36)}`;
   const cloneMappings = (mappings: KsbMapping[] = [], scope: string) => mappings.map((mapping, index) => ({
     ...mapping,
@@ -1282,8 +1513,8 @@ export async function duplicateModuleStructure(
     // everything that reads the table by module (the Teams Meetings page,
     // attendance, recordings, the sync) followed the meeting to the copy.
     // Stripped the same way the components are, and for the same reason.
-    deliveryMetadata: source.deliveryMetadata
-      ? independentCopySettings(structuredClone(source.deliveryMetadata), { keepDates })
+    deliveryMetadata: (options.deliveryMetadata || source.deliveryMetadata)
+      ? independentCopySettings(structuredClone(options.deliveryMetadata || source.deliveryMetadata), { keepDates })
       : source.deliveryMetadata,
     // The run the source is on is the source's, not the copy's. `createNewModule`
     // below already withholds these, but the structure save right after it sends
@@ -1296,12 +1527,20 @@ export async function duplicateModuleStructure(
     // so the sessions simply landed on the old run's dates spelled in new days.
     // Undated is the honest state: the module drawer asks for a start date before
     // it will save, and the plan fills the weeks from the answer.
-    startDate: keepDates ? source.startDate : '',
+    startDate: keepDates ? source.startDate : options.startDate || '',
     endDate: keepDates ? source.endDate : '',
     cohortId: options.cohortId ?? source.cohortId,
     cohort: options.cohortName ?? source.cohort,
     groupId: options.groupId ?? source.groupId,
     group: options.groupName ?? source.group,
+    programmeId: options.programmeId ?? source.programmeId,
+    programmeName: options.programmeName ?? source.programmeName,
+    learnerRosterMode,
+    teamsSharedSourceModuleId: teamsCopyMode === 'shared'
+      ? (source.catalogueId || source.id)
+      : '',
+    ksbRemapReport: options.ksbRemapReport || null,
+    duplicateDestination: true,
     moduleKsbMappings: cloneMappings(source.moduleKsbMappings, 'module'),
     completionCriteria: { ...source.completionCriteria },
     advancedDetails: { ...source.advancedDetails },
@@ -1343,28 +1582,58 @@ export async function duplicateModuleStructure(
     }),
   });
 
+  let preparedDuplicate = duplicate;
+  if (options.ksbSource) {
+    preparedDuplicate = remapModuleKsbMappings(preparedDuplicate, options.ksbSource, options.ksbRemapReport || {
+      sourceProgrammeId: source.programmeId,
+      sourceProgrammeName: source.programmeName,
+      sourceType: source.ksbProfileSourceId ? 'framework' : '',
+      sourceId: source.ksbProfileSourceId || '',
+      targetProgrammeId: preparedDuplicate.programmeId,
+      targetProgrammeName: preparedDuplicate.programmeName,
+      targetType: options.ksbSource.sourceType,
+      targetId: options.ksbSource.sourceId,
+    }).module;
+  }
+
   try {
     const created = await createNewModule({
-      programme: duplicate.programmeName,
-      title: duplicate.title,
-      description: duplicate.description,
-      weeks: Math.max(1, duplicate.weekStructure.length),
+      programme: preparedDuplicate.programmeName,
+      title: preparedDuplicate.title,
+      description: preparedDuplicate.description,
+      weeks: Math.max(1, preparedDuplicate.weekStructure.length),
       status: 'draft',
-      cohortId: duplicate.cohortId,
-      cohortName: duplicate.cohort,
-      groupId: duplicate.groupId,
-      groupName: duplicate.group,
-      startDate: keepDates ? duplicate.startDate : undefined,
-      endDate: keepDates ? duplicate.endDate : undefined,
+      programmeId: preparedDuplicate.programmeId,
+      ksbProfileSourceId: preparedDuplicate.ksbProfileSourceId,
+      cohortId: preparedDuplicate.cohortId,
+      cohortName: preparedDuplicate.cohort,
+      groupId: preparedDuplicate.groupId,
+      groupName: preparedDuplicate.group,
+      startDate: preparedDuplicate.startDate || undefined,
+      endDate: keepDates ? preparedDuplicate.endDate : undefined,
+      learnerRosterMode,
+      teamsSharedSourceModuleId: teamsCopyMode === 'shared'
+        ? (source.catalogueId || source.id)
+        : '',
+      ksbRemapReport: preparedDuplicate.ksbRemapReport,
+      moduleKsbMappings: preparedDuplicate.moduleKsbMappings,
+      weekStructure: preparedDuplicate.weekStructure,
+      duplicateDestination: true,
     });
-    const payload = recalculateModule({
-      ...duplicate,
+    let payload = recalculateModule({
+      ...preparedDuplicate,
       catalogueId: created.catalogueId,
       id: created.id || duplicate.id,
       // An authored module's `source_id` is its own catalogue id -- that is what
       // the estate holds for the modules the builder made. The copy names
       // itself here rather than the module it was copied from.
       sourceId: created.catalogueId,
+      learnerRosterMode,
+      teamsSharedSourceModuleId: teamsCopyMode === 'shared'
+        ? (source.catalogueId || source.id)
+        : '',
+      ksbRemapReport: preparedDuplicate.ksbRemapReport || null,
+      duplicateDestination: true,
     });
     const saved = await saveModuleStructure(payload.catalogueId, payload);
     return saved;
@@ -1994,6 +2263,9 @@ export function curriculumModuleToCatalogue(module: CurriculumModule): ModuleCat
     cohort: module.cohort || '',
     groupId: module.groupId || '',
     group: module.group || '',
+    learnerRosterMode: module.learnerRosterMode || 'inherited',
+    teamsSharedSourceModuleId: module.teamsSharedSourceModuleId || '',
+    ksbRemapReport: (module.ksbRemapReport || null) as unknown as KsbRemapReport | null,
     isProgrammeDeleted: Boolean(module.isProgrammeDeleted),
     title,
     description,
@@ -2777,6 +3049,51 @@ export function fetchTeamsCreateStatus(moduleCatalogueId: string) {
 }
 
 /**
+ * A module's create form, saved without creating anything.
+ *
+ * Held on the server against the module, so whoever opens Create next starts
+ * from it. Saving one never reaches Microsoft and sends no email; a successful
+ * Create removes it. See `teams_create_drafts.py`.
+ */
+export interface TeamsCreateDraft {
+  form: Record<string, string>;
+  updatedAt: string;
+  updatedByEmail: string;
+  updatedByName: string;
+}
+
+const CREATE_DRAFT_PATH = '/curriculum/teams-meetings/create-draft/';
+
+/** Which form the draft belongs to: the module calendar, or the additional week meeting. */
+export type TeamsDraftKind = 'calendar' | 'week';
+
+function createDraftQuery(moduleCatalogueId: string, kind: TeamsDraftKind) {
+  return `${CREATE_DRAFT_PATH}?moduleCatalogueId=${encodeURIComponent(moduleCatalogueId)}&kind=${kind}`;
+}
+
+export function fetchTeamsCreateDraft(moduleCatalogueId: string, kind: TeamsDraftKind = 'calendar') {
+  return apiJson<{ draft: TeamsCreateDraft | null; available: boolean }>(
+    createDraftQuery(moduleCatalogueId, kind),
+    { timeoutMs: 15000 },
+  );
+}
+
+export function saveTeamsCreateDraft(moduleCatalogueId: string, form: Record<string, string>, kind: TeamsDraftKind = 'calendar') {
+  return apiJson<{ draft: TeamsCreateDraft | null; available: boolean }>(CREATE_DRAFT_PATH, {
+    method: 'PUT',
+    body: JSON.stringify({ moduleCatalogueId, form, kind }),
+    timeoutMs: 15000,
+  });
+}
+
+export function deleteTeamsCreateDraft(moduleCatalogueId: string, kind: TeamsDraftKind = 'calendar') {
+  return apiJson<{ draft: null; available: boolean }>(createDraftQuery(moduleCatalogueId, kind), {
+    method: 'DELETE',
+    timeoutMs: 15000,
+  });
+}
+
+/**
  * One extra Teams meeting on a single week, with its own host and guests.
  *
  * A different record from the module's calendar, not a variation of it: its own
@@ -3024,7 +3341,7 @@ export async function updateTeamsMeetingSchedule(liveSessionId: string, input: P
   // The review is complete. The caller can now replace its form with a
   // progress panel without showing it behind the confirmation dialog.
   options.onSubmitted?.();
-  return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting']; warnings?: Array<{ code?: string; message: string; detail?: string }>; changeNotice?: string }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
+  return apiJson<{ updated: boolean; meeting: TeamsMeetingResult['meeting']; warnings?: Array<{ code?: string; message: string; detail?: string }>; changeNotice?: string; leftoverSlots?: TeamsLeftoverSlot[] }>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/schedule/`, {
     method: 'PATCH',
     body: JSON.stringify({ ...reviewed, notifyAttendees }),
     // One update is around ten SERIAL Microsoft Graph round trips -- read the
@@ -3034,7 +3351,8 @@ export async function updateTeamsMeetingSchedule(liveSessionId: string, input: P
     // past 45s on that path, and the browser abandoning it there did not stop
     // the server: it left the author staring at a timeout for an update that
     // was still being applied. The budget is the transport's, not Microsoft's.
-    timeoutMs: 120000,
+    // Four minutes: a slow Graph day pushed long series past two.
+    timeoutMs: 240000,
   }).then(result => {
     clearCurriculumGetCache();
     return { ...result, notifyAttendees };
@@ -3157,6 +3475,24 @@ export interface TeamsMeetingArtifactsResult {
     calendar_series?: Array<{ day: string; joinUrl: string; sessionNumbers: number[] }>;
   };
   occurrences: TeamsMeetingOccurrence[];
+  /** Slots on Teams that are not module sessions, as the last status check found them. */
+  leftoverSlots?: TeamsLeftoverSlot[];
+}
+
+/**
+ * A slot Microsoft holds that the module plan does not: weekly filler in a gap,
+ * a week handed to its own additional meeting, a dropped session, or a weekday
+ * series the plan stopped using. No save, sync or background job removes one;
+ * only its own Cancel does, because Microsoft emails everyone invited.
+ */
+export interface TeamsLeftoverSlot {
+  kind?: 'occurrence' | 'event' | 'series';
+  eventId: string;
+  rootId?: string;
+  startDateTimeUtc?: string;
+  endDateTimeUtc?: string;
+  day?: string;
+  reason?: string;
 }
 
 export function syncTeamsMeetingArtifacts(liveSessionId: string): Promise<TeamsArtifactSyncResult | { state: 'queued'; message: string }> {
@@ -3165,7 +3501,8 @@ export function syncTeamsMeetingArtifacts(liveSessionId: string): Promise<TeamsA
 
 export function loadTeamsMeetingArtifacts(liveSessionId: string) {
   return apiJson<TeamsMeetingArtifactsResult>(`/curriculum/teams-meetings/${encodeURIComponent(liveSessionId)}/artifacts/`, {
-    timeoutMs: 30000,
+    // Read first by every Update Teams calendar, so it shares that save's patience.
+    timeoutMs: 60000,
   });
 }
 

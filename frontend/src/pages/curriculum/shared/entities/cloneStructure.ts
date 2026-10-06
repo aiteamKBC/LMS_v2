@@ -47,6 +47,8 @@ async function cloneGroupModules(
       await duplicateModuleStructure(structure, {
         keepDates: true,
         renameCopy: false,
+        learnerRosterMode: 'inherited',
+        teamsCopyMode: 'independent',
         groupId: targetGroupId,
         groupName: group.name,
         cohortId: targetCohortId,

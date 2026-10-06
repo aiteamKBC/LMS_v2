@@ -1,6 +1,8 @@
 import { fetchLearnerDetail } from '@/api/learnerDetail';
 import { fetchLearnerMetrics } from '@/api/learnerMetrics';
-import { fetchStudentActivity } from '@/api/studentActivity';
+import { fetchStudentActivity, subjectRequest, type StudentActivityResponse } from '@/api/studentActivity';
+import { subjectRefs, type CoverMetadata } from '@/pages/learner/my-learning/learningSummary';
+import type { LearnerDetail } from '@/api/learnerDetail';
 import { coachFetch } from '@/lib/coachFetch';
 import type { LearnerKind } from '@/api/learnerDetail';
 
@@ -23,8 +25,12 @@ export interface LearnerProfileShell {
     coachName: string | null;
     coachEmail: string | null;
     status: string | null;
+    learnerStartDate?: string | null;
+    learnerEndDate?: string | null;
     startDate: string | null;
     plannedEndDate: string | null;
+    otjhProgrammeStartDate?: string | null;
+    otjhProgrammeEndDate?: string | null;
     gatewayReviewDate: string | null;
     coachRag: string | null;
   };
@@ -76,4 +82,8 @@ export const fetchLearnerProfileDetail = fetchLearnerDetail;
 export const fetchLearnerProfileMetrics = (kind: LearnerKind, id: string, signal?: AbortSignal, force = false) =>
   fetchLearnerMetrics(kind, id, signal, force, 'learner-overview');
 export const fetchLearnerProfileActivity = fetchStudentActivity;
+
+/** Same assigned-subject metadata endpoint and refs as Learner My Learning. */
+export const fetchLearnerProfileSubjectMetadata = (id: string, activity: StudentActivityResponse, detail: LearnerDetail) =>
+  subjectRequest<CoverMetadata>(`/learner_api/subject-covers/${encodeURIComponent(id)}/?refs=${encodeURIComponent(subjectRefs(activity, detail))}`);
 

@@ -4433,7 +4433,7 @@ def quiz_questions(request, pk):
                 question_record.explanation = question.get("explanation", "")
                 question_record.is_archived = bool(question.get("isArchived"))
                 question_record.sort_order = question_index
-                question_record.save(update_fields=["question_text", "question_type", "explanation", "is_archived", "sort_order"])
+                question_record.save(update_fields=["question_text", "question_type", "explanation", "is_archived", "sort_order", "updated_at"])
                 question_record.answers.all().delete()
                 seen_question_ids.add(question_record.id)
             else:
@@ -4466,7 +4466,7 @@ def quiz_questions(request, pk):
                 if existing_id in seen_question_ids:
                     continue
                 existing_question.sort_order = next_order
-                existing_question.save(update_fields=["sort_order"])
+                existing_question.save(update_fields=["sort_order", "updated_at"])
                 next_order += 1
 
         quiz.questions = QuizQuestion.objects.filter(quiz_id=quiz.id, is_archived=False).count()

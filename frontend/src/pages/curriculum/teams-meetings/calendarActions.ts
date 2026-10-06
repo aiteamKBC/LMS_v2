@@ -8,7 +8,7 @@ export interface ActionSession {
 }
 export interface ActionReview {
   reviewToken: string; title: string; organizer: string; timeZone: string; action: 'cancel' | 'reschedule';
-  scope: 'series' | 'occurrence'; notificationRequired: boolean; calendarRequests: number; sessions: ActionSession[];
+  scope: 'series' | 'occurrence' | 'leftover'; notificationRequired: boolean; calendarRequests: number; sessions: ActionSession[];
   warnings?: string[];
 }
 export interface ActionResult {
@@ -32,11 +32,14 @@ export async function calendarAction<T extends ActionReview | ActionResult>(live
     const valid = body.stage === 'review'
       ? result && typeof result.reviewToken === 'string' && result.reviewToken.length > 0
         && typeof result.timeZone === 'string' && typeof result.notificationRequired === 'boolean'
-        && ['cancel', 'reschedule'].includes(result.action) && ['series', 'occurrence'].includes(result.scope)
+        && ['cancel', 'reschedule'].includes(result.action) && ['series', 'occurrence', 'leftover'].includes(result.scope)
         && Number.isInteger(result.calendarRequests) && result.calendarRequests > 0
         && Array.isArray(result.sessions) && result.sessions.length > 0
+        // A slot outside the plan has no session number, and a whole weekday
+        // series has no single date; every other review names real sessions.
         && result.sessions.every((session: ActionSession) => session && Number.isInteger(session.sessionNumber)
-          && Number.isFinite(Date.parse(session.startDateTimeUtc)) && Number.isFinite(Date.parse(session.endDateTimeUtc)))
+          && (result.scope === 'leftover' || (Number.isFinite(Date.parse(session.startDateTimeUtc)) && Number.isFinite(Date.parse(session.endDateTimeUtc)))))
+        && (result.scope !== 'leftover' || (result.action === 'cancel' && result.calendarRequests === 1))
       : result && ['done', 'failed', 'uncertain', 'processing', 'incomplete', 'none'].includes(result.status)
         && typeof result.message === 'string';
     if (!valid) throw new Error('The calendar response could not be verified. Check action status before confirming again.');

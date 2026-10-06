@@ -37,6 +37,7 @@ from .learning_plan import effective_training_plan
 from .programme_access import learning_access
 from .mappers import _s, get_training_plan, to_learner_detail
 from .models import EnrolmentUser, LearnerProfile
+from .retained_quiz_progress import retain_quiz_progress
 from .student_activity_access import student_activity_available
 
 logger = logging.getLogger(__name__)
@@ -1276,6 +1277,51 @@ def _component_resource_url(settings):
     return None
 
 
+_COMPONENT_FILE_URL_PREFIXES = ("https://", "http://", "/curriculum_api/curriculum/uploads/")
+
+
+def _component_files(settings, resource_url, file_name):
+    """Every file attached to this component, in the order the author set.
+
+    ``componentFiles`` is the ordered list the Module Builder writes once a
+    component holds more than one attachment: index 0 is the first upload, and
+    it is the same file ``resourceUrl`` already resolves to, so the learner page
+    can keep serving ``resourceUrl`` as the primary document and read the rest
+    from here.
+
+    A component authored before the list existed has no list at all, and nothing
+    re-saves a component on its own -- so the single file already resolved
+    stands in for it and the page behaves exactly as it did.
+    """
+    stored = (settings or {}).get("componentFiles")
+    if isinstance(stored, str):
+        try:
+            stored = json.loads(stored) if stored.strip() else []
+        except (TypeError, ValueError):
+            stored = []
+    files = []
+    seen = set()
+    if isinstance(stored, list):
+        for entry in stored:
+            if not isinstance(entry, dict):
+                continue
+            url = _s(entry.get("url"))
+            # Same rule the authoring side enforces: our own upload path or a
+            # plain web link. Anything else is not something to hand a learner.
+            if not url.startswith(_COMPONENT_FILE_URL_PREFIXES) or url in seen:
+                continue
+            seen.add(url)
+            files.append({
+                "fileName": _s(entry.get("fileName")) or None,
+                "url": url,
+                "size": entry.get("size") if isinstance(entry.get("size"), (int, float)) else 0,
+                "contentType": _s(entry.get("contentType")) or None,
+            })
+    if files:
+        return files
+    return [{"fileName": file_name, "url": resource_url, "size": 0, "contentType": None}] if resource_url else []
+
+
 def _cohort_schedule(cohort_name, programme_name):
     """The dates the learner's cohort runs to, or an empty dict.
 
@@ -1631,6 +1677,10 @@ def _resolve_from_master(modules, weeks, components, assigned_modules=None, *, c
             "contentHtml": content_html,
             **({"hasReadingContent": bool(settings.get("_readingContentAvailable"))} if compact else {}),
             "fileName": file_name,
+            # Everything attached, in the author's order. `resourceUrl` above is
+            # this list's first entry; the rest are new and additive, so a client
+            # that does not read `files` keeps showing exactly what it showed.
+            "files": _component_files(settings, resource_url, file_name),
             "downloadAllowed": download_allowed,
             "reflectionPrompt": reflection_prompt,
             "reflectionRequired": bool(reflection_required),
@@ -1815,6 +1865,10 @@ def build_learner_detail(source, pk, *, compact=False):
             persist_live_otjh_snapshot(learner_profile, snapshot)
         except DatabaseError as exc:
             logger.warning("Could not persist hours columns for learner %s: %s", pk, exc)
+    # After the hours snapshot so OTJH persistence is unaffected; this only
+    # re-attaches earned quiz results to slots an author has since re-linked
+    # or removed.
+    retain_quiz_progress(detail)
 
     if compact:
         # Nullable optional fields dominate the JSON for large plans. Omission

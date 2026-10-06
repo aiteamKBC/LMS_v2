@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor, cleanup } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, cleanup, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -50,12 +50,37 @@ beforeEach(() => {
   Object.assign(account, { role: 'learner', subjectId: 7, access: 'learner' });
   vi.mocked(getLogSummary).mockResolvedValue(summary);
   vi.mocked(getLogMonth).mockImplementation(async (_id, month) => month === '2026-08' ? retained : current);
+  vi.mocked(getLogLearners).mockResolvedValue({ learners: [
+    { id: 7, name: 'Example learner', programme: 'Programme' },
+    { id: 8, name: 'Second learner', programme: 'Data Technician' },
+  ] });
   vi.mocked(getLogContent).mockResolvedValue({ id: 44, parts: [{ id: 44, title: 'Original material', category: 'Reading',
     url: 'https://example.org/reading', html: null, quiz: null }] });
 });
 afterEach(cleanup);
 
 describe('monthly logs', () => {
+  it.each(['learner', 'coach'] as const)('orders %s activities by date and time without changing the saved report', async role => {
+    const rows = [
+      { ...current.rows[0], id: 101, title: 'Later day', activity_date: '2026-09-20', activity_time: '08:00' },
+      { ...current.rows[0], id: 102, title: 'Unknown date', activity_date: '', activity_time: '' },
+      { ...current.rows[0], id: 103, title: 'Afternoon reading', activity_date: '2026-09-02', activity_time: '14:00' },
+      { ...current.rows[0], id: 104, title: 'Morning reading', activity_date: '2026-09-02', activity_time: '09:00' },
+    ];
+    const report = { ...current, rows, row_count: rows.length };
+    vi.mocked(getLogMonth).mockResolvedValue(report);
+    if (role === 'coach') Object.assign(account, { role: 'coach', access: 'coach' });
+    page(role === 'coach' ? '/coach/monthly-logs/7/2026-09' : '/learner/monthly-logs/2026-09');
+    const table = await screen.findByRole('table', { name: 'Monthly activity log' });
+    expect(within(table).getAllByRole('button').map(button => button.textContent)).toEqual([
+      'Morning reading', 'Afternoon reading', 'Later day', 'Unknown date',
+    ]);
+    expect(report.rows.map(row => row.id)).toEqual([101, 102, 103, 104]);
+    expect(report.snapshot_digest).toBe('reviewed-digest');
+    expect(report.month).toBe('2026-09');
+    expect(report.actual_hours).toBe(current.actual_hours);
+  });
+
   it('replaces both learner cards and gives coaches a monthly logs destination', () => {
     const learnerItems = learnerNavItems.flatMap(item => [item, ...(item.children || [])]);
     expect(learnerItems.filter(item => item.label === 'Monthly Logs')).toHaveLength(1);
@@ -344,7 +369,31 @@ describe('monthly logs', () => {
     vi.mocked(getLogLearners).mockResolvedValue({ learners: [{ id: 7, name: 'Example learner', programme: 'Programme' }] });
     page('/coach/monthly-logs');
     expect(await screen.findByRole('link', { name: /Example learner/ })).toHaveAttribute('href', '/coach/monthly-logs/7');
-    expect(getLogSummary).not.toHaveBeenCalled();
+    expect(screen.getByRole('link', { name: /Example learner/ })).toHaveAttribute('aria-current', 'page');
+    expect(await screen.findByRole('region', { name: 'Example learner monthly logs' })).toBeVisible();
+    expect(getLogSummary).toHaveBeenCalledWith('7', expect.any(AbortSignal), 'coach');
+  });
+
+  it('uses a coach loading layout without the decorative background image', () => {
+    Object.assign(account, { role: 'staff', access: 'coach' });
+    vi.mocked(getLogLearners).mockReturnValue(new Promise(() => undefined));
+    page('/coach/monthly-logs');
+    const loading = screen.getByRole('status', { name: 'Loading coach monthly logs' });
+    expect(loading.querySelector('img')).toBeNull();
+  });
+
+  it('keeps the learner list visible and updates the selected learner in the same coach workspace', async () => {
+    Object.assign(account, { role: 'staff', access: 'coach' });
+    vi.mocked(getLogSummary).mockImplementation(async id => id === '8'
+      ? { ...summary, learner: { ...summary.learner!, id: 8, name: 'Second learner', programme: 'Data Technician' } }
+      : summary);
+    page('/coach/monthly-logs/7');
+    await screen.findByRole('region', { name: 'Example learner monthly logs' });
+    fireEvent.click(screen.getByRole('link', { name: /Second learner/ }));
+    expect(await screen.findByRole('region', { name: 'Second learner monthly logs' })).toBeVisible();
+    expect(screen.getByRole('navigation', { name: 'Choose a learner' })).toBeVisible();
+    expect(screen.getByRole('link', { name: /Second learner/ })).toHaveAttribute('aria-current', 'page');
+    expect(getLogSummary).toHaveBeenCalledWith('8', expect.any(AbortSignal), 'coach');
   });
 
   it('disables signing for the admin read-only coach view', async () => {

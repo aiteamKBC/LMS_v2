@@ -39,6 +39,8 @@ def _ended_at(event):
 
 
 def _applies(event):
+    if event.get('reviewSource') == 'aptem' and not event.get('calendarEventKey'):
+        return False
     status = str(event.get('status') or '').lower()
     source = str(event.get('source') or '').lower()
     if source not in MEETING_TYPES:
@@ -76,7 +78,7 @@ def annotate_meeting_outcomes(events, *, now=None):
             elapsed.append(event)
     if not elapsed:
         return events
-    attended = learner_attended_event_keys(event.get('eventKey') for event in elapsed)
+    attended = learner_attended_event_keys(event.get('calendarEventKey') or event.get('eventKey') for event in elapsed)
     for event in elapsed:
-        event['meetingOutcome'] = 'completed' if event.get('eventKey') in attended else 'ended'
+        event['meetingOutcome'] = 'completed' if (event.get('calendarEventKey') or event.get('eventKey')) in attended else 'ended'
     return events

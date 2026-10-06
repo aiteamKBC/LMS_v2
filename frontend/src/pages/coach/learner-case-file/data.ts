@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { KsbActivityPoint } from '@/api/learnerMetrics';
-import { formatHoursMinutes } from '@/lib/format';
+import { formatHoursMinutes, systemDateParts } from '@/lib/format';
+import { otjhProgressAsOfToday } from '@/pages/coach/caseload/lib/format';
 import {
   type LearnerActivityEntry,
   type LearnerDetail,
@@ -19,6 +20,7 @@ import {
 } from '@/pages/coach/shared/calendarEvents';
 import { buildLearnerJourney } from '@/utils/learnerJourney';
 import type { StudentActivityResponse } from '@/api/studentActivity';
+import type { CoverMetadata } from '@/pages/learner/my-learning/learningSummary';
 import { buildCaseFileActivityStates, buildFullCaseFileJourney } from './activityState';
 import { normalizeKsbCode } from './domain/ksbSelectors';
 import {
@@ -26,6 +28,7 @@ import {
   fetchCaseFileLearnerMetrics,
   fetchCaseFileShell,
   fetchCaseFileStudentActivity,
+  fetchCaseFileSubjectMetadata,
   type CaseFileShell,
 } from './api/caseFileApi';
 import type {
@@ -119,6 +122,7 @@ export function useCoachLearnerCaseFileData(args: {
       let detail: LearnerDetail | null = null;
       let detailError: string | null = null;
       let aptemActivity: StudentActivityResponse | null = null;
+      let subjectMetadata: CoverMetadata | null = null;
       if (resolvedEnrolmentId) {
         try {
           // Detail and canonical metrics are independent reads. Loading them
@@ -149,8 +153,13 @@ export function useCoachLearnerCaseFileData(args: {
             setData(initialData);
             setLoading(false);
           }
-          if (detail.studentActivityAvailable) {
-            aptemActivity = await fetchCaseFileStudentActivity(resolvedKind, resolvedEnrolmentId).catch(() => null);
+          if (shell.identity.aptemId || detail.studentActivityAvailable) {
+            try {
+              aptemActivity = await fetchCaseFileStudentActivity(resolvedKind, resolvedEnrolmentId);
+              subjectMetadata = await fetchCaseFileSubjectMetadata(resolvedEnrolmentId, aptemActivity, detail);
+            } catch {
+              detailError = 'Could not load the canonical Programme Journey. Please retry.';
+            }
           }
         } catch (loadErr) {
           detailError = loadErr instanceof Error ? loadErr.message : 'Could not load learner details.';
@@ -175,6 +184,7 @@ export function useCoachLearnerCaseFileData(args: {
         evidence: null,
         detail,
         aptemActivity,
+        subjectMetadata,
         timetableEvents: [],
         reviewGenerationIssues: [],
         reviewsLoading: false,
@@ -195,7 +205,7 @@ export function useCoachLearnerCaseFileData(args: {
       setData(finalData);
 
       const missingDetailOnly = Boolean(detailError && /learner not found|\b404\b/i.test(detailError));
-      if (!detail && detailError && !missingDetailOnly) {
+      if (detailError && !missingDetailOnly) {
         setError(detailError);
       } else {
         setError(null);
@@ -644,6 +654,7 @@ function buildCaseFileData(args: {
   evidence: CoachMarkingQueueItem | null;
   detail: LearnerDetail | null;
   aptemActivity?: StudentActivityResponse | null;
+  subjectMetadata?: CoverMetadata | null;
   timetableEvents: CoachCalendarEvent[];
   reviewGenerationIssues: CoachReviewGenerationIssue[];
   reviewsLoading?: boolean;
@@ -656,7 +667,8 @@ function buildCaseFileData(args: {
 
   const cohort = args.detail?.cohort || args.shell.profile.cohort || args.attendance?.cohort || '';
   const peers: CoachCaseloadLearner[] = [];
-  const journey = buildFullCaseFileJourney(buildLearnerJourney(args.detail), args.aptemActivity || null);
+  const hasAptemId = Boolean(args.shell.identity.aptemId || args.detail?.studentActivityAvailable);
+  const journey = buildFullCaseFileJourney(hasAptemId ? [] : buildLearnerJourney(args.detail), args.aptemActivity || null, args.detail, args.subjectMetadata || null, hasAptemId);
   const activityStates = buildCaseFileActivityStates(journey, args.detail, args.aptemActivity || null);
   const touchedKsbCodes = Array.from(
     new Set(
@@ -692,13 +704,31 @@ function buildCaseFileData(args: {
   const allReviewMeetings = buildReviewMeetingItems(reviewEventContext, args.timetableEvents);
   const progressReviews = allReviewMeetings.filter(item => caseFileReviewCategory(item) === 'progress-review');
   const monthlyCoachMeetings = allReviewMeetings.filter(item => caseFileReviewCategory(item) === 'mcr');
-  // Use the exact programme/OTJH totals displayed by the learner dashboard.
-  // The coach view must not turn the learner's whole-plan target into a
-  // cumulative target-to-date or substitute OTJH progress for programme progress.
+  // Preserve canonical actual/whole-plan totals, but use the coach table's
+  // target-to-date for the Case File target and its dependent calculations.
   const canonicalActual = args.learnerMetrics?.actual ?? null;
   const canonicalPlanned = args.learnerMetrics?.planned ?? null;
+  const businessDay = systemDateParts(new Date())!;
+  const targetToDate = otjhProgressAsOfToday({
+    otjhCompleted: canonicalActual,
+    otjhPlanned: canonicalPlanned,
+    otjhTarget: canonicalPlanned,
+    startDate: args.shell.profile.startDate,
+    otjhProgrammeStartDate: args.shell.profile.otjhProgrammeStartDate ?? args.shell.profile.startDate,
+    plannedEndDate: args.shell.profile.otjhProgrammeEndDate ?? args.shell.profile.plannedEndDate ?? args.detail?.programmeEndDate,
+  }, new Date(businessDay.year, businessDay.month - 1, businessDay.day)).targetHours;
+  // The caseload API publishes target-to-date rounded to two decimal places.
+  const canonicalTarget = targetToDate === null ? null : Number(targetToDate.toFixed(2));
   const metricsAvailable = Boolean(args.learnerMetrics);
   const overallProgress = metricsAvailable ? args.learnerMetrics?.programmeProgress ?? null : null;
+  const learnerEndDate = args.detail?.learnerEndDate;
+  const formattedLearnerEndDate = learnerEndDate && /^\d{4}-\d{2}-\d{2}(?:T|$)/.test(learnerEndDate)
+    ? formatCalendarDateLabel(learnerEndDate)
+    : learnerEndDate;
+  const plannedEndDate = args.detail?.programmeEndDate
+    || args.shell.profile.plannedEndDate
+    || formattedLearnerEndDate
+    || '--';
 
   return {
     learnerId: args.learnerId,
@@ -726,6 +756,8 @@ function buildCaseFileData(args: {
     employerEmail: '',
     employerPhone: '',
     overallProgress,
+    activitiesCompleted: args.learnerMetrics?.programmeCompleted ?? null,
+    activitiesTotal: args.learnerMetrics?.programmeTotal ?? null,
     // Prefer the learner's canonical register. The coach attendance projection
     // remains a fallback so a temporary register failure does not blank the file.
     attendanceRate: null,
@@ -733,7 +765,7 @@ function buildCaseFileData(args: {
     attendanceSessionCount: null,
     attendanceAbsentCount: null,
     otjhCompleted: metricsAvailable ? canonicalActual : null,
-    otjhTarget: metricsAvailable ? canonicalPlanned : null,
+    otjhTarget: metricsAvailable ? canonicalTarget : null,
     otjhPlanned: metricsAvailable ? canonicalPlanned : null,
     ksbProgress: metricsAvailable ? args.learnerMetrics?.ksbProgress ?? null : null,
     metricsAvailable,
@@ -746,9 +778,9 @@ function buildCaseFileData(args: {
     ksbCodeProgress: args.learnerMetrics?.ksbCodeProgress ?? [],
     ksbActivityPoints: args.learnerMetrics?.ksbActivityPoints ?? [],
     evidenceCount: args.snapshot?.evidenceCount ?? args.evidence?.totalEvidence ?? null,
-    startDate: args.detail?.programmeStartDate || args.shell.profile.startDate || '--',
+    startDate: args.shell.profile.startDate || '--',
     gatewayReviewDate: args.shell.profile.gatewayReviewDate || '--',
-    plannedEndDate: args.detail?.programmeEndDate || args.shell.profile.plannedEndDate || '--',
+    plannedEndDate: (args.detail ? args.detail.learnerEndDate : args.shell.profile.learnerEndDate) || '--',
     totalExpectedOtjh: metricsAvailable ? canonicalPlanned ?? 0 : 0,
     touchedKsbCodes,
     activityItems: buildActivityItems(args.snapshot, args.detail, args.evidence),
@@ -770,12 +802,13 @@ function buildActivityItems(
 ) {
   const items: CaseFileActivityItem[] = [];
 
-  if (snapshot?.startDate && snapshot.startDate !== '--') {
+  const activityStartDate = snapshot?.otjhProgrammeStartDate ?? snapshot?.startDate;
+  if (activityStartDate && activityStartDate !== '--') {
     items.push({
       id: 'programme-start',
-      date: snapshot.startDate,
+      date: activityStartDate,
       event: 'Programme start',
-      detail: `${snapshot.name} joined ${snapshot.cohortName}`,
+      detail: `${snapshot?.name} joined ${snapshot?.cohortName}`,
       tone: 'primary',
     });
   }

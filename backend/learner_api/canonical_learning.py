@@ -22,13 +22,42 @@ def is_legacy_record(record):
 
 
 def counts_as_actual(record):
-    """Accepted canonical rows count regardless of their source lineage.
-
-    Duplicate source observations are removed by ``canonical_activity_key`` in
-    the SSOT query.  ``source_system`` says where the surviving canonical row
-    came from; it is not a reason to throw that learner evidence away.
-    """
+    """Count accepted progress rows, independently of their source lineage."""
     return record.get('accepted') is True
+
+
+def is_time_estimated(record):
+    """Return whether a reporting allocation is provisional and needs approval."""
+    if record.get('reporting_estimated') is True or record.get('actual_estimated') is True:
+        return True
+    payload = source_payload_metadata(record.get('source_payload'))
+    reconciliation = payload.get('reconciliation')
+    allocation = reconciliation.get('reporting_allocation') if isinstance(reconciliation, dict) else None
+    return isinstance(allocation, dict) and allocation.get('estimated') is True
+
+
+def counts_as_completed(record, include_source_evidence=True):
+    """Completion and accepted OTJ hours are deliberately separate facts.
+
+    Source completion is trusted for the old LMS lineage. Callers that are
+    projecting a non-journal/coach view can disable source evidence while still
+    retaining explicit completion and status-based completion.
+    """
+    if record.get('completed') is True or record.get('accepted') is True:
+        return True
+    statuses = {str(record.get('activity_status') or '').strip().casefold()}
+    statuses.update(
+        str(source.get('activity_status') or '').strip().casefold()
+        for source in (record.get('sources') or []) if isinstance(source, dict)
+    )
+    if include_source_evidence and any(
+            source.get('completed') is True
+            and str(source.get('source_system') or '').strip().casefold() in {'', 'old_lms'}
+            for source in (record.get('sources') or []) if isinstance(source, dict)):
+        return True
+    return bool(statuses & {
+        'accepted', 'complete', 'completed', 'passed',
+    })
 
 
 def enabled(learner_id):
@@ -103,16 +132,10 @@ def entries(learner_id):
 
 
 def entries_for(owner):
-    records = query('''WITH candidates AS (
-        SELECT progress.*,
-            row_number() OVER (
-                PARTITION BY coalesce(nullif(progress.canonical_activity_key,''),concat('progress:',progress.id))
-                ORDER BY progress.actual_seconds DESC NULLS LAST,progress.id
-            ) AS canonical_rank
+    records = query('''WITH canonical AS (
+        SELECT progress.*
         FROM "Learner".learner_progress_entries progress
         WHERE progress.learner_id=%s AND progress.deleted_at IS NULL
-    ), canonical AS (
-        SELECT * FROM candidates WHERE canonical_rank=1
     ), progress_ksbs AS (
         SELECT k.progress_id,jsonb_agg(k.ksb_code ORDER BY k.position) AS payload
         FROM "Learner".learner_progress_ksbs k
@@ -131,6 +154,7 @@ def entries_for(owner):
             'course_title',c.source_course_title,'catalogue_id',a.id,
             'component_ref',coalesce(nullif(s.curriculum_component_ref,''),a.curriculum_component_ref),
             'module_ref',c.curriculum_module_ref,'group_ref',c.curriculum_group_ref,
+            'activity_status',s.activity_status,
             'source_activity_kind',a.source_activity_kind) ORDER BY s.id) AS payload
         FROM "Learner".learner_activity_sources s
         JOIN canonical p ON s.canonical_progress_id=p.id AND s.learner_id=p.learner_id
@@ -140,7 +164,8 @@ def entries_for(owner):
         GROUP BY s.canonical_progress_id
     ), journal_routes AS (
         SELECT j.progress_id,jsonb_agg(jsonb_build_object(
-            'group_id',j.group_id,'activity_id',j.activity_id,'source_ref',j.source_ref) ORDER BY j.id) AS payload,
+            'group_id',j.group_id,'activity_id',j.activity_id,'source_ref',j.source_ref,
+            'source_system',s.source_system,'month',j.month,'activity_date',j.activity_date) ORDER BY j.id) AS payload,
             sum(j.planned_hours) AS planned
         FROM "Learner".learner_journal_rows j
         JOIN canonical p ON j.progress_id=p.id AND j.canonical_learner_id=p.learner_id
@@ -182,25 +207,35 @@ def entries_for(owner):
             item['expected_otjh'] = float(record['journal_planned_hours'])
             item['journal_planned_hours'] = float(record['journal_planned_hours'])
         loaded.append(item)
-    result = current_records(owner, loaded)
+    result = progress_records_with_completion(loaded, current_records(owner, loaded))
     if journal_enabled:
+        # Completion is independent of accepted hours. Reapply the shared rule
+        # after current saves are projected so old-LMS source/status evidence is
+        # retained in the journal learner view only.
         for record in result:
-            # Source completion is independent of hours eligibility. Excluded
-            # administration and represented recordings still retain completion.
-            record['completed'] = record.get('completed', record.get('accepted')) is True or any(
-                source.get('source_system') == 'old_lms' and source.get('completed') is True
-                for source in record.get('sources') or [])
+            record['completed'] = counts_as_completed(record)
+    return result
+
+
+def progress_records_with_completion(records, current):
+    """Enrich progress completion without replacing stored hours or adding rows.
+
+    Counts, acceptance, seconds and reporting months belong to progress entries.
+    Newer attempts may still supply completion and scores for those same entries.
+    Unpersisted submissions cannot become extra accepted-hour records on a read.
+    """
+    by_id = {str(record['id']): record for record in current}
+    result = []
+    for record in records:
+        latest = by_id.get(str(record['id']), {})
+        result.append({**record, **{key: latest[key] for key in (
+            'completed', 'achieved_score', 'total_score') if key in latest}})
     return result
 
 
 def allocations(entry):
-    """Segments replace the parent's allocation; source observations never add time."""
-    segments = entry.get('segments') or []
-    if not segments:
-        return [entry]
-    return [{**entry, **{key: segment.get(key) for key in (
-        'actual_seconds', 'reporting_month', 'reporting_started_at', 'reporting_ended_at')},
-        'segment_id': segment['id']} for segment in segments]
+    """Use the progress row's own month and seconds; retain segments as history."""
+    return [entry]
 
 
 def recorded_seconds(entry):
@@ -220,6 +255,26 @@ def activity_rows(learner_id):
     return rows_for(owner)
 
 
+def journal_activity_date(entry):
+    """Use an unambiguous original journal date within the progress reporting month."""
+    if entry.get('source_system') != 'journal':
+        return None
+    month = entry.get('reporting_month')
+    dates = set()
+    for route in entry.get('journal_routes') or []:
+        if not isinstance(route, dict) or route.get('source_system') != 'journal' or route.get('month') != month:
+            continue
+        value = str(route.get('activity_date') or '')
+        if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', value) or value[:7] != month:
+            continue
+        try:
+            datetime.strptime(value, '%Y-%m-%d')
+        except ValueError:
+            continue
+        dates.add(value)
+    return next(iter(dates)) if len(dates) == 1 else None
+
+
 def rows_for(owner, records=None):
     result = []
     for entry in (part for record in (records if records is not None else entries_for(owner)) for part in allocations(record)):
@@ -234,11 +289,22 @@ def rows_for(owner, records=None):
                    planned=entry.get('expected_otjh') if entry.get('expected_otjh') is not None else source.get('planned_hours'),
                    note=source.get('completion_note') or entry.get('feedback'),
                    group=entry.get('module_title') or entry.get('group_title'), ksbs=entry['ksbs'])
+        # A backfill timestamp may describe a later import/edit, not the original
+        # activity. Correct only that display date; hours and month stay on progress.
+        if not at or at.strftime('%Y-%m') != entry.get('reporting_month'):
+            item['activity_date'] = journal_activity_date(entry) or item['activity_date']
+        timestamp_label = entry.get('reporting_timestamp_label') or source.get('timestamp_label') or ''
+        # Translate the historical system label for display without rewriting the ledger.
+        if timestamp_label == '\u062a\u0642\u062f\u064a\u0631\u064a \u2014 \u064a\u062d\u062a\u0627\u062c \u0627\u0639\u062a\u0645\u0627\u062f':
+            timestamp_label = 'Estimated — approval required'
         item.update(accepted=entry.get('accepted') is True,
                     source_system=entry.get('source_system'),
                     reporting_month=entry.get('reporting_month'),
-                    timestamp_label=entry.get('reporting_timestamp_label') or source.get('timestamp_label') or '',
+                    timestamp_label=timestamp_label,
                     actual_hours_recorded=entry.get('actual_seconds') is not None,
+                    actual_estimated=is_time_estimated(entry),
+                    actual_status_label='Estimated — approval required' if is_time_estimated(entry)
+                    else ('Accepted' if entry.get('accepted') is True else 'Not accepted'),
                     progress_id=entry['id'])
         result.append(item)
     by_id = {}
@@ -698,7 +764,8 @@ def recorded_course_items(courses, catalogue, records):
                 'section_title': definition.get('source_section_title'),
                 'position': definition.get('position') or 0,
                 **recorded_activity_schedule(record, course),
-                'completed': record.get('completed', accepted) is True, 'historical_completed': accepted,
+                'completed': counts_as_completed(record, include_source_evidence='completed' in record),
+                'historical_completed': accepted,
                 'actual': recorded_seconds(record) / 3600 if accepted else 0,
                 'hours_mapped': accepted and any(p.get('actual_seconds') is not None for p in allocations(record)),
                 'planned': record.get('journal_planned_hours', 0),
@@ -727,6 +794,17 @@ def recorded_course_items(courses, catalogue, records):
     return items, subjects, links
 
 
+def ksb_point_definition(record, code):
+    """Only an unambiguous stored link may enrich an activity/code label."""
+    matches = {(str(item.get('ksb_definition_id')), item.get('definition_code'))
+               for item in record.get('ksb_definitions') or []
+               if item.get('ksb_code') == code and item.get('ksb_definition_id') is not None}
+    if len(matches) != 1:
+        return {'ksbDefinitionId': None, 'definitionCode': None}
+    definition_id, definition_code = next(iter(matches))
+    return {'ksbDefinitionId': definition_id, 'definitionCode': definition_code}
+
+
 def metrics_from_records(records, monthly_targets, *, include_ksb_points=False):
     """Count final activity records once, using accepted evidence only for hours.
 
@@ -735,7 +813,8 @@ def metrics_from_records(records, monthly_targets, *, include_ksb_points=False):
     """
     counted = list(records)
     accepted = [item for item in counted if item.get('accepted') is True]
-    completed = [item for item in counted if item.get('completed', item.get('accepted')) is True]
+    completed = [item for item in counted if counts_as_completed(
+        item, include_source_evidence='completed' in item)]
     def ratio(done, total):
         return {'completed': done, 'total': total,
                 'percent': round(done / total * 100, 2) if total else None,
@@ -764,6 +843,7 @@ def metrics_from_records(records, monthly_targets, *, include_ksb_points=False):
         # belongs to this activity, never to every activity sharing its code.
         result['ksb']['points'] = [
             {'activityId': str(item['id']), 'code': code,
+             **ksb_point_definition(item, code),
              'completed': item.get('accepted') is True,
              'title': item.get('component_title') or None,
              'type': item.get('component_type') or item.get('kind') or None,
@@ -827,16 +907,7 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
         return result
 
     learner_profile_ids = [int(owner['id']) for owner in valid_owners.values()]
-    progress_rows = query('''WITH candidates AS (
-        SELECT p.*,
-          row_number() OVER (
-            PARTITION BY p.learner_id,coalesce(nullif(p.canonical_activity_key,''),concat('progress:',p.id))
-            ORDER BY p.actual_seconds DESC NULLS LAST,p.id
-          ) AS canonical_rank
-        FROM "Learner".learner_progress_entries p
-        WHERE p.learner_id=ANY(%s) AND p.deleted_at IS NULL
-    )
-        SELECT p.learner_id AS owner_id,p.id,p.kind,
+    progress_rows = query('''SELECT p.learner_id AS owner_id,p.id,p.kind,
         p.module_title,p.component_ref,p.component_title,p.component_type,p.quiz_ref,
         p.passed,p.feedback,p.reported_time,p.submitted_at,p.started_at,
         p.time_tracking_source,p.claimed_seconds,p.verified_seconds,p.expected_otjh,
@@ -846,8 +917,8 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
         CASE WHEN p.source_payload ? 'original_source_ref'
              THEN jsonb_build_object('original_source_ref',p.source_payload->>'original_source_ref')
              ELSE '{}'::jsonb END AS source_payload
-        FROM candidates p
-        WHERE p.canonical_rank=1
+        FROM "Learner".learner_progress_entries p
+        WHERE p.learner_id=ANY(%s) AND p.deleted_at IS NULL
         ORDER BY p.learner_id,p.reporting_month,p.reporting_started_at NULLS LAST,p.id''',
         [learner_profile_ids])
     records_by_learner = {profile_id: [] for profile_id in learner_profile_ids}
@@ -855,17 +926,23 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
     for payload in progress_rows:
         owner_id = int(payload.pop('owner_id'))
         payload.update(ksbs=[], segments=[], sources=[], historical_components=[])
+        payload['completed'] = counts_as_completed(payload)
         records_by_learner.setdefault(owner_id, []).append(payload)
         records_by_progress[int(payload['id'])] = payload
 
     progress_ids = list(records_by_progress)
     if progress_ids:
-        for item in query('''SELECT progress_id,ksb_code
-            FROM "Learner".learner_progress_ksbs
-            WHERE progress_id=ANY(%s) ORDER BY progress_id,position''', [progress_ids]):
+        definition_columns = ",to_jsonb(k)->>'ksb_definition_id' AS ksb_definition_id,d.code AS definition_code" if include_ksb_points else ''
+        definition_join = "LEFT JOIN curriculum.ksb_definitions d ON d.id::text=to_jsonb(k)->>'ksb_definition_id'" if include_ksb_points else ''
+        for item in query(f'''SELECT k.progress_id,k.ksb_code{definition_columns}
+            FROM "Learner".learner_progress_ksbs k
+            {definition_join}
+            WHERE k.progress_id=ANY(%s) ORDER BY k.progress_id,k.position''', [progress_ids]):
             record = records_by_progress.get(int(item['progress_id']))
             if record is not None:
                 record['ksbs'].append(item['ksb_code'])
+                if include_ksb_points:
+                    record.setdefault('ksb_definitions', []).append(item)
         for item in query('''SELECT progress_id,to_jsonb(s) AS payload
             FROM "Learner".learner_activity_reporting_segments s
             WHERE progress_id=ANY(%s) ORDER BY progress_id,segment_order,id''', [progress_ids]):
@@ -878,7 +955,7 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
             c.source_course_title AS course_title,a.id AS catalogue_id,
             coalesce(nullif(s.curriculum_component_ref,''),a.curriculum_component_ref) AS component_ref,
             c.curriculum_module_ref AS module_ref,c.curriculum_group_ref AS group_ref,
-            a.source_activity_kind
+            a.source_activity_kind,s.activity_status,s.completed
             FROM "Learner".learner_activity_sources s
             LEFT JOIN curriculum.source_activities a
               ON a.id=s.source_catalog_activity_id AND a.deleted_at IS NULL
@@ -917,7 +994,10 @@ def metrics_bulk(learner_ids, *, learner_workspace=False, include_ksb_points=Fal
             targets_by_learner.setdefault(int(target['learner_id']), {})[target['report_month']] = float(target['target_hours'])
 
     for enrolment_id, owner in valid_owners.items():
-        records = current_by_enrolment.get(enrolment_id, [])
+        records = progress_records_with_completion(
+            records_by_learner.get(int(owner['id']), []),
+            current_by_enrolment.get(enrolment_id, []),
+        )
         if learner_workspace:
             # Match entries_for's learner journal completion rule, including
             # completed source activities that are excluded from OTJ hours.
@@ -988,7 +1068,9 @@ def overlay_subjects(payload, records, summarize):
             accepted = [r for r in matches if counts_as_actual(r)]
             recorded = [r for r in accepted if any(part.get('actual_seconds') is not None for part in allocations(r))]
             at = local_instant(latest.get('reporting_started_at') or latest.get('reporting_ended_at'))
-            item.update(completed=any(r.get('completed', r.get('accepted')) is True for r in matches),
+            item.update(completed=any(
+                counts_as_completed(r, include_source_evidence='completed' in r)
+                for r in matches),
                         historical_completed=bool(accepted),
                         actual=sum(recorded_seconds(r) for r in recorded) / 3600,
                         hours_mapped=bool(recorded), status=latest.get('activity_status'),

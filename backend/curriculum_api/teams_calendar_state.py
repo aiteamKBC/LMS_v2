@@ -137,7 +137,9 @@ def reconcile_calendar(live_id):
         v.invalidate_curriculum_cache()
     return {'changed': changed, 'seriesStatus': 'cancelled' if plan['seriesCancelled'] else 'active',
             'cancelledSessions': [row['session_number'] for row in rows if row['id'] in plan['cancelledIds']],
-            'errors': plan['errors']}
+            'errors': plan['errors'],
+            # Reported for a person to decide on; nothing here cancels them.
+            'leftovers': plan.get('leftovers') or []}
 
 
 @transaction.non_atomic_requests

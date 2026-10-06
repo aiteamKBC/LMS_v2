@@ -4,9 +4,17 @@ from unittest.mock import MagicMock, patch
 from django.test import SimpleTestCase
 
 from coach_api.views import _case_file_next_session, _case_file_review_events, fetch_case_file_shell, serialize_case_file_shell
+from coach_api.views import serialize_caseload_dashboard_learner
+from coach_api.tests import SerializeCaseloadDashboardLearnerTests as DashboardFixtures
 
 
 class CaseFileShellTests(SimpleTestCase):
+    def setUp(self):
+        super().setUp()
+        contracts = patch("coach_api.views.load_contracts_bulk", return_value={})
+        contracts.start()
+        self.addCleanup(contracts.stop)
+
     def test_query_is_scoped_by_stable_profile_id_and_coach(self):
         profile = SimpleNamespace(id=316, enrolment_id=5170)
         profile_queryset = MagicMock()
@@ -22,6 +30,32 @@ class CaseFileShellTests(SimpleTestCase):
         self.assertEqual(source.id, 5170)
         profile_queryset.filter.assert_called_once_with(id=316, coach_email_key="coach@example.test")
         source_queryset.filter.assert_called_once_with(pk=5170)
+        self.assertIn("learner_start_date", source_queryset.filter.return_value.only.call_args.args)
+
+    def test_dashboard_and_case_file_share_canonical_start_date_for_all_types(self):
+        for kind in ("apprenticeship", "commercial"):
+            for value, expected in (("2026-06-01", "2026-06-01"), (" 2026-05-28 ", "2026-05-28"),
+                                    (None, None), ("", None), (" ", None), ("2026-02-30", None),
+                                    ("2026-06-01invalid", None)):
+                with self.subTest(kind=kind, value=value):
+                    source = self.source(learner_type=kind, learner_start_date=value, start_date="2020-01-01")
+                    profile = self.profile(learner_type=kind, start_date="2021-01-01",
+                                           end_date="2027-06-01", gateway_review_date="2027-03-01")
+                    dashboard_row = DashboardFixtures()._row(
+                        id=profile.id, enrolment_id=profile.enrolment_id, learner_type=kind,
+                        start_date=profile.start_date, _caseload_source=source,
+                        _caseload_contract={"program_start_date": "2022-01-01"},
+                    )
+                    shell = serialize_case_file_shell(profile, source)
+                    dashboard = serialize_caseload_dashboard_learner(dashboard_row)
+                    self.assertEqual(shell["profile"]["startDate"], expected)
+                    self.assertEqual(shell["profile"]["startDate"], dashboard["startDate"])
+                    self.assertEqual(shell["profile"]["plannedEndDate"], "01 Jun 2027")
+                    self.assertEqual(shell["profile"]["gatewayReviewDate"], "01 Mar 2027")
+
+    def test_missing_enrolment_source_never_uses_profile_start_date(self):
+        self.assertIsNone(serialize_case_file_shell(
+            self.profile(start_date="2026-06-01"), None)["profile"]["startDate"])
 
     def test_aptem_source_wins_when_profile_agrees(self):
         payload = serialize_case_file_shell(
