@@ -26,6 +26,8 @@ interface HeaderProps {
   mobileSidebarOpen?: boolean;
   mobileMenuButtonRef?: RefObject<HTMLButtonElement | null>;
   role?: string;
+  /** Visual workspace chrome, when it intentionally differs from the account role. */
+  appearance?: string;
   workspaceLabel?: string;
   personalLearning?: boolean;
   /** The sidebar carries its own Sign out (the learner look), so the floating one would duplicate it. */
@@ -172,7 +174,7 @@ export function SignOutConfirmModal({
 }
 
 // Notification sound
-export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, headerExtras, onOpenSearch, userName = 'Sarah Mitchell', onToggleMobileSidebar, mobileSidebarOpen = false, mobileMenuButtonRef, role, workspaceLabel, personalLearning = false, sidebarSignOut = false }: HeaderProps) {
+export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, headerExtras, onOpenSearch, userName = 'Sarah Mitchell', onToggleMobileSidebar, mobileSidebarOpen = false, mobileMenuButtonRef, role, appearance, workspaceLabel, personalLearning = false, sidebarSignOut = false }: HeaderProps) {
   const { auth, logout } = useAuth();
   const { theme, toggleTheme } = useTheme();
   // Profile is the only dropdown left in the header, so the state that used to
@@ -259,12 +261,14 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, he
   const roleLabel = auth.account?.position || auth.roles?.[0]?.name || '';
   const initials = initialsOf(displayName);
   const hasLearnerProfile = role === 'learner' && auth.account?.subjectType === 'learner' && Boolean(auth.account.subjectId);
+  const headerLook = appearance ?? role;
+  const usesLearnerHeader = headerLook === 'learner' || headerLook === 'coach';
 
   return (
     <>
     {/* Every workspace shares the same frame as its icon rail. */}
-    <header className={`kbc-workspace-topbar workspace-topbar relative mx-2 mb-2 mt-2 flex h-16 shrink-0 items-center gap-2 overflow-visible rounded-[20px] border-b border-foreground-100 bg-background-50 px-2 sm:px-3 md:gap-3 md:px-4 lg:ml-0 lg:mr-3 lg:mt-3 lg:gap-4 lg:px-5 [&_.kbc-workspace-switcher-button]:h-10 [&_.kbc-workspace-switcher-button]:gap-2.5 [&_.kbc-workspace-switcher-button]:px-3 [&_.kbc-workspace-switcher-button]:focus-visible:outline-none [&_.kbc-workspace-switcher-button]:focus-visible:ring-2 [&_.kbc-workspace-switcher-button]:focus-visible:ring-white/80 ${role === 'learner' || role === 'coach' ? 'kbc-learner-header' : ''}`}>
-      {(role === 'learner' || role === 'coach') && (
+    <header className={`kbc-workspace-topbar workspace-topbar relative mx-2 mb-2 mt-2 flex h-16 shrink-0 items-center gap-2 overflow-visible rounded-[20px] border-b border-foreground-100 bg-background-50 px-2 sm:px-3 md:gap-3 md:px-4 lg:ml-0 lg:mr-3 lg:mt-3 lg:gap-4 lg:px-5 [&_.kbc-workspace-switcher-button]:h-10 [&_.kbc-workspace-switcher-button]:gap-2.5 [&_.kbc-workspace-switcher-button]:px-3 [&_.kbc-workspace-switcher-button]:focus-visible:outline-none [&_.kbc-workspace-switcher-button]:focus-visible:ring-2 [&_.kbc-workspace-switcher-button]:focus-visible:ring-white/80 ${usesLearnerHeader ? 'kbc-learner-header' : ''}`}>
+      {usesLearnerHeader && (
         <div
           aria-hidden="true"
           className="kbc-learner-header-pattern pointer-events-none absolute inset-0"
@@ -278,7 +282,7 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, he
           type="button"
           ref={mobileMenuButtonRef}
           onClick={onToggleMobileSidebar}
-          className={`kbc-navigation-menu ${role === 'learner' || role === 'coach' ? 'min-h-11 min-w-11 px-2' : ''}`}
+          className={`kbc-navigation-menu ${usesLearnerHeader ? 'min-h-11 min-w-11 px-2' : ''}`}
           title={mobileSidebarOpen ? 'Close navigation menu' : 'Open navigation menu'}
           aria-label={mobileSidebarOpen ? 'Close navigation menu' : 'Open navigation menu'}
           aria-expanded={mobileSidebarOpen}
@@ -290,13 +294,13 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, he
       )}
       {/* Provider logo — below lg only. From lg up the sidebar carries the
           brand, and showing it twice was the duplication that read as clutter. */}
-      <Link to="/" className={`${role === 'learner' || role === 'coach' ? 'hidden' : 'flex'} shrink-0 lg:hidden`} aria-label="Kent Business College home">
+      <Link to="/" className={`${usesLearnerHeader ? 'hidden' : 'flex'} shrink-0 lg:hidden`} aria-label="Kent Business College home">
         <BrandLockup size="compact" className="max-w-16 sm:max-w-none" />
       </Link>
 
       {/* Where the page says what it is. These props were being passed by every
           page and thrown away, which is what left the bar looking empty. */}
-      <div className={`${role === 'learner' || role === 'coach' ? 'flex' : 'hidden lg:flex'} min-w-0 flex-1`}>
+      <div className={`${usesLearnerHeader ? 'flex' : 'hidden lg:flex'} min-w-0 flex-1`}>
         <div className="flex min-w-0 items-center gap-3">
           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10 text-white ring-1 ring-inset ring-white/10" aria-hidden="true">
             {pageIcon ?? <AppIcon className="ri-dashboard-line h-5 w-5" />}
@@ -304,14 +308,14 @@ export function Header({ accountButtonRef, pageTitle, pageIcon, pageSubtitle, he
           <div className="min-w-0">
             <p className="kbc-topbar-title truncate font-heading text-[15px] font-bold leading-tight tracking-tight text-foreground-900">{pageTitle}</p>
             {pageSubtitle && (
-              <p className={`${role === 'learner' || role === 'coach' ? 'hidden sm:block' : ''} kbc-topbar-subtitle mt-1 truncate text-[11.5px] leading-tight text-foreground-400`}>{pageSubtitle}</p>
+              <p className={`${usesLearnerHeader ? 'hidden sm:block' : ''} kbc-topbar-subtitle mt-1 truncate text-[11.5px] leading-tight text-foreground-400`}>{pageSubtitle}</p>
             )}
           </div>
         </div>
       </div>
 
       {/* Below lg the title has no room, so the actions simply push right. */}
-      <div className={`${role === 'learner' || role === 'coach' ? 'hidden' : 'flex-1'} lg:hidden`}></div>
+      <div className={`${usesLearnerHeader ? 'hidden' : 'flex-1'} lg:hidden`}></div>
 
       {/* The shared workspace controls stay visible on every desktop page so
           the dashboard and its child pages have the same navigation chrome. */}
