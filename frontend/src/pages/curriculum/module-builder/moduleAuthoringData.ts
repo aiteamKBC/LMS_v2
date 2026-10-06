@@ -2600,6 +2600,39 @@ export class ModuleStructureConflictError extends Error {
 }
 
 /**
+ * The server's request-body ceiling (`DATA_UPLOAD_MAX_MEMORY_SIZE` in
+ * backend/config/settings.py). Past it Django refuses the PATCH with its own
+ * HTML 400 page before the view runs, so the reader would only ever see
+ * "returned 400". Kept here so the refusal can be explained instead.
+ */
+export const MODULE_STRUCTURE_SAVE_LIMIT_BYTES = 30 * 1024 * 1024;
+// Django's own default ceiling. A non-JSON 400 on a body smaller than this is
+// some other refusal, and is not blamed on size.
+const DJANGO_DEFAULT_UPLOAD_LIMIT_BYTES = Math.floor(2.5 * 1024 * 1024);
+
+function formatMegabytes(bytes: number) {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+/** A save refused because the module is bigger than the server accepts in one request. */
+export class ModuleStructureTooLargeError extends Error {
+  sizeBytes: number;
+
+  constructor(sizeBytes: number, componentCount: number, limitKnown: boolean) {
+    const limit = limitKnown ? ` The most one save can carry is ${formatMegabytes(MODULE_STRUCTURE_SAVE_LIMIT_BYTES)}.` : '';
+    super(
+      `This module is too large to save in one go: it is ${formatMegabytes(sizeBytes)} across ${componentCount} components.${limit}`
+      + ' Your changes are still here and nothing was lost.'
+      + ' Large content pasted straight into components, such as images, is the usual cause:'
+      + ' remove or replace it with a link or uploaded file, or split the module, then save again.',
+    );
+    this.name = 'ModuleStructureTooLargeError';
+    this.sizeBytes = sizeBytes;
+    Object.setPrototypeOf(this, ModuleStructureTooLargeError.prototype);
+  }
+}
+
+/**
  * Write a module's whole structure back.
  *
  * `expectedRevision` is the `structureRevision` that came with the copy being
@@ -2630,12 +2663,28 @@ export async function saveModuleStructure(
     weeksNumber: recalculated.weekStructure.length || recalculated.weeks,
     ...(options.expectedRevision ? { expectedRevision: options.expectedRevision } : {}),
   };
+  const serialized = JSON.stringify(body);
+  const sizeBytes = new Blob([serialized]).size;
+  const componentCount = recalculated.weekStructure.reduce((total, week) => total + week.components.length, 0);
+  // Refused here rather than sent: the server would only answer with an HTML
+  // 400 after the whole body had been uploaded.
+  if (sizeBytes > MODULE_STRUCTURE_SAVE_LIMIT_BYTES) {
+    throw new ModuleStructureTooLargeError(sizeBytes, componentCount, true);
+  }
   const saved = recalculateModule(await apiJson<ModuleCatalogueItem>(`/curriculum/modules/${encodeURIComponent(moduleCatalogueId)}/structure/`, {
     method: 'PATCH',
-    body: JSON.stringify(body),
+    body: serialized,
     headers: { 'X-Curriculum-Save-Source': options.source || 'manual' },
     timeoutMs: 90000,
   }).catch((err: unknown) => {
+    // A deployment can set a lower ceiling than the one mirrored above. The
+    // view always answers in JSON, so a body-less 400 on a large payload (or a
+    // proxy's 413) is the size refusal.
+    if (err instanceof ApiError && !err.data && (
+      err.status === 413 || (err.status === 400 && sizeBytes > DJANGO_DEFAULT_UPLOAD_LIMIT_BYTES)
+    )) {
+      throw new ModuleStructureTooLargeError(sizeBytes, componentCount, false);
+    }
     if (!(err instanceof ApiError) || err.status !== 409 || !err.data?.conflict) throw err;
     const server = err.data.module as ModuleCatalogueItem | undefined;
     throw new ModuleStructureConflictError(
